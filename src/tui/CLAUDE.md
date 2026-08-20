@@ -253,6 +253,42 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   falls back to the shade the id derives, so a freshly imported database is already
   distinguishable and the field is an override rather than a step the owner has to complete. That
   is also what `—` on the selector writes back.
+- **An account cannot reach a screen without its color, and that is a property of the types
+  rather than a rule to remember.** `label.rs` holds `Account` — an account's id, the text a
+  screen shows for it, and the owner's color — with **no reader for the text outside that file**.
+  Its two exits are `account_cell` and `label_line`, and both color what they draw, so a screen
+  that wants an uncolored account has no way to ask for one. One layer down,
+  `db::account::AccountName` and `AccountCode` have no `Display`, so an account cannot become a
+  `String` on the way to a `format!` either.
+  - **`Account::named`, `Account::coded` and `Account::labelled` are one per caller.** The
+    ledgers' rows, Savings, Overview and Accounts show a name; Recurring Transactions and the
+    ledger *title* show a code, the one because its other columns pin the row down already and
+    the other because a title is a chain of filter terms; the three form selectors show
+    `CHK — Everyday` as one segment, because both halves name the same account and splitting
+    them would leave the code reading as chrome in front of a colored name.
+  - **`Label` is what lets a title carry a tint.** A title cannot be a `String` and be colored,
+    and it cannot be a ratatui `Line` because view-state types hold no ratatui. So it is a
+    sequence of plain runs and `Account`s: `Savings::title`, `Ledger::title`, `Picker::title`,
+    `Worksheet::title`, the new-goal title and `ValueForm::title` (the Value, Reconcile, Fund
+    Value and Birth Date modals) all return one, and `label_line` turns one into spans. `text`
+    and `account` only ever append; `prepend` is the one way to put plain text ahead of a label
+    built elsewhere, which is what lets `ValueForm::title` keep its "Edit " prefix in front of a
+    label that may already carry a colored account segment.
+  - **Every `display(field)` returns a `Label`**, including the fields that name no account. One
+    shape per form rather than one for the account fields and one for the rest. The Accounts
+    screen's `Color` field is the exception and still goes through `field_line_tinted`: its tint
+    says what `Teal` looks like, not which account this is.
+  - **The status line and the Savings reconciliation footer are deliberately uncolored.** They
+    are transient prose rather than places a reader looks to identify an account, and
+    `Savings::account_name` exists for the footer alone.
+  - **`as_str` is the escape, and it is pinned.** `AccountName::as_str` serves the uses that are
+    not displays — a description prefill, a search filter folding case, a form seeding its
+    editable field — and `nothing_in_the_screens_reads_an_account_name_as_bare_text` lists them
+    with a reason each, including the one entry that is a genuine gap rather than a justified
+    exemption: the destination picker's `Offered.container` in `app.rs`'s `open_destination` is
+    an uncolored account display that no task in this plan put in scope. A source scan rather
+    than a type, because the property is "nobody reached for the escape hatch", which no
+    signature can state.
 - **Every Planning row that names an account is tinted by it, and the tone outranks the tint.** A
   `Row` carries **one** `Tint`, which says which of the three cells holds the name — `Column::Label`
   for a transfer, which heads its own account; `Column::Value` for the two account-backed
@@ -336,13 +372,15 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     the accounts it was last handed, so a reload that refreshed the list last would leave the
     Savings `Acct` column on the old name while the title and the `Unallocated` footer, which
     resolve live, already showed the new one.
-- **Only Recurring Transactions shows an account code.** Every other screen — Overview, both
-  ledgers, Savings, and the worksheet and picker titles — shows `account.name`, resolved through
-  `tui::account_name`. Screen 8 keeps `tui::account_code` because its other columns already
-  pin a row down exactly, so the code alone is enough to say which account it belongs to, and that
-  much detail reads better tight than padded. Widening a name column is still paid for
-  out of another column on the same screen, so the width tests are the guard — see *How wide a
-  screen is* above.
+- **Only Recurring Transactions' row and a filtered ledger's title show an account code.** Every
+  other account display — Overview, both ledgers' rows, Savings, and the worksheet and picker
+  titles — shows `account.name`, through `Account::named`. Screen 8's `Acct` column goes through
+  `Account::coded` because its other columns already pin a row down exactly, so the code alone is
+  enough to say which account it belongs to, and that much detail reads better tight than padded;
+  the ledger title goes through `Account::coded` too, for the other reason a code beats a name — a
+  title is a chain of filter terms, and the code is the tighter one. Widening a name column is
+  still paid for out of another column on the same screen, so the width tests are the guard — see
+  *How wide a screen is* above.
 - **A right-aligned column takes a right-aligned header**, through `tui::right_header` — one
   decision in `mod.rs` rather than each screen deciding for itself. Left over right, a
   header sits at the far side of its column from every figure in it and reads as a label for the

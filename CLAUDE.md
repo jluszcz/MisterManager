@@ -122,7 +122,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
-| `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `mod.rs` rather than in whichever screen needed it first. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
+| `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen only as `label::Account`, which colors it. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `mod.rs` rather than in whichever screen needed it first. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
 | `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `import` is the one subcommand. |
 
 **`rusqlite` is named only inside `src/db/`.** `Db` holds a private `Connection` and deliberately does
@@ -229,6 +229,9 @@ matches, since nothing but a test ties them together.
   enum because it is a fact about *it* — which variant an id lands on — while what a variant looks
   like is `tui::style::palette`'s to say and nothing else's, which is what keeps colour decided in
   one module.
+  Which screens honour that is not left to each screen: `tui::label::Account` is the only way an
+  account reaches a glyph and it colors what it draws, and `AccountName`/`AccountCode` have no
+  `Display`, so an account cannot be flattened into a `String` on the way.
 - **Three things about the owner's accounts are in no cell of the workbook, and all three are
   configured on the Accounts screen.** The `Savings` sheet names its two blocks by *position* --
   `A:E` and `I:K` -- with no account code beside either, and nothing anywhere says which account is
