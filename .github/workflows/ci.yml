@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+    paths:
+      - '.github/workflows/**'
+      - 'Cargo**'
+      - 'src/**/*.rs'
+
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: jluszcz/github-utils/.github/workflows/rust-ci.yml@v2
+    with:
+      runs-on: ubuntu-24.04-arm
+      target: aarch64-unknown-linux-musl

@@ -1,0 +1,806 @@
+//! The Recurring Goals screen: the recurring goals a new round is created
+//! from, the month filter over them, and the form that adds or edits them.
+//!
+//! View state only -- no ratatui above the render functions at the bottom, and
+//! no `Db` on the type. `App` runs the queries and hands the results in.
+
+use super::cursor::{Cursor, Scroll};
+use super::form::{Field, FormFields, next_in, parse_whole_amount, step_index};
+use super::month::MonthCycle;
+use crate::db::RecurringGoalId;
+use crate::db::recurring_goal::{Cadence, Entry, NewEntry};
+use crate::money::Cents;
+use anyhow::{Result, ensure};
+use std::collections::HashMap;
+
+/// One recurring goal entry as the screen shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub recurring_goal_id: RecurringGoalId,
+    pub name: String,
+    pub month: i64,
+    pub base_cents: Cents,
+    pub taxed: bool,
+    pub cadence: Cadence,
+    /// How many goals this entry currently has open. A hint only -- a second
+    /// open goal against one entry is a legitimate thing to want, the same as
+    /// the picker's "Open?" column.
+    pub open_goals: i64,
+}
+
+pub struct RecurringGoals {
+    all: Vec<Row>,
+    /// Indices into `all` that survive the month filter.
+    visible: Vec<usize>,
+    /// The cycle is the calendar itself: the entries carry a month of the
+    /// year and no date, so every month is always in it and the ends wrap.
+    month: MonthCycle<i64>,
+    cursor: Cursor,
+}
+
+impl RecurringGoals {
+    /// Opens unfiltered. The screen is a reference list of a dozen-odd
+    /// entries, so showing all of them is the useful default; `[` and `]` are
+    /// what start narrowing it.
+    pub fn new(today_month: i64) -> RecurringGoals {
+        RecurringGoals {
+            all: Vec::new(),
+            visible: Vec::new(),
+            month: MonthCycle::new((1..=12).collect(), today_month),
+            cursor: Cursor::new(),
+        }
+    }
+
+    pub fn set_entries(&mut self, entries: Vec<Entry>, open_goals: HashMap<RecurringGoalId, i64>) {
+        self.all = entries
+            .into_iter()
+            .map(|entry| Row {
+                open_goals: open_goals.get(&entry.id).copied().unwrap_or(0),
+                recurring_goal_id: entry.id,
+                name: entry.name,
+                month: entry.month,
+                base_cents: entry.base_cents,
+                taxed: entry.taxed,
+                cadence: entry.cadence,
+            })
+            .collect();
+        self.refilter();
+    }
+
+    /// `]`: forward a month, December wrapping to January.
+    ///
+    /// The entries carry a month of the year and no date, so there is no data
+    /// range to clamp against the way [`super::ledger::Ledger`] has one.
+    pub fn next_month(&mut self) {
+        self.month.next();
+        self.refilter();
+    }
+
+    /// `[`: back a month, January wrapping to December.
+    pub fn previous_month(&mut self) {
+        self.month.previous();
+        self.refilter();
+    }
+
+    /// `Esc`: show every entry again.
+    pub fn clear_month(&mut self) {
+        self.month.clear();
+        self.refilter();
+    }
+
+    pub fn selected_month(&self) -> Option<i64> {
+        self.month.selected()
+    }
+
+    fn refilter(&mut self) {
+        let month = self.month.selected();
+        self.visible = self
+            .all
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| month.is_none_or(|m| row.month == m))
+            .map(|(i, _)| i)
+            .collect();
+        self.cursor.clamp(self.visible.len());
+    }
+
+    pub fn rows(&self) -> Vec<&Row> {
+        self.visible.iter().map(|i| &self.all[*i]).collect()
+    }
+
+    pub fn selected(&self) -> Option<&Row> {
+        self.visible.get(self.cursor.index()).map(|i| &self.all[*i])
+    }
+
+    pub fn title(&self) -> String {
+        let month = match self.month.selected() {
+            None => "All".to_string(),
+            Some(m) => super::month_name(m),
+        };
+        format!("Recurring Goals · {month} · {}", self.visible.len())
+    }
+}
+
+impl Scroll for RecurringGoals {
+    fn cursor(&self) -> &Cursor {
+        &self.cursor
+    }
+
+    fn cursor_mut(&mut self) -> &mut Cursor {
+        &mut self.cursor
+    }
+
+    /// The rows the month filter left, not every entry.
+    fn row_count(&self) -> usize {
+        self.visible.len()
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RecurringGoalField {
+    Name,
+    Month,
+    Amount,
+    Taxed,
+    Cadence,
+}
+
+impl RecurringGoalField {
+    pub const ORDER: [RecurringGoalField; 5] = [
+        RecurringGoalField::Name,
+        RecurringGoalField::Month,
+        RecurringGoalField::Amount,
+        RecurringGoalField::Taxed,
+        RecurringGoalField::Cadence,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RecurringGoalField::Name => "Name",
+            RecurringGoalField::Month => "Month",
+            RecurringGoalField::Amount => "Base",
+            RecurringGoalField::Taxed => "Taxed",
+            RecurringGoalField::Cadence => "Cadence",
+        }
+    }
+}
+
+/// A month of the year `delta` months on, December wrapping to January and
+/// January back to December. The form's Month selector steps the same
+/// calendar the screen's filter does, but as a field rather than a filter --
+/// it has no All to fall out of, so it is not a [`MonthCycle`].
+fn wrapped_month(month: i64, delta: i64) -> i64 {
+    (month - 1 + delta).rem_euclid(12) + 1
+}
+
+/// Adding or editing one recurring goal entry. Backs `a` and `e`.
+///
+/// Month, Taxed and Cadence are selectors rather than text fields, so none of
+/// an out-of-range month, an unparseable boolean, or a cadence the schema's
+/// `CHECK` would refuse is representable.
+#[derive(Debug)]
+pub struct RecurringGoalForm {
+    pub editing: Option<RecurringGoalId>,
+    pub focus: RecurringGoalField,
+    name: Field,
+    /// 1-12. A number rather than a `Field`, because the Month selector can
+    /// only ever hold one.
+    month: i64,
+    amount: Field,
+    taxed: bool,
+    cadence: usize,
+}
+
+impl RecurringGoalForm {
+    pub fn add() -> RecurringGoalForm {
+        RecurringGoalForm {
+            editing: None,
+            focus: RecurringGoalField::Name,
+            name: Field::default(),
+            month: 1,
+            amount: Field::default(),
+            taxed: false,
+            cadence: 0,
+        }
+    }
+
+    pub fn edit(entry: &Entry) -> RecurringGoalForm {
+        RecurringGoalForm {
+            editing: Some(entry.id),
+            focus: RecurringGoalField::Name,
+            name: Field::given(entry.name.clone()),
+            // A row outside 1-12 is corrupt; the selector has no way to show
+            // one, so it opens on January rather than refusing to open.
+            month: entry.month.clamp(1, 12),
+            amount: Field::given(entry.base_cents.to_string()),
+            taxed: entry.taxed,
+            cadence: Cadence::ALL
+                .iter()
+                .position(|c| *c == entry.cadence)
+                .unwrap_or(0),
+        }
+    }
+
+    pub fn title(&self) -> &'static str {
+        match self.editing {
+            Some(_) => "Edit recurring goal — Tab field · ←/→ selector · Enter save · Esc cancel",
+            None => "Add recurring goal — Tab field · ←/→ selector · Enter save · Esc cancel",
+        }
+    }
+
+    pub fn display(&self, field: RecurringGoalField) -> String {
+        match field {
+            RecurringGoalField::Name => self.name.value().to_string(),
+            RecurringGoalField::Month => super::month_full_name(self.month),
+            RecurringGoalField::Amount => self.amount.value().to_string(),
+            RecurringGoalField::Taxed => (if self.taxed { "yes" } else { "no" }).to_string(),
+            RecurringGoalField::Cadence => Cadence::ALL[self.cadence].as_str().to_string(),
+        }
+    }
+
+    pub fn commit(&self) -> Result<NewEntry> {
+        let name = self.name.value().trim().to_string();
+        ensure!(!name.is_empty(), "name must not be empty");
+        Ok(NewEntry {
+            name,
+            month: self.month,
+            base_cents: parse_whole_amount(self.amount.value())?,
+            taxed: self.taxed,
+            cadence: Cadence::ALL[self.cadence],
+        })
+    }
+}
+
+impl FormFields for RecurringGoalForm {
+    fn next_field(&mut self) {
+        self.focus = next_in(&RecurringGoalField::ORDER, self.focus, 1);
+    }
+
+    fn previous_field(&mut self) {
+        self.focus = next_in(&RecurringGoalField::ORDER, self.focus, -1);
+    }
+
+    fn next_choice(&mut self) {
+        match self.focus {
+            RecurringGoalField::Month => self.month = wrapped_month(self.month, 1),
+            RecurringGoalField::Taxed => self.taxed = !self.taxed,
+            RecurringGoalField::Cadence => {
+                self.cadence = step_index(self.cadence, Cadence::ALL.len(), 1)
+            }
+            _ => {}
+        }
+    }
+
+    fn previous_choice(&mut self) {
+        match self.focus {
+            RecurringGoalField::Month => self.month = wrapped_month(self.month, -1),
+            RecurringGoalField::Taxed => self.taxed = !self.taxed,
+            RecurringGoalField::Cadence => {
+                self.cadence = step_index(self.cadence, Cadence::ALL.len(), -1)
+            }
+            _ => {}
+        }
+    }
+
+    fn type_char(&mut self, c: char) {
+        match self.focus {
+            RecurringGoalField::Name => self.name.push(c),
+            RecurringGoalField::Amount => self.amount.push(c),
+            RecurringGoalField::Month | RecurringGoalField::Taxed | RecurringGoalField::Cadence => {
+            }
+        }
+    }
+
+    fn backspace(&mut self) {
+        match self.focus {
+            RecurringGoalField::Name => self.name.backspace(),
+            RecurringGoalField::Amount => self.amount.backspace(),
+            RecurringGoalField::Month | RecurringGoalField::Taxed | RecurringGoalField::Cadence => {
+            }
+        }
+    }
+}
+
+use super::form::{field_line, render_fields};
+use super::{amount, month_name, right_header, table_state};
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::Line as TextLine;
+use ratatui::widgets::{Block, Cell, Row as TableRow, Table};
+
+pub fn render_form(frame: &mut Frame, form: &RecurringGoalForm) {
+    let lines: Vec<TextLine> = RecurringGoalField::ORDER
+        .iter()
+        .map(|f| field_line(f.label(), form.display(*f), form.focus == *f))
+        .collect();
+    render_fields(frame, form.title(), lines);
+}
+
+/// One row per recurring goal entry. Returns the viewport's height, for
+/// `PageUp`/`PageDown`.
+pub fn render(frame: &mut Frame, area: Rect, recurring_goal: &RecurringGoals) -> usize {
+    let rows: Vec<TableRow> = recurring_goal
+        .rows()
+        .iter()
+        .map(|r| {
+            TableRow::new(vec![
+                Cell::from(r.name.clone()),
+                Cell::from(month_name(r.month)),
+                amount(r.base_cents),
+                Cell::from(if r.taxed { "yes" } else { "no" }),
+                Cell::from(r.cadence.as_str()),
+                Cell::from(TextLine::from(r.open_goals.to_string()).right_aligned()),
+            ])
+        })
+        .collect();
+
+    let header = TableRow::new(vec![
+        Cell::from("Name"),
+        Cell::from("Month"),
+        right_header("Base"),
+        Cell::from("Taxed"),
+        Cell::from("Cadence"),
+        right_header("Open"),
+    ])
+    .style(Style::default().add_modifier(Modifier::BOLD));
+    let widths = [
+        Constraint::Min(16),
+        Constraint::Length(5),
+        Constraint::Length(12),
+        Constraint::Length(5),
+        Constraint::Length(9),
+        Constraint::Length(4),
+    ];
+
+    // Two borders and the header row are not available to data rows.
+    let height = usize::from(area.height).saturating_sub(3);
+    let mut state = table_state(
+        recurring_goal.selected_index(),
+        recurring_goal.rows().len(),
+        height,
+    );
+    frame.render_stateful_widget(
+        Table::new(rows, widths)
+            .header(header)
+            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .highlight_symbol("> ")
+            .block(Block::bordered().title(recurring_goal.title())),
+        area,
+        &mut state,
+    );
+
+    height
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::MIN_WIDTH;
+
+    fn entry(id: i64, name: &str, month: i64, cadence: Cadence) -> Entry {
+        Entry {
+            id: RecurringGoalId(id),
+            name: name.to_string(),
+            month,
+            base_cents: Cents::from_dollars(128),
+            taxed: false,
+            cadence,
+        }
+    }
+
+    /// Four entries in four different months, unfiltered, with the current
+    /// month set to September — where `Dropbox` falls, and the only month of
+    /// the four that `[` and `]` reach without stepping.
+    fn screen() -> RecurringGoals {
+        let mut recurring_goal = RecurringGoals::new(9);
+        recurring_goal.set_entries(
+            vec![
+                entry(1, "Car Insurance", 3, Cadence::Annual),
+                entry(2, "Dropbox", 9, Cadence::Annual),
+                entry(3, "Backblaze", 11, Cadence::Biennial),
+                entry(4, "Lego", 12, Cadence::Annual),
+            ],
+            HashMap::from([(RecurringGoalId(1), 2), (RecurringGoalId(4), 1)]),
+        );
+        recurring_goal
+    }
+
+    /// The same four entries, narrowed to September by one step out of All.
+    fn september() -> RecurringGoals {
+        let mut recurring_goal = screen();
+        recurring_goal.next_month();
+        recurring_goal
+    }
+
+    fn names(recurring_goal: &RecurringGoals) -> Vec<&str> {
+        recurring_goal
+            .rows()
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn each_row_carries_how_many_goals_are_open_against_it() {
+        let recurring_goal = screen();
+        let open: Vec<i64> = recurring_goal.rows().iter().map(|r| r.open_goals).collect();
+        assert_eq!(open, vec![2, 0, 0, 1]);
+    }
+
+    #[test]
+    fn the_cursor_stays_inside_the_list() {
+        let mut recurring_goal = screen();
+        assert_eq!(
+            recurring_goal.selected().unwrap().recurring_goal_id,
+            RecurringGoalId(1)
+        );
+        recurring_goal.select_previous();
+        assert_eq!(
+            recurring_goal.selected().unwrap().recurring_goal_id,
+            RecurringGoalId(1)
+        );
+
+        recurring_goal.select_last();
+        assert_eq!(
+            recurring_goal.selected().unwrap().recurring_goal_id,
+            RecurringGoalId(4)
+        );
+        recurring_goal.select_next();
+        assert_eq!(
+            recurring_goal.selected().unwrap().recurring_goal_id,
+            RecurringGoalId(4)
+        );
+
+        recurring_goal.select_first();
+        assert_eq!(recurring_goal.selected_index(), 0);
+    }
+
+    /// `d` refuses rather than deleting outright, so a cursor left past the
+    /// end would make `e` and `d` act on nothing -- or on whatever later
+    /// lands at that index.
+    #[test]
+    fn a_shrinking_list_moves_the_selection_into_bounds() {
+        let mut recurring_goal = screen();
+        recurring_goal.select_last();
+
+        recurring_goal.set_entries(
+            vec![entry(1, "Car Insurance", 3, Cadence::Annual)],
+            HashMap::new(),
+        );
+
+        assert_eq!(recurring_goal.selected_index(), 0);
+        assert_eq!(
+            recurring_goal.selected().unwrap().recurring_goal_id,
+            RecurringGoalId(1)
+        );
+    }
+
+    #[test]
+    fn an_empty_list_has_nothing_selected() {
+        let mut recurring_goal = RecurringGoals::new(9);
+        recurring_goal.set_entries(Vec::new(), HashMap::new());
+        assert!(recurring_goal.rows().is_empty());
+        assert!(recurring_goal.selected().is_none());
+    }
+
+    /// Nothing is hidden until a key is pressed: the screen is a reference
+    /// list, and most months hold no entry at all.
+    #[test]
+    fn the_screen_opens_unfiltered() {
+        let recurring_goal = screen();
+        assert_eq!(recurring_goal.selected_month(), None);
+        assert_eq!(
+            names(&recurring_goal),
+            ["Car Insurance", "Dropbox", "Backblaze", "Lego"]
+        );
+    }
+
+    /// Either key enters the calendar at the current month, so the first
+    /// press narrows rather than stepping somewhere arbitrary.
+    #[test]
+    fn the_first_step_filters_to_the_current_month() {
+        let mut forward = screen();
+        forward.next_month();
+        assert_eq!(forward.selected_month(), Some(9));
+        assert_eq!(names(&forward), ["Dropbox"]);
+
+        let mut back = screen();
+        back.previous_month();
+        assert_eq!(back.selected_month(), Some(9));
+    }
+
+    /// The entries carry a month of the year and no date, so the cycle is the
+    /// calendar itself rather than a window clamped to the range of real
+    /// data, the way the ledgers' `[` and `]` are.
+    #[test]
+    fn stepping_forward_wraps_december_to_january() {
+        let mut recurring_goal = september();
+        for expected in [10, 11, 12, 1, 2] {
+            recurring_goal.next_month();
+            assert_eq!(recurring_goal.selected_month(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn stepping_back_wraps_january_to_december() {
+        let mut recurring_goal = september();
+        for expected in [8, 7, 6, 5, 4, 3, 2, 1, 12, 11] {
+            recurring_goal.previous_month();
+            assert_eq!(recurring_goal.selected_month(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn esc_shows_every_entry_again() {
+        let mut recurring_goal = september();
+        assert_eq!(names(&recurring_goal), ["Dropbox"]);
+
+        recurring_goal.clear_month();
+
+        assert_eq!(recurring_goal.selected_month(), None);
+        assert_eq!(
+            names(&recurring_goal),
+            ["Car Insurance", "Dropbox", "Backblaze", "Lego"]
+        );
+    }
+
+    /// No state is carried across the All filter, so both keys re-enter at
+    /// the current month rather than at whichever month `Esc` was pressed
+    /// from.
+    #[test]
+    fn stepping_out_of_all_re_enters_at_the_current_month() {
+        let mut recurring_goal = september();
+        recurring_goal.next_month();
+        recurring_goal.next_month();
+        assert_eq!(recurring_goal.selected_month(), Some(11));
+
+        recurring_goal.clear_month();
+        recurring_goal.next_month();
+        assert_eq!(recurring_goal.selected_month(), Some(9));
+
+        recurring_goal.clear_month();
+        recurring_goal.previous_month();
+        assert_eq!(recurring_goal.selected_month(), Some(9));
+    }
+
+    /// Most months hold no entry at all. An empty table is the honest answer
+    /// there, and `e` and `d` must find nothing selected rather than a row
+    /// the filter excluded.
+    #[test]
+    fn a_month_with_no_entries_leaves_an_empty_list() {
+        let mut recurring_goal = september();
+        recurring_goal.next_month();
+        assert_eq!(recurring_goal.selected_month(), Some(10));
+        assert!(recurring_goal.rows().is_empty());
+        assert!(recurring_goal.selected().is_none());
+    }
+
+    /// `e` and `d` act on the selection, so a cursor left past the end of a
+    /// narrowed list would edit whatever later landed at that index.
+    #[test]
+    fn the_cursor_moves_into_bounds_when_the_month_filter_narrows_the_list() {
+        let mut recurring_goal = screen();
+        recurring_goal.select_last();
+        assert_eq!(recurring_goal.selected().unwrap().name, "Lego");
+
+        recurring_goal.next_month();
+
+        assert_eq!(recurring_goal.selected_index(), 0);
+        assert_eq!(recurring_goal.selected().unwrap().name, "Dropbox");
+    }
+
+    #[test]
+    fn the_title_names_the_filter_and_how_many_rows_it_left() {
+        let mut recurring_goal = september();
+        assert_eq!(recurring_goal.title(), "Recurring Goals · Sep · 1");
+
+        recurring_goal.clear_month();
+        assert_eq!(recurring_goal.title(), "Recurring Goals · All · 4");
+
+        recurring_goal.next_month();
+        assert_eq!(recurring_goal.title(), "Recurring Goals · Sep · 1");
+    }
+
+    #[test]
+    fn a_catalog_form_commits_what_was_typed() {
+        let mut form = RecurringGoalForm::add();
+        assert_eq!(form.editing, None);
+
+        for c in "Dropbox".chars() {
+            form.type_char(c);
+        }
+        form.next_field();
+        for _ in 1..9 {
+            form.next_choice();
+        }
+        form.next_field();
+        for c in "128".chars() {
+            form.type_char(c);
+        }
+        form.next_field();
+        form.next_choice();
+        form.next_field();
+        form.next_choice();
+
+        let new = form.commit().unwrap();
+        assert_eq!(new.name, "Dropbox");
+        assert_eq!(new.month, 9);
+        assert_eq!(new.base_cents, Cents::from_dollars(128));
+        assert!(new.taxed);
+        assert_eq!(new.cadence, Cadence::Biennial);
+    }
+
+    #[test]
+    fn a_catalog_form_opened_on_an_entry_prefills_every_field() {
+        let form = RecurringGoalForm::edit(&Entry {
+            id: RecurringGoalId(2),
+            name: "Dropbox".to_string(),
+            month: 9,
+            base_cents: Cents::from_dollars(128),
+            taxed: true,
+            cadence: Cadence::Biennial,
+        });
+        assert_eq!(form.editing, Some(RecurringGoalId(2)));
+        assert_eq!(form.display(RecurringGoalField::Name), "Dropbox");
+        assert_eq!(form.display(RecurringGoalField::Month), "September");
+        assert_eq!(form.display(RecurringGoalField::Amount), "128.00");
+        assert_eq!(form.display(RecurringGoalField::Taxed), "yes");
+        assert_eq!(form.display(RecurringGoalField::Cadence), "biennial");
+    }
+
+    /// A recurring goal's base is what each round of it is worth, and every
+    /// round is a whole dollar.
+    #[test]
+    fn a_base_with_cents_in_it_is_refused() {
+        let mut form = RecurringGoalForm::add();
+        for c in "Dropbox".chars() {
+            form.type_char(c);
+        }
+        // Month is a selector and takes whatever it opens on; the base is the
+        // field under test.
+        form.next_field();
+        form.next_field();
+        for c in "128.99".chars() {
+            form.type_char(c);
+        }
+        let err = form.commit().unwrap_err().to_string();
+        assert!(err.contains("128.99"), "{err}");
+    }
+
+    #[test]
+    fn an_empty_name_is_refused() {
+        let mut form = RecurringGoalForm::add();
+        form.next_field();
+        form.next_field();
+        for c in "128".chars() {
+            form.type_char(c);
+        }
+        let err = form.commit().unwrap_err();
+        assert!(err.to_string().contains("name"), "{err}");
+    }
+
+    #[test]
+    fn the_month_selector_names_the_month_and_wraps_at_both_ends() {
+        let mut form = RecurringGoalForm::add();
+        while form.focus != RecurringGoalField::Month {
+            form.next_field();
+        }
+        assert_eq!(form.display(RecurringGoalField::Month), "January");
+
+        form.next_choice();
+        assert_eq!(form.display(RecurringGoalField::Month), "February");
+
+        form.previous_choice();
+        form.previous_choice();
+        assert_eq!(form.display(RecurringGoalField::Month), "December");
+
+        form.next_choice();
+        assert_eq!(form.display(RecurringGoalField::Month), "January");
+    }
+
+    /// Typing at the Month selector must not reach another field's text.
+    #[test]
+    fn typing_at_the_month_selector_changes_nothing() {
+        let mut form = RecurringGoalForm::add();
+        for c in "Dropbox".chars() {
+            form.type_char(c);
+        }
+        form.next_field();
+        for c in "13".chars() {
+            form.type_char(c);
+        }
+        form.backspace();
+
+        assert_eq!(form.display(RecurringGoalField::Name), "Dropbox");
+        assert_eq!(form.display(RecurringGoalField::Month), "January");
+    }
+
+    #[test]
+    fn the_taxed_selector_cycles_both_ways() {
+        let mut form = RecurringGoalForm::add();
+        while form.focus != RecurringGoalField::Taxed {
+            form.next_field();
+        }
+        assert_eq!(form.display(RecurringGoalField::Taxed), "no");
+        form.next_choice();
+        assert_eq!(form.display(RecurringGoalField::Taxed), "yes");
+        form.next_choice();
+        assert_eq!(form.display(RecurringGoalField::Taxed), "no");
+        form.previous_choice();
+        assert_eq!(form.display(RecurringGoalField::Taxed), "yes");
+        form.previous_choice();
+        assert_eq!(form.display(RecurringGoalField::Taxed), "no");
+    }
+
+    #[test]
+    fn the_cadence_selector_cycles_both_ways() {
+        let mut form = RecurringGoalForm::add();
+        while form.focus != RecurringGoalField::Cadence {
+            form.next_field();
+        }
+        assert_eq!(form.display(RecurringGoalField::Cadence), "annual");
+        form.next_choice();
+        assert_eq!(form.display(RecurringGoalField::Cadence), "biennial");
+        form.next_choice();
+        assert_eq!(form.display(RecurringGoalField::Cadence), "annual");
+        form.previous_choice();
+        assert_eq!(form.display(RecurringGoalField::Cadence), "biennial");
+        form.previous_choice();
+        assert_eq!(form.display(RecurringGoalField::Cadence), "annual");
+    }
+
+    /// `←`/`→` on a text field must not silently change Month, Taxed or
+    /// Cadence.
+    /// One press each way, never two: Taxed is a bool and Cadence has two
+    /// options, so a second press would cycle a broken one straight back to
+    /// where it started and the assertion would pass either way.
+    #[test]
+    fn cycling_does_nothing_unless_a_selector_is_focused() {
+        let mut form = RecurringGoalForm::add();
+        assert_eq!(form.focus, RecurringGoalField::Name);
+
+        form.next_choice();
+        assert_eq!(form.display(RecurringGoalField::Month), "January");
+        assert_eq!(form.display(RecurringGoalField::Taxed), "no");
+        assert_eq!(form.display(RecurringGoalField::Cadence), "annual");
+
+        form.previous_choice();
+        assert_eq!(form.display(RecurringGoalField::Month), "January");
+        assert_eq!(form.display(RecurringGoalField::Taxed), "no");
+        assert_eq!(form.display(RecurringGoalField::Cadence), "annual");
+    }
+
+    fn drawn(list: &RecurringGoals) -> Vec<String> {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), list);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..8)
+            .map(|y| (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    /// `Base` and `Open` are the right-aligned columns, so they are the two
+    /// headers that must end where their figures do.
+    #[test]
+    fn the_right_aligned_headers_end_where_their_own_columns_do() {
+        let lines = drawn(&screen());
+        let header = super::super::ends_in_order(
+            &lines[1],
+            &["Name", "Month", "Base", "Taxed", "Cadence", "Open"],
+        );
+        let row = super::super::ends_in_order(
+            &lines[2],
+            &["Car Insurance", "Mar", "128.00", "no", "annual", "2"],
+        );
+        assert_eq!(header[2], row[2], "Base over {:?}", lines[2]);
+        assert_eq!(header[5], row[5], "Open over {:?}", lines[2]);
+    }
+}

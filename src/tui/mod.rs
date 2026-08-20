@@ -1,0 +1,442 @@
+//! The terminal UI.
+//!
+//! `ratatui` and `crossterm` are named only inside this directory, exactly as
+//! `rusqlite` is confined to `src/db/` and `calamine` to `src/import/`.
+//! Nothing in `calc`, `db`, `plan`, or `projection` learns that a terminal
+//! exists.
+//!
+//! The seam is placed so that everything with a decision in it is a plain
+//! type — `Overview`, `Ledger`, `TxnForm`, `TransferForm`, `Autocomplete` —
+//! holding no ratatui state and unit-tested directly. The render functions
+//! only draw.
+
+pub mod accounts;
+pub mod app;
+pub mod autocomplete;
+mod cursor;
+pub mod destination;
+pub mod form;
+pub mod fund;
+pub mod goal_form;
+mod help;
+pub mod ledger;
+mod modal;
+pub mod month;
+pub mod overview;
+pub mod picker;
+pub mod planning;
+pub mod recurring_goal;
+pub mod recurring_txn;
+pub mod savings;
+mod search;
+pub mod style;
+pub mod worksheet;
+
+use crate::db::account::Account;
+use crate::db::goal::GoalWithBalance;
+use crate::db::{AccountId, Db};
+use anyhow::{Result, ensure};
+use app::App;
+use chrono::NaiveDate;
+use ratatui::DefaultTerminal;
+use ratatui::crossterm::event::{self, Event, KeyEventKind};
+use ratatui::style::Style;
+use ratatui::text::{Line as TextLine, Span};
+use ratatui::widgets::{Cell, TableState};
+use std::time::Duration;
+
+/// How long a draw waits for input before looping. Nothing animates, so this
+/// decides how quickly a resize is picked up, and how closely a status
+/// message's expiry follows [`app::STATUS_TTL`].
+const TICK: Duration = Duration::from_millis(250);
+
+/// The narrowest terminal the screens are laid out for.
+///
+/// Nothing enforces it at runtime -- a narrower terminal still draws, and
+/// ratatui truncates whatever no longer fits. What the number is for is the
+/// width tests: every screen renders one row of its widest plausible content
+/// at this width and asserts nothing is cut. A constant rather than a literal
+/// in each of them so the contract is stated once and the next retarget is a
+/// one-line edit.
+pub const MIN_WIDTH: u16 = 120;
+
+use crate::money::Cents;
+
+/// How far a container's unallocated remainder may drift before it is worth
+/// flagging. A container can sit at $0.23 for months; a warning that is always
+/// on is a warning nobody reads.
+///
+/// A documented constant rather than a setting: nothing yet suggests it needs
+/// to vary, and a setting would need a fallback, which is a second place for
+/// it to be wrong.
+pub const RECONCILED_WITHIN: Cents = Cents(100);
+
+/// Whether a container's excess is close enough to zero to stop flagging. The
+/// figure still renders either way -- this only decides the marker.
+///
+/// Called by the Savings screen's `Unallocated` footer, which is the one place
+/// the reconciliation is shown.
+pub fn is_reconciled(excess: Cents) -> bool {
+    excess.0.abs() < RECONCILED_WITHIN.0
+}
+
+/// What one goal asks of this paycheck, or `None` when it asks nothing.
+///
+/// The one place a goal is unpacked into [`crate::calc::per_paycheck`]'s four
+/// arguments. Three callers want the same number and would otherwise each
+/// unpack it themselves: the Savings screen's `$/Pay` column, the payday
+/// worksheet `A` prefills, and the one Planning's `t` prefills. A figure the
+/// screen shows and a figure the prefill writes must be the same figure, and
+/// three copies of the unpacking is how they stop being.
+///
+/// `None` for an undated goal -- there is no runway to divide -- and for one
+/// already at its target. Both mean "nothing this paycheck", which a prefill
+/// reads as zero and a column leaves blank.
+pub fn paycheck_ask(
+    goal: &GoalWithBalance,
+    today: NaiveDate,
+    period_days: i64,
+) -> Result<Option<Cents>> {
+    crate::calc::per_paycheck(
+        goal.current,
+        goal.goal.goal_cents,
+        goal.goal.goal_date,
+        today,
+        period_days,
+    )
+}
+
+/// One share of `pot`, floored to a whole dollar.
+///
+/// The `/N` operator both screens offer: the worksheet divides its posted
+/// amount across the selected lines, and the allocation form divides the
+/// container's unallocated remainder. One function so the two cannot drift --
+/// the same pot and the same divisor must give the same figure whichever
+/// screen it is typed on.
+///
+/// `n` is typed, so a non-positive divisor is an error rather than a
+/// `debug_assert!`; the forms surface it on the status line.
+pub fn share_of(pot: Cents, n: i64) -> Result<Cents> {
+    ensure!(n > 0, "cannot divide by {n}");
+    Ok(Cents::from_dollars(pot.dollars() / n))
+}
+
+/// An account's code, looked up by id.
+///
+/// An id with no account is a corrupt row rather than a reason to stop drawing
+/// the screen, so it renders as `?`.
+///
+/// Only Recurring Transactions still shows the code. Its other columns
+/// already pin a row down exactly, so the code alone is enough to say which
+/// account it belongs to, and that much detail reads better tight than
+/// padded. Everywhere else the name is what the reader wants, and every other
+/// screen shows [`account_name`].
+fn account_code(accounts: &[Account], id: AccountId) -> &str {
+    accounts
+        .iter()
+        .find(|a| a.id == id)
+        .map_or("?", |a| a.code.as_str())
+}
+
+/// An account's name, looked up by id -- `Brokerage` rather than `BET`.
+///
+/// The same `?` for a corrupt row, and for the same reason.
+fn account_name(accounts: &[Account], id: AccountId) -> &str {
+    accounts
+        .iter()
+        .find(|a| a.id == id)
+        .map_or("?", |a| a.name.as_str())
+}
+
+/// A money cell: right-aligned, and colored by [`style::amount_color`].
+///
+/// Every screen that renders a `Cents` goes through here, so "negative reads
+/// red" is one decision rather than one per screen. Right alignment is not decoration
+/// either -- a truncated right-aligned cell loses its *leading* characters, so
+/// a column too narrow for its figures is visibly wrong rather than quietly
+/// off by a digit.
+fn amount(cents: Cents) -> Cell<'static> {
+    money_cell(cents, cents.to_string())
+}
+
+/// The same cell with the cents dropped — see [`Cents::to_whole_dollars`].
+///
+/// The Savings screen's figures are targets and balances in the thousands,
+/// where two decimal places are two digits of noise on every row. Its footer
+/// is the exception and keeps its cents: the whole point of that line is the
+/// $0.23 a container can sit at, which truncates away to nothing.
+fn whole_amount(cents: Cents) -> Cell<'static> {
+    money_cell(cents, cents.to_whole_dollars())
+}
+
+/// A header cell over a right-aligned column.
+///
+/// A right-aligned column's label belongs over its own figures rather than
+/// over the padding to their left, and that padding is wide enough for a
+/// left-aligned header to read as though it belonged to the column beside
+/// it. Shared rather than inlined per screen so that
+/// "right-aligned cells take a right-aligned header" is one decision instead
+/// of one per screen, and so a new screen has something obvious to reach for.
+fn right_header(text: &str) -> Cell<'static> {
+    Cell::from(TextLine::from(text.to_string()).right_aligned())
+}
+
+fn money_cell(cents: Cents, text: String) -> Cell<'static> {
+    let cell = Cell::from(TextLine::from(text).right_aligned());
+    match style::amount_color(cents) {
+        Some(color) => cell.style(Style::default().fg(color)),
+        None => cell,
+    }
+}
+
+/// The same figure as a span, for the money that lands somewhere other than a
+/// table cell — the ledgers' title carries a balance.
+///
+/// Reads [`style::amount_color`] rather than restating the rule, so a figure
+/// in a border is red on the same terms as a figure in a column. No alignment
+/// here: a span is placed by whatever line it joins.
+///
+/// This is the one figure in the app that prints a `$`, and the difference is
+/// the setting rather than the money. A column of figures under a right-aligned
+/// `Amount` header is already unmistakably money, and a `$` on all forty rows
+/// is forty characters of noise; a lone figure in a title sits in prose, where
+/// nothing else says what it is. The sign goes outside the `$` — `-$42.00`,
+/// the way a ledger writes one.
+fn money_span(cents: Cents) -> Span<'static> {
+    let span = Span::raw(money_text(cents));
+    match style::amount_color(cents) {
+        Some(color) => span.style(Style::default().fg(color)),
+        None => span,
+    }
+}
+
+/// `-$42.00`: the text half of [`money_span`], for the figures that carry a
+/// color of their own -- the ledgers' reconciliation delta, which is green
+/// above its target where an ordinary amount is uncolored.
+///
+/// Moves the `$` inside the sign `Display` already wrote, rather than
+/// re-deriving the figure from an absolute value: this cannot come to disagree
+/// with `Cents`'s own formatting, and there is one place that decides where the
+/// digits and their separators go.
+fn money_text(cents: Cents) -> String {
+    let figure = cents.to_string();
+    match figure.strip_prefix('-') {
+        Some(magnitude) => format!("-${magnitude}"),
+        None => format!("${figure}"),
+    }
+}
+
+/// A cell naming an account, tinted by [`style::account_color`].
+///
+/// Takes the text rather than deriving it, because the screens do not agree on
+/// which half of an account they show: Recurring Transactions prints the code,
+/// having no room for more; Overview, the ledgers and Savings print the name.
+/// The id is what ties them together, so the same account is the same color on
+/// all four.
+fn account_cell(text: String, id: AccountId) -> Cell<'static> {
+    Cell::from(text).style(Style::default().fg(style::account_color(id)))
+}
+
+/// A recurring goal entry's month, abbreviated for a table column.
+fn month_name(month: i64) -> String {
+    formatted_month(month, "%b")
+}
+
+/// The same month spelled out, for the recurring goal form's Month selector --
+/// one field on a 64-column modal has the room a three-character column does
+/// not, and a name is what the reader is picking between.
+fn month_full_name(month: i64) -> String {
+    formatted_month(month, "%B")
+}
+
+/// Blank rather than a panic for a month outside 1-12: the schema's `CHECK`
+/// refuses one, and a corrupt row is not a reason to stop drawing the list.
+fn formatted_month(month: i64, format: &str) -> String {
+    u32::try_from(month)
+        .ok()
+        .and_then(|m| NaiveDate::from_ymd_opt(2000, m, 1))
+        .map(|d| d.format(format).to_string())
+        .unwrap_or_default()
+}
+
+/// Where the viewport starts, given where the cursor is.
+///
+/// Keeps the cursor near the middle so there is as much list visible below it
+/// as above, and clamps at both ends so the first and last rows stay reachable
+/// rather than the view scrolling past them.
+///
+/// Every screen with a list derives its offset from its selection each frame
+/// rather than storing one, so they all land here.
+fn scroll_offset(selected: usize, rows: usize, height: usize) -> usize {
+    if rows <= height {
+        return 0;
+    }
+    selected.saturating_sub(height / 2).min(rows - height)
+}
+
+/// The scroll state for a list of `rows` with the cursor on `selected`.
+///
+/// Handing `TableState` a bare default instead would leave the offset at zero,
+/// and ratatui would scroll the minimum needed to reveal the selection --
+/// pinning the cursor to the last visible line, with the rest of the window
+/// showing only rows already behind it. An empty list selects nothing, so the
+/// highlight does not sit on a row that is not there.
+fn table_state(selected: usize, rows: usize, height: usize) -> TableState {
+    let mut state = TableState::default();
+    if rows > 0 {
+        state.select(Some(selected));
+        *state.offset_mut() = scroll_offset(selected, rows, height);
+    }
+    state
+}
+
+/// Where each of `labels` ends in `line`, matched left to right.
+///
+/// Sequential rather than independent, so a label that also occurs inside a
+/// later one cannot match the wrong column -- the Savings header carries
+/// `Goal`, a second `Goal`, and a `Goal Date`, and searching each
+/// independently would find all three at the first.
+///
+/// The header alignment tests compare these against the same reading of a
+/// data row: a right-aligned column and its header end in the same place.
+#[cfg(test)]
+fn ends_in_order(line: &str, labels: &[&str]) -> Vec<usize> {
+    let mut at = 0;
+    labels
+        .iter()
+        .map(|label| {
+            let start = at
+                + line[at..]
+                    .find(label)
+                    .unwrap_or_else(|| panic!("no {label:?} after column {at} of {line:?}"));
+            at = start + label.len();
+            at
+        })
+        .collect()
+}
+
+pub fn run(db: Db, today: NaiveDate) -> Result<()> {
+    let mut app = App::new(db, today)?;
+    // `try_init` enables raw mode, enters the alternate screen, and installs
+    // a panic hook that restores the terminal before unwinding -- so a bug
+    // leaves a working shell rather than a dead one.
+    let mut terminal = ratatui::try_init()?;
+    let result = event_loop(&mut terminal, &mut app);
+    ratatui::try_restore()?;
+    result
+}
+
+fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
+    while !app.should_quit() {
+        // Before the draw, so a message that has run out of time is gone from
+        // the frame it would otherwise appear in for one more tick.
+        app.expire_status();
+        terminal.draw(|frame| app.render(frame))?;
+        if !event::poll(TICK)? {
+            continue;
+        }
+        if let Event::Key(key) = event::read()?
+            // Windows reports press and release both; acting on each would
+            // run every key twice.
+            && key.kind == KeyEventKind::Press
+        {
+            app.on_key(key);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The cents are dropped rather than carried: the allocation is a whole
+    /// dollar figure, and what is left behind stays in the container's
+    /// remainder where the Savings footer reports it.
+    #[test]
+    fn a_share_of_a_pot_floors_to_a_whole_dollar() {
+        assert_eq!(
+            share_of(Cents(260_017), 2).unwrap(),
+            Cents::from_dollars(1300)
+        );
+        assert_eq!(
+            share_of(Cents(260_017), 6).unwrap(),
+            Cents::from_dollars(433)
+        );
+        assert_eq!(
+            share_of(Cents(260_017), 12).unwrap(),
+            Cents::from_dollars(216)
+        );
+    }
+
+    #[test]
+    fn a_whole_share_of_a_pot_is_the_pot_less_its_cents() {
+        assert_eq!(
+            share_of(Cents(260_017), 1).unwrap(),
+            Cents::from_dollars(2600)
+        );
+    }
+
+    /// The remainder goes negative when a container is over-allocated, and
+    /// pulling a fraction of it back out of a goal is a real thing to want.
+    #[test]
+    fn a_share_of_a_negative_pot_is_negative() {
+        assert_eq!(
+            share_of(Cents::from_dollars(-100), 2).unwrap(),
+            Cents::from_dollars(-50)
+        );
+    }
+
+    /// The divisor is typed, so nothing but this stops a divide by zero.
+    #[test]
+    fn a_non_positive_divisor_is_refused() {
+        assert!(share_of(Cents::from_dollars(100), 0).is_err());
+        assert!(share_of(Cents::from_dollars(100), -3).is_err());
+    }
+
+    /// The threshold is exclusive: $0.99 of drift is the workbook's steady
+    /// state, $1.00 is worth looking at.
+    #[test]
+    fn sub_dollar_drift_reconciles_in_either_direction() {
+        assert!(is_reconciled(Cents(99)));
+        assert!(is_reconciled(Cents(-99)));
+        assert!(is_reconciled(Cents::ZERO));
+        assert!(!is_reconciled(Cents(100)));
+        assert!(!is_reconciled(Cents(-100)));
+    }
+
+    #[test]
+    fn a_list_shorter_than_the_viewport_never_scrolls() {
+        assert_eq!(scroll_offset(0, 4, 10), 0);
+        assert_eq!(scroll_offset(3, 4, 10), 0);
+    }
+
+    #[test]
+    fn the_cursor_rides_the_middle_of_a_long_list() {
+        assert_eq!(scroll_offset(800, 1600, 10), 795);
+    }
+
+    /// Near the top there is nothing to scroll to, so the cursor moves down
+    /// the screen instead of the list moving under it.
+    #[test]
+    fn the_offset_stays_at_zero_until_the_cursor_reaches_the_middle() {
+        assert_eq!(scroll_offset(2, 1600, 10), 0);
+        assert_eq!(scroll_offset(5, 1600, 10), 0);
+        assert_eq!(scroll_offset(6, 1600, 10), 1);
+    }
+
+    /// The last row must be reachable: pinning the cursor to the middle to the
+    /// very end would scroll past the list.
+    #[test]
+    fn the_offset_stops_with_the_last_row_on_screen() {
+        assert_eq!(scroll_offset(1599, 1600, 10), 1590);
+    }
+
+    /// An empty list must select nothing: a highlight on row zero of no rows
+    /// is a cursor on a row that is not there.
+    #[test]
+    fn an_empty_list_selects_nothing() {
+        assert_eq!(table_state(0, 0, 10).selected(), None);
+        assert_eq!(table_state(0, 1, 10).selected(), Some(0));
+    }
+}
