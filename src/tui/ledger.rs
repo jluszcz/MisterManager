@@ -1,7 +1,7 @@
 use super::cursor::{Cursor, Scroll};
 use super::search::{Search, SearchBox};
 use crate::db::AccountId;
-use crate::db::account::{Account, AccountColor, Kind};
+use crate::db::account::{self, Account, Kind};
 use crate::db::txn::{Filter, Txn};
 use crate::money::Cents;
 use chrono::{Datelike, Months, NaiveDate};
@@ -343,14 +343,14 @@ impl Ledger {
     }
 
     pub fn account_name(&self, id: AccountId) -> &str {
-        super::account_name(&self.accounts, id)
+        self.accounts
+            .iter()
+            .find(|a| a.id == id)
+            .map_or("?", |a| a.name.as_str())
     }
 
-    /// The color the owner picked for that account, if any. Resolved out of
-    /// the same list `account_name` reads, so a rename and a recolor reach
-    /// this screen by the one path -- `App::reload_accounts`.
-    pub fn account_color(&self, id: AccountId) -> Option<AccountColor> {
-        super::account_color_of(&self.accounts, id)
+    pub(super) fn accounts(&self) -> &[account::Account] {
+        &self.accounts
     }
 
     pub fn title(&self) -> String {
@@ -462,11 +462,7 @@ pub fn render(frame: &mut Frame, area: Rect, ledger: &Ledger, today: NaiveDate) 
         .map(|t| {
             Row::new(vec![
                 Cell::from(t.date.to_string()),
-                account_cell(
-                    ledger.account_name(t.account_id).to_string(),
-                    t.account_id,
-                    ledger.account_color(t.account_id),
-                ),
+                account_cell(&super::Account::named(ledger.accounts(), t.account_id)),
                 Cell::from(t.description.clone()),
                 amount(t.cents),
             ])

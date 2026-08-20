@@ -1,7 +1,7 @@
 use super::cursor::{Cursor, Scroll};
 use super::month::{MonthCycle, YearMonth};
 use super::search::{Search, SearchBox};
-use crate::db::account::{Account, AccountColor};
+use crate::db::account::Account;
 use crate::db::goal::GoalWithBalance;
 use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
@@ -15,11 +15,9 @@ use chrono::NaiveDate;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     pub goal_id: GoalId,
-    pub container: AccountId,
-    pub account_name: String,
-    /// The color the owner picked for that container, if any -- snapshotted
-    /// beside its name, and for the same reason.
-    pub account_color: Option<AccountColor>,
+    /// The container this goal sits in, as the Account column shows it. One
+    /// value rather than an id, a name and a color kept in step by hand.
+    pub container: super::Account,
     pub name: String,
     pub current: Cents,
     pub goal: Cents,
@@ -107,9 +105,7 @@ impl Savings {
             let per_paycheck = super::paycheck_ask(&g, self.today, self.period_days)?;
             rows.push(Row {
                 goal_id: g.goal.id,
-                container: g.goal.container_account_id,
-                account_name: self.account_name(g.goal.container_account_id).to_string(),
-                account_color: super::account_color_of(&self.accounts, g.goal.container_account_id),
+                container: super::Account::named(&self.accounts, g.goal.container_account_id),
                 percent: percent_complete(g.current, g.goal.goal_cents),
                 expired: g.goal.goal_date.is_some_and(|d| d < self.today)
                     && g.current < g.goal.goal_cents,
@@ -150,8 +146,16 @@ impl Savings {
         &self.excess
     }
 
+    /// The container's name as text, for the reconciliation footer.
+    ///
+    /// The footer is a status strip rather than a place a reader looks to
+    /// identify an account, so it is deliberately not tinted. Everything else
+    /// on this screen names a container through `Account`.
     pub fn account_name(&self, id: AccountId) -> &str {
-        super::account_name(&self.accounts, id)
+        self.accounts
+            .iter()
+            .find(|a| a.id == id)
+            .map_or("?", |a| a.name.as_str())
     }
 
     /// `Tab`: All -> each container in `goal::containers` order -> All.
@@ -276,7 +280,7 @@ impl Search for Savings {
             .all
             .iter()
             .enumerate()
-            .filter(|(_, row)| container.is_none_or(|id| row.container == id))
+            .filter(|(_, row)| container.is_none_or(|id| row.container.id() == id))
             // A goal with no date belongs to no month, so a month filter
             // drops it: All is the only place it can be seen.
             .filter(|(_, row)| month.is_none_or(|m| row.goal_date.is_some_and(|d| m.contains(d))))
@@ -351,7 +355,7 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
         .iter()
         .map(|r| {
             TableRow::new(vec![
-                account_cell(r.account_name.clone(), r.container, r.account_color),
+                account_cell(&r.container),
                 Cell::from(r.name.clone()),
                 whole_amount(r.current),
                 whole_amount(r.goal),
@@ -862,11 +866,7 @@ mod tests {
     #[test]
     fn the_account_column_names_each_goals_container() {
         let savings = savings();
-        let names: Vec<&str> = savings
-            .rows()
-            .iter()
-            .map(|r| r.account_name.as_str())
-            .collect();
+        let names: Vec<&str> = savings.rows().iter().map(|r| r.container.text()).collect();
         assert_eq!(names, ["Rainy Day", "Rainy Day", "Rainy Day", "Brokerage"]);
     }
 

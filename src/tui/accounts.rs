@@ -23,15 +23,11 @@ use anyhow::{Result, ensure};
 /// One account as the screen shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
-    pub account_id: AccountId,
+    pub account: super::Account,
     pub code: String,
-    pub name: String,
     pub kind: Kind,
     pub group: Group,
     pub policy: InterestPolicy,
-    /// The color the owner picked, if any. `None` draws in the shade the id
-    /// derives, which is what every account starts at.
-    pub color: Option<AccountColor>,
     /// Which block of the `Savings` sheet this account is the container for,
     /// if either. The one thing on this screen that the import *reads* rather
     /// than merely leaves alone: without both blocks pointed somewhere,
@@ -74,9 +70,9 @@ impl Accounts {
     /// `set_rows` takes `account::list` order, which is `kind, sort, code`,
     /// so the accounts of one kind are contiguous and in position order.
     pub fn position_of(&self, id: AccountId) -> Option<(usize, usize)> {
-        let row = self.rows.iter().find(|r| r.account_id == id)?;
+        let row = self.rows.iter().find(|r| r.account.id() == id)?;
         let of_kind: Vec<&Row> = self.rows.iter().filter(|r| r.kind == row.kind).collect();
-        let position = of_kind.iter().position(|r| r.account_id == id)?;
+        let position = of_kind.iter().position(|r| r.account.id() == id)?;
         Some((position, of_kind.len()))
     }
 
@@ -437,7 +433,7 @@ pub fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> usize {
         .map(|r| {
             TableRow::new(vec![
                 Cell::from(r.code.clone()),
-                account_cell(r.name.clone(), r.account_id, r.color),
+                account_cell(&r.account),
                 Cell::from(r.kind.label()),
                 Cell::from(r.group.label()),
                 // Only a cash account holds goals, so only a cash account has
@@ -500,14 +496,21 @@ mod tests {
     use crate::tui::MIN_WIDTH;
 
     fn row(id: i64, code: &str, name: &str, kind: Kind, group: Group) -> Row {
+        let accounts = [Account {
+            id: AccountId(id),
+            code: code.into(),
+            name: name.into(),
+            kind,
+            sort: 0,
+            group,
+            color: None,
+        }];
         Row {
-            account_id: AccountId(id),
+            account: super::super::Account::named(&accounts, AccountId(id)),
             code: code.to_string(),
-            name: name.to_string(),
             kind,
             group,
             policy: InterestPolicy::Manual,
-            color: None,
             block: None,
         }
     }
@@ -741,14 +744,14 @@ mod tests {
     #[test]
     fn the_cursor_stays_inside_the_list() {
         let mut accounts = screen();
-        assert_eq!(accounts.selected().unwrap().account_id, AccountId(1));
+        assert_eq!(accounts.selected().unwrap().account.id(), AccountId(1));
         accounts.select_previous();
-        assert_eq!(accounts.selected().unwrap().account_id, AccountId(1));
+        assert_eq!(accounts.selected().unwrap().account.id(), AccountId(1));
 
         accounts.select_last();
-        assert_eq!(accounts.selected().unwrap().account_id, AccountId(5));
+        assert_eq!(accounts.selected().unwrap().account.id(), AccountId(5));
         accounts.select_next();
-        assert_eq!(accounts.selected().unwrap().account_id, AccountId(5));
+        assert_eq!(accounts.selected().unwrap().account.id(), AccountId(5));
     }
 
     #[test]

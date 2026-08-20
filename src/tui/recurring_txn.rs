@@ -6,7 +6,7 @@
 
 use super::cursor::{Cursor, Scroll};
 use super::form::{Field, FormFields, next_in, parse_amount, parse_date, step_index};
-use crate::db::account::{Account, AccountColor};
+use crate::db::account::Account;
 use crate::db::recurring_txn::{Cadence, NewRecurringTxn, RecurringTxn};
 use crate::db::txn::Suggestion;
 use crate::db::{AccountId, RecurringTxnId};
@@ -20,11 +20,9 @@ use std::collections::HashMap;
 pub struct Row {
     pub recurring_txn_id: RecurringTxnId,
     pub description: String,
-    pub account_id: AccountId,
-    pub account_code: String,
-    /// The color the owner picked for that account, if any -- snapshotted
-    /// beside its code, and for the same reason.
-    pub account_color: Option<AccountColor>,
+    /// The account this row belongs to, as the Account column shows it: its
+    /// code, since the other columns pin the row down already.
+    pub account: super::Account,
     pub cents: Cents,
     pub cadence: Cadence,
     pub anchor_date: NaiveDate,
@@ -67,9 +65,7 @@ impl RecurringTxns {
         self.rows = txns
             .into_iter()
             .map(|txn| Row {
-                account_id: txn.account_id,
-                account_code: self.account_code(txn.account_id).to_string(),
-                account_color: super::account_color_of(&self.accounts, txn.account_id),
+                account: super::Account::coded(&self.accounts, txn.account_id),
                 owned: owned.get(&txn.id).copied().unwrap_or(0),
                 last_owned: last_owned.get(&txn.id).copied(),
                 recurring_txn_id: txn.id,
@@ -84,7 +80,10 @@ impl RecurringTxns {
     }
 
     pub fn account_code(&self, id: AccountId) -> &str {
-        super::account_code(&self.accounts, id)
+        self.accounts
+            .iter()
+            .find(|a| a.id == id)
+            .map_or("?", |a| a.code.as_str())
     }
 
     pub fn rows(&self) -> &[Row] {
@@ -398,7 +397,7 @@ pub fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> usize {
             TableRow::new(vec![
                 Cell::from(if r.is_paycheck { "$" } else { " " }),
                 Cell::from(r.description.clone()),
-                account_cell(r.account_code.clone(), r.account_id, r.account_color),
+                account_cell(&r.account),
                 amount(r.cents),
                 Cell::from(r.cadence.as_str()),
                 Cell::from(r.anchor_date.to_string()),
@@ -546,7 +545,7 @@ mod tests {
     #[test]
     fn each_row_names_its_rules_account_by_code() {
         let list = screen();
-        assert!(list.rows().iter().all(|r| r.account_code == "CHK"));
+        assert!(list.rows().iter().all(|r| r.account.text() == "CHK"));
     }
 
     /// An account id with no account is a corrupt row, not a reason to stop
@@ -559,7 +558,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
         );
-        assert_eq!(list.rows()[0].account_code, "?");
+        assert_eq!(list.rows()[0].account.text(), "?");
     }
 
     #[test]

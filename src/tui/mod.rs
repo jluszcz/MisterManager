@@ -19,6 +19,7 @@ pub mod form;
 pub mod fund;
 pub mod goal_form;
 mod help;
+mod label;
 pub mod ledger;
 mod modal;
 pub mod month;
@@ -32,12 +33,12 @@ mod search;
 pub mod style;
 pub mod worksheet;
 
-use crate::db::account::{Account, AccountColor};
+use crate::db::Db;
 use crate::db::goal::GoalWithBalance;
-use crate::db::{AccountId, Db};
 use anyhow::{Result, ensure};
 use app::App;
 use chrono::NaiveDate;
+use label::{Account, account_cell};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use ratatui::style::Style;
@@ -120,33 +121,6 @@ pub fn paycheck_ask(
 pub fn share_of(pot: Cents, n: i64) -> Result<Cents> {
     ensure!(n > 0, "cannot divide by {n}");
     Ok(Cents::from_dollars(pot.dollars() / n))
-}
-
-/// An account's code, looked up by id.
-///
-/// An id with no account is a corrupt row rather than a reason to stop drawing
-/// the screen, so it renders as `?`.
-///
-/// Only Recurring Transactions still shows the code. Its other columns
-/// already pin a row down exactly, so the code alone is enough to say which
-/// account it belongs to, and that much detail reads better tight than
-/// padded. Everywhere else the name is what the reader wants, and every other
-/// screen shows [`account_name`].
-fn account_code(accounts: &[Account], id: AccountId) -> &str {
-    accounts
-        .iter()
-        .find(|a| a.id == id)
-        .map_or("?", |a| a.code.as_str())
-}
-
-/// An account's name, looked up by id -- `Brokerage` rather than `BET`.
-///
-/// The same `?` for a corrupt row, and for the same reason.
-fn account_name(accounts: &[Account], id: AccountId) -> &str {
-    accounts
-        .iter()
-        .find(|a| a.id == id)
-        .map_or("?", |a| a.name.as_str())
 }
 
 /// A money cell: right-aligned, and colored by [`style::amount_color`].
@@ -273,30 +247,6 @@ fn money_text(cents: Cents) -> String {
         Some(magnitude) => format!("-${magnitude}"),
         None => format!("${figure}"),
     }
-}
-
-/// A cell naming an account, tinted by [`style::account_color`].
-///
-/// Takes the text rather than deriving it, because the screens do not agree on
-/// which half of an account they show: Recurring Transactions prints the code,
-/// having no room for more; Overview, the ledgers and Savings print the name.
-/// The id is what ties them together, so the same account is the same color on
-/// all four -- and `color` is the owner's choice for it, which every caller
-/// carries beside the id for exactly that reason.
-fn account_cell(text: String, id: AccountId, color: Option<AccountColor>) -> Cell<'static> {
-    tinted(TextLine::from(text), Some(style::account_color(id, color)))
-}
-
-/// An account's chosen color, looked up by id.
-///
-/// `None` for an account nobody has colored *and* for an id with no account:
-/// the two are the same answer here, because [`style::account_color`] falls
-/// back to the shade the id derives either way, and a corrupt row is not a
-/// reason to stop drawing the screen. It is the third of the trio beside
-/// [`account_code`] and [`account_name`], and exists so the screens holding
-/// their own `Vec<Account>` resolve it the one way.
-fn account_color_of(accounts: &[Account], id: AccountId) -> Option<AccountColor> {
-    accounts.iter().find(|a| a.id == id).and_then(|a| a.color)
 }
 
 /// A recurring goal entry's month, abbreviated for a table column.

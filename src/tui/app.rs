@@ -542,7 +542,11 @@ impl App {
     fn open_destination(&mut self, line: Line) -> Result<()> {
         let accounts = account::list(&self.db)?;
         let offer = |goal: goal::Goal| destination::Offered {
-            container: super::account_name(&accounts, goal.container_account_id).to_string(),
+            container: accounts
+                .iter()
+                .find(|a| a.id == goal.container_account_id)
+                .map_or("?", |a| a.name.as_str())
+                .to_string(),
             id: goal.id,
             name: goal.name,
         };
@@ -1236,14 +1240,11 @@ impl App {
         let mut rows = Vec::with_capacity(accounts.len());
         for account in &accounts {
             rows.push(accounts_screen::Row {
-                account_id: account.id,
-                // FIXME(task 2): tui::Account carries the id, the text and the color together.
+                account: super::Account::named(&accounts, account.id),
                 code: account.code.as_str().to_string(),
-                name: account.name.as_str().to_string(),
                 kind: account.kind,
                 group: account.group,
                 policy: account::interest_policy(&self.db, account.id)?,
-                color: account.color,
                 block: self.savings_block_of(account.id)?,
             });
         }
@@ -1292,7 +1293,7 @@ impl App {
         let Some(row) = self.accounts.selected() else {
             return self.nothing_selected();
         };
-        let id = row.account_id;
+        let id = row.account.id();
         let (position, of_kind) = self
             .accounts
             .position_of(id)
@@ -1624,7 +1625,7 @@ impl App {
         let Some(row) = self.savings.selected() else {
             return self.nothing_selected();
         };
-        let (goal_id, name, container) = (row.goal_id, row.name.clone(), row.container);
+        let (goal_id, name, container) = (row.goal_id, row.name.clone(), row.container.id());
         // The pot `/N` divides. A container with nothing unallocated is not an
         // error -- the form still opens, and `/N` there is zero.
         let unallocated = self
@@ -1730,8 +1731,12 @@ impl App {
         let Some(row) = self.savings.selected() else {
             return self.nothing_selected();
         };
-        let (goal_id, name, container, current) =
-            (row.goal_id, row.name.clone(), row.container, row.current);
+        let (goal_id, name, container, current) = (
+            row.goal_id,
+            row.name.clone(),
+            row.container.id(),
+            row.current,
+        );
         // Built from the container, not from the screen's filtered rows: a
         // search must not narrow what a close-out may move value into.
         let siblings = goal::list_with_balances(&self.db, container)?
@@ -6965,7 +6970,7 @@ mod tests {
         assert_eq!(bike.goal, Cents::from_dollars(1_200));
         assert_eq!(bike.goal_date, Some(day(2027, 5, 1)));
         assert_eq!(
-            bike.container,
+            bike.container.id(),
             app.savings.default_container().unwrap(),
             "the new goal landed outside the container the screen defaults to"
         );
@@ -7146,14 +7151,14 @@ mod tests {
         // The three screens holding their own account list see it without a
         // restart, which is what `reload_accounts` is for.
         assert_eq!(app.savings.account_name(id), "Nest Egg");
-        assert_eq!(app.accounts.rows()[1].name, "Nest Egg");
+        assert_eq!(app.accounts.rows()[1].account.text(), "Nest Egg");
         assert!(
             app.overview
                 .cash
                 .bands
                 .iter()
                 .flat_map(|b| &b.lines)
-                .any(|l| l.label == "Nest Egg")
+                .any(|l| l.account.as_ref().is_some_and(|a| a.text() == "Nest Egg"))
         );
         // The cached column, which only moves if `reload` refreshes the account
         // list before it re-sets the goals.
@@ -7161,8 +7166,8 @@ mod tests {
             .savings
             .rows()
             .iter()
-            .filter(|r| r.container == id)
-            .map(|r| r.account_name.as_str())
+            .filter(|r| r.container.id() == id)
+            .map(|r| r.container.text())
             .collect();
         assert!(
             !cached.is_empty(),
@@ -7194,7 +7199,7 @@ mod tests {
             press(&mut app, KeyCode::Down);
         }
         assert_eq!(
-            app.accounts.selected().unwrap().account_id,
+            app.accounts.selected().unwrap().account.id(),
             *before.last().unwrap()
         );
         press(&mut app, KeyCode::Char('e'));
@@ -7267,7 +7272,11 @@ mod tests {
         let mut app = app();
         press(&mut app, KeyCode::Char('9'));
         let before = app.accounts.selected().unwrap().clone();
-        assert_eq!(before.color, None, "an account starts with no color");
+        assert_eq!(
+            account::get(&app.db, before.account.id()).unwrap().color,
+            None,
+            "an account starts with no color"
+        );
 
         press(&mut app, KeyCode::Char('e'));
         let Some(Modal::Account(form)) = &mut app.modal else {
@@ -7275,7 +7284,7 @@ mod tests {
         };
         // The form opens on the shade the row is already drawn in, so one
         // step off it is the *next* color rather than the head of the list.
-        let opening = account::AccountColor::derived(before.account_id);
+        let opening = account::AccountColor::derived(before.account.id());
         form.next_choice_on(accounts_screen::AccountField::Color);
         let picked = form
             .color_choice()
@@ -7287,13 +7296,12 @@ mod tests {
             .accounts
             .rows()
             .iter()
-            .find(|r| r.account_id == before.account_id)
+            .find(|r| r.account.id() == before.account.id())
             .expect("the account is gone");
-        assert_eq!(after.color, Some(picked));
-        assert_eq!(after.name, before.name);
+        assert_eq!(after.account.text(), before.account.text());
         assert_eq!(after.group, before.group);
         assert_eq!(
-            account::get(&app.db, before.account_id).unwrap().color,
+            account::get(&app.db, before.account.id()).unwrap().color,
             Some(picked),
             "the color did not reach the database"
         );
@@ -7308,7 +7316,7 @@ mod tests {
     fn enter_on_an_untouched_account_form_pins_the_derived_color() {
         let mut app = app();
         press(&mut app, KeyCode::Char('9'));
-        let id = app.accounts.selected().unwrap().account_id;
+        let id = app.accounts.selected().unwrap().account.id();
         assert_eq!(account::get(&app.db, id).unwrap().color, None);
 
         press(&mut app, KeyCode::Char('e'));
@@ -7331,7 +7339,7 @@ mod tests {
     fn a_color_can_be_cleared_from_the_accounts_screen() {
         let mut app = app();
         press(&mut app, KeyCode::Char('9'));
-        let id = app.accounts.selected().unwrap().account_id;
+        let id = app.accounts.selected().unwrap().account.id();
         account::set_color(&app.db, id, Some(account::AccountColor::Rose)).unwrap();
         app.reload().unwrap();
 
