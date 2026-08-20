@@ -373,4 +373,111 @@ mod tests {
         assert_eq!(line.spans.len(), 1);
         assert_eq!(line.spans[0].style.fg, None);
     }
+
+    /// `AccountName::as_str` is the one way past `Account`, and it exists for the
+    /// uses that are not displays of an account -- a description prefill, a
+    /// search filter folding case, a form seeding its editable field. Every one
+    /// of those is listed here, so a new one has to be added deliberately and is
+    /// visible in the diff that adds it.
+    ///
+    /// A source scan rather than a type, because the property is "nobody reached
+    /// for the escape hatch", which no signature can state. It is the weakest
+    /// link in the guarantee and says so.
+    #[test]
+    fn nothing_in_the_screens_reads_an_account_name_as_bare_text() {
+        let sanctioned = [
+            // Seeds the Accounts form's editable Name field -- the owner then
+            // owns the text.
+            ("accounts.rs", "Field::given(account.name.as_str()"),
+            // The destination picker's `Offered.container`. This is a real
+            // residual, not a justified exemption: it is an uncolored account
+            // display in a picker column, sanctioned only because no task in
+            // this plan has `destination.rs` in scope and the design's own
+            // inventory of uncolored shapes does not list it.
+            ("app.rs", "map_or(\"?\", |a| a.name.as_str())"),
+            // The `accounts::Row` `Code` column, deliberately uncolored: its
+            // row's first column already names the account in color, and
+            // coloring both would say the same thing twice.
+            ("app.rs", "code: account.code.as_str()"),
+            // Prefills a description with the card's code. Not a display of an
+            // account: it seeds an editable field the owner then owns.
+            ("form.rs", "{} Payment"),
+            // Names the source in an error about a transfer to itself. Errors
+            // are prose, and the status line is uncolored.
+            ("form.rs", "from.code.as_str()"),
+            // `Ledger::account_name`, which feeds an `App::status` message --
+            // a status message is transient prose.
+            ("ledger.rs", "map_or(\"?\", |a| a.name.as_str())"),
+            // `RecurringTxns::account_code`, that screen's counterpart.
+            ("recurring_txn.rs", "map_or(\"?\", |a| a.code.as_str())"),
+            // `Savings::account_name`, the reconciliation footer -- a status
+            // strip rather than a place a reader looks to identify an account.
+            ("savings.rs", "map_or(\"?\", |a| a.name.as_str())"),
+        ];
+
+        let mut found: Vec<String> = Vec::new();
+        for (file, source) in tui_sources() {
+            for (number, line) in source.lines().enumerate() {
+                if !line.contains(".name.as_str()") && !line.contains(".code.as_str()") {
+                    continue;
+                }
+                if sanctioned
+                    .iter()
+                    .any(|(f, needle)| *f == file && line.contains(needle))
+                {
+                    continue;
+                }
+                found.push(format!("{file}:{}: {}", number + 1, line.trim()));
+            }
+        }
+
+        assert!(
+            found.is_empty(),
+            "an account's text is read as a bare string here, which is how one \
+             reaches a screen with no color on it. Draw it through `Account` \
+             instead, or add the site to `sanctioned` with a comment saying why \
+             it is not a display:\n{}",
+            found.join("\n")
+        );
+    }
+
+    /// Every `src/tui/*.rs` file the scan reads, as (file name, the file's
+    /// production code).
+    ///
+    /// `label.rs` is skipped by name: it is where the guarantee above is
+    /// discharged: `Account::named`, `Account::coded` and `Account::labelled`
+    /// all read `.name.as_str()` / `.code.as_str()`, and every one of those
+    /// reads flows straight into an `Account`, which colors what it draws.
+    ///
+    /// Every other file is truncated at its first `#[cfg(test)]` line, so the
+    /// scan never sees a test module. Without that cut this test fails on its
+    /// own fixtures: `app.rs`, `savings.rs`, `worksheet.rs`, `picker.rs` and
+    /// `recurring_goal.rs` all have test helpers that read `.name.as_str()` on
+    /// goal rows, worksheet lines or picker entries -- none of them an
+    /// account.
+    fn tui_sources() -> Vec<(String, String)> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tui");
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("src/tui is readable") {
+            let path = entry.expect("a readable dir entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .expect("a named file")
+                .to_string();
+            if name == "label.rs" {
+                continue;
+            }
+            let contents = std::fs::read_to_string(&path).expect("a readable file");
+            let production = match contents.find("#[cfg(test)]") {
+                Some(index) => &contents[..index],
+                None => contents.as_str(),
+            };
+            out.push((name, production.to_string()));
+        }
+        out
+    }
 }
