@@ -71,7 +71,22 @@ pub(super) struct Migration {
 /// way to forget to. Empty is a legitimate state rather than an unfinished
 /// one -- it is what the chain looks like just after a squash, and
 /// `schema.sql` alone is then the whole schema.
-pub(super) const MIGRATIONS: &[Migration] = &[];
+pub(super) const MIGRATIONS: &[Migration] = &[Migration {
+    version: 2,
+    // The color an account's name draws in, on every screen that names it.
+    // Nullable because that is the state every existing row is already in
+    // and a real choice in its own right: `account::set_color` writes `NULL`
+    // back, and `tui::style::account_color` draws it in the shade the id
+    // derives, which is exactly what the app looked like before the column
+    // existed. The `CHECK` list is `account::AccountColor::as_str` written
+    // out, the way `kind`, `grp` and `interest_policy` are above it.
+    sql: "ALTER TABLE account ADD COLUMN color TEXT \
+          CHECK (color IN ('blue', 'copper', 'violet', 'teal', \
+                           'rose', 'olive', 'indigo', 'tan'))",
+    // Nothing to move: every account keeps the derived color it already had,
+    // by holding no color at all.
+    data: None,
+}];
 
 /// The version this build's chain leaves a database at.
 ///

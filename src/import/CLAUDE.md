@@ -49,8 +49,8 @@ accounts are keyed by `(code, kind)` and never by code alone; `account::by_code`
 
 The codes are all the sheet carries, so that is all the import writes: each new code becomes an
 account **named by itself**, in its kind's `default_group`, with a `sort` appending to whatever
-that kind already holds. The longer name, the band and the order are set on the Accounts screen and
-survive a `--replace` — `account` is not an imported table. A code already present is skipped, so
+that kind already holds, and no color at all. The longer name, the color, the band and the order are
+set on the Accounts screen and survive a `--replace` — `account` is not an imported table. A code already present is skipped, so
 re-running the pass is a no-op rather than a `UNIQUE (code, kind)` failure.
 
 `E2` is a fraction in the sheet and becomes `BasisPoints` (×10,000). The Planning split percentages

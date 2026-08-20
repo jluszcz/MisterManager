@@ -1,4 +1,4 @@
-use crate::db::account::{self, Group, Kind};
+use crate::db::account::{self, AccountColor, Group, Kind};
 use crate::db::{AccountId, Db, txn};
 use crate::money::Cents;
 use crate::projection::Dates;
@@ -52,6 +52,12 @@ pub struct Line {
     /// which are sums over accounts rather than accounts, so tinting one with
     /// an account's color would claim it belongs to that account.
     pub account_id: Option<AccountId>,
+    /// The color the owner picked for that account, if any. Carried beside
+    /// the id rather than looked up at render time, for the reason every
+    /// other screen snapshots what it draws: the row is built from the
+    /// account list once, and a second reading is a second chance to
+    /// disagree with it.
+    pub color: Option<AccountColor>,
     pub balances: Balances,
 }
 
@@ -128,6 +134,7 @@ impl Overview {
                     };
                     Line {
                         account_id: Some(account.id),
+                        color: account.color,
                         label: account.name.clone(),
                         // Credit is stored as debt, and this screen is the
                         // only one that negates it -- which is what makes Net
@@ -185,12 +192,12 @@ use ratatui::widgets::{Block, Cell, Row, Table};
 /// keep the plain foreground.
 fn table_row(
     label: &str,
-    account_id: Option<AccountId>,
+    account: Option<(AccountId, Option<AccountColor>)>,
     balances: Balances,
     style: Style,
 ) -> Row<'static> {
-    let label = match account_id {
-        Some(id) => account_cell(label.to_string(), id),
+    let label = match account {
+        Some((id, color)) => account_cell(label.to_string(), id, color),
         None => Cell::from(label.to_string()),
     };
     Row::new(vec![
@@ -269,11 +276,14 @@ pub fn render(frame: &mut Frame, area: Rect, overview: &Overview, scrubbed: bool
     let mut rows: Vec<Row> = Vec::new();
     for section in [&overview.cash, &overview.credit] {
         for band in &section.bands {
-            rows.extend(
-                band.lines
-                    .iter()
-                    .map(|l| table_row(&l.label, l.account_id, l.balances, plain)),
-            );
+            rows.extend(band.lines.iter().map(|l| {
+                table_row(
+                    &l.label,
+                    l.account_id.map(|id| (id, l.color)),
+                    l.balances,
+                    plain,
+                )
+            }));
             if section.breaks_down() {
                 rows.push(subtotal_row(band.group.label(), band.total));
             }

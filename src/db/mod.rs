@@ -170,8 +170,8 @@ mod tests {
 
     /// Zero is the one version that is not "some other schema": it is an
     /// empty file, and filling it is the whole job. A guard written as
-    /// `current < SCHEMA_VERSION` would refuse it instead, which while the
-    /// chain is empty means refusing every database the app ever creates.
+    /// `current < SCHEMA_VERSION` would refuse it instead -- and every
+    /// database the app creates starts there, whatever the chain's length.
     #[test]
     fn a_version_zero_database_is_created_rather_than_refused() {
         let conn = Connection::open_in_memory().unwrap();

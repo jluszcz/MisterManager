@@ -23,6 +23,7 @@ whoever presses the key.
 | `a` / `e` / `d` | add, edit, delete — the selected row, or the thing the screen is about |
 | `t` | move money between accounts |
 | `p` | pay a card on the ledgers, pin a plan on Planning — unrelated actions, so the letter is free to serve both |
+| `P` | unpin a plan on Planning, mark the paycheck on Recurring Txns — likewise |
 | `r` | reconcile the ledgers' filtered account against a statement |
 | `[` / `]` | step the month, whatever a month filters here |
 | `←` / `→` | step a date a day at a time, or cycle the focused selector — see the invariant below |
@@ -75,19 +76,22 @@ resize waits for.
 
 `overview` is the first screen; `ledger` backs both the second and the third, Cash and Credit, from
 one type. `savings` and `goal_form` are the fourth screen and its forms, the goal
-form serving `e` and `n` alike; `worksheet` backs `A`/`i`, and `picker` backs `s` on the eighth
+form serving `e` and `n` alike; `worksheet` backs `A`/`i`, and `picker` backs `s` on the seventh
 screen. `planning` is the fifth screen, its `Target` and `Editable` enums, its bill form,
 `Enter`, which opens the long form of a plan that will not resolve, and
 `t`, which confirms a computed plan, writes its payday through `transfer::execute`, and opens the
 allocation worksheets prefilled; `destination` is the list `e` opens on one of its destination
 rows. `fund` is the sixth screen, its form, and the birth-date prompt the age row needs and no
-other screen owns. `recurring_txn` is the seventh screen and `recurring_goal` the
+other screen owns. `recurring_goal` is the seventh screen and `recurring_txn` the
 eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
-smallest: one key, `e`, over the five things the workbook does not say about an account.
+smallest: one key, `e`, over the six things the workbook does not say about an account.
 
 `month` is the `[`/`]` filter Savings and Recurring Goals share. `style` is where color is decided —
-`ratatui::style::Color` is named there and nowhere else, so no screen grows its own opinion about
-what red means. `help` is where the screen footers are joined from — one `Topic` per context,
+`ratatui::style::Color` is *decided* there and nowhere else, so no screen grows its own opinion
+about what red means. The helpers that carry one of those decisions to a cell — `tui::tinted`,
+`form::field_line_tinted` — have to name the type to pass it, and they reach it as `style::Color`,
+which `style` re-exports: every mention is then visibly routed through the module that owns the
+choice, and the plumbing stays visibly plumbing. `help` is where the screen footers are joined from — one `Topic` per context,
 so a footer cannot drift from the panel that explains it; modal border titles are still written
 where they are drawn. `cursor` answers the scroll keys for every list at once, and `search` is the
 `/` box the ledgers, Savings, the worksheet and the destination chooser share. What every screen
@@ -99,7 +103,7 @@ fields, which `Topic` each is showing, how each one draws, and what a `Confirm` 
 keys — every arm of it is a call into a handler `app` owns, so that one match stays with them.
 Everything else about adding a modal is one file.
 
-The tab bar abbreviates screens seven and eight as `7 Txns` and `8 Goals`. It is a row of shortcuts
+The tab bar abbreviates screens seven and eight as `7 Goals` and `8 Txns`. It is a row of shortcuts
 rather than a set of headings, and the screens title themselves in full the moment they are opened.
 
 ## How wide a screen is
@@ -163,6 +167,15 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   that arrived with it, which is the one worth checking. `TxnField::ORDER` and
   `TransferField::ORDER` are both tab order and render order, so the screen and the hand cannot
   disagree; `RecurringTxnField::ORDER` already opens on its description.
+- **`Shift+←`/`Shift+→` on the Overview scrub a week, and that is the only modified arrow in the
+  app.** The plain arrows step this date a day like every other date; Shift is the same nudge with
+  a bigger step, on the key that already means "move this date", rather than a second letter for
+  one action.
+  It earns the modifier because this is the one date that is *scrubbed* rather than typed — a
+  horizon several paydays out is a plausible question here and nowhere else — and a week is the
+  step that reaches the middle of the fortnightly paycheck cycle in one press. **Shift and not
+  Ctrl**: macOS claims `Ctrl`+arrow for its own spaces, and a key the terminal never receives is a
+  key that does nothing with nothing on screen to say why.
 - **`←`/`→` on the Overview is the one key that changes another screen.** It moves `App::adhoc`,
   and Planning reads that same date: `Excess (Actual)` is the checking balance at it, and so is
   every figure below. `App::scrub` therefore reloads both screens, and `t` and `p` act on the
@@ -171,6 +184,34 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   footer drift; Planning has no header to mark, so `build` puts the date in the `Excess (Actual)`
   extra column, `*`-suffixed, and only when `View::scrubbed_adhoc` is `Some`. `App` decides
   whether the plan is scrubbed — the screen only renders what it is handed.
+- **`p` always pins, and `P` is the only way out of a pin.** The pin freezes `excess_used` so the
+  waterfall holds still while a payday's legs are entered — transfers land *before* the ad-hoc
+  date, so each leg entered collapses `Excess (Actual)` with the rest still to go, which is the
+  whole reason the pin exists (see `src/calc/CLAUDE.md`). Two things follow.
+  - **`p` is not a toggle.** The press after a forgotten pin is the *next* payday's, and a `p`
+    answering it with "unpinned" makes the press that matters the second one every time. Worse,
+    mid-payday a toggle press does the actively wrong thing — it clears the pin protecting the
+    figure being worked against. Re-pinning is the only thing a second press can sensibly mean:
+    the drift line exists to say a pin has gone stale, and a fresh pin is the answer to that. The
+    status line says `re-pinned` rather than `pinned` so a press that replaced a pin does not read
+    as one that made the first.
+  - **Unpinning is a real operation, not an undo**, and it is why `P` earns a key rather than
+    being dropped. It puts the waterfall back on the live balance; without it a pin is permanent
+    and `excess_used` runs off a frozen figure that never tracks reality again. The capital is not
+    the usual "same verb, wider object" — it is the *inverse* of `p` — and that divergence is
+    stated in its `help::Entry` detail, which is what the rule asks for. It is named on the footer
+    only while something is pinned, through `footer_without`, though the key is live either way
+    and says "nothing pinned" rather than failing silently.
+  - **`p` is refused with no live view and `P` is not.** `set_unavailable` leaves `excess_actual`
+    holding whatever the last successful view left there, so pinning against it would freeze a
+    number belonging to a plan the screen has just said it cannot compute. `P` only clears two
+    keys and reads nothing off the view — refusing there would strand a pin behind a footer still
+    offering to remove it.
+  - **Both keys move together.** `PINNED_EXCESS` and `PINNED_AT` are written and cleared as a
+    pair: a date with no amount would render a line about a plan that is not pinned. A re-pin
+    therefore advances the date to today, and the drift falls back to the cents the whole-dollar
+    floor drops — never to zero, which is what makes a *fresh* pin distinguishable from one that
+    happens to sit exactly on the excess.
 - **Planning leads with the transfers, not with the sheet's first row.** The rows `t` would write
   head the screen; `Planning!C1:G41` follows underneath, Target and Buffer first. The transfers are
   what the owner acts on, and everything below them is the working that produced them — so a
@@ -184,6 +225,44 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   the money leaves the tracked system, which is how Retirement and Investment are meant to stand. An
   unset line with nothing to suggest is drawn plain, because a warning that is always on is a
   warning nobody reads.
+- **A tinted cell colors its characters, never its padding and never its indent.** `tui::tinted`
+  is the one place that happens; `account_cell`, `money_cell`, `savings::percent`, Planning's three
+  columns and `form::field_line_tinted` all go through it or its rule. A `Cell`'s own style — and a
+  `Line`'s — covers the cell's whole area, and a table's `row_highlight_style` is patched over the
+  row *after* its cells have drawn, so `Style::patch` leaves each cell's foreground in place and
+  `REVERSED` turns it into a background. A colored cell on the cursor row therefore drew as a solid
+  block the full width of its column, and two colored columns side by side read as one column of
+  the wrong width — which is what Recurring Transactions showed, `Acct` and `Amount` being adjacent
+  there with nothing between them. Styling the *spans* leaves the padding to the row: an ordinary
+  row is unchanged, since padding has no glyphs to color. The leading indent is split off the first
+  span for the same reason — Planning indents its labels to show nesting, and an indent is
+  structure rather than content.
+  - **The colors these tests read back are at a *column*, and `str::find` answers in bytes.** Every
+    screen draws inside a border, and `│` is three bytes and one column, so a byte offset lands two
+    columns right of the word asked for — which for a word longer than two characters is still
+    inside it, so the mistake passes and the test quietly stops checking what it says. `column_of`
+    in `mod.rs` is what the color tests use instead.
+- **An account is one color everywhere, and the owner picks it.** `account.color` is an
+  `AccountColor` — a name in a `TEXT` column with the schema's `CHECK` behind it, the same
+  construction as `kind`, `grp` and `interest_policy`, so that reordering a palette array cannot
+  repaint a database. `style::palette` is what a name looks like, and `ratatui::style::Color` stays
+  named in `style` alone. **Unset is a real state and the common one**: `style::account_color`
+  falls back to the shade the id derives, so a freshly imported database is already
+  distinguishable and the field is an override rather than a step the owner has to complete. That
+  is also what `—` on the selector writes back.
+- **Every Planning row that names an account is tinted by it, and the tone outranks the tint.** A
+  `Row` carries **one** `Tint`, which says which of the three cells holds the name — `Column::Label`
+  for a transfer, which heads its own account; `Column::Value` for the two account-backed
+  destination lines; `Column::Extra` for a goal's container or the plug's. One field rather than
+  one per column because a row naming *two* accounts is not a state this screen has, and making
+  that unrepresentable is cheaper than checking it. The id and color reach the screen on
+  `transfer::Container` (destinations) and on `transfer::Row::Transfer`'s own `color` (transfers):
+  `plan` and `wiring` have the account row in hand and the screen does not. Red and amber carry
+  *instructions* where a tint only says which account, so `render` reads the tone first. Three
+  states carry no tint at all, for the same reason each time — nothing single is named: an
+  ambiguous plug spans several containers, a withdrawal leaves the tracked system, and a suggestion
+  **displaces** the container so that cell holds a goal's name. The lines *under* a transfer are
+  plain too: the account is said once, at the head of the group it heads.
 - **A section of one band draws no band subtotals.** The Overview stacks accounts in bands
   (`account::Group`) inside sections (`account::Kind`): cash breaks into Checking and Savings,
   credit does not break at all. A single band's subtotal and its section's total are the same
@@ -195,9 +274,10 @@ derive it from `MIN_WIDTH` rather than write the offset out.
 - **The Accounts screen has no `a` and no `d`, and that is the whole shape of it.** An account
   exists because the workbook names it, so there is nothing to add; deleting one would orphan every
   transaction, goal and recurring rule pointing at it, and the next import would put it straight
-  back. What is left is `e` over the five things the sheet does *not* say — the name, the band, the
-  position, how an interest posting against it is divided, and which block of the `Savings` sheet it
-  is the container for — and none of them is touched by an import after the row's first insert. The code and the kind are deliberately not on the form:
+  back. What is left is `e` over the six things the sheet does *not* say — the name, the color, the
+  band, the position, how an interest posting against it is divided, and which block of the
+  `Savings` sheet it is the container for — and none of them is touched by an import after the
+  row's first insert. The code and the kind are deliberately not on the form:
   they are what `account::by_code` matches the next import against, so editing either would orphan
   the row from the sheet that produced it.
   - **All but the name are selectors, cycled with `←`/`→` like every other selector in the app.**
@@ -215,7 +295,31 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   - **Which fields the form shows depends on the kind**, the way `FundForm`'s depend on the target.
     Credit does not split into bands, so there is nothing for a band selector to cycle; only a cash
     account holds the goals an interest posting is divided among or a `Savings` block fills, so only
-    a cash account is asked about either. A card's form is two fields.
+    a cash account is asked about either. A card's form is three fields.
+  - **`Color` is the one of the six that every kind is asked.** A card is named on the Credit
+    ledger and on Recurring Transactions, so it is tinted there like any other account, and what it
+    looks like is not a fact about cash. It sits beside the name because the two are one decision:
+    what this account looks like wherever it is named.
+  - **The `Color` field draws its own value in the color it names**, through
+    `form::field_line_tinted` — the one field on any form whose text is a name for something the
+    form could not otherwise show, and `Teal` in black is not an answer to "what will this look
+    like". Only the value: the label and the caret are the form's chrome. It resolves through
+    `style::account_color` with the account's own id, so `—` shows the **derived** shade the row
+    will actually take rather than nothing at all — which is the whole reason that choice is worth
+    drawing rather than leaving plain.
+  - **It opens on the color the account is *being drawn in*, not on what it has stored.** An
+    account nobody has picked for opens on `AccountColor::derived(id)`, named, rather than on `—`.
+    Opening on `—` put the selector somewhere the row behind the modal visibly contradicted, and
+    made the first `→` a jump to the head of the palette instead of a step off the current color —
+    and stepping off a color is only a nudge if you start on it. `—` stays in the cycle, one step
+    back, so the derivation is recoverable. The cost is that Enter on an untouched form writes the
+    derived shade down: nothing on screen changes, because it is the shade already drawn, and what
+    it gives up is the stored difference between "not chosen" and "chosen to be exactly what it
+    already was" — which no screen shows.
+  - **Which variant an id derives is `AccountColor::derived`, in `db::account`, not in `style`.**
+    It is a fact about the enum — which of its variants an id lands on — and says nothing about
+    what a variant looks like. `style::account_color` is where the two halves meet, and the
+    Accounts screen reads the derivation directly, without reaching for a color at all.
   - **`Order` reads one-based and commits zero-based.** It is a place in a list to whoever reads it
     and an index to `account::reorder`, which renumbers the whole kind so that what the screen
     shows is what is stored.
@@ -231,7 +335,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     resolve live, already showed the new one.
 - **Only Recurring Transactions shows an account code.** Every other screen — Overview, both
   ledgers, Savings, and the worksheet and picker titles — shows `account.name`, resolved through
-  `tui::account_name`. Screen 7 keeps `tui::account_code` because its other columns already
+  `tui::account_name`. Screen 8 keeps `tui::account_code` because its other columns already
   pin a row down exactly, so the code alone is enough to say which account it belongs to, and that
   much detail reads better tight than padded. Widening a name column is still paid for
   out of another column on the same screen, so the width tests are the guard — see *How wide a
@@ -241,7 +345,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   header sits at the far side of its column from every figure in it and reads as a label for the
   column beside it. Which columns are right-aligned is not guessable from the header list, so each
   screen's `the_right_aligned_headers_end_where_their_own_columns_do` measures the drawn header
-  against a drawn data row. `Last` on screen 7 is the standing exception: its cells go through that
+  against a drawn data row. `Last` on screen 8 is the standing exception: its cells go through that
   screen's own `optional`, which does not right-align, so its header does not either.
 - **Some screens drop the cents, all through `Cents::to_whole_dollars`.** Savings, Planning, and
   Funds render whole dollars; the digits are dropped rather than rounded, truncating toward zero, so
@@ -329,7 +433,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   screens.** `n` on Savings is a goal typed from scratch — `a` there is the allocation the screen is
   mostly used for, so the add takes another letter. `s` on Recurring Goals opens the picker: goals
   created *from* the entries that screen lists. Both land in the container the Savings screen's
-  `Tab` names, which is the app's one answer to "which container" — screen 8's entries carry none.
+  `Tab` names, which is the app's one answer to "which container" — screen 7's entries carry none.
   A goal's container is chosen once and never again, so `n`'s border names the one it is about to
   use, the way `Picker` and `Worksheet` name theirs: under the `Tab` filter's All the screen's own
   title says only `Savings · All`, and `default_container` has quietly picked the first. The form
@@ -457,7 +561,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   to a handler means adding it to its `Topic`'s table, which
   `every_key_a_screen_handler_matches_appears_in_its_table` and
   `every_key_a_modal_handler_matches_appears_in_its_table` enforce.
-- **Screen 7 shows the last date a recurring transaction reaches, not the horizon it may reach.**
+- **Screen 8 shows the last date a recurring transaction reaches, not the horizon it may reach.**
   `recurring_txn::last_owned_dates` is `MAX(txn.date)` over the rows it owns, beside the `Rows`
   count from the same source — so the column is `—` until the first `g`, and it is the number `x`
   moves. The end date stays editable in the `e` form: a cap the owner sets belongs with the rest of

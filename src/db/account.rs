@@ -167,6 +167,109 @@ impl FromStr for InterestPolicy {
     }
 }
 
+/// The color an account's name draws in, on every screen that names it.
+///
+/// The owner's, like the name beside it: the workbook carries a code and
+/// nothing else, so nothing here is written by an import past the row's
+/// first insert. Stored as `TEXT` and constrained by the schema's
+/// `CHECK (color IN (...))`, the same construction as [`Kind`], [`Group`]
+/// and [`InterestPolicy`] -- an index into a palette would leave the
+/// database holding a number whose meaning lived in one array in `src/tui/`,
+/// and reordering that array would silently repaint every account.
+///
+/// The names are what the Accounts screen's selector shows. What each one
+/// actually looks like is `tui::style`'s to say, because
+/// `ratatui::style::Color` is named there and nowhere else.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum AccountColor {
+    Blue,
+    Copper,
+    Violet,
+    Teal,
+    Rose,
+    Olive,
+    Indigo,
+    Tan,
+}
+
+impl AccountColor {
+    /// Every color, in the order the Accounts screen's selector cycles them.
+    ///
+    /// Beside the enum rather than on the screen, for [`InterestPolicy::ALL`]'s
+    /// reason: a screen offering a subset would leave a variant unreachable
+    /// with nothing to say so.
+    pub const ALL: [AccountColor; 8] = [
+        AccountColor::Blue,
+        AccountColor::Copper,
+        AccountColor::Violet,
+        AccountColor::Teal,
+        AccountColor::Rose,
+        AccountColor::Olive,
+        AccountColor::Indigo,
+        AccountColor::Tan,
+    ];
+
+    /// The color an account nobody has picked one for is drawn in.
+    ///
+    /// Keyed on the id and not on the account's position in whatever list a
+    /// screen is holding: `Ledger` is handed a kind-filtered list, so "the
+    /// third account here" is a different account on Cash than it is on
+    /// Credit, and the colors would disagree between two screens showing the
+    /// same ledger.
+    ///
+    /// Here rather than in `tui::style` because it is a fact about *this*
+    /// enum -- which variant an id lands on -- and nothing about what a
+    /// variant looks like. The Accounts screen reads it too, to open its
+    /// selector on the color an unset account is already being drawn in.
+    ///
+    /// `rem_euclid` rather than `%` so a negative id -- which `account.id`
+    /// being a rowid rules out, but the type does not -- wraps into the list
+    /// instead of panicking on an index out of range. Ids run 1..n after an
+    /// import, so accounts take distinct colors until there are more than
+    /// [`AccountColor::ALL`] holds.
+    pub fn derived(id: AccountId) -> AccountColor {
+        AccountColor::ALL[id.0.rem_euclid(AccountColor::ALL.len() as i64) as usize]
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AccountColor::Blue => "blue",
+            AccountColor::Copper => "copper",
+            AccountColor::Violet => "violet",
+            AccountColor::Teal => "teal",
+            AccountColor::Rose => "rose",
+            AccountColor::Olive => "olive",
+            AccountColor::Indigo => "indigo",
+            AccountColor::Tan => "tan",
+        }
+    }
+
+    /// What the Accounts screen calls this color. Capitalized because it is
+    /// a name on a form rather than the string it is stored as.
+    pub fn label(self) -> &'static str {
+        match self {
+            AccountColor::Blue => "Blue",
+            AccountColor::Copper => "Copper",
+            AccountColor::Violet => "Violet",
+            AccountColor::Teal => "Teal",
+            AccountColor::Rose => "Rose",
+            AccountColor::Olive => "Olive",
+            AccountColor::Indigo => "Indigo",
+            AccountColor::Tan => "Tan",
+        }
+    }
+}
+
+impl FromStr for AccountColor {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        AccountColor::ALL
+            .into_iter()
+            .find(|c| c.as_str() == s)
+            .with_context(|| format!("unknown account color {s:?}"))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Account {
     pub id: AccountId,
@@ -175,11 +278,17 @@ pub struct Account {
     pub kind: Kind,
     pub sort: i64,
     pub group: Group,
+    /// The color the owner picked, or `None` for an account nobody has
+    /// picked one for -- which `tui::style::account_color` draws in the
+    /// shade the id derives, so accounts are distinguishable the moment
+    /// they are imported rather than only once they are configured.
+    pub color: Option<AccountColor>,
 }
 
 fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
     let kind: String = row.get(3)?;
     let group: String = row.get(5)?;
+    let color: Option<String> = row.get(6)?;
     Ok(Account {
         id: row.get(0)?,
         code: row.get(1)?,
@@ -189,6 +298,10 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
         group: group
             .parse()
             .expect("schema CHECK guarantees a valid group"),
+        color: color.map(|c| {
+            c.parse()
+                .expect("schema CHECK guarantees a valid account color")
+        }),
     })
 }
 
@@ -198,7 +311,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
 macro_rules! select_account {
     ($tail:literal) => {
         concat!(
-            "SELECT id, code, name, kind, sort, grp FROM account ",
+            "SELECT id, code, name, kind, sort, grp, color FROM account ",
             $tail
         )
     };
@@ -395,6 +508,23 @@ pub fn set_interest_policy(db: &Db, id: AccountId, policy: InterestPolicy) -> Re
     let changed = db.conn.execute(
         "UPDATE account SET interest_policy = ?2 WHERE id = ?1",
         params![id, policy.as_str()],
+    )?;
+    ensure!(changed == 1, "no account with id {id}");
+    Ok(())
+}
+
+/// Sets the color an account's name draws in, or clears it back to the shade
+/// its id derives.
+///
+/// `None` is a real choice rather than a missing one: it is what every
+/// account starts at, and what the Accounts screen's selector calls `—`.
+/// Clearing it therefore restores exactly what an unconfigured database
+/// shows, which is what makes the whole field an override rather than a
+/// step the owner has to complete before the screens read properly.
+pub fn set_color(db: &Db, id: AccountId, color: Option<AccountColor>) -> Result<()> {
+    let changed = db.conn.execute(
+        "UPDATE account SET color = ?2 WHERE id = ?1",
+        params![id, color.map(AccountColor::as_str)],
     )?;
     ensure!(changed == 1, "no account with id {id}");
     Ok(())
@@ -669,6 +799,66 @@ mod tests {
         let db = db::open_in_memory().unwrap();
         let err = interest_policy(&db, AccountId(999)).unwrap_err();
         assert!(err.to_string().contains("999"), "{err}");
+    }
+
+    /// The enum and the schema's `CHECK (color IN (...))` are two independent
+    /// lists of the same eight strings. A variant missing from the constraint
+    /// type-checks and then fails at runtime.
+    #[test]
+    fn every_account_color_satisfies_the_schema_constraint() {
+        let db = db::open_in_memory().unwrap();
+        let id = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        for color in AccountColor::ALL {
+            set_color(&db, id, Some(color))
+                .unwrap_or_else(|e| panic!("{color:?} is not in the schema's CHECK list: {e}"));
+            assert_eq!(get(&db, id).unwrap().color, Some(color));
+        }
+    }
+
+    /// Every existing row is in this state and stays in it until the owner
+    /// says otherwise, so it has to be a state the screens can draw rather
+    /// than a hole they have to work around.
+    #[test]
+    fn an_account_nobody_has_colored_holds_no_color() {
+        let db = db::open_in_memory().unwrap();
+        let id = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        assert_eq!(get(&db, id).unwrap().color, None);
+    }
+
+    /// `—` on the selector is a choice, not the absence of one: picking it
+    /// has to put an account back exactly where it started.
+    #[test]
+    fn a_color_can_be_cleared_back_to_the_derived_one() {
+        let db = db::open_in_memory().unwrap();
+        let id = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        set_color(&db, id, Some(AccountColor::Teal)).unwrap();
+        set_color(&db, id, None).unwrap();
+        assert_eq!(get(&db, id).unwrap().color, None);
+    }
+
+    #[test]
+    fn coloring_a_missing_account_is_an_error() {
+        let db = db::open_in_memory().unwrap();
+        let err = set_color(&db, AccountId(999), Some(AccountColor::Blue)).unwrap_err();
+        assert!(err.to_string().contains("999"), "{err}");
+    }
+
+    #[test]
+    fn account_color_as_str_and_from_str_round_trip() {
+        for color in AccountColor::ALL {
+            assert_eq!(color.as_str().parse::<AccountColor>().unwrap(), color);
+        }
+        assert!("chartreuse".parse::<AccountColor>().is_err());
+    }
+
+    /// `ALL` is what the selector cycles, so a duplicate would offer one
+    /// color twice and a short list would leave a variant unreachable.
+    #[test]
+    fn every_account_color_is_offered_exactly_once() {
+        let mut seen: Vec<&str> = AccountColor::ALL.iter().map(|c| c.as_str()).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), AccountColor::ALL.len());
     }
 
     #[test]

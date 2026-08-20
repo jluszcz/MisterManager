@@ -16,7 +16,7 @@
 use super::cursor::{Cursor, Scroll};
 use super::form::{Field, FormFields, next_in, step_index};
 use crate::db::AccountId;
-use crate::db::account::{Account, Group, InterestPolicy, Kind};
+use crate::db::account::{Account, AccountColor, Group, InterestPolicy, Kind};
 use crate::savings_block::Block as SavingsBlock;
 use anyhow::{Result, ensure};
 
@@ -29,6 +29,9 @@ pub struct Row {
     pub kind: Kind,
     pub group: Group,
     pub policy: InterestPolicy,
+    /// The color the owner picked, if any. `None` draws in the shade the id
+    /// derives, which is what every account starts at.
+    pub color: Option<AccountColor>,
     /// Which block of the `Savings` sheet this account is the container for,
     /// if either. The one thing on this screen that the import *reads* rather
     /// than merely leaves alone: without both blocks pointed somewhere,
@@ -105,6 +108,7 @@ impl Scroll for Accounts {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AccountField {
     Name,
+    Color,
     Band,
     Order,
     Interest,
@@ -115,6 +119,7 @@ impl AccountField {
     pub fn label(self) -> &'static str {
         match self {
             AccountField::Name => "Name",
+            AccountField::Color => "Color",
             AccountField::Band => "Band",
             AccountField::Order => "Order",
             AccountField::Interest => "Interest",
@@ -136,6 +141,24 @@ fn savings_choices() -> Vec<Option<SavingsBlock>> {
     choices
 }
 
+/// The `Color` selector's choices: no color, then one per name.
+///
+/// `None` first because it is the state every account is stored in until
+/// somebody picks -- it is not "no color" so much as "the shade the id
+/// derives", which `AccountColor::derived` is what decides and
+/// `style::account_color` what draws. The form does not *open* on it (see
+/// [`AccountForm::edit`]); it is here so an owner who wants the derivation
+/// back can cycle to it.
+///
+/// Built from `AccountColor::ALL` rather than written out, so a color added
+/// to the palette reaches this screen without anyone remembering to come
+/// here.
+fn color_choices() -> Vec<Option<AccountColor>> {
+    let mut choices = vec![None];
+    choices.extend(AccountColor::ALL.map(Some));
+    choices
+}
+
 /// What `e` commits: the whole of what the owner may say about an account.
 ///
 /// The code and the kind are absent on purpose. Both come from the workbook
@@ -144,6 +167,8 @@ fn savings_choices() -> Vec<Option<SavingsBlock>> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AccountEdit {
     pub name: String,
+    /// The color the name draws in, or `None` for the one its id derives.
+    pub color: Option<AccountColor>,
     pub group: Group,
     /// Where among the accounts of this kind it should sit.
     pub position: usize,
@@ -171,6 +196,7 @@ pub struct AccountForm {
     pub focus: AccountField,
     kind: Kind,
     name: Field,
+    color: usize,
     band: usize,
     position: usize,
     /// How many accounts of this kind there are, which bounds `position`.
@@ -193,6 +219,25 @@ impl AccountForm {
             focus: AccountField::Name,
             kind: account.kind,
             name: Field::given(account.name.clone()),
+            // The color the account is *being drawn in*, which for one
+            // nobody has picked for is the shade its id derives rather than
+            // `—`. Opening on `—` meant the first `→` jumped to the head of
+            // the palette from a row that was visibly some other color, so
+            // the selector started somewhere the screen behind it contradicted
+            // -- and stepping off a color is only a nudge if you start on it.
+            //
+            // The cost is that opening this form and pressing Enter writes
+            // the derived shade down as a choice. Nothing on screen changes,
+            // because it is the shade that was already being drawn; what it
+            // gives up is the distinction between "not chosen" and "chosen to
+            // be exactly what it already was", which no screen shows anyway.
+            // `—` stays in the cycle for an owner who wants it back.
+            color: color_choices()
+                .iter()
+                .position(|c| {
+                    *c == Some(account.color.unwrap_or(AccountColor::derived(account.id)))
+                })
+                .unwrap_or(0),
             band: Group::bands(account.kind)
                 .iter()
                 .position(|g| *g == account.group)
@@ -212,7 +257,12 @@ impl AccountForm {
 
     /// The fields this form shows, which is also its tab order.
     pub fn fields(&self) -> Vec<AccountField> {
-        let mut fields = vec![AccountField::Name];
+        // Both kinds, unlike the three below it: a card is named on the
+        // Credit ledger and on Recurring Transactions, so it is tinted there
+        // too, and the choice belongs to every account rather than to the
+        // cash ones. Beside the name because the two are one decision --
+        // what this account looks like wherever it is named.
+        let mut fields = vec![AccountField::Name, AccountField::Color];
         if Group::bands(self.kind).len() > 1 {
             fields.push(AccountField::Band);
         }
@@ -231,6 +281,10 @@ impl AccountForm {
     pub fn display(&self, field: AccountField) -> String {
         match field {
             AccountField::Name => self.name.value().to_string(),
+            AccountField::Color => match color_choices()[self.color] {
+                None => "—".to_string(),
+                Some(color) => color.label().to_string(),
+            },
             AccountField::Band => Group::bands(self.kind)[self.band].label().to_string(),
             // One-based, because it is a place in a list rather than an index.
             AccountField::Order => format!("{} of {}", self.position + 1, self.of_kind),
@@ -251,11 +305,20 @@ impl AccountForm {
         self.focus = was;
     }
 
+    /// The color choice the selector is sitting on, which is what the form
+    /// draws its value in. `None` is `—`, and drawing *that* in the shade the
+    /// id derives is the point rather than a fallback: what the row will look
+    /// like is the question the field is asking, and `—` has an answer to it.
+    pub fn color_choice(&self) -> Option<AccountColor> {
+        color_choices()[self.color]
+    }
+
     pub fn commit(&self) -> Result<AccountEdit> {
         let name = self.name.value().trim().to_string();
         ensure!(!name.is_empty(), "name must not be empty");
         Ok(AccountEdit {
             name,
+            color: color_choices()[self.color],
             group: Group::bands(self.kind)[self.band],
             position: self.position,
             policy: InterestPolicy::ALL[self.policy],
@@ -287,7 +350,8 @@ impl FormFields for AccountForm {
             // Selectors ignore typing, the same as the goal form's Interest
             // field: a choice spelled out one letter at a time can sit at
             // something that means nothing in between.
-            AccountField::Band
+            AccountField::Color
+            | AccountField::Band
             | AccountField::Order
             | AccountField::Interest
             | AccountField::Savings => {}
@@ -297,7 +361,8 @@ impl FormFields for AccountForm {
     fn backspace(&mut self) {
         match self.focus {
             AccountField::Name => self.name.backspace(),
-            AccountField::Band
+            AccountField::Color
+            | AccountField::Band
             | AccountField::Order
             | AccountField::Interest
             | AccountField::Savings => {}
@@ -309,6 +374,9 @@ impl AccountForm {
     fn step_choice(&mut self, step: isize) {
         match self.focus {
             AccountField::Name => {}
+            AccountField::Color => {
+                self.color = step_index(self.color, color_choices().len(), step);
+            }
             AccountField::Band => {
                 self.band = step_index(self.band, Group::bands(self.kind).len(), step);
             }
@@ -325,7 +393,7 @@ impl AccountForm {
     }
 }
 
-use super::form::{field_line, render_fields};
+use super::form::{field_line, field_line_tinted, render_fields};
 use super::{account_cell, table_state};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
@@ -337,7 +405,25 @@ pub fn render_form(frame: &mut Frame, form: &AccountForm) {
     let lines: Vec<TextLine> = form
         .fields()
         .iter()
-        .map(|f| field_line(f.label(), form.display(*f), form.focus == *f))
+        .map(|f| {
+            let value = form.display(*f);
+            let focused = form.focus == *f;
+            match f {
+                // A name is not a color. Drawing the choice in the shade it
+                // names is what makes the field answerable here rather than
+                // by saving it and looking at the table behind the modal --
+                // and it goes through `account_color` with the account's own
+                // id, so `—` shows the derived shade the row will actually
+                // take rather than nothing at all.
+                AccountField::Color => field_line_tinted(
+                    f.label(),
+                    value,
+                    focused,
+                    super::style::account_color(form.account_id, form.color_choice()),
+                ),
+                _ => field_line(f.label(), value, focused),
+            }
+        })
         .collect();
     render_fields(frame, form.title(), lines);
 }
@@ -350,7 +436,7 @@ pub fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> usize {
         .map(|r| {
             TableRow::new(vec![
                 Cell::from(r.code.clone()),
-                account_cell(r.name.clone(), r.account_id),
+                account_cell(r.name.clone(), r.account_id, r.color),
                 Cell::from(r.kind.label()),
                 Cell::from(r.group.label()),
                 // Only a cash account holds goals, so only a cash account has
@@ -420,6 +506,7 @@ mod tests {
             kind,
             group,
             policy: InterestPolicy::Manual,
+            color: None,
             block: None,
         }
     }
@@ -447,6 +534,7 @@ mod tests {
             kind,
             sort: 0,
             group,
+            color: None,
         }
     }
 
@@ -478,6 +566,7 @@ mod tests {
             cash.fields(),
             vec![
                 AccountField::Name,
+                AccountField::Color,
                 AccountField::Band,
                 AccountField::Order,
                 AccountField::Interest,
@@ -492,7 +581,10 @@ mod tests {
             2,
             None,
         );
-        assert_eq!(card.fields(), vec![AccountField::Name, AccountField::Order]);
+        assert_eq!(
+            card.fields(),
+            vec![AccountField::Name, AccountField::Color, AccountField::Order]
+        );
     }
 
     /// The selector offers exactly the bands `account::set_group` accepts, so
@@ -536,6 +628,60 @@ mod tests {
         form.previous_choice();
         // Focus is still Name, so the arrow must not have moved the order.
         assert_eq!(form.display(AccountField::Order), "1 of 3");
+    }
+
+    /// `—` first, then one entry per name: the choice the owner takes back
+    /// has to be reachable, and it is where every account starts.
+    #[test]
+    fn the_color_selector_offers_no_color_and_then_each_one() {
+        let choices = color_choices();
+        assert_eq!(choices.len(), AccountColor::ALL.len() + 1);
+        assert_eq!(choices[0], None);
+        for color in AccountColor::ALL {
+            assert!(choices.contains(&Some(color)), "{color:?} is not offered");
+        }
+    }
+
+    /// `—` is still in the cycle, one step back from where an unset account
+    /// opens: the derivation has to be recoverable for an owner who picked a
+    /// color and wants it undone.
+    #[test]
+    fn the_color_selector_cycles_round_to_no_color() {
+        let mut form = AccountForm::edit(
+            &account(1, "Everyday", Kind::Cash, Group::Checking),
+            InterestPolicy::Manual,
+            0,
+            3,
+            None,
+        );
+        let opening = form.commit().unwrap().color;
+        assert_eq!(opening, Some(AccountColor::derived(AccountId(1))));
+
+        // One choice per name plus `—`, so a full cycle returns to the start
+        // and passes through `—` on the way.
+        let mut seen = vec![opening];
+        for _ in 0..AccountColor::ALL.len() {
+            form.next_choice_on(AccountField::Color);
+            seen.push(form.commit().unwrap().color);
+        }
+        assert!(seen.contains(&None), "`—` is unreachable: {seen:?}");
+        form.next_choice_on(AccountField::Color);
+        assert_eq!(
+            form.commit().unwrap().color,
+            opening,
+            "a full cycle must come back to where it started"
+        );
+    }
+
+    /// Pressing Enter straight away must not repaint an account the owner
+    /// only opened the form to rename.
+    #[test]
+    fn the_form_opens_on_the_color_the_account_already_holds() {
+        let mut account = account(2, "Rainy Day", Kind::Cash, Group::Savings);
+        account.color = Some(AccountColor::Violet);
+        let form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None);
+        assert_eq!(form.display(AccountField::Color), "Violet");
+        assert_eq!(form.commit().unwrap().color, Some(AccountColor::Violet));
     }
 
     #[test]
@@ -664,6 +810,97 @@ mod tests {
         }
     }
 
+    /// The value the `Color` selector shows is drawn in the shade it names,
+    /// so the choice is answerable in the modal rather than by saving it and
+    /// looking at the table behind. Only the value: the label and the caret
+    /// are the form's chrome.
+    #[test]
+    fn the_color_field_draws_its_value_in_the_color_it_names() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut account = account(2, "Rainy Day", Kind::Cash, Group::Savings);
+        account.color = Some(AccountColor::Violet);
+        let form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None);
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 16)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_form(frame, &form);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let (y, line) = (0..16u16)
+            .map(|y| {
+                (
+                    y,
+                    (0..MIN_WIDTH)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>(),
+                )
+            })
+            .find(|(_, line)| line.contains("Violet"))
+            .expect("the Color field was not drawn");
+
+        let expected = crate::tui::style::account_color(account.id, Some(AccountColor::Violet));
+        let at = crate::tui::column_of(&line, "Violet");
+        assert_eq!(buffer[(at, y)].fg, expected, "{line:?}");
+
+        // The label beside it is chrome and stays plain.
+        let label = crate::tui::column_of(&line, "Color");
+        assert_eq!(
+            buffer[(label, y)].fg,
+            crate::tui::style::Color::Reset,
+            "{line:?}"
+        );
+    }
+
+    /// An account nobody has picked for opens on the color it is *already
+    /// being drawn in*, named. Opening on `—` put the selector somewhere the
+    /// row behind the modal contradicted, and made the first `→` a jump to
+    /// the head of the palette rather than a step off the current color.
+    #[test]
+    fn an_unset_account_opens_on_the_color_it_is_already_drawn_in() {
+        let form = AccountForm::edit(
+            &account(2, "Rainy Day", Kind::Cash, Group::Savings),
+            InterestPolicy::Manual,
+            1,
+            3,
+            None,
+        );
+        let derived = AccountColor::derived(AccountId(2));
+        assert_eq!(form.display(AccountField::Color), derived.label());
+        assert_eq!(form.color_choice(), Some(derived));
+        // And it is the same shade the row was drawn in before the form
+        // opened -- the choice names what was there, it does not change it.
+        assert_eq!(
+            crate::tui::style::account_color(AccountId(2), form.color_choice()),
+            crate::tui::style::account_color(AccountId(2), None),
+        );
+    }
+
+    /// `—` still means the derivation, and still draws as it, for the owner
+    /// who cycles back to it.
+    #[test]
+    fn the_no_color_choice_draws_in_the_shade_the_id_derives() {
+        let mut form = AccountForm::edit(
+            &account(2, "Rainy Day", Kind::Cash, Group::Savings),
+            InterestPolicy::Manual,
+            1,
+            3,
+            None,
+        );
+        while form.color_choice().is_some() {
+            form.next_choice_on(AccountField::Color);
+        }
+        assert_eq!(form.display(AccountField::Color), "—");
+        assert_eq!(
+            crate::tui::style::account_color(AccountId(2), form.color_choice()),
+            crate::tui::style::account_color(AccountId(2), None),
+        );
+    }
+
     /// A card has no interest posting to divide, so the cell says so rather
     /// than naming a policy nothing reads.
     #[test]
@@ -690,6 +927,7 @@ mod savings_block_tests {
             kind,
             sort: 0,
             group,
+            color: None,
         }
     }
 

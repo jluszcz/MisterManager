@@ -37,7 +37,7 @@ use crate::transfer;
 use anyhow::{Context, Result, bail, ensure};
 use chrono::{Datelike, NaiveDate};
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::widgets::{Paragraph, Tabs};
 use std::collections::HashSet;
@@ -51,8 +51,8 @@ enum Screen {
     Savings = 3,
     Planning = 4,
     Funds = 5,
-    RecurringTxns = 6,
-    RecurringGoals = 7,
+    RecurringGoals = 6,
+    RecurringTxns = 7,
     Accounts = 8,
 }
 
@@ -73,13 +73,21 @@ impl Screen {
             '4' => Screen::Savings,
             '5' => Screen::Planning,
             '6' => Screen::Funds,
-            '7' => Screen::RecurringTxns,
-            '8' => Screen::RecurringGoals,
+            '7' => Screen::RecurringGoals,
+            '8' => Screen::RecurringTxns,
             '9' => Screen::Accounts,
             _ => return None,
         })
     }
 }
+
+/// How far `Shift+←`/`Shift+→` move the Overview's Paycheck-Eve column.
+///
+/// A week, because the column answers "what does this look like if the
+/// paycheck lands on a different day" and a fortnight is the cadence the
+/// paycheck itself runs on -- so a week is the step that reaches the middle
+/// of the next cycle and the one after in two presses.
+const SCRUB_WEEK: i64 = 7;
 
 /// How long a status message holds the footer before the screen's own keys
 /// come back.
@@ -352,7 +360,8 @@ impl App {
             KeyCode::Char('a') => self.modal = Some(Modal::Bill(BillForm::add())),
             KeyCode::Char('E') => self.open_bill_edit()?,
             KeyCode::Char('d') => self.open_bill_delete()?,
-            KeyCode::Char('p') => self.toggle_pin()?,
+            KeyCode::Char('p') => self.pin()?,
+            KeyCode::Char('P') => self.unpin()?,
             KeyCode::Char('t') => self.open_plan_transfers()?,
             KeyCode::Enter => self.open_plan_details(),
             _ => {}
@@ -998,9 +1007,17 @@ impl App {
     }
 
     fn overview_key(&mut self, key: KeyEvent) -> Result<()> {
+        // Shift is the same nudge, a week at a time. `←`/`→` step a date a
+        // day wherever there is one, and this is the one date in the app
+        // that is *scrubbed* rather than typed -- a horizon several paydays
+        // out is a plausible question here, and nowhere else, so the bigger
+        // step is a modifier on the key that already means "move this date"
+        // rather than a second letter for the same action.
+        let week = key.modifiers.contains(KeyModifiers::SHIFT);
+        let step = if week { SCRUB_WEEK } else { 1 };
         match key.code {
-            KeyCode::Left => self.scrub(-1)?,
-            KeyCode::Right => self.scrub(1)?,
+            KeyCode::Left => self.scrub(-step)?,
+            KeyCode::Right => self.scrub(step)?,
             _ => {}
         }
         Ok(())
@@ -1225,6 +1242,7 @@ impl App {
                 kind: account.kind,
                 group: account.group,
                 policy: account::interest_policy(&self.db, account.id)?,
+                color: account.color,
                 block: self.savings_block_of(account.id)?,
             });
         }
@@ -1303,7 +1321,7 @@ impl App {
         Ok(None)
     }
 
-    /// The four writes `e` stands for, in an order that makes the last one
+    /// The five writes `e` stands for, in an order that makes the last one
     /// mean what it says: `reorder` renumbers by position, so it goes after
     /// the band change rather than before one that could move the row.
     fn commit_account(&mut self) -> Result<()> {
@@ -1313,6 +1331,7 @@ impl App {
         let id = form.account_id;
         let edit = form.commit()?;
         account::set_name(&self.db, id, &edit.name)?;
+        account::set_color(&self.db, id, edit.color)?;
         account::set_group(&self.db, id, edit.group)?;
         account::set_interest_policy(&self.db, id, edit.policy)?;
         account::reorder(&self.db, id, edit.position)?;
@@ -1356,36 +1375,65 @@ impl App {
         }
     }
 
-    /// Freeze `Excess (Actual)` at its whole-dollar floor, or release it.
+    /// Freeze `Excess (Actual)` at its whole-dollar floor.
     ///
     /// The floor is the same figure `compute` uses when nothing is pinned, so
     /// pinning a plan that is already balanced changes no number on screen --
     /// only whether it goes on moving.
     ///
-    /// Both keys move together: a date with no amount would render a line
-    /// about a plan that is not pinned.
+    /// **Always pins, and overwrites a pin already there.** It does not
+    /// toggle, because the press that follows a forgotten pin is the next
+    /// payday's: `p` answering it with "unpinned" makes the press that
+    /// matters the second one, every time. Re-pinning is also the only thing
+    /// a second press could sensibly mean here -- the drift line exists to
+    /// say a pin has gone stale, and the answer to a stale pin is a fresh
+    /// one. Clearing is [`App::unpin`], on its own key.
     ///
-    /// *Pinning* is refused while the screen has no live view:
-    /// `set_unavailable` leaves `excess_actual` holding whatever the last
-    /// successful view left there, and pinning against that would freeze a
-    /// number belonging to a plan the screen has just said it cannot compute.
-    /// Unpinning only clears two keys and needs no view at all — refusing it
-    /// there would strand a pin behind a footer still offering to remove it.
-    fn toggle_pin(&mut self) -> Result<()> {
-        if self.planning.is_pinned() {
-            setting::clear(&self.db, key::PINNED_EXCESS)?;
-            setting::clear(&self.db, key::PINNED_AT)?;
-            self.status = "unpinned".to_string();
-        } else {
-            if self.planning.message().is_some() {
-                self.status = "nothing to pin".to_string();
-                return Ok(());
-            }
-            let pinned = self.planning.excess_actual().floor_to_dollar();
-            setting::set(&self.db, key::PINNED_EXCESS, pinned)?;
-            setting::set(&self.db, key::PINNED_AT, self.today)?;
-            self.status = format!("pinned {pinned}");
+    /// Both keys move together: a date with no amount would render a line
+    /// about a plan that is not pinned, so `PINNED_AT` advances to today with
+    /// the figure and the drift starts again from zero.
+    ///
+    /// Refused while the screen has no live view: `set_unavailable` leaves
+    /// `excess_actual` holding whatever the last successful view left there,
+    /// and pinning against that would freeze a number belonging to a plan the
+    /// screen has just said it cannot compute.
+    fn pin(&mut self) -> Result<()> {
+        if self.planning.message().is_some() {
+            self.status = "nothing to pin".to_string();
+            return Ok(());
         }
+        let was_pinned = self.planning.is_pinned();
+        let pinned = self.planning.excess_actual().floor_to_dollar();
+        setting::set(&self.db, key::PINNED_EXCESS, pinned)?;
+        setting::set(&self.db, key::PINNED_AT, self.today)?;
+        // Named apart so a press that replaced a pin does not read as one
+        // that made the first: the figure below the plan has just changed
+        // under the owner, and "pinned" alone would not say so.
+        self.status = match was_pinned {
+            true => format!("re-pinned {pinned}"),
+            false => format!("pinned {pinned}"),
+        };
+        self.reload()
+    }
+
+    /// Put the waterfall back on the live balance.
+    ///
+    /// The other half of the payday the pin covers, and not an undo: the plan
+    /// holds still while the legs are entered, and this is what ends that.
+    /// Without it a pin is permanent, and `excess_used` would run off a
+    /// frozen figure that never tracks reality again.
+    ///
+    /// Needs no live view, unlike [`App::pin`] -- it only clears two keys, and
+    /// refusing here would strand a pin behind a footer still offering to
+    /// remove it.
+    fn unpin(&mut self) -> Result<()> {
+        if !self.planning.is_pinned() {
+            self.status = "nothing pinned".to_string();
+            return Ok(());
+        }
+        setting::clear(&self.db, key::PINNED_EXCESS)?;
+        setting::clear(&self.db, key::PINNED_AT)?;
+        self.status = "unpinned".to_string();
         self.reload()
     }
 
@@ -1504,12 +1552,12 @@ impl App {
                 format!("/{}  · Enter to keep · Esc to clear", self.savings.search())
             }
             Screen::Savings => Topic::Savings.footer(),
-            // The only footer that replaces a word in place rather than adding
-            // to the line: the table carries "pin", and a table of closures for
-            // a single case would cost more than this.
+            // `P` is live either way -- it says "nothing pinned" rather than
+            // failing silently -- but naming it on an unpinned screen would
+            // offer to clear something that is not there.
             Screen::Planning => match self.planning.is_pinned() {
-                true => Topic::Planning.footer().replacen("p pin", "p unpin", 1),
-                false => Topic::Planning.footer(),
+                true => Topic::Planning.footer(),
+                false => Topic::Planning.footer_without(&["P"]),
             },
             // The other dynamic footer, but a prefix rather than a replaced
             // word: a screen showing a row with no target must say why rather
@@ -2324,8 +2372,8 @@ impl App {
         .areas(frame.area());
 
         // Abbreviated on purpose. The bar is a row of shortcuts, not a set
-        // of headings: spelled out, "7 Recurring Txns" and "8 Recurring
-        // Goals" spend fourteen columns restating what the screen's own title
+        // of headings: spelled out, "7 Recurring Goals" and "8 Recurring
+        // Txns" spend fourteen columns restating what the screen's own title
         // and footer say the moment it is opened.
         frame.render_widget(
             Tabs::new(vec![
@@ -2335,8 +2383,8 @@ impl App {
                 "4 Savings",
                 "5 Planning",
                 "6 Funds",
-                "7 Txns",
-                "8 Goals",
+                "7 Goals",
+                "8 Txns",
                 "9 Accounts",
             ])
             .select(self.screen as usize)
@@ -2413,7 +2461,6 @@ mod tests {
     use crate::tui::form::TxnField;
     use crate::tui::goal_form;
     use crate::tui::worksheet::Worksheet;
-    use ratatui::crossterm::event::KeyModifiers;
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
@@ -2492,6 +2539,12 @@ mod tests {
 
     fn press(app: &mut App, code: KeyCode) {
         app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    /// The same key with Shift held, which crossterm reports as the arrow
+    /// plus a modifier rather than a code of its own.
+    fn shift_press(app: &mut App, code: KeyCode) {
+        app.on_key(KeyEvent::new(code, KeyModifiers::SHIFT));
     }
 
     fn type_str(app: &mut App, text: &str) {
@@ -2786,6 +2839,55 @@ mod tests {
         assert!(app.modal.is_none());
     }
 
+    /// A week per press, both ways, and the drift the footer reports counts
+    /// in days rather than presses.
+    #[test]
+    fn shift_and_an_arrow_scrub_the_overview_a_week_at_a_time() {
+        let mut app = app();
+        let baseline = app.dates.adhoc;
+
+        shift_press(&mut app, KeyCode::Right);
+        assert_eq!(app.adhoc, baseline + chrono::Duration::days(7));
+        assert_eq!(app.scrubbed_days(), 7);
+
+        shift_press(&mut app, KeyCode::Left);
+        assert_eq!(app.adhoc, baseline);
+        assert_eq!(app.scrubbed_days(), 0);
+
+        shift_press(&mut app, KeyCode::Left);
+        assert_eq!(app.adhoc, baseline - chrono::Duration::days(7));
+        assert_eq!(app.scrubbed_days(), -7);
+    }
+
+    /// The unmodified arrow is untouched: one is a nudge and the other a
+    /// bigger nudge, and they compose because both move the same date.
+    #[test]
+    fn a_plain_arrow_still_scrubs_a_single_day() {
+        let mut app = app();
+        let baseline = app.dates.adhoc;
+
+        press(&mut app, KeyCode::Right);
+        shift_press(&mut app, KeyCode::Right);
+        assert_eq!(app.adhoc, baseline + chrono::Duration::days(8));
+        assert_eq!(app.scrubbed_days(), 8);
+    }
+
+    /// The week scrub is the day scrub with a bigger step, so it reaches
+    /// Planning the same way: `Excess (Actual)` is the checking balance at
+    /// this date, and a screen quoting a different day than the column the
+    /// owner just moved is the failure the shared `App::adhoc` prevents.
+    #[test]
+    fn a_week_scrub_moves_the_date_planning_quotes_too() {
+        let mut app = planning_app_with_a_row_after_today();
+        let before = app.planning.excess_actual();
+
+        // One press clears the 18th, where the fixture's Rent lands.
+        shift_press(&mut app, KeyCode::Right);
+        assert_eq!(app.adhoc, day(2026, 8, 22));
+
+        assert_eq!(app.planning.excess_actual(), before - Cents(1_000_000));
+    }
+
     /// The scrub is view state and always was; with `ADHOC_DATE` retired
     /// there is nothing left for `Enter` to save.
     #[test]
@@ -2831,8 +2933,8 @@ mod tests {
             "4 Savings",
             "5 Planning",
             "6 Funds",
-            "7 Txns",
-            "8 Goals",
+            "7 Goals",
+            "8 Txns",
         ] {
             assert!(bar.contains(tab), "{tab:?} is cut off: {bar:?}");
         }
@@ -3686,7 +3788,7 @@ mod tests {
         )
         .unwrap();
         app.reload().unwrap();
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('7'));
         press(&mut app, KeyCode::Char('s'));
         press(&mut app, KeyCode::Enter);
 
@@ -3739,7 +3841,7 @@ mod tests {
         .unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('7'));
         press(&mut app, KeyCode::Char('s'));
         // It has an open goal, so it opens unticked -- Space is the deliberate
         // second round the picker never refuses.
@@ -3776,7 +3878,7 @@ mod tests {
             .unwrap();
         }
         app.reload().unwrap();
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('7'));
         press(&mut app, KeyCode::Char('s'));
         press(&mut app, KeyCode::Enter);
 
@@ -3812,7 +3914,7 @@ mod tests {
         )
         .unwrap();
         app.reload().unwrap();
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('7'));
         press(&mut app, KeyCode::Char('s'));
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Char('s'));
@@ -4379,20 +4481,91 @@ mod tests {
         );
     }
 
-    /// `p` is a toggle, and unpinning has to remove both keys -- a pin with a
-    /// date and no amount would render a line about a plan that is not
-    /// pinned.
+    /// Unpinning has to remove both keys -- a pin with a date and no amount
+    /// would render a line about a plan that is not pinned.
     #[test]
-    fn p_again_unpins_and_clears_the_date_with_it() {
+    fn capital_p_unpins_and_clears_the_date_with_it() {
         let mut app = planning_app();
         press(&mut app, KeyCode::Char('5'));
         press(&mut app, KeyCode::Char('p'));
-        press(&mut app, KeyCode::Char('p'));
+        press(&mut app, KeyCode::Char('P'));
 
         assert_eq!(setting::get(&app.db, key::PINNED_EXCESS).unwrap(), None);
         assert_eq!(setting::get(&app.db, key::PINNED_AT).unwrap(), None);
         assert!(!app.planning.is_pinned());
         assert_eq!(app.planning.pin_line(), None);
+    }
+
+    /// The whole of the change: a second `p` re-pins rather than clearing.
+    /// The press that follows a forgotten pin is the next payday's, and a `p`
+    /// that answered it with "unpinned" would make the press that matters the
+    /// second one every time.
+    #[test]
+    fn p_on_an_already_pinned_plan_re_pins_rather_than_clearing() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        press(&mut app, KeyCode::Char('p'));
+        let first = setting::get(&app.db, key::PINNED_EXCESS).unwrap();
+        assert!(first.is_some());
+
+        press(&mut app, KeyCode::Char('p'));
+
+        assert!(app.planning.is_pinned(), "the second p cleared the pin");
+        assert_eq!(setting::get(&app.db, key::PINNED_EXCESS).unwrap(), first);
+        assert_eq!(app.status, format!("re-pinned {}", first.unwrap()));
+    }
+
+    /// A re-pin takes the figure the screen is showing *now*, and moves the
+    /// date with it -- so the drift falls back to the cents the whole-dollar
+    /// floor drops, rather than going on reporting a gap against a figure
+    /// that has just been replaced.
+    #[test]
+    fn a_re_pin_takes_the_current_excess_and_resets_the_drift() {
+        let mut app = planning_app_with_a_row_after_today();
+        press(&mut app, KeyCode::Char('5'));
+        press(&mut app, KeyCode::Char('p'));
+        let first = setting::get(&app.db, key::PINNED_EXCESS)
+            .unwrap()
+            .expect("p did not pin");
+
+        // Scrubbing past the Rent moves `Excess (Actual)` off the pin, which
+        // is what the drift line reports. The scrub is an Overview key, and
+        // it reaches Planning through the `App::adhoc` both screens read.
+        press(&mut app, KeyCode::Char('1'));
+        scrub_past_the_rent(&mut app);
+        press(&mut app, KeyCode::Char('5'));
+        assert!(app.planning.pin_line().unwrap().contains("moved"));
+
+        press(&mut app, KeyCode::Char('p'));
+
+        let second = setting::get(&app.db, key::PINNED_EXCESS)
+            .unwrap()
+            .expect("the re-pin cleared it");
+        assert_ne!(second, first, "the re-pin kept the stale figure");
+        assert_eq!(second, app.planning.excess_actual().floor_to_dollar());
+        // Under a dollar, which is the floor's own remainder -- a fresh pin
+        // never reads as zero drift, and it was a whole Rent out a moment ago.
+        assert!(
+            app.planning.excess_actual() - second < Cents::from_dollars(1),
+            "{:?}",
+            app.planning.pin_line()
+        );
+        assert_eq!(
+            setting::get(&app.db, key::PINNED_AT).unwrap(),
+            Some(app.today),
+            "the re-pin left the old date behind"
+        );
+    }
+
+    /// `P` on a plan nobody pinned says so rather than writing anything.
+    #[test]
+    fn capital_p_with_nothing_pinned_says_so() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        press(&mut app, KeyCode::Char('P'));
+
+        assert_eq!(app.status, "nothing pinned");
+        assert_eq!(setting::get(&app.db, key::PINNED_EXCESS).unwrap(), None);
     }
 
     /// The pin is what `Excess (Used)` divides from, so pinning must be
@@ -4421,7 +4594,7 @@ mod tests {
     }
 
     /// Unpinning clears two keys and reads nothing off the view, and the
-    /// footer offers `p unpin` on the strength of `is_pinned`, which survives
+    /// footer offers `P unpin` on the strength of `is_pinned`, which survives
     /// `set_unavailable`. Refusing here would advertise a key that then does
     /// nothing, with the pin stuck until the plan computes again.
     #[test]
@@ -4438,7 +4611,7 @@ mod tests {
         app.reload().unwrap();
         assert!(app.planning.message().is_some());
 
-        press(&mut app, KeyCode::Char('p'));
+        press(&mut app, KeyCode::Char('P'));
 
         assert_eq!(setting::get(&app.db, key::PINNED_EXCESS).unwrap(), None);
         assert_eq!(setting::get(&app.db, key::PINNED_AT).unwrap(), None);
@@ -5157,7 +5330,7 @@ mod tests {
     }
 
     fn add_mortgage_rule(app: &mut App) {
-        press(app, KeyCode::Char('7'));
+        press(app, KeyCode::Char('8'));
         press(app, KeyCode::Char('a'));
         type_str(app, "Mortgage");
         press(app, KeyCode::Esc); // dismiss the suggestion popup, keep the form
@@ -5319,7 +5492,7 @@ mod tests {
         let mut app = recurring_txns_app();
         assert_eq!(app.dates.adhoc, today(), "no paycheck transaction yet");
 
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('8'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "Salary");
         press(&mut app, KeyCode::Esc);
@@ -5357,7 +5530,7 @@ mod tests {
         press(&mut app, KeyCode::Right);
         assert_eq!(app.scrubbed_days(), 2, "scrubbed two days off today");
 
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('8'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "Salary");
         press(&mut app, KeyCode::Esc);
@@ -5406,7 +5579,7 @@ mod tests {
     #[test]
     fn d_on_an_empty_rules_screen_says_nothing_is_selected() {
         let mut app = recurring_txns_app();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('8'));
         press(&mut app, KeyCode::Char('d'));
         assert!(app.modal.is_none());
         assert!(app.status.contains("nothing selected"), "{}", app.status);
@@ -5542,9 +5715,9 @@ mod tests {
     }
 
     #[test]
-    fn eight_opens_the_catalog_and_a_adds_an_entry() {
+    fn seven_opens_the_catalog_and_a_adds_an_entry() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('7'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "Dropbox");
         press(&mut app, KeyCode::Tab);
@@ -5560,7 +5733,7 @@ mod tests {
     }
 
     fn add_dropbox_entry(app: &mut App) {
-        press(app, KeyCode::Char('8'));
+        press(app, KeyCode::Char('7'));
         press(app, KeyCode::Char('a'));
         type_str(app, "Dropbox");
         press(app, KeyCode::Tab);
@@ -5762,7 +5935,7 @@ mod tests {
     #[test]
     fn e_on_an_empty_catalog_says_nothing_is_selected() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('7'));
         press(&mut app, KeyCode::Char('e'));
         assert!(app.modal.is_none());
         assert!(app.status.contains("nothing selected"), "{}", app.status);
@@ -5771,7 +5944,7 @@ mod tests {
     #[test]
     fn d_on_a_catalog_entry_with_goals_against_it_is_refused_and_says_why() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('7'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "Dropbox");
         press(&mut app, KeyCode::Tab);
@@ -5802,7 +5975,7 @@ mod tests {
     #[test]
     fn d_on_a_catalog_entry_whose_only_goal_is_closed_still_confirms_a_nonzero_count() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('7'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "Dropbox");
         press(&mut app, KeyCode::Tab);
@@ -5829,7 +6002,7 @@ mod tests {
         // up -- the same as any other out-of-band change would.
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('7'));
         assert_eq!(
             app.recurring_goal.rows()[0].open_goals,
             0,
@@ -5876,7 +6049,10 @@ mod tests {
     #[test]
     fn every_screen_footer_reads_as_it_always_has() {
         let mut app = app();
-        assert_eq!(footer_of(&mut app, '1'), "←/→ scrub · 1-9 screens · q quit");
+        assert_eq!(
+            footer_of(&mut app, '1'),
+            "←/→ scrub · Shift+←/→ week · 1-9 screens · q quit"
+        );
         assert_eq!(
             footer_of(&mut app, '2'),
             "[ ] month · Esc today · Tab account · / search · r target · a add · t transfer · p pay · e edit · d delete · q quit"
@@ -5899,11 +6075,11 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '7'),
-            "a add · e edit · d delete · g regen · G all · x extend · P paycheck · 1-9 screens · q quit"
+            "[ ] month · Esc all · a add · e edit · d delete · s savings · 1-9 screens · q quit"
         );
         assert_eq!(
             footer_of(&mut app, '8'),
-            "[ ] month · Esc all · a add · e edit · d delete · s savings · 1-9 screens · q quit"
+            "a add · e edit · d delete · g regen · G all · x extend · P paycheck · 1-9 screens · q quit"
         );
     }
 
@@ -5911,16 +6087,24 @@ mod tests {
     /// carries "pin"; this is what turns it into "unpin", and nothing else in the
     /// line may be touched on the way.
     #[test]
-    fn the_planning_footer_says_unpin_once_a_plan_is_pinned() {
+    fn the_planning_footer_offers_unpin_only_once_a_plan_is_pinned() {
         let mut app = app();
         press(&mut app, KeyCode::Char('5'));
         let unpinned = app.footer();
         assert!(unpinned.contains("p pin"), "{unpinned}");
+        assert!(
+            !unpinned.contains("P unpin"),
+            "offers to clear a pin that is not there: {unpinned}"
+        );
 
         press(&mut app, KeyCode::Char('p'));
         press(&mut app, KeyCode::Char('5'));
         let pinned = app.footer();
-        assert_eq!(pinned, unpinned.replacen("p pin", "p unpin", 1), "{pinned}");
+        assert_eq!(
+            pinned,
+            unpinned.replacen("p pin", "p pin · P unpin", 1),
+            "{pinned}"
+        );
     }
 
     /// The panel is open, and on the topic named.
@@ -5937,8 +6121,8 @@ mod tests {
             ('4', Topic::Savings),
             ('5', Topic::Planning),
             ('6', Topic::Funds),
-            ('7', Topic::RecurringTxns),
-            ('8', Topic::RecurringGoals),
+            ('7', Topic::RecurringGoals),
+            ('8', Topic::RecurringTxns),
         ] {
             let mut app = app();
             press(&mut app, KeyCode::Char(key));
@@ -6122,7 +6306,7 @@ mod tests {
     #[test]
     fn every_key_a_screen_handler_matches_appears_in_its_table() {
         let handlers: [(Topic, &[&str]); 8] = [
-            (Topic::Overview, &["←/→"]),
+            (Topic::Overview, &["←/→", "Shift+←/→"]),
             (
                 Topic::Ledger,
                 &[
@@ -6135,7 +6319,10 @@ mod tests {
                     "Tab", "BackTab", "[ ]", "Esc", "/", "a", "A", "i", "e", "c", "n", "U",
                 ],
             ),
-            (Topic::Planning, &["e", "a", "E", "d", "t", "Enter", "p"]),
+            (
+                Topic::Planning,
+                &["e", "a", "E", "d", "t", "Enter", "p", "P"],
+            ),
             (Topic::Funds, &["a", "e", "E", "d"]),
             (Topic::RecurringTxns, &["a", "e", "d", "g", "G", "x", "P"]),
             (Topic::RecurringGoals, &["[ ]", "Esc", "a", "e", "d", "s"]),
@@ -6157,8 +6344,8 @@ mod tests {
             ('4', Screen::Savings),
             ('5', Screen::Planning),
             ('6', Screen::Funds),
-            ('7', Screen::RecurringTxns),
-            ('8', Screen::RecurringGoals),
+            ('7', Screen::RecurringGoals),
+            ('8', Screen::RecurringTxns),
             ('9', Screen::Accounts),
         ];
         let mut roaming = app();
@@ -6298,8 +6485,8 @@ mod tests {
             ('4', |app| app.savings.selected_index()),
             ('5', |app| app.planning.selected_index()),
             ('6', |app| app.funds.selected_index()),
-            ('7', |app| app.recurring_txn.selected_index()),
-            ('8', |app| app.recurring_goal.selected_index()),
+            ('7', |app| app.recurring_goal.selected_index()),
+            ('8', |app| app.recurring_txn.selected_index()),
         ];
         for (key, index) in screens {
             let mut app = app_with_two_rows_on_every_list();
@@ -6719,7 +6906,7 @@ mod tests {
             )
             .unwrap();
         }
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('7'));
         press(&mut app, KeyCode::Char('s'));
 
         press(&mut app, KeyCode::End);
@@ -6737,7 +6924,7 @@ mod tests {
 
     /// `n` is a free-form goal: a name, a target and a date, in the container
     /// the `Tab` filter names. Creating goals *from* recurring goal entries is
-    /// `s` on screen 8, over on the table those entries live in.
+    /// `s` on screen 7, over on the table those entries live in.
     #[test]
     fn n_on_savings_opens_a_blank_goal_form() {
         let mut app = app();
@@ -6836,7 +7023,7 @@ mod tests {
     /// `[`/`]` from All enter at today's month, so a second step reaches
     /// September.
     fn open_september_picker(app: &mut App) {
-        press(app, KeyCode::Char('8'));
+        press(app, KeyCode::Char('7'));
         press(app, KeyCode::Char(']'));
         press(app, KeyCode::Char(']'));
         assert_eq!(app.recurring_goal.selected_month(), Some(9));
@@ -6905,7 +7092,7 @@ mod tests {
     #[test]
     fn s_sorts_the_unopened_entries_above_the_rest_under_the_all_filter() {
         let mut app = app_with_recurring_goals();
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('7'));
         press(&mut app, KeyCode::Char('s'));
 
         assert_eq!(entries(&app), ["Lego", "Rolex", "Dropbox"]);
@@ -6914,7 +7101,7 @@ mod tests {
     #[test]
     fn s_under_the_all_filter_preselects_every_unopened_entry() {
         let mut app = app_with_recurring_goals();
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('7'));
         press(&mut app, KeyCode::Char('s'));
 
         assert_eq!(chosen(&app), ["Lego", "Rolex"]);
@@ -7069,6 +7256,101 @@ mod tests {
 
     /// A card has no band to move between and no goals to divide interest
     /// among, so its form is two fields and neither selector is offered.
+    /// The Color field end to end: the selector is cycled on the form, `Enter`
+    /// writes it, and the row the Accounts screen redraws carries it. Nothing
+    /// else on the row moves -- the same press must not rename or reband the
+    /// account it recolors.
+    #[test]
+    fn e_on_the_accounts_screen_writes_the_color_it_was_left_on() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('9'));
+        let before = app.accounts.selected().unwrap().clone();
+        assert_eq!(before.color, None, "an account starts with no color");
+
+        press(&mut app, KeyCode::Char('e'));
+        let Some(Modal::Account(form)) = &mut app.modal else {
+            panic!("e did not open the account form");
+        };
+        // The form opens on the shade the row is already drawn in, so one
+        // step off it is the *next* color rather than the head of the list.
+        let opening = account::AccountColor::derived(before.account_id);
+        form.next_choice_on(accounts_screen::AccountField::Color);
+        let picked = form
+            .color_choice()
+            .expect("one step off a color is a color");
+        assert_ne!(picked, opening, "the step did not move");
+        press(&mut app, KeyCode::Enter);
+
+        let after = app
+            .accounts
+            .rows()
+            .iter()
+            .find(|r| r.account_id == before.account_id)
+            .expect("the account is gone");
+        assert_eq!(after.color, Some(picked));
+        assert_eq!(after.name, before.name);
+        assert_eq!(after.group, before.group);
+        assert_eq!(
+            account::get(&app.db, before.account_id).unwrap().color,
+            Some(picked),
+            "the color did not reach the database"
+        );
+    }
+
+    /// The one cost of opening on the derived shade: Enter on an untouched
+    /// form writes it down. Nothing on screen changes, because it is the
+    /// shade the row was already drawn in -- what it gives up is the stored
+    /// difference between "not chosen" and "chosen to be what it already
+    /// was", which no screen shows.
+    #[test]
+    fn enter_on_an_untouched_account_form_pins_the_derived_color() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('9'));
+        let id = app.accounts.selected().unwrap().account_id;
+        assert_eq!(account::get(&app.db, id).unwrap().color, None);
+
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(
+            account::get(&app.db, id).unwrap().color,
+            Some(account::AccountColor::derived(id))
+        );
+        // And the row is drawn in exactly the shade it was before.
+        assert_eq!(
+            crate::tui::style::account_color(id, Some(account::AccountColor::derived(id))),
+            crate::tui::style::account_color(id, None)
+        );
+    }
+
+    /// `—` is a choice the owner can take back, so cycling the whole way
+    /// round and saving has to leave the account exactly as it was found.
+    #[test]
+    fn a_color_can_be_cleared_from_the_accounts_screen() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('9'));
+        let id = app.accounts.selected().unwrap().account_id;
+        account::set_color(&app.db, id, Some(account::AccountColor::Rose)).unwrap();
+        app.reload().unwrap();
+
+        press(&mut app, KeyCode::Char('e'));
+        let Some(Modal::Account(form)) = &mut app.modal else {
+            panic!("e did not open the account form");
+        };
+        // Step round to `—` rather than counting to it: how long the cycle
+        // is, is the form's business and not this test's.
+        for _ in 0..=account::AccountColor::ALL.len() {
+            if form.display(accounts_screen::AccountField::Color) == "—" {
+                break;
+            }
+            form.next_choice_on(accounts_screen::AccountField::Color);
+        }
+        assert_eq!(form.display(accounts_screen::AccountField::Color), "—");
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(account::get(&app.db, id).unwrap().color, None);
+    }
+
     #[test]
     fn a_card_gets_a_shorter_account_form() {
         let mut app = app();
@@ -7085,6 +7367,10 @@ mod tests {
             form.fields(),
             vec![
                 accounts_screen::AccountField::Name,
+                // Color survives the trim: a card is named on the Credit
+                // ledger and on Recurring Transactions, so it is tinted
+                // there, and the choice belongs to every account.
+                accounts_screen::AccountField::Color,
                 accounts_screen::AccountField::Order
             ]
         );

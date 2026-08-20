@@ -1,7 +1,7 @@
 use super::cursor::{Cursor, Scroll};
 use super::month::{MonthCycle, YearMonth};
 use super::search::{Search, SearchBox};
-use crate::db::account::Account;
+use crate::db::account::{Account, AccountColor};
 use crate::db::goal::GoalWithBalance;
 use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
@@ -17,6 +17,9 @@ pub struct Row {
     pub goal_id: GoalId,
     pub container: AccountId,
     pub account_name: String,
+    /// The color the owner picked for that container, if any -- snapshotted
+    /// beside its name, and for the same reason.
+    pub account_color: Option<AccountColor>,
     pub name: String,
     pub current: Cents,
     pub goal: Cents,
@@ -106,6 +109,7 @@ impl Savings {
                 goal_id: g.goal.id,
                 container: g.goal.container_account_id,
                 account_name: self.account_name(g.goal.container_account_id).to_string(),
+                account_color: super::account_color_of(&self.accounts, g.goal.container_account_id),
                 percent: percent_complete(g.current, g.goal.goal_cents),
                 expired: g.goal.goal_date.is_some_and(|d| d < self.today)
                     && g.current < g.goal.goal_cents,
@@ -316,8 +320,10 @@ fn optional(text: Option<String>) -> Cell<'static> {
 /// it stays the plain em dash rather than being colored as if it were at zero.
 fn percent(percent: Option<Percent>) -> Cell<'static> {
     match percent {
-        Some(p) => optional(Some(format!("{}%", p.0)))
-            .style(Style::default().fg(super::style::percent_color(p))),
+        Some(p) => super::tinted(
+            TextLine::from(format!("{}%", p.0)).right_aligned(),
+            Some(super::style::percent_color(p)),
+        ),
         None => optional(None),
     }
 }
@@ -345,7 +351,7 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
         .iter()
         .map(|r| {
             TableRow::new(vec![
-                account_cell(r.account_name.clone(), r.container),
+                account_cell(r.account_name.clone(), r.container, r.account_color),
                 Cell::from(r.name.clone()),
                 whole_amount(r.current),
                 whole_amount(r.goal),
@@ -438,6 +444,7 @@ mod tests {
                 kind: Kind::Cash,
                 sort: 0,
                 group: Group::Savings,
+                color: None,
             },
             Account {
                 id: AccountId(2),
@@ -446,6 +453,7 @@ mod tests {
                 kind: Kind::Cash,
                 sort: 1,
                 group: Group::Savings,
+                color: None,
             },
         ]
     }
@@ -932,12 +940,12 @@ mod tests {
         assert_eq!(buffer[(3, 2)].symbol(), "R", "{:?}", buffer[(3, 2)]);
         assert_eq!(
             buffer[(3, 2)].fg,
-            super::super::style::account_color(AccountId(1))
+            super::super::style::account_color(AccountId(1), None)
         );
         assert_eq!(buffer[(3, 3)].symbol(), "B", "{:?}", buffer[(3, 3)]);
         assert_eq!(
             buffer[(3, 3)].fg,
-            super::super::style::account_color(AccountId(2))
+            super::super::style::account_color(AccountId(2), None)
         );
     }
 
