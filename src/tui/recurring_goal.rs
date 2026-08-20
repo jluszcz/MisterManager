@@ -4,6 +4,7 @@
 //! View state only -- no ratatui above the render functions at the bottom, and
 //! no `Db` on the type. `App` runs the queries and hands the results in.
 
+use super::Label;
 use super::cursor::{Cursor, Scroll};
 use super::form::{Field, FormFields, next_in, parse_whole_amount, step_index};
 use super::month::MonthCycle;
@@ -228,14 +229,14 @@ impl RecurringGoalForm {
         }
     }
 
-    pub fn display(&self, field: RecurringGoalField) -> String {
-        match field {
+    pub fn display(&self, field: RecurringGoalField) -> Label {
+        Label::plain(match field {
             RecurringGoalField::Name => self.name.value().to_string(),
             RecurringGoalField::Month => super::month_full_name(self.month),
             RecurringGoalField::Amount => self.amount.value().to_string(),
             RecurringGoalField::Taxed => (if self.taxed { "yes" } else { "no" }).to_string(),
             RecurringGoalField::Cadence => Cadence::ALL[self.cadence].as_str().to_string(),
-        }
+        })
     }
 
     pub fn commit(&self) -> Result<NewEntry> {
@@ -642,11 +643,23 @@ mod tests {
             cadence: Cadence::Biennial,
         });
         assert_eq!(form.editing, Some(RecurringGoalId(2)));
-        assert_eq!(form.display(RecurringGoalField::Name), "Dropbox");
-        assert_eq!(form.display(RecurringGoalField::Month), "September");
-        assert_eq!(form.display(RecurringGoalField::Amount), "128.00");
-        assert_eq!(form.display(RecurringGoalField::Taxed), "yes");
-        assert_eq!(form.display(RecurringGoalField::Cadence), "biennial");
+        assert_eq!(
+            form.display(RecurringGoalField::Name).plain_text(),
+            "Dropbox"
+        );
+        assert_eq!(
+            form.display(RecurringGoalField::Month).plain_text(),
+            "September"
+        );
+        assert_eq!(
+            form.display(RecurringGoalField::Amount).plain_text(),
+            "128.00"
+        );
+        assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "yes");
+        assert_eq!(
+            form.display(RecurringGoalField::Cadence).plain_text(),
+            "biennial"
+        );
     }
 
     /// A recurring goal's base is what each round of it is worth, and every
@@ -686,17 +699,29 @@ mod tests {
         while form.focus != RecurringGoalField::Month {
             form.next_field();
         }
-        assert_eq!(form.display(RecurringGoalField::Month), "January");
+        assert_eq!(
+            form.display(RecurringGoalField::Month).plain_text(),
+            "January"
+        );
 
         form.next_choice();
-        assert_eq!(form.display(RecurringGoalField::Month), "February");
+        assert_eq!(
+            form.display(RecurringGoalField::Month).plain_text(),
+            "February"
+        );
 
         form.previous_choice();
         form.previous_choice();
-        assert_eq!(form.display(RecurringGoalField::Month), "December");
+        assert_eq!(
+            form.display(RecurringGoalField::Month).plain_text(),
+            "December"
+        );
 
         form.next_choice();
-        assert_eq!(form.display(RecurringGoalField::Month), "January");
+        assert_eq!(
+            form.display(RecurringGoalField::Month).plain_text(),
+            "January"
+        );
     }
 
     /// Typing at the Month selector must not reach another field's text.
@@ -712,8 +737,14 @@ mod tests {
         }
         form.backspace();
 
-        assert_eq!(form.display(RecurringGoalField::Name), "Dropbox");
-        assert_eq!(form.display(RecurringGoalField::Month), "January");
+        assert_eq!(
+            form.display(RecurringGoalField::Name).plain_text(),
+            "Dropbox"
+        );
+        assert_eq!(
+            form.display(RecurringGoalField::Month).plain_text(),
+            "January"
+        );
     }
 
     #[test]
@@ -722,15 +753,15 @@ mod tests {
         while form.focus != RecurringGoalField::Taxed {
             form.next_field();
         }
-        assert_eq!(form.display(RecurringGoalField::Taxed), "no");
+        assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "no");
         form.next_choice();
-        assert_eq!(form.display(RecurringGoalField::Taxed), "yes");
+        assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "yes");
         form.next_choice();
-        assert_eq!(form.display(RecurringGoalField::Taxed), "no");
+        assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "no");
         form.previous_choice();
-        assert_eq!(form.display(RecurringGoalField::Taxed), "yes");
+        assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "yes");
         form.previous_choice();
-        assert_eq!(form.display(RecurringGoalField::Taxed), "no");
+        assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "no");
     }
 
     #[test]
@@ -739,15 +770,30 @@ mod tests {
         while form.focus != RecurringGoalField::Cadence {
             form.next_field();
         }
-        assert_eq!(form.display(RecurringGoalField::Cadence), "annual");
+        assert_eq!(
+            form.display(RecurringGoalField::Cadence).plain_text(),
+            "annual"
+        );
         form.next_choice();
-        assert_eq!(form.display(RecurringGoalField::Cadence), "biennial");
+        assert_eq!(
+            form.display(RecurringGoalField::Cadence).plain_text(),
+            "biennial"
+        );
         form.next_choice();
-        assert_eq!(form.display(RecurringGoalField::Cadence), "annual");
+        assert_eq!(
+            form.display(RecurringGoalField::Cadence).plain_text(),
+            "annual"
+        );
         form.previous_choice();
-        assert_eq!(form.display(RecurringGoalField::Cadence), "biennial");
+        assert_eq!(
+            form.display(RecurringGoalField::Cadence).plain_text(),
+            "biennial"
+        );
         form.previous_choice();
-        assert_eq!(form.display(RecurringGoalField::Cadence), "annual");
+        assert_eq!(
+            form.display(RecurringGoalField::Cadence).plain_text(),
+            "annual"
+        );
     }
 
     /// `←`/`→` on a text field must not silently change Month, Taxed or
@@ -761,14 +807,26 @@ mod tests {
         assert_eq!(form.focus, RecurringGoalField::Name);
 
         form.next_choice();
-        assert_eq!(form.display(RecurringGoalField::Month), "January");
-        assert_eq!(form.display(RecurringGoalField::Taxed), "no");
-        assert_eq!(form.display(RecurringGoalField::Cadence), "annual");
+        assert_eq!(
+            form.display(RecurringGoalField::Month).plain_text(),
+            "January"
+        );
+        assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "no");
+        assert_eq!(
+            form.display(RecurringGoalField::Cadence).plain_text(),
+            "annual"
+        );
 
         form.previous_choice();
-        assert_eq!(form.display(RecurringGoalField::Month), "January");
-        assert_eq!(form.display(RecurringGoalField::Taxed), "no");
-        assert_eq!(form.display(RecurringGoalField::Cadence), "annual");
+        assert_eq!(
+            form.display(RecurringGoalField::Month).plain_text(),
+            "January"
+        );
+        assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "no");
+        assert_eq!(
+            form.display(RecurringGoalField::Cadence).plain_text(),
+            "annual"
+        );
     }
 
     fn drawn(list: &RecurringGoals) -> Vec<String> {

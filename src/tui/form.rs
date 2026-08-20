@@ -4,7 +4,8 @@
 //! bottom: the parsing, the validation, and the suggestion rules are the
 //! parts with decisions in them, and they are unit-tested directly.
 
-use crate::db::account::{Account, Kind};
+use super::Account;
+use crate::db::account::{self, Kind};
 use crate::db::txn::{NewTxn, Suggestion, Txn};
 use crate::db::{AccountId, TxnId};
 use crate::money::Cents;
@@ -253,7 +254,7 @@ pub struct TxnForm {
     date: Field,
     amount: Field,
     description: Field,
-    accounts: Vec<Account>,
+    accounts: Vec<account::Account>,
     account: usize,
     account_touched: bool,
 }
@@ -265,7 +266,7 @@ impl TxnForm {
     /// It is a *default*, not the user's own choice: like the prefilled date,
     /// it stays untouched, so an accepted suggestion may still move it.
     pub fn add(
-        accounts: Vec<Account>,
+        accounts: Vec<account::Account>,
         today: NaiveDate,
         preselected: Option<AccountId>,
     ) -> Result<TxnForm> {
@@ -288,7 +289,7 @@ impl TxnForm {
         })
     }
 
-    pub fn edit(accounts: Vec<Account>, txn: &Txn) -> Result<TxnForm> {
+    pub fn edit(accounts: Vec<account::Account>, txn: &Txn) -> Result<TxnForm> {
         ensure!(
             !accounts.is_empty(),
             "there is no account of this kind to edit a transaction into"
@@ -313,17 +314,15 @@ impl TxnForm {
         self.description.value()
     }
 
-    pub fn display(&self, field: TxnField) -> String {
+    pub fn display(&self, field: TxnField) -> Label {
         match field {
-            TxnField::Date => self.date.value().to_string(),
-            TxnField::Amount => self.amount.value().to_string(),
-            TxnField::Description => self.description.value().to_string(),
-            TxnField::Account => self
-                .accounts
-                .get(self.account)
-                // FIXME(task 4): a Label with one Account segment, so the selector is tinted.
-                .map(|a| format!("{} — {}", a.code.as_str(), a.name.as_str()))
-                .unwrap_or_default(),
+            TxnField::Date => Label::from(self.date.value()),
+            TxnField::Amount => Label::from(self.amount.value()),
+            TxnField::Description => Label::from(self.description.value()),
+            TxnField::Account => match self.accounts.get(self.account) {
+                Some(a) => Label::default().account(Account::labelled(a)),
+                None => Label::default(),
+            },
         }
     }
 
@@ -566,9 +565,9 @@ pub struct TransferForm {
     date: Field,
     amount: Field,
     description: Field,
-    from_accounts: Vec<Account>,
+    from_accounts: Vec<account::Account>,
     from: usize,
-    to_accounts: Vec<Account>,
+    to_accounts: Vec<account::Account>,
     to: usize,
 }
 
@@ -582,12 +581,12 @@ impl TransferForm {
     /// transfer key. Keeping the source cash-only means every `t` reads the
     /// same way: something left an account you hold and arrived somewhere
     /// else.
-    pub fn transfer(accounts: Vec<Account>, today: NaiveDate) -> Result<TransferForm> {
+    pub fn transfer(accounts: Vec<account::Account>, today: NaiveDate) -> Result<TransferForm> {
         ensure!(
             accounts.len() >= 2,
             "a transfer needs two different accounts"
         );
-        let cash: Vec<Account> = accounts
+        let cash: Vec<account::Account> = accounts
             .iter()
             .filter(|a| a.kind == Kind::Cash)
             .cloned()
@@ -615,14 +614,14 @@ impl TransferForm {
     /// cash: a "payment" means cash settling a card, and a card-to-card move
     /// is a balance transfer, which is a different thing the owner should not
     /// reach by pressing `p`.
-    pub fn payment(accounts: Vec<Account>, today: NaiveDate) -> Result<TransferForm> {
-        let cards: Vec<Account> = accounts
+    pub fn payment(accounts: Vec<account::Account>, today: NaiveDate) -> Result<TransferForm> {
+        let cards: Vec<account::Account> = accounts
             .iter()
             .filter(|a| a.kind == Kind::Credit)
             .cloned()
             .collect();
         ensure!(!cards.is_empty(), "there is no credit account to pay");
-        let cash: Vec<Account> = accounts
+        let cash: Vec<account::Account> = accounts
             .into_iter()
             .filter(|a| a.kind == Kind::Cash)
             .collect();
@@ -661,17 +660,15 @@ impl TransferForm {
         self.description.value()
     }
 
-    pub fn display(&self, field: TransferField) -> String {
-        let account = |list: &[Account], i: usize| {
-            list.get(i)
-                // FIXME(task 4): a Label with one Account segment, so the selector is tinted.
-                .map(|a| format!("{} — {}", a.code.as_str(), a.name.as_str()))
-                .unwrap_or_default()
+    pub fn display(&self, field: TransferField) -> Label {
+        let account = |list: &[account::Account], i: usize| match list.get(i) {
+            Some(a) => Label::default().account(Account::labelled(a)),
+            None => Label::default(),
         };
         match field {
-            TransferField::Date => self.date.value().to_string(),
-            TransferField::Amount => self.amount.value().to_string(),
-            TransferField::Description => self.description.value().to_string(),
+            TransferField::Date => Label::from(self.date.value()),
+            TransferField::Amount => Label::from(self.amount.value()),
+            TransferField::Description => Label::from(self.description.value()),
             TransferField::From => account(&self.from_accounts, self.from),
             TransferField::To => account(&self.to_accounts, self.to),
         }
@@ -801,7 +798,7 @@ pub(super) fn centered(area: Rect, width: u16, height: u16) -> Rect {
 }
 
 /// One labelled input line; the focused one carries a caret.
-pub(super) fn field_line(label: &str, value: String, focused: bool) -> TextLine<'static> {
+pub(super) fn field_line(label: &str, value: Label, focused: bool) -> TextLine<'static> {
     field_line_noted(label, value, focused, "")
 }
 
@@ -810,52 +807,45 @@ pub(super) fn field_line(label: &str, value: String, focused: bool) -> TextLine<
 /// nothing, trailing space included.
 pub(super) fn field_line_noted(
     label: &str,
-    value: String,
+    value: Label,
     focused: bool,
     note: &str,
 ) -> TextLine<'static> {
-    field_line_parts(label, value, focused, note, None)
+    let mut spans = vec![Span::raw(format!("{label:>12}  "))];
+    spans.extend(label_line(&value).spans);
+    spans.push(Span::raw(trailer(focused, note)));
+    TextLine::from(spans)
 }
 
-/// The same, with the *value* drawn in a color -- the one field whose text
-/// is a name for something the form cannot otherwise show. The Accounts
-/// screen's `Color` selector cycles eight names, and a name is not a color:
-/// drawing `Teal` in teal is what makes the choice answerable without
-/// saving it and looking.
+/// The same, with the *value* drawn in a color -- the one field whose text is
+/// a name for something the form cannot otherwise show. The Accounts screen's
+/// `Color` selector cycles eight names, and a name is not a color: drawing
+/// `Teal` in teal is what makes the choice answerable without saving it and
+/// looking.
 ///
-/// Only the value is tinted. The label and the caret are chrome and belong
-/// to the form rather than to the field's content.
+/// Only the value is tinted. The label and the caret are chrome and belong to
+/// the form rather than to the field's content.
 pub(super) fn field_line_tinted(
     label: &str,
     value: String,
     focused: bool,
     color: Color,
 ) -> TextLine<'static> {
-    field_line_parts(label, value, focused, "", Some(color))
-}
-
-fn field_line_parts(
-    label: &str,
-    value: String,
-    focused: bool,
-    note: &str,
-    color: Option<Color>,
-) -> TextLine<'static> {
-    let caret = if focused { "▌" } else { "" };
-    let note = if note.is_empty() {
-        String::new()
-    } else {
-        format!("  {note}")
-    };
-    let value = match color {
-        Some(color) => Span::styled(value, Style::default().fg(color)),
-        None => Span::raw(value),
-    };
     TextLine::from(vec![
         Span::raw(format!("{label:>12}  ")),
-        value,
-        Span::raw(format!("{caret}{note}")),
+        Span::styled(value, Style::default().fg(color)),
+        Span::raw(trailer(focused, "")),
     ])
+}
+
+/// The caret and the note that follow every field's value.
+fn trailer(focused: bool, note: &str) -> String {
+    let caret = if focused { "▌" } else { "" };
+    if note.is_empty() {
+        caret.to_string()
+    } else {
+        format!("{caret}  {note}")
+    }
 }
 
 /// Draw a form: the centered box, its border and title, and one line per
@@ -884,7 +874,7 @@ pub fn render_value(frame: &mut Frame, form: &ValueForm) {
     let label_text = form.label().plain_text();
     let lines = vec![field_line(
         label_text.trim(),
-        form.value().to_string(),
+        Label::from(form.value()),
         true,
     )];
     render_fields(frame, form.title(), lines);
@@ -1077,9 +1067,9 @@ mod tests {
         assert!(err.contains("/x"), "{err}");
     }
 
-    fn accounts() -> Vec<Account> {
+    fn accounts() -> Vec<account::Account> {
         vec![
-            Account {
+            account::Account {
                 id: AccountId(1),
                 code: "CHK".into(),
                 name: "Everyday".into(),
@@ -1088,7 +1078,7 @@ mod tests {
                 group: Group::Savings,
                 color: None,
             },
-            Account {
+            account::Account {
                 id: AccountId(2),
                 code: "SAV".into(),
                 name: "Rainy Day".into(),
@@ -1100,9 +1090,9 @@ mod tests {
         ]
     }
 
-    fn all_accounts() -> Vec<Account> {
+    fn all_accounts() -> Vec<account::Account> {
         let mut all = accounts();
-        all.push(Account {
+        all.push(account::Account {
             id: AccountId(3),
             code: "CC1".into(),
             name: "Card One".into(),
@@ -1111,7 +1101,7 @@ mod tests {
             group: Group::Credit,
             color: None,
         });
-        all.push(Account {
+        all.push(account::Account {
             id: AccountId(4),
             code: "CC2".into(),
             name: "Card Two".into(),
@@ -1125,6 +1115,10 @@ mod tests {
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    fn today() -> NaiveDate {
+        day(2026, 8, 15)
     }
 
     fn suggestion(description: &str, account_id: AccountId, cents: i64) -> Suggestion {
@@ -1154,10 +1148,44 @@ mod tests {
         }
     }
 
+    /// A transaction's account is the same account the ledger's Account column
+    /// names behind the form, so it is the same color. The selector shows a
+    /// code and a name, and both are that account.
+    #[test]
+    fn the_account_selector_shows_one_colored_account() {
+        let form = TxnForm::add(accounts(), today(), None).unwrap();
+        let value = form.display(TxnField::Account);
+        assert_eq!(value.plain_text(), "CHK — Everyday");
+        assert_eq!(value.accounts().len(), 1);
+        assert_eq!(value.accounts()[0].id(), AccountId(1));
+    }
+
+    /// A date is not an account and takes no color. The uniform `Label`
+    /// return is about having one shape per form, not about tinting every
+    /// field.
+    #[test]
+    fn a_forms_ordinary_fields_name_no_account() {
+        let form = TxnForm::add(accounts(), today(), None).unwrap();
+        assert!(form.display(TxnField::Date).accounts().is_empty());
+        assert!(form.display(TxnField::Amount).accounts().is_empty());
+        assert!(form.display(TxnField::Description).accounts().is_empty());
+    }
+
+    /// Both ends of a transfer, so money moving between two containers is
+    /// readable at a glance rather than by reading two codes.
+    #[test]
+    fn both_ends_of_a_transfer_name_their_own_account() {
+        let form = TransferForm::transfer(all_accounts(), today()).unwrap();
+        let from = form.display(TransferField::From);
+        let to = form.display(TransferField::To);
+        assert_eq!(from.accounts().len(), 1);
+        assert_eq!(to.accounts().len(), 1);
+    }
+
     #[test]
     fn add_prefills_todays_date_and_commits_what_was_typed() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
-        assert_eq!(form.display(TxnField::Date), "2026-08-15");
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-15");
 
         typed(&mut form, TxnField::Amount, "$1,234.5");
         typed(&mut form, TxnField::Description, "Whole Foods");
@@ -1230,8 +1258,8 @@ mod tests {
 
         form.apply_suggestion(&suggestion("Movies", AccountId(2), 1_499));
 
-        assert_eq!(form.display(TxnField::Description), "Movies");
-        assert_eq!(form.display(TxnField::Amount), "14.99");
+        assert_eq!(form.display(TxnField::Description).plain_text(), "Movies");
+        assert_eq!(form.display(TxnField::Amount).plain_text(), "14.99");
         assert_eq!(form.commit().unwrap().account_id, AccountId(2));
     }
 
@@ -1245,8 +1273,8 @@ mod tests {
 
         form.apply_suggestion(&suggestion("Movies", AccountId(2), 1_499));
 
-        assert_eq!(form.display(TxnField::Description), "Movies");
-        assert_eq!(form.display(TxnField::Amount), "22.50");
+        assert_eq!(form.display(TxnField::Description).plain_text(), "Movies");
+        assert_eq!(form.display(TxnField::Amount).plain_text(), "22.50");
         assert_eq!(
             form.commit().unwrap().account_id,
             AccountId(2),
@@ -1271,13 +1299,13 @@ mod tests {
         let mut form = TxnForm::edit(accounts(), &row).unwrap();
 
         assert_eq!(form.editing, Some(TxnId(7)));
-        assert_eq!(form.display(TxnField::Date), "2026-01-02");
-        assert_eq!(form.display(TxnField::Amount), "4,999.99");
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-01-02");
+        assert_eq!(form.display(TxnField::Amount).plain_text(), "4,999.99");
 
         form.apply_suggestion(&suggestion("Paycheck", AccountId(1), 500_000));
 
-        assert_eq!(form.display(TxnField::Description), "Paycheck");
-        assert_eq!(form.display(TxnField::Amount), "4,999.99");
+        assert_eq!(form.display(TxnField::Description).plain_text(), "Paycheck");
+        assert_eq!(form.display(TxnField::Amount).plain_text(), "4,999.99");
         let new = form.commit().unwrap();
         assert_eq!(new.cents, Cents(499_999));
         assert_eq!(new.account_id, AccountId(2));
@@ -1287,7 +1315,10 @@ mod tests {
     #[test]
     fn adding_with_a_preselected_account_opens_on_it() {
         let form = TxnForm::add(accounts(), day(2026, 8, 15), Some(AccountId(2))).unwrap();
-        assert_eq!(form.display(TxnField::Account), "SAV — Rainy Day");
+        assert_eq!(
+            form.display(TxnField::Account).plain_text(),
+            "SAV — Rainy Day"
+        );
     }
 
     /// The preselection is a default, not the user's own choice, so it obeys
@@ -1307,7 +1338,10 @@ mod tests {
     #[test]
     fn a_preselected_account_that_is_not_on_offer_falls_back_to_the_first() {
         let form = TxnForm::add(accounts(), day(2026, 8, 15), Some(AccountId(99))).unwrap();
-        assert_eq!(form.display(TxnField::Account), "CHK — Everyday");
+        assert_eq!(
+            form.display(TxnField::Account).plain_text(),
+            "CHK — Everyday"
+        );
     }
 
     #[test]
@@ -1319,7 +1353,10 @@ mod tests {
     #[test]
     fn a_transfer_prefills_the_description_both_legs_share() {
         let mut form = TransferForm::transfer(all_accounts(), day(2026, 8, 31)).unwrap();
-        assert_eq!(form.display(TransferField::Description), "Transfer");
+        assert_eq!(
+            form.display(TransferField::Description).plain_text(),
+            "Transfer"
+        );
 
         while form.focus != TransferField::To {
             form.next_field();
@@ -1366,17 +1403,23 @@ mod tests {
     #[test]
     fn a_payment_offers_only_credit_destinations() {
         let form = TransferForm::payment(all_accounts(), day(2026, 9, 8)).unwrap();
-        assert_eq!(form.display(TransferField::To), "CC1 — Card One");
+        assert_eq!(
+            form.display(TransferField::To).plain_text(),
+            "CC1 — Card One"
+        );
 
         let mut form = form;
         while form.focus != TransferField::To {
             form.next_field();
         }
         form.next_choice();
-        assert_eq!(form.display(TransferField::To), "CC2 — Card Two");
+        assert_eq!(
+            form.display(TransferField::To).plain_text(),
+            "CC2 — Card Two"
+        );
         form.next_choice();
         assert_eq!(
-            form.display(TransferField::To),
+            form.display(TransferField::To).plain_text(),
             "CC1 — Card One",
             "the cycle must not reach a cash account"
         );
@@ -1394,7 +1437,7 @@ mod tests {
         }
         let mut seen = Vec::new();
         for _ in 0..all_accounts().len() {
-            seen.push(form.display(TransferField::From));
+            seen.push(form.display(TransferField::From).plain_text());
             form.next_choice();
         }
         assert_eq!(
@@ -1420,7 +1463,7 @@ mod tests {
         }
         let mut seen = Vec::new();
         for _ in 0..all_accounts().len() {
-            seen.push(form.display(TransferField::To));
+            seen.push(form.display(TransferField::To).plain_text());
             form.next_choice();
         }
         assert!(
@@ -1431,7 +1474,7 @@ mod tests {
 
     #[test]
     fn a_transfer_with_no_cash_account_to_move_from_is_refused() {
-        let cards: Vec<Account> = all_accounts()
+        let cards: Vec<account::Account> = all_accounts()
             .into_iter()
             .filter(|a| a.kind == Kind::Credit)
             .collect();
@@ -1444,36 +1487,54 @@ mod tests {
     #[test]
     fn a_payment_offers_only_cash_sources() {
         let mut form = TransferForm::payment(all_accounts(), day(2026, 9, 8)).unwrap();
-        assert_eq!(form.display(TransferField::From), "CHK — Everyday");
+        assert_eq!(
+            form.display(TransferField::From).plain_text(),
+            "CHK — Everyday"
+        );
         while form.focus != TransferField::From {
             form.next_field();
         }
         form.next_choice();
-        assert_eq!(form.display(TransferField::From), "SAV — Rainy Day");
+        assert_eq!(
+            form.display(TransferField::From).plain_text(),
+            "SAV — Rainy Day"
+        );
         form.next_choice();
-        assert_eq!(form.display(TransferField::From), "CHK — Everyday");
+        assert_eq!(
+            form.display(TransferField::From).plain_text(),
+            "CHK — Everyday"
+        );
     }
 
     #[test]
     fn a_payments_description_follows_the_card_until_it_is_edited() {
         let mut form = TransferForm::payment(all_accounts(), day(2026, 9, 8)).unwrap();
-        assert_eq!(form.display(TransferField::Description), "CC1 Payment");
-
-        while form.focus != TransferField::To {
-            form.next_field();
-        }
-        form.next_choice();
-        assert_eq!(form.display(TransferField::Description), "CC2 Payment");
-
-        typed_transfer(&mut form, TransferField::Description, "!");
-        assert_eq!(form.display(TransferField::Description), "CC2 Payment!");
+        assert_eq!(
+            form.display(TransferField::Description).plain_text(),
+            "CC1 Payment"
+        );
 
         while form.focus != TransferField::To {
             form.next_field();
         }
         form.next_choice();
         assert_eq!(
-            form.display(TransferField::Description),
+            form.display(TransferField::Description).plain_text(),
+            "CC2 Payment"
+        );
+
+        typed_transfer(&mut form, TransferField::Description, "!");
+        assert_eq!(
+            form.display(TransferField::Description).plain_text(),
+            "CC2 Payment!"
+        );
+
+        while form.focus != TransferField::To {
+            form.next_field();
+        }
+        form.next_choice();
+        assert_eq!(
+            form.display(TransferField::Description).plain_text(),
             "CC2 Payment!",
             "an edited description must stop following the card"
         );
@@ -1602,17 +1663,17 @@ mod tests {
     fn the_arrows_step_a_transaction_date_by_a_day() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
         form.next_choice();
-        assert_eq!(form.display(TxnField::Date), "2026-08-16");
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-16");
         form.previous_choice();
         form.previous_choice();
-        assert_eq!(form.display(TxnField::Date), "2026-08-14");
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-14");
     }
 
     #[test]
     fn stepping_a_date_crosses_a_month_boundary() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 31), None).unwrap();
         form.next_choice();
-        assert_eq!(form.display(TxnField::Date), "2026-09-01");
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-09-01");
     }
 
     /// The arrows are a nudge on a date that is already there, not a way to
@@ -1630,7 +1691,7 @@ mod tests {
             form.type_char(c);
         }
         form.next_choice();
-        assert_eq!(form.display(TxnField::Date), "2026-08");
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08");
     }
 
     /// The date and the account are both reachable by `←`/`→`, so each must
@@ -1651,16 +1712,16 @@ mod tests {
             form.next_field();
         }
         form.next_choice();
-        assert_eq!(form.display(TxnField::Date), "2026-08-15");
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-15");
     }
 
     #[test]
     fn the_arrows_step_a_transfer_date_by_a_day() {
         let mut form = TransferForm::transfer(all_accounts(), day(2026, 8, 31)).unwrap();
         form.next_choice();
-        assert_eq!(form.display(TransferField::Date), "2026-09-01");
+        assert_eq!(form.display(TransferField::Date).plain_text(), "2026-09-01");
         form.previous_choice();
-        assert_eq!(form.display(TransferField::Date), "2026-08-31");
+        assert_eq!(form.display(TransferField::Date).plain_text(), "2026-08-31");
     }
 
     /// The account selectors sit on their own fields; a step on the date must
@@ -1670,8 +1731,14 @@ mod tests {
     fn stepping_a_transfer_date_moves_neither_account() {
         let mut form = TransferForm::payment(all_accounts(), day(2026, 9, 8)).unwrap();
         form.next_choice();
-        assert_eq!(form.display(TransferField::From), "CHK — Everyday");
-        assert_eq!(form.display(TransferField::To), "CC1 — Card One");
+        assert_eq!(
+            form.display(TransferField::From).plain_text(),
+            "CHK — Everyday"
+        );
+        assert_eq!(
+            form.display(TransferField::To).plain_text(),
+            "CC1 — Card One"
+        );
     }
 
     /// Eleven forms had this arithmetic written out, each with its own `+ 2`,
@@ -1685,7 +1752,7 @@ mod tests {
 
         for count in [1usize, 3, 6] {
             let lines: Vec<TextLine> = (0..count)
-                .map(|i| field_line("Label", i.to_string(), false))
+                .map(|i| field_line("Label", Label::from(i.to_string()), false))
                 .collect();
             let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
             let mut drawn = Rect::default();

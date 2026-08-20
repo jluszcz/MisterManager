@@ -3218,7 +3218,10 @@ mod tests {
         assert_eq!(descriptions(&app.credit), ["Batteries"]);
 
         press(&mut app, KeyCode::Char('a'));
-        assert_eq!(form(&app).display(TxnField::Account), "CC2 — Card Two");
+        assert_eq!(
+            form(&app).display(TxnField::Account).plain_text(),
+            "CC2 — Card Two"
+        );
     }
 
     /// The Savings container filter cycles both ways too, so `BackTab` backs
@@ -3244,7 +3247,10 @@ mod tests {
         press(&mut app, KeyCode::Char('3'));
         press(&mut app, KeyCode::Char('a'));
 
-        assert_eq!(form(&app).display(TxnField::Account), "CC1 — Card One");
+        assert_eq!(
+            form(&app).display(TxnField::Account).plain_text(),
+            "CC1 — Card One"
+        );
     }
 
     /// Without this the only way out of the popup is `Esc`, which discarded
@@ -3699,7 +3705,7 @@ mod tests {
             panic!("e opens the goal form");
         };
         assert_eq!(
-            form.display(goal_form::GoalField::Name),
+            form.display(goal_form::GoalField::Name).plain_text(),
             "Home Down Payment"
         );
         for _ in 0..3 {
@@ -4349,8 +4355,11 @@ mod tests {
         match &app.modal {
             Some(Modal::Bill(form)) => {
                 assert_eq!(form.editing, Some(bill.id));
-                assert_eq!(form.display(BillField::Label), bill.label);
-                assert_eq!(form.display(BillField::Amount), bill.cents.to_string());
+                assert_eq!(form.display(BillField::Label).plain_text(), bill.label);
+                assert_eq!(
+                    form.display(BillField::Amount).plain_text(),
+                    bill.cents.to_string()
+                );
                 assert_eq!(form.category(), bill.category);
             }
             _ => panic!("no bill form is open"),
@@ -5610,7 +5619,8 @@ mod tests {
         match &app.modal {
             Some(Modal::RecurringTxn(form)) => {
                 assert_eq!(
-                    form.display(crate::tui::recurring_txn::RecurringTxnField::Description),
+                    form.display(crate::tui::recurring_txn::RecurringTxnField::Description)
+                        .plain_text(),
                     "Mortgage"
                 );
                 assert_eq!(
@@ -5906,7 +5916,8 @@ mod tests {
         match &app.modal {
             Some(Modal::RecurringGoalEntry(form)) => {
                 assert_eq!(
-                    form.display(crate::tui::recurring_goal::RecurringGoalField::Name),
+                    form.display(crate::tui::recurring_goal::RecurringGoalField::Name)
+                        .plain_text(),
                     "Dropbox"
                 );
                 assert_eq!(
@@ -6815,12 +6826,18 @@ mod tests {
         assert_eq!(form(&app).focus, TxnField::Date, "a form opens on its date");
 
         press(&mut app, KeyCode::Right);
-        assert_eq!(form(&app).display(TxnField::Date), "2026-08-16");
-        press(&mut app, KeyCode::Left);
-        press(&mut app, KeyCode::Left);
-        assert_eq!(form(&app).display(TxnField::Date), "2026-08-14");
         assert_eq!(
-            form(&app).display(TxnField::Account),
+            form(&app).display(TxnField::Date).plain_text(),
+            "2026-08-16"
+        );
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Left);
+        assert_eq!(
+            form(&app).display(TxnField::Date).plain_text(),
+            "2026-08-14"
+        );
+        assert_eq!(
+            form(&app).display(TxnField::Account).plain_text(),
             "CHK — Everyday",
             "the account selector sits on its own field"
         );
@@ -6954,7 +6971,7 @@ mod tests {
             GoalTarget::Create(app.savings.default_container().unwrap()),
             "a new goal has no id to edit, and lands in the default container"
         );
-        assert_eq!(form.display(goal_form::GoalField::Name), "");
+        assert_eq!(form.display(goal_form::GoalField::Name).plain_text(), "");
     }
 
     #[test]
@@ -7358,12 +7375,20 @@ mod tests {
         // Step round to `—` rather than counting to it: how long the cycle
         // is, is the form's business and not this test's.
         for _ in 0..=account::AccountColor::ALL.len() {
-            if form.display(accounts_screen::AccountField::Color) == "—" {
+            if form
+                .display(accounts_screen::AccountField::Color)
+                .plain_text()
+                == "—"
+            {
                 break;
             }
             form.next_choice_on(accounts_screen::AccountField::Color);
         }
-        assert_eq!(form.display(accounts_screen::AccountField::Color), "—");
+        assert_eq!(
+            form.display(accounts_screen::AccountField::Color)
+                .plain_text(),
+            "—"
+        );
         press(&mut app, KeyCode::Enter);
 
         assert_eq!(account::get(&app.db, id).unwrap().color, None);

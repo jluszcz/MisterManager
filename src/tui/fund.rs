@@ -4,6 +4,7 @@
 //! View state only -- no ratatui above the render functions at the bottom,
 //! and no `Db` on the type. `App` runs the queries and hands the results in.
 
+use super::Label;
 use super::cursor::{Cursor, Scroll};
 use super::form::{self, Field, FormFields, next_in, step_index};
 use crate::db::FundId;
@@ -242,8 +243,8 @@ impl FundForm {
         }
     }
 
-    pub fn display(&self, field: FundField) -> String {
-        match field {
+    pub fn display(&self, field: FundField) -> Label {
+        Label::plain(match field {
             FundField::Name => self.name.value().to_string(),
             FundField::Share => self.share.value().to_string(),
             FundField::Actual => self.actual.value().to_string(),
@@ -251,7 +252,7 @@ impl FundForm {
                 Target::AgeOver30 => "tracks age".to_string(),
                 Target::RemainderShare(_) => "share of the rest".to_string(),
             },
-        }
+        })
     }
 
     /// Cycle one particular field's selector, whatever the focus is. The
@@ -653,9 +654,9 @@ mod tests {
             actual: Cents::from_dollars(60_000),
         });
         assert_eq!(form.editing, Some(FundId(2)));
-        assert_eq!(form.display(FundField::Name), "International");
-        assert_eq!(form.display(FundField::Share), "40.00");
-        assert_eq!(form.display(FundField::Actual), "60,000.00");
+        assert_eq!(form.display(FundField::Name).plain_text(), "International");
+        assert_eq!(form.display(FundField::Share).plain_text(), "40.00");
+        assert_eq!(form.display(FundField::Actual).plain_text(), "60,000.00");
     }
 
     /// Five columns at `MIN_WIDTH`, all read for one test.

@@ -3,6 +3,7 @@
 //! View state only -- no ratatui above the render functions at the bottom, and
 //! no `Db` on the type. `App` runs the queries and hands a [`View`] in.
 
+use super::Label;
 use super::cursor::{Cursor, Scroll};
 use super::form::{Field, FormFields, next_in, parse_amount, parse_date, step_index};
 use super::style::Tone;
@@ -909,12 +910,12 @@ impl BillForm {
         }
     }
 
-    pub fn display(&self, field: BillField) -> String {
-        match field {
+    pub fn display(&self, field: BillField) -> Label {
+        Label::plain(match field {
             BillField::Label => self.label.value().to_string(),
             BillField::Amount => self.amount.value().to_string(),
             BillField::Category => self.category().as_str().to_string(),
-        }
+        })
     }
 
     pub fn commit(&self) -> Result<bill::BillEdit> {
@@ -1046,7 +1047,11 @@ pub fn render_transfers(frame: &mut Frame, confirm: &TransferConfirm) {
             TextLine::from(format!("{label:<40}{:>20}", cents.to_whole_dollars()))
         })
         .collect();
-    lines.push(field_line("Date", confirm.date_value().to_string(), true));
+    lines.push(field_line(
+        "Date",
+        Label::from(confirm.date_value().to_string()),
+        true,
+    ));
     lines.push(TextLine::from("Enter write · Esc cancel"));
     render_fields(frame, "Confirm transfers", lines);
 }
@@ -2442,8 +2447,8 @@ mod tests {
     fn a_bill_form_opened_on_a_bill_prefills_every_field() {
         let form = BillForm::edit(&bill(4, "Phone", 60, Category::Other, 1));
         assert_eq!(form.editing, Some(BillId(4)));
-        assert_eq!(form.display(BillField::Label), "Phone");
-        assert_eq!(form.display(BillField::Amount), "60.00");
+        assert_eq!(form.display(BillField::Label).plain_text(), "Phone");
+        assert_eq!(form.display(BillField::Amount).plain_text(), "60.00");
         assert_eq!(form.category(), Category::Other);
     }
 
