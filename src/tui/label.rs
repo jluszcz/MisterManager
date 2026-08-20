@@ -3,10 +3,12 @@
 //! `style::account_color` decides what an account looks like; this module is
 //! what makes that decision unavoidable. [`Account`] holds an account's id,
 //! the text a screen shows for it, and the owner's color, with **no reader
-//! for the text outside this file**. So the only routes from an account to a
-//! glyph are [`account_cell`], which colors a table cell, and [`Label`]
-//! through [`label_line`], which does the same for a title -- and a screen
-//! that wants an uncolored account has no way to ask for one.
+//! for the text outside this file** other than [`Label::plain_text`], which
+//! exists for the assertions that check wording and must never feed a draw.
+//! So the only routes from an account to a glyph are [`account_cell`], which
+//! colors a table cell, and [`Label`] through [`label_line`], which does the
+//! same for a title -- and a screen that wants an uncolored account has no
+//! way to ask for one short of reaching for that escape.
 //!
 //! That is a stronger arrangement than a helper every screen is supposed to
 //! remember. The tables all did remember; the titles and the form selectors
@@ -166,7 +168,12 @@ impl Label {
     ///
     /// Not a `Display` impl: this type exists to stop an account being
     /// flattened by accident, and a `Display` on the thing that holds one
-    /// would put the flattening back within reach of a `format!`.
+    /// would put the flattening back within reach of a `format!`. This
+    /// method is that flattening, made deliberate rather than accidental --
+    /// it drops every account segment's color on the floor, so a caller that
+    /// feeds its result to a draw has recreated the exact bug this module
+    /// exists to make unwritable. Test assertions are the one legitimate use;
+    /// a production render must go through [`label_line`] instead.
     pub fn plain_text(&self) -> String {
         self.0
             .iter()
@@ -378,22 +385,24 @@ mod tests {
     /// uses that are not displays of an account -- a description prefill, a
     /// search filter folding case, a form seeding its editable field. Every one
     /// of those is listed here, so a new one has to be added deliberately and is
-    /// visible in the diff that adds it.
+    /// visible in the diff that adds it. [`Label::plain_text`] is the second
+    /// escape, gated the same way: legitimate where the flattened text is
+    /// never drawn, and listed for the same reason.
     ///
     /// A source scan rather than a type, because the property is "nobody reached
-    /// for the escape hatch", which no signature can state. It is the weakest
-    /// link in the guarantee and says so.
+    /// for the escape hatch", which no signature can state -- and it is purely
+    /// textual, so a reflow that split `a.name.as_str()` onto its own line, or
+    /// hid it behind `let n = &a.name; n.as_str()`, would pass both clauses with
+    /// nothing rewritten. It is the weakest link in the guarantee and says so.
     #[test]
     fn nothing_in_the_screens_reads_an_account_name_as_bare_text() {
         let sanctioned = [
             // Seeds the Accounts form's editable Name field -- the owner then
             // owns the text.
             ("accounts.rs", "Field::given(account.name.as_str()"),
-            // The destination picker's `Offered.container`. This is a real
-            // residual, not a justified exemption: it is an uncolored account
-            // display in a picker column, sanctioned only because no task in
-            // this plan has `destination.rs` in scope and the design's own
-            // inventory of uncolored shapes does not list it.
+            // The destination picker's `Offered.container` -- the first entry
+            // in the residual list in `src/tui/CLAUDE.md`'s account-color
+            // section.
             ("app.rs", "map_or(\"?\", |a| a.name.as_str())"),
             // The `accounts::Row` `Code` column, deliberately uncolored: its
             // row's first column already names the account in color, and
@@ -408,10 +417,12 @@ mod tests {
             // `Ledger::account_name`, which feeds an `App::status` message --
             // a status message is transient prose.
             ("ledger.rs", "map_or(\"?\", |a| a.name.as_str())"),
-            // `RecurringTxns::account_code`, that screen's counterpart.
-            ("recurring_txn.rs", "map_or(\"?\", |a| a.code.as_str())"),
-            // `Savings::account_name`, the reconciliation footer -- a status
-            // strip rather than a place a reader looks to identify an account.
+            // `Savings::account_name` -- the second entry in the residual
+            // list. It has two callers, both read here for the same reason:
+            // the Unallocated footer, transient prose like the status line,
+            // and `open_allocate`'s prefill for the Allocation modal's body,
+            // which is a real display and stays uncolored only because
+            // `AllocationForm` is outside this guarantee.
             ("savings.rs", "map_or(\"?\", |a| a.name.as_str())"),
         ];
 
@@ -439,6 +450,54 @@ mod tests {
              it is not a display:\n{}",
             found.join("\n")
         );
+
+        // The second escape: `plain_text()` flattens whatever accounts a
+        // `Label` carries, and is meant for the assertions that check
+        // wording, not for a draw. This is exactly how `render_value` lost
+        // the Reconcile modal field label's tint -- the fix belongs in
+        // `field_line_labeled`, not in a longer sanctioned list here.
+        let plain_text_sanctioned = [
+            // The status line, transient prose like every other status
+            // message sanctioned above.
+            ("app.rs", "form.label().plain_text().trim()"),
+            // The Accounts screen's `Color` field draws its own value through
+            // `field_line_tinted`, whose tint names the chosen color rather
+            // than an account -- this flattening is that value argument, not
+            // a draw of an account.
+            ("accounts.rs", "value.plain_text()"),
+            // Only the char count is read, to pad a label that may carry an
+            // account to the same twelve columns `format!("{label:>12}  ")`
+            // always padded a plain `&str` label to. `label_line(label)`
+            // draws the segments themselves; this flattened copy never
+            // reaches the screen.
+            ("form.rs", "label.plain_text().trim().chars().count()"),
+        ];
+
+        let mut leaked: Vec<String> = Vec::new();
+        for (file, source) in tui_sources() {
+            for (number, line) in source.lines().enumerate() {
+                if !line.contains(".plain_text()") {
+                    continue;
+                }
+                if plain_text_sanctioned
+                    .iter()
+                    .any(|(f, needle)| *f == file && line.contains(needle))
+                {
+                    continue;
+                }
+                leaked.push(format!("{file}:{}: {}", number + 1, line.trim()));
+            }
+        }
+
+        assert!(
+            leaked.is_empty(),
+            "`Label::plain_text()` flattens an account's color away and is meant \
+             for the assertions that check wording, not for a draw. Draw \
+             through `label_line` instead, or add the site to \
+             `plain_text_sanctioned` with a comment saying why it is not a \
+             draw:\n{}",
+            leaked.join("\n")
+        );
     }
 
     /// Every `src/tui/*.rs` file the scan reads, as (file name, the file's
@@ -449,8 +508,13 @@ mod tests {
     /// all read `.name.as_str()` / `.code.as_str()`, and every one of those
     /// reads flows straight into an `Account`, which colors what it draws.
     ///
-    /// Every other file is truncated at its first `#[cfg(test)]` line, so the
-    /// scan never sees a test module. Without that cut this test fails on its
+    /// Every other file is truncated just before its `#[cfg(test)] mod tests`
+    /// declaration, so the scan never sees a test module. The cut is the
+    /// module, not the first `#[cfg(test)]` line: `mod.rs` gates two helper
+    /// functions, `ends_in_order` and `column_of`, the same way ahead of its
+    /// own test module, and cutting at the first would have left `run` and
+    /// `event_loop` -- the event loop itself -- unscanned along with them.
+    /// Without the cut landing at the module at all, this test fails on its
     /// own fixtures: `app.rs`, `savings.rs`, `worksheet.rs`, `picker.rs` and
     /// `recurring_goal.rs` all have test helpers that read `.name.as_str()` on
     /// goal rows, worksheet lines or picker entries -- none of them an
@@ -472,7 +536,7 @@ mod tests {
                 continue;
             }
             let contents = std::fs::read_to_string(&path).expect("a readable file");
-            let production = match contents.find("#[cfg(test)]") {
+            let production = match contents.find("#[cfg(test)]\nmod tests {") {
                 Some(index) => &contents[..index],
                 None => contents.as_str(),
             };

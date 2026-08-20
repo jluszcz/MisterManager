@@ -146,11 +146,13 @@ impl Savings {
         &self.excess
     }
 
-    /// The container's name as text, for the reconciliation footer.
-    ///
-    /// The footer is a status strip rather than a place a reader looks to
-    /// identify an account, so it is deliberately not tinted. Everything else
-    /// on this screen names a container through `Account`.
+    /// The container's name as text, for the two callers that cannot take an
+    /// `Account`: the reconciliation footer below, a status strip rather
+    /// than a place a reader looks to identify an account, and
+    /// `App::open_allocate`'s prefill for the Allocation modal's
+    /// `container_name`, which draws into that modal's body. The second is
+    /// the residual, listed with its reason in `src/tui/CLAUDE.md`'s
+    /// account-color section -- `AllocationForm` is outside this guarantee.
     pub fn account_name(&self, id: AccountId) -> &str {
         self.accounts
             .iter()

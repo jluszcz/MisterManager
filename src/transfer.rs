@@ -299,7 +299,9 @@ pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
     let container_of = |id: AccountId| {
         accounts.iter().find(|a| a.id == id).map(|a| Container {
             id: a.id,
-            // Container is (id, name, color); see "Known residuals".
+            // A `String`, not a `tui::label::Account`: the Planning screen
+            // tints this through `planning::Tint` instead -- see
+            // `src/tui/CLAUDE.md`'s account-color section.
             name: a.name.as_str().to_string(),
             color: a.color,
         })
@@ -609,7 +611,9 @@ fn merge_transfer(
     let account = account::get(db, to)?;
     transfers.push(Row::Transfer {
         to,
-        // Container is (id, name, color); see "Known residuals".
+        // A `String`, not a `tui::label::Account`: the Planning screen tints
+        // this through `planning::Tint` instead -- see `src/tui/CLAUDE.md`'s
+        // account-color section.
         name: account.name.as_str().to_string(),
         color: account.color,
         cents,
@@ -1020,7 +1024,9 @@ mod tests {
         let account = account::by_code(db, code, Kind::Cash).unwrap().unwrap();
         Container {
             id: account.id,
-            // Container is (id, name, color); see "Known residuals".
+            // A `String`, not a `tui::label::Account`: the Planning screen
+            // tints this through `planning::Tint` instead -- see
+            // `src/tui/CLAUDE.md`'s account-color section.
             name: account.name.as_str().to_string(),
             color: account.color,
         }

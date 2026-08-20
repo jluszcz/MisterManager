@@ -278,17 +278,31 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     shape per form rather than one for the account fields and one for the rest. The Accounts
     screen's `Color` field is the exception and still goes through `field_line_tinted`: its tint
     says what `Teal` looks like, not which account this is.
-  - **The status line and the Savings reconciliation footer are deliberately uncolored.** They
-    are transient prose rather than places a reader looks to identify an account, and
-    `Savings::account_name` exists for the footer alone.
-  - **`as_str` is the escape, and it is pinned.** `AccountName::as_str` serves the uses that are
-    not displays — a description prefill, a search filter folding case, a form seeding its
-    editable field — and `nothing_in_the_screens_reads_an_account_name_as_bare_text` lists them
-    with a reason each, including the one entry that is a genuine gap rather than a justified
-    exemption: the destination picker's `Offered.container` in `app.rs`'s `open_destination` is
-    an uncolored account display that no task in this plan put in scope. A source scan rather
-    than a type, because the property is "nobody reached for the escape hatch", which no
-    signature can state.
+  - **The status line is deliberately uncolored.** It is transient prose rather than a place a
+    reader looks to identify an account.
+  - **Three account displays are outside this guarantee, and this is the entire list.** Each is
+    a deliberate route around `Account` rather than a gap in it:
+    - **The destination picker's `Offered.container`**, in `app.rs`'s `open_destination` (backed
+      by `destination.rs`): an uncolored account display in a picker column, a genuine gap rather
+      than a justified exemption — no task has put `destination.rs` in scope.
+    - **`AllocationForm`'s `container_name: String`**, in `goal_form.rs`, drawn into the
+      Allocation modal's body by `unallocated_line`. It reads through `Savings::account_name`,
+      which has a second caller too — the Unallocated footer below, transient prose like the
+      status line — but the Allocation modal's is a real display, kept out of `Account` because
+      converting `AllocationForm` is outside this guarantee's scope.
+    - **`transfer::Container`'s `String` name, and `planning::Tint`.** The Planning screen tints
+      an account through that mechanism (below) rather than through `label::Account`: `plan` and
+      `wiring` already have the account row in hand, and `Account` would only look it up again
+      for the same color.
+  - **`as_str` is the escape for text, and it is pinned.** `AccountName::as_str` serves the uses
+    that are not displays — a description prefill, a search filter folding case, a form seeding
+    its editable field — and `nothing_in_the_screens_reads_an_account_name_as_bare_text` lists
+    them with a reason each, including the destination picker's `Offered.container`, the first
+    entry above. A source scan rather than a type, because the property is "nobody reached for
+    the escape hatch", which no signature can state — and it is purely textual, so a reflow that
+    hid an escape behind a local variable would pass it just the same. The same test's second
+    clause pins `Label::plain_text`, the escape for a `Label` rather than an `AccountName`: it
+    flattens whatever accounts a label carries and is meant for wording assertions, never a draw.
 - **Every Planning row that names an account is tinted by it, and the tone outranks the tint.** A
   `Row` carries **one** `Tint`, which says which of the three cells holds the name — `Column::Label`
   for a transfer, which heads its own account; `Column::Value` for the two account-backed

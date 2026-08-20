@@ -7,10 +7,10 @@
 use super::Label;
 use super::cursor::{Cursor, Scroll};
 use super::form::{Field, FormFields, next_in, parse_amount, parse_date, step_index};
+use crate::db::RecurringTxnId;
 use crate::db::account::Account;
 use crate::db::recurring_txn::{Cadence, NewRecurringTxn, RecurringTxn};
 use crate::db::txn::Suggestion;
-use crate::db::{AccountId, RecurringTxnId};
 use crate::money::Cents;
 use anyhow::{Result, ensure};
 use chrono::NaiveDate;
@@ -78,13 +78,6 @@ impl RecurringTxns {
             })
             .collect();
         self.cursor.clamp(self.rows.len());
-    }
-
-    pub fn account_code(&self, id: AccountId) -> &str {
-        self.accounts
-            .iter()
-            .find(|a| a.id == id)
-            .map_or("?", |a| a.code.as_str())
     }
 
     pub fn rows(&self) -> &[Row] {
@@ -449,6 +442,7 @@ pub fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::AccountId;
     use crate::db::account::{Group, Kind};
     use crate::tui::MIN_WIDTH;
 
