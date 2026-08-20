@@ -467,11 +467,14 @@ impl ValueForm {
     }
 
     /// The label, wherever it was built -- with an account segment, on the
-    /// Reconcile modal -- carries straight through into the border: appending
-    /// text is the whole of what a `Label` can do to itself, which is what
-    /// keeps the color in place all the way to the screen.
+    /// Reconcile modal -- carries straight through into the border: `prepend`
+    /// and `text` are the whole of what a `Label` can do to itself, which is
+    /// what keeps the color in place all the way to the screen.
     pub fn title(&self) -> Label {
-        self.label.clone().text(" — Enter save · Esc cancel")
+        self.label
+            .clone()
+            .prepend("Edit ")
+            .text(" — Enter save · Esc cancel")
     }
 }
 
@@ -1514,6 +1517,19 @@ mod tests {
             form.type_char(c);
         }
         assert_eq!(form.value(), "9000");
+    }
+
+    /// A `ValueForm` with no account in its label reads exactly as it always
+    /// has: the border still says "Edit", the same word every other form's
+    /// title opens on -- only the Reconcile modal's title carries a tint, and
+    /// that must not cost every other one-field form its wording.
+    #[test]
+    fn a_value_forms_title_reads_edit_then_its_label() {
+        let form = ValueForm::new("Target", "13,500.00");
+        assert_eq!(
+            form.title().plain_text(),
+            "Edit Target — Enter save · Esc cancel"
+        );
     }
 
     /// One field means `Tab` has nowhere to go and `←`/`→` have nothing to

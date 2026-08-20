@@ -154,6 +154,14 @@ impl Label {
         self
     }
 
+    /// Puts plain text ahead of everything already in the label -- the one
+    /// way to build a title that reads "verb, then a label built elsewhere",
+    /// since `text` and `account` only ever add to the end.
+    pub fn prepend(mut self, text: impl Into<String>) -> Label {
+        self.0.insert(0, Segment::Plain(text.into()));
+        self
+    }
+
     /// The whole label as text, for the assertions that check wording.
     ///
     /// Not a `Display` impl: this type exists to stop an account being

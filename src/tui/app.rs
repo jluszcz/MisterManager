@@ -493,7 +493,10 @@ impl App {
         match opened {
             None | Some((None, _, _)) => self.status = NOTHING_SELECTED.to_string(),
             Some((Some(planning::Editable::Constant(target)), label, prefill)) => {
-                self.modal = Some(Modal::Value(target, ValueForm::new(label, &prefill)));
+                self.modal = Some(Modal::Value(
+                    target,
+                    ValueForm::new(label.trim().to_string(), &prefill),
+                ));
             }
             Some((Some(planning::Editable::Destination(line)), _, _)) => {
                 self.open_destination(line)?
