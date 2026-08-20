@@ -1,7 +1,7 @@
 use super::cursor::{Cursor, Scroll};
 use super::search::{Search, SearchBox};
 use crate::db::AccountId;
-use crate::db::account::{Account, Kind};
+use crate::db::account::{Account, AccountColor, Kind};
 use crate::db::txn::{Filter, Txn};
 use crate::money::Cents;
 use chrono::{Datelike, Months, NaiveDate};
@@ -346,6 +346,13 @@ impl Ledger {
         super::account_name(&self.accounts, id)
     }
 
+    /// The color the owner picked for that account, if any. Resolved out of
+    /// the same list `account_name` reads, so a rename and a recolor reach
+    /// this screen by the one path -- `App::reload_accounts`.
+    pub fn account_color(&self, id: AccountId) -> Option<AccountColor> {
+        super::account_color_of(&self.accounts, id)
+    }
+
     pub fn title(&self) -> String {
         let kind = match self.kind {
             Kind::Cash => "Cash",
@@ -455,7 +462,11 @@ pub fn render(frame: &mut Frame, area: Rect, ledger: &Ledger, today: NaiveDate) 
         .map(|t| {
             Row::new(vec![
                 Cell::from(t.date.to_string()),
-                account_cell(ledger.account_name(t.account_id).to_string(), t.account_id),
+                account_cell(
+                    ledger.account_name(t.account_id).to_string(),
+                    t.account_id,
+                    ledger.account_color(t.account_id),
+                ),
                 Cell::from(t.description.clone()),
                 amount(t.cents),
             ])
@@ -518,6 +529,7 @@ mod tests {
                 kind: Kind::Cash,
                 sort: 0,
                 group: Group::Savings,
+                color: None,
             },
             Account {
                 id: AccountId(2),
@@ -526,6 +538,7 @@ mod tests {
                 kind: Kind::Cash,
                 sort: 1,
                 group: Group::Savings,
+                color: None,
             },
         ]
     }

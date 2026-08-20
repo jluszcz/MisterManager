@@ -207,17 +207,28 @@ matches, since nothing but a test ties them together.
   the whole point of the type is that the two halves cannot be paired wrongly. `plan_line::Line`
   owns such keys of its own — one per line matched at import — built the same way and for the same
   reason.
-- **An account's name, order, and Overview band are the owner's, not the workbook's.** The sheet
-  carries a short code per account in its own column order and nothing else — no longer name, no
-  band, no order. So the import writes a row per code and stops: `name = code`, the kind's
-  `default_group`, and a `sort` appending to whatever that kind already holds. The Accounts screen
-  is where all three are then set, and `account` is **not** in `IMPORTED_TABLES`, so what is set
-  there outlives every `mm import --replace`. A code the sheet grows later is not an error: it
+- **An account's name, color, order, and Overview band are the owner's, not the workbook's.** The
+  sheet carries a short code per account in its own column order and nothing else — no longer name,
+  no band, no order, no color. So the import writes a row per code and stops: `name = code`, the
+  kind's `default_group`, a `sort` appending to whatever that kind already holds, and no color at
+  all. The Accounts screen is where all four are then set, and `account` is **not** in
+  `IMPORTED_TABLES`, so what is set there outlives every `mm import --replace`. A code the sheet grows later is not an error: it
   arrives the same way, named after itself, and sorts past the accounts already placed.
   `account::reorder` takes a *position* rather than a raw `sort` and renumbers the whole kind,
   because `sort` is only ever read through an `ORDER BY` that breaks ties by code — "put it third"
   is an instruction whose result does not depend on rows the caller never saw, and "set sort to 2"
   is.
+- **An account's color is a name, and having none is a supported state rather than a gap.**
+  `account.color` holds an `account::AccountColor` as `TEXT` with the schema's `CHECK` behind it —
+  the construction `kind`, `grp` and `interest_policy` already use — because an index into a
+  palette would leave the database holding a number whose meaning lived in one array in `src/tui/`,
+  and reordering that array would silently repaint every account. `NULL` is what every row starts
+  at and what the Accounts screen's `—` writes back: `tui::style::account_color` falls back to
+  `AccountColor::derived`, so a freshly imported database is already distinguishable and the field
+  is an *override* rather than a step the owner has to complete first. The derivation lives on the
+  enum because it is a fact about *it* — which variant an id lands on — while what a variant looks
+  like is `tui::style::palette`'s to say and nothing else's, which is what keeps colour decided in
+  one module.
 - **Three things about the owner's accounts are in no cell of the workbook, and all three are
   configured on the Accounts screen.** The `Savings` sheet names its two blocks by *position* --
   `A:E` and `I:K` -- with no account code beside either, and nothing anywhere says which account is

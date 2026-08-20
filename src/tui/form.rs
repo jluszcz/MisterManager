@@ -763,9 +763,11 @@ impl FormFields for TransferForm {
 }
 
 use super::autocomplete::Autocomplete;
+use super::style::Color;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::text::Line as TextLine;
+use ratatui::style::Style;
+use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
 /// How wide every form is drawn. One number, because a form that opened at a
@@ -799,13 +801,48 @@ pub(super) fn field_line_noted(
     focused: bool,
     note: &str,
 ) -> TextLine<'static> {
+    field_line_parts(label, value, focused, note, None)
+}
+
+/// The same, with the *value* drawn in a color -- the one field whose text
+/// is a name for something the form cannot otherwise show. The Accounts
+/// screen's `Color` selector cycles eight names, and a name is not a color:
+/// drawing `Teal` in teal is what makes the choice answerable without
+/// saving it and looking.
+///
+/// Only the value is tinted. The label and the caret are chrome and belong
+/// to the form rather than to the field's content.
+pub(super) fn field_line_tinted(
+    label: &str,
+    value: String,
+    focused: bool,
+    color: Color,
+) -> TextLine<'static> {
+    field_line_parts(label, value, focused, "", Some(color))
+}
+
+fn field_line_parts(
+    label: &str,
+    value: String,
+    focused: bool,
+    note: &str,
+    color: Option<Color>,
+) -> TextLine<'static> {
     let caret = if focused { "▌" } else { "" };
     let note = if note.is_empty() {
         String::new()
     } else {
         format!("  {note}")
     };
-    TextLine::from(format!("{label:>12}  {value}{caret}{note}"))
+    let value = match color {
+        Some(color) => Span::styled(value, Style::default().fg(color)),
+        None => Span::raw(value),
+    };
+    TextLine::from(vec![
+        Span::raw(format!("{label:>12}  ")),
+        value,
+        Span::raw(format!("{caret}{note}")),
+    ])
 }
 
 /// Draw a form: the centered box, its border and title, and one line per
@@ -1035,6 +1072,7 @@ mod tests {
                 kind: Kind::Cash,
                 sort: 0,
                 group: Group::Savings,
+                color: None,
             },
             Account {
                 id: AccountId(2),
@@ -1043,6 +1081,7 @@ mod tests {
                 kind: Kind::Cash,
                 sort: 1,
                 group: Group::Savings,
+                color: None,
             },
         ]
     }
@@ -1056,6 +1095,7 @@ mod tests {
             kind: Kind::Credit,
             sort: 0,
             group: Group::Credit,
+            color: None,
         });
         all.push(Account {
             id: AccountId(4),
@@ -1064,6 +1104,7 @@ mod tests {
             kind: Kind::Credit,
             sort: 1,
             group: Group::Credit,
+            color: None,
         });
         all
     }

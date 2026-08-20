@@ -97,9 +97,10 @@ drops by that leg's amount and `Excess (Actual)` collapses, while the remaining 
 unentered. The waterfall would move underneath you mid-payday.
 
 Pressing `p` on the Planning screen snapshots the floored actual into `setting`; the waterfall runs
-off the pin until it is cleared. The screen shows drift since the pin, so a stale pin is visible
-rather than silent. Unpinned, `excess_used` floors the live actual — which is why the checksum holds
-in both modes.
+off the pin until `P` clears it. The screen shows drift since the pin, so a stale pin is visible
+rather than silent, and `p` pressed again re-pins at the current figure — the answer to a stale pin
+is a fresh one, not a cleared one. Unpinned, `excess_used` floors the live actual — which is why the
+checksum holds in both modes.
 
 ### Goals is a plug, and the clamp is what makes the checksum real
 

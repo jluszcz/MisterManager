@@ -6,7 +6,7 @@
 //! does that -- and nothing in `calc` decides destinations.
 
 use crate::calc::planning::Lines;
-use crate::db::account;
+use crate::db::account::{self, AccountColor};
 use crate::db::goal::Goal;
 use crate::db::setting::Key;
 use crate::db::txn::{self, NewTxn};
@@ -24,6 +24,11 @@ pub enum Row {
     Transfer {
         to: AccountId,
         name: String,
+        /// The color the owner picked for that account, if any -- carried
+        /// beside its name so the Planning screen tints the row it heads the
+        /// same shade the Account column carries everywhere else. `plan` has
+        /// the account row in hand and the screen does not.
+        color: Option<AccountColor>,
         cents: Cents,
         lines: Vec<(Line, Cents)>,
     },
@@ -214,12 +219,12 @@ fn container_names(db: &Db, ids: &[AccountId]) -> Result<Vec<String>> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Landing {
     /// The key names this goal, which sits in this container.
-    Goal { goal: String, container: String },
+    Goal { goal: String, container: Container },
     /// The key names this account directly -- the two lines with no goal
     /// behind them.
-    Account { name: String },
+    Account { account: Container },
     /// The plug, spread over the unclaimed goals of this one container.
-    Spread { container: String },
+    Spread { container: Container },
     /// The plug with nowhere single to land: unclaimed goals sit in all of
     /// these containers, and there is no rule for dividing one amount.
     Ambiguous { containers: Vec<String> },
@@ -247,6 +252,25 @@ impl Landing {
     }
 }
 
+/// An account a landing names, as a screen needs it: what to call it, and
+/// which account it is.
+///
+/// The id is here so the Planning screen can tint a destination the same
+/// color the Account column carries on every other screen -- a container
+/// named in one shade on Savings and another on Planning would be two
+/// screens disagreeing about the same account. The color travels with it
+/// rather than being looked up again, because `wiring` has the account row
+/// in hand and the screen does not.
+///
+/// Only where *one* account is named: an ambiguous plug spans several, and
+/// there is no single color for a list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Container {
+    pub id: AccountId,
+    pub name: String,
+    pub color: Option<AccountColor>,
+}
+
 /// One line, where it lands, and what its name would suggest if it landed
 /// nowhere.
 #[derive(Debug, Clone)]
@@ -271,7 +295,14 @@ pub struct Wiring {
 /// key is reported as itself rather than taking the whole block down.
 pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
     let accounts = account::list(db)?;
-    let name_of = |id: AccountId| accounts.iter().find(|a| a.id == id).map(|a| a.name.clone());
+    let container_of = |id: AccountId| {
+        accounts.iter().find(|a| a.id == id).map(|a| Container {
+            id: a.id,
+            name: a.name.clone(),
+            color: a.color,
+        })
+    };
+    let name_of = |id: AccountId| container_of(id).map(|c| c.name);
 
     let mut landings: Vec<(Line, Landing)> = Vec::new();
     for line in Line::ALL {
@@ -284,7 +315,7 @@ pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
                     None => Landing::Dangling {
                         key: key.name().to_string(),
                     },
-                    Some(goal) => match name_of(goal.container_account_id) {
+                    Some(goal) => match container_of(goal.container_account_id) {
                         None => Landing::Dangling {
                             key: key.name().to_string(),
                         },
@@ -297,11 +328,11 @@ pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
             },
             Destination::Account(key) => match setting::get(db, key)? {
                 None => Landing::Withdrawal,
-                Some(id) => match name_of(id) {
+                Some(id) => match container_of(id) {
                     None => Landing::Dangling {
                         key: key.name().to_string(),
                     },
-                    Some(name) => Landing::Account { name },
+                    Some(account) => Landing::Account { account },
                 },
             },
         };
@@ -317,7 +348,7 @@ pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
     let containers = spread_containers(&shares_of(&with_balances));
     let spread = match containers.len() {
         0 => Landing::Nowhere,
-        1 => match name_of(containers[0]) {
+        1 => match container_of(containers[0]) {
             Some(container) => Landing::Spread { container },
             None => Landing::Nowhere,
         },
@@ -570,9 +601,11 @@ fn merge_transfer(
         lines.push((line, cents));
         return Ok(());
     }
+    let account = account::get(db, to)?;
     transfers.push(Row::Transfer {
         to,
-        name: account::get(db, to)?.name,
+        name: account.name,
+        color: account.color,
         cents,
         lines: vec![(line, cents)],
     });
@@ -973,6 +1006,19 @@ mod tests {
             .landing
     }
 
+    /// The container an account code names, as `wiring` reports it. Read
+    /// back out of the database rather than written out, because a
+    /// `Container` carries the account's id and its color as well as its
+    /// name -- and the id is a rowid the fixture does not name.
+    fn container(db: &db::Db, code: &str) -> Container {
+        let account = account::by_code(db, code, Kind::Cash).unwrap().unwrap();
+        Container {
+            id: account.id,
+            name: account.name,
+            color: account.color,
+        }
+    }
+
     #[test]
     fn wiring_reports_a_configured_line_with_its_goal_and_container() {
         let (db, _, _) = configured();
@@ -980,7 +1026,7 @@ mod tests {
             landing_of(&db, Line::MomAndDad),
             Landing::Goal {
                 goal: "Mom & Dad".to_string(),
-                container: "Brokerage".to_string(),
+                container: container(&db, "BKR"),
             }
         );
     }
@@ -1017,7 +1063,7 @@ mod tests {
         assert_eq!(
             landing_of(&db, Line::Goals),
             Landing::Spread {
-                container: "Rainy Day".to_string()
+                container: container(&db, "SAV")
             }
         );
     }
@@ -1393,6 +1439,7 @@ mod tests {
         let transfer = Row::Transfer {
             to: AccountId(1),
             name: "Rainy Day".to_string(),
+            color: None,
             cents: Cents::from_dollars(100),
             lines: vec![(Line::Bills, Cents::from_dollars(100))],
         };
@@ -1415,12 +1462,14 @@ mod tests {
             Row::Transfer {
                 to: savings,
                 name: "Rainy Day".to_string(),
+                color: None,
                 cents: Cents::from_dollars(8_069),
                 lines: vec![(Line::Bills, Cents::from_dollars(8_069))],
             },
             Row::Transfer {
                 to: AccountId(9_999),
                 name: "Nowhere".to_string(),
+                color: None,
                 cents: Cents::from_dollars(100),
                 lines: vec![(Line::Roth, Cents::from_dollars(100))],
             },

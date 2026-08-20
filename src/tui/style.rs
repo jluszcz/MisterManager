@@ -1,10 +1,13 @@
 //! Where color is decided.
 //!
-//! `ratatui::style::Color` is named here and nowhere else in `src/tui/`, the
-//! same way `ratatui` itself is named only inside this directory. Every
+//! `ratatui::style::Color` is *decided* here and nowhere else in `src/tui/`,
+//! the same way `ratatui` itself is named only inside this directory. Every
 //! function is a total mapping from a value the screens already hold to a
 //! color, so the choices are unit-testable without a terminal and no screen
-//! grows its own opinion about what red means.
+//! grows its own opinion about what red means. The type itself is re-exported
+//! below, because the helpers that carry one of these decisions to a cell have
+//! to name it to pass it -- reaching it as `style::Color` keeps every such
+//! mention visibly routed through the module that made the choice.
 //!
 //! The colors are `Color::Rgb`, not the ANSI names: a named color is whatever
 //! the user's terminal theme says it is, and a red-to-green ramp needs the
@@ -12,9 +15,15 @@
 //! terminal.
 
 use crate::db::AccountId;
+use crate::db::account::AccountColor;
 use crate::money::Cents;
 use crate::rate::Percent;
-use ratatui::style::Color;
+// Re-exported rather than merely used: the helpers that carry one of these
+// decisions to a cell -- `tui::tinted`, `form::field_line_tinted` -- have to
+// name the type to pass it, and routing every such mention through `style`
+// keeps the decisions themselves in one place while the plumbing stays
+// visibly plumbing.
+pub use ratatui::style::Color;
 
 /// The funding ramp's three stops: nothing saved, halfway, funded.
 ///
@@ -28,22 +37,29 @@ const RAMP_HIGH: (u8, u8, u8) = (70, 170, 70);
 /// Where [`RAMP_MID`] sits, and so the width of each leg.
 const RAMP_MIDPOINT: i64 = 50;
 
-/// The colors accounts are drawn from, in order.
+/// What each [`AccountColor`] actually looks like.
+///
+/// A total match rather than an array indexed by the enum: the name the
+/// database stores and the shade it draws in are then one fact, and no
+/// reordering can separate them. Which is the whole reason `account.color`
+/// holds a name instead of a palette index.
 ///
 /// No red and no green: those two are spoken for by [`NEGATIVE`] and by
 /// [`percent_color`]'s ramp, and an account tinted like a warning is a warning
 /// nobody reads. Mid-tone and saturated so they stay legible against a light
 /// terminal and a dark one both.
-const ACCOUNTS: [Color; 8] = [
-    Color::Rgb(70, 130, 180),
-    Color::Rgb(205, 133, 63),
-    Color::Rgb(150, 110, 200),
-    Color::Rgb(0, 150, 155),
-    Color::Rgb(200, 100, 150),
-    Color::Rgb(130, 140, 70),
-    Color::Rgb(90, 110, 210),
-    Color::Rgb(160, 120, 90),
-];
+fn palette(color: AccountColor) -> Color {
+    match color {
+        AccountColor::Blue => Color::Rgb(70, 130, 180),
+        AccountColor::Copper => Color::Rgb(205, 133, 63),
+        AccountColor::Violet => Color::Rgb(150, 110, 200),
+        AccountColor::Teal => Color::Rgb(0, 150, 155),
+        AccountColor::Rose => Color::Rgb(200, 100, 150),
+        AccountColor::Olive => Color::Rgb(130, 140, 70),
+        AccountColor::Indigo => Color::Rgb(90, 110, 210),
+        AccountColor::Tan => Color::Rgb(160, 120, 90),
+    }
+}
 
 /// A negative amount, in every column the app renders one.
 ///
@@ -119,17 +135,17 @@ pub fn delta_color(cents: Cents) -> Option<Color> {
 
 /// An account's color, the same on every screen that names it.
 ///
-/// Keyed on the id and not on the account's position in whatever list the
-/// screen is holding: `Ledger` is handed a kind-filtered list, so "the third
-/// account here" is a different account on Cash than it is on Credit, and the
-/// colors would disagree between two screens showing the same ledger.
+/// The owner's choice where there is one, and otherwise the shade the id
+/// derives. Deriving is what makes the field an *override* rather than a step
+/// the owner has to complete first: a freshly imported database has a
+/// distinct color per account before anybody has opened the Accounts screen,
+/// and clearing a color back to `—` returns exactly that.
 ///
-/// `rem_euclid` rather than `%` so a negative id -- which `account.id` being a
-/// rowid rules out, but the type does not -- wraps into the palette instead of
-/// panicking on a negative index. Ids run 1..n after an import, so accounts
-/// take distinct colors until there are more than [`ACCOUNTS`] holds.
-pub fn account_color(id: AccountId) -> Color {
-    ACCOUNTS[id.0.rem_euclid(ACCOUNTS.len() as i64) as usize]
+/// Which variant an unset account falls back to is [`AccountColor::derived`]'s
+/// to say -- a fact about the enum rather than about what a color looks like.
+/// This is the one place the two halves meet.
+pub fn account_color(id: AccountId, chosen: Option<AccountColor>) -> Color {
+    palette(chosen.unwrap_or_else(|| AccountColor::derived(id)))
 }
 
 /// `step/span` of the way from `from` to `to`, per channel.
@@ -177,15 +193,18 @@ mod tests {
     /// color on Cash, Savings, Recurring Transactions and Overview alike.
     #[test]
     fn an_account_keeps_one_color_however_often_it_is_asked_for() {
-        assert_eq!(account_color(AccountId(3)), account_color(AccountId(3)));
+        assert_eq!(
+            account_color(AccountId(3), None),
+            account_color(AccountId(3), None)
+        );
     }
 
     /// Ids run 1..n after an import, so a real database's accounts are all
     /// distinguishable -- which is the entire request.
     #[test]
     fn accounts_numbered_within_the_palette_all_differ() {
-        let colors: Vec<Color> = (1..=ACCOUNTS.len() as i64)
-            .map(|n| account_color(AccountId(n)))
+        let colors: Vec<Color> = (1..=AccountColor::ALL.len() as i64)
+            .map(|n| account_color(AccountId(n), None))
             .collect();
         let mut unique = colors.clone();
         unique.sort_by_key(|c| format!("{c:?}"));
@@ -198,27 +217,63 @@ mod tests {
     /// screen down.
     #[test]
     fn more_accounts_than_colors_wrap_instead_of_panicking() {
-        let wrapped = ACCOUNTS.len() as i64;
+        let wrapped = AccountColor::ALL.len() as i64;
         assert_eq!(
-            account_color(AccountId(wrapped)),
-            account_color(AccountId(0))
+            account_color(AccountId(wrapped), None),
+            account_color(AccountId(0), None)
         );
         assert_eq!(
-            account_color(AccountId(wrapped + 1)),
-            account_color(AccountId(1))
+            account_color(AccountId(wrapped + 1), None),
+            account_color(AccountId(1), None)
         );
         assert_eq!(
-            account_color(AccountId(-1)),
-            account_color(AccountId(wrapped - 1))
+            account_color(AccountId(-1), None),
+            account_color(AccountId(wrapped - 1), None)
         );
+    }
+
+    /// A color the owner picked outranks the one the id derives -- that is
+    /// the whole of what the Accounts screen's `Color` field does.
+    #[test]
+    fn a_chosen_color_overrides_the_one_the_id_derives() {
+        for color in AccountColor::ALL {
+            assert_eq!(account_color(AccountId(3), Some(color)), palette(color));
+        }
+    }
+
+    /// Clearing the field back to `—` has to put an account exactly where it
+    /// started, or the choice would be one the owner could not take back.
+    #[test]
+    fn clearing_a_color_returns_the_one_the_id_derives() {
+        let derived = account_color(AccountId(5), None);
+        assert_eq!(
+            account_color(AccountId(5), Some(AccountColor::derived(AccountId(5)))),
+            derived
+        );
+    }
+
+    /// Two accounts with the same chosen color are indistinguishable, which
+    /// is the owner's business -- but no *name* may draw as another name's
+    /// shade, or the eight choices would be fewer than eight.
+    #[test]
+    fn every_named_color_is_a_different_shade() {
+        let mut shades: Vec<String> = AccountColor::ALL
+            .iter()
+            .map(|c| format!("{:?}", palette(*c)))
+            .collect();
+        shades.sort();
+        shades.dedup();
+        assert_eq!(shades.len(), AccountColor::ALL.len(), "{shades:?}");
     }
 
     /// Red and green mean "below zero" and "barely funded" everywhere else on
     /// screen. An account tinted like either reads as a warning it is not.
     #[test]
     fn no_account_color_is_mistakable_for_the_negative_red() {
-        assert!(!ACCOUNTS.contains(&NEGATIVE));
-        assert!(!ACCOUNTS.contains(&POSITIVE));
+        for color in AccountColor::ALL {
+            assert_ne!(palette(color), NEGATIVE, "{color:?}");
+            assert_ne!(palette(color), POSITIVE, "{color:?}");
+        }
     }
 
     /// The reconciliation delta on the ledgers: above the target is money the

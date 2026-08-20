@@ -6,7 +6,7 @@
 
 use super::cursor::{Cursor, Scroll};
 use super::form::{Field, FormFields, next_in, parse_amount, parse_date, step_index};
-use crate::db::account::Account;
+use crate::db::account::{Account, AccountColor};
 use crate::db::recurring_txn::{Cadence, NewRecurringTxn, RecurringTxn};
 use crate::db::txn::Suggestion;
 use crate::db::{AccountId, RecurringTxnId};
@@ -22,6 +22,9 @@ pub struct Row {
     pub description: String,
     pub account_id: AccountId,
     pub account_code: String,
+    /// The color the owner picked for that account, if any -- snapshotted
+    /// beside its code, and for the same reason.
+    pub account_color: Option<AccountColor>,
     pub cents: Cents,
     pub cadence: Cadence,
     pub anchor_date: NaiveDate,
@@ -66,6 +69,7 @@ impl RecurringTxns {
             .map(|txn| Row {
                 account_id: txn.account_id,
                 account_code: self.account_code(txn.account_id).to_string(),
+                account_color: super::account_color_of(&self.accounts, txn.account_id),
                 owned: owned.get(&txn.id).copied().unwrap_or(0),
                 last_owned: last_owned.get(&txn.id).copied(),
                 recurring_txn_id: txn.id,
@@ -393,7 +397,7 @@ pub fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> usize {
             TableRow::new(vec![
                 Cell::from(if r.is_paycheck { "$" } else { " " }),
                 Cell::from(r.description.clone()),
-                account_cell(r.account_code.clone(), r.account_id),
+                account_cell(r.account_code.clone(), r.account_id, r.account_color),
                 amount(r.cents),
                 Cell::from(r.cadence.as_str()),
                 Cell::from(r.anchor_date.to_string()),
@@ -407,7 +411,7 @@ pub fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> usize {
     // cells go through the local `optional` above, which does not right-align.
     let header = TableRow::new(vec![
         Cell::from(" "),
-        Cell::from("RecurringTxn"),
+        Cell::from("Description"),
         Cell::from("Acct"),
         right_header("Amount"),
         Cell::from("Cadence"),
@@ -462,6 +466,7 @@ mod tests {
                 kind: Kind::Cash,
                 sort: 0,
                 group: Group::Savings,
+                color: None,
             },
             Account {
                 id: AccountId(2),
@@ -470,6 +475,7 @@ mod tests {
                 kind: Kind::Cash,
                 sort: 1,
                 group: Group::Savings,
+                color: None,
             },
         ]
     }
@@ -935,6 +941,70 @@ mod tests {
             .collect()
     }
 
+    /// The bug this pins: a `Cell`'s own style covers its whole area, and a
+    /// table's `row_highlight_style` is patched over the row *after* the
+    /// cells draw -- so `REVERSED` used to turn each tinted cell's padding
+    /// into a solid block of background the full width of its column. `Acct`
+    /// is five wide holding three characters and `Amount` twelve holding
+    /// nine, and the two sit side by side here with nothing between them, so
+    /// a negative row read as one wide column of the wrong color. Only
+    /// negative rows showed it, because a negative amount is the only figure
+    /// in that column carrying a foreground at all.
+    ///
+    /// Stated as "no space is colored", which is the general fact: it holds
+    /// for the columns that abut and for the ones that do not.
+    #[test]
+    fn the_cursor_row_tints_its_characters_and_not_its_padding() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Color;
+
+        let mut list = screen();
+        // Mortgage: the negative row, and the one the screenshots showed.
+        list.select_next();
+        assert!(list.selected().unwrap().cents < Cents::ZERO);
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &list);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        // Row 0 is the border and row 1 the header, so the cursor sits on
+        // row 3 -- the second data row.
+        let y = 3;
+        let row: String = (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect();
+        assert!(row.contains("Mortgage"), "{row:?}");
+
+        for x in 0..MIN_WIDTH {
+            let cell = &buffer[(x, y)];
+            if cell.symbol() == " " {
+                assert_eq!(
+                    cell.fg,
+                    Color::Reset,
+                    "padding at column {x} is tinted: {row:?}"
+                );
+            }
+        }
+
+        // And the characters themselves still carry their colors -- the fix
+        // narrows the tint rather than dropping it.
+        let colored = |needle: &str, color: Color| {
+            assert_eq!(
+                buffer[(super::super::column_of(&row, needle), y)].fg,
+                color,
+                "{needle:?} is not tinted in {row:?}"
+            );
+        };
+        colored(
+            "CHK",
+            super::super::style::account_color(AccountId(1), None),
+        );
+        colored("-1,200.00", super::super::style::NEGATIVE);
+    }
+
     /// `Amount` and `Rows` are the two right-aligned columns, so they are the
     /// two headers that must end where their figures do. `Last` is left with
     /// its cells, which the local `optional` does not right-align.
@@ -944,7 +1014,7 @@ mod tests {
         let header = super::super::ends_in_order(
             &lines[1],
             &[
-                "RecurringTxn",
+                "Description",
                 "Acct",
                 "Amount",
                 "Cadence",

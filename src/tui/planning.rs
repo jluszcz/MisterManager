@@ -8,14 +8,15 @@ use super::form::{Field, FormFields, next_in, parse_amount, parse_date, step_ind
 use super::style::Tone;
 use crate::calc;
 use crate::calc::planning::{Plan, PlanSettings};
+use crate::db::account::AccountColor;
 use crate::db::bill::{self, Bill};
 use crate::db::setting::{self, key};
-use crate::db::{BillId, Db};
+use crate::db::{AccountId, BillId, Db};
 use crate::gate::Gate;
 use crate::money::Cents;
 use crate::plan_line::{Destination, Line};
 use crate::rate::Percent;
-use crate::transfer::{self, Landing, Wiring};
+use crate::transfer::{self, Container, Landing, Wiring};
 use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
 
@@ -159,6 +160,58 @@ pub struct Row {
     /// so there is no amount to hand [`super::amount`]. Only [`Row::figure`]
     /// reads it off money, which is why a count can never render red.
     pub tone: Tone,
+    /// The one account this row names, if it names one, and which of the
+    /// three cells holds it.
+    ///
+    /// One field rather than one per column, because a row naming two
+    /// accounts is not a state this screen has -- a transfer heads its own
+    /// account, a destination names a goal's container or the account the
+    /// line points at, and nothing names both. Making that unrepresentable
+    /// is cheaper than checking it.
+    pub account: Option<Tint>,
+}
+
+/// Which cell of a [`Row`] a tint applies to.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Column {
+    /// The transfers block: each row is headed by the account its money
+    /// lands in, and the name is the row's label.
+    Label,
+    /// The two account-backed destination lines, which name an account
+    /// where the others name a goal.
+    Value,
+    /// A goal's container, or the one container the plug spreads over.
+    Extra,
+}
+
+/// An account a row names, the cell it names it in, and the color it draws
+/// in.
+///
+/// The same tint the Account column carries on every other screen, resolved
+/// through [`super::style::account_color`] like every other one: an account
+/// named in one shade on Savings and another here would be two screens
+/// disagreeing about the same account.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Tint {
+    pub column: Column,
+    pub id: AccountId,
+    pub color: Option<AccountColor>,
+}
+
+impl Tint {
+    fn of(container: &Container, column: Column) -> Tint {
+        Tint {
+            column,
+            id: container.id,
+            color: container.color,
+        }
+    }
+
+    /// This tint's color, if it applies to `column`.
+    fn color_in(tint: Option<Tint>, column: Column) -> Option<super::style::Color> {
+        tint.filter(|t| t.column == column)
+            .map(|t| super::style::account_color(t.id, t.color))
+    }
 }
 
 impl Row {
@@ -171,6 +224,7 @@ impl Row {
             edit: String::new(),
             bold: false,
             tone: Tone::Plain,
+            account: None,
         }
     }
 
@@ -257,10 +311,23 @@ impl Row {
     /// as a question rather than a setting: nothing is stored until the
     /// owner answers it.
     fn destination(w: &Wiring) -> Row {
+        // Which of the two right-hand cells names an account, if either.
+        // The account-backed lines name theirs in `value`; every other
+        // landing that names one at all puts its container in `extra`.
+        let mut tint = None;
         let (value, mut extra) = match &w.landing {
-            Landing::Goal { goal, container } => (goal.clone(), container.clone()),
-            Landing::Account { name } => (name.clone(), String::new()),
-            Landing::Spread { container } => ("spread".to_string(), container.clone()),
+            Landing::Goal { goal, container } => {
+                tint = Some(Tint::of(container, Column::Extra));
+                (goal.clone(), container.name.clone())
+            }
+            Landing::Account { account } => {
+                tint = Some(Tint::of(account, Column::Value));
+                (account.name.clone(), String::new())
+            }
+            Landing::Spread { container } => {
+                tint = Some(Tint::of(container, Column::Extra));
+                ("spread".to_string(), container.name.clone())
+            }
             // Named while they fit and counted past that: the cell is
             // right-aligned, so an overflowing list would lose its *leading*
             // characters and read as a shorter list of the wrong containers.
@@ -281,6 +348,16 @@ impl Row {
         };
         if let Some(goal) = &w.suggestion {
             extra = format!("{}?", goal.name);
+            // The cell is a goal's name now, not a container's.
+            if matches!(
+                tint,
+                Some(Tint {
+                    column: Column::Extra,
+                    ..
+                })
+            ) {
+                tint = None;
+            }
         }
         Row {
             label: format!("  {}", w.line.label()),
@@ -312,6 +389,7 @@ impl Row {
             editable: (matches!(w.line.destination(), Destination::Goal(_))
                 && w.line.gate().is_none())
             .then_some(Editable::Destination(w.line)),
+            account: tint,
             ..Row::blank()
         }
     }
@@ -378,9 +456,26 @@ fn build(view: &View) -> Result<Vec<Row>> {
             for row in &view.transfers {
                 match row {
                     transfer::Row::Transfer {
-                        name, cents, lines, ..
+                        to,
+                        name,
+                        color,
+                        cents,
+                        lines,
                     } => {
-                        rows.push(Row::total(&format!("  {name}"), *cents));
+                        // The account this row's money lands in, named in the
+                        // label column -- so it is tinted there rather than
+                        // in the two columns a destination row uses. The
+                        // lines beneath it are the plan's own labels and name
+                        // no account, so they stay plain: the account is said
+                        // once, at the head of the group it heads.
+                        rows.push(Row {
+                            account: Some(Tint {
+                                column: Column::Label,
+                                id: *to,
+                                color: *color,
+                            }),
+                            ..Row::total(&format!("  {name}"), *cents)
+                        });
                         for (line, amount) in lines {
                             rows.push(Row::figure(&format!("    {}", line.label()), *amount));
                         }
@@ -925,7 +1020,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line as TextLine;
-use ratatui::widgets::{Block, Cell, Clear, Paragraph, Row as TableRow, Table, Wrap};
+use ratatui::widgets::{Block, Clear, Paragraph, Row as TableRow, Table, Wrap};
 
 pub fn render_bill(frame: &mut Frame, form: &BillForm) {
     let lines: Vec<TextLine> = BillField::ORDER
@@ -1006,14 +1101,20 @@ pub fn render(frame: &mut Frame, area: Rect, planning: &Planning) -> usize {
         .rows()
         .iter()
         .map(|r| {
-            let value = Cell::from(TextLine::from(r.value.clone()).right_aligned());
+            let tint = |column| Tint::color_in(r.account, column);
             let row = TableRow::new(vec![
-                Cell::from(r.label.clone()),
-                match super::style::tone_color(r.tone) {
-                    Some(color) => value.style(Style::default().fg(color)),
-                    None => value,
-                },
-                Cell::from(TextLine::from(r.extra.clone()).right_aligned()),
+                super::tinted(TextLine::from(r.label.clone()), tint(Column::Label)),
+                super::tinted(
+                    TextLine::from(r.value.clone()).right_aligned(),
+                    // Tone first: red says this plan will not run and amber
+                    // says there is a gap worth filling, and neither may be
+                    // displaced by a tint that only says which account.
+                    super::style::tone_color(r.tone).or_else(|| tint(Column::Value)),
+                ),
+                super::tinted(
+                    TextLine::from(r.extra.clone()).right_aligned(),
+                    tint(Column::Extra),
+                ),
             ]);
             if r.bold { row.style(bold) } else { row }
         })
@@ -1138,6 +1239,7 @@ mod tests {
             transfer::Row::Transfer {
                 to: crate::db::AccountId(1),
                 name: "Rainy Day".to_string(),
+                color: None,
                 cents: l.bills + l.current_housing + l.goals + l.roth,
                 lines: vec![
                     (Line::Bills, l.bills),
@@ -1149,6 +1251,7 @@ mod tests {
             transfer::Row::Transfer {
                 to: crate::db::AccountId(2),
                 name: "Brokerage".to_string(),
+                color: None,
                 cents: l.future_housing + l.mom_and_dad + l.emergency_fund,
                 lines: vec![
                     (Line::FutureHousing, l.future_housing),
@@ -1159,6 +1262,7 @@ mod tests {
             transfer::Row::Transfer {
                 to: crate::db::AccountId(3),
                 name: "Nest Egg".to_string(),
+                color: None,
                 cents: l.retirement + l.investment,
                 lines: vec![
                     (Line::Retirement, l.retirement),
@@ -1190,10 +1294,21 @@ mod tests {
         }
     }
 
-    fn in_goal(name: &str, container: &str) -> Landing {
+    /// A container by name, with an invented id so the two in this fixture
+    /// are distinguishable -- the screen tints by id, so two containers
+    /// sharing one would stop the tint tests saying anything.
+    fn container(name: &str) -> Container {
+        Container {
+            id: AccountId(if name == "Brokerage" { 2 } else { 1 }),
+            name: name.to_string(),
+            color: None,
+        }
+    }
+
+    fn in_goal(name: &str, container_name: &str) -> Landing {
         Landing::Goal {
             goal: name.to_string(),
-            container: container.to_string(),
+            container: container(container_name),
         }
     }
 
@@ -1208,7 +1323,7 @@ mod tests {
             wired(
                 Line::Goals,
                 Landing::Spread {
-                    container: "Rainy Day".to_string(),
+                    container: container("Rainy Day"),
                 },
             ),
             wired(Line::Roth, in_goal("Roth IRA", "Rainy Day")),
@@ -1303,6 +1418,60 @@ mod tests {
             .join("\n");
 
         assert!(drawn.contains("2026-08-29*"), "{drawn}");
+    }
+
+    /// The tint reaches the screen, and reaches the container's name rather
+    /// than the goal's. `render` puts the tone ahead of it on the value
+    /// column -- red and amber carry instructions where a tint only says
+    /// which account -- which no landing currently exercises, because every
+    /// landing carrying an account is one that resolved.
+    #[test]
+    fn a_container_is_drawn_in_its_accounts_color() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        // A dangling account key: red, and naming nothing that exists.
+        let mut v = view(None, None);
+        v.wiring = wiring();
+        let mut planning = Planning::new();
+        planning.set_view(v).unwrap();
+
+        let height = planning.rows().len() as u16 + 5;
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &planning);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        // The destination row, located by its label: the screen leads with
+        // the transfers, which name accounts of their own, so a search over
+        // the whole buffer would find one of those instead.
+        // Both needles, because the transfer block above carries a row
+        // under the same label -- the destination row is the one that also
+        // names the container.
+        let (y, line) = (0..height)
+            .map(|y| {
+                (
+                    y,
+                    (0..MIN_WIDTH)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>(),
+                )
+            })
+            .find(|(_, line)| line.contains(Line::MomAndDad.label()) && line.contains("Brokerage"))
+            .expect("no Mom & Dad destination row");
+        let fg = |needle: &str| buffer[(super::super::column_of(&line, needle), y)].fg;
+
+        // `Mom & Dad` lands in Brokerage, whose container name is tinted.
+        assert_eq!(
+            fg("Brokerage"),
+            super::super::style::account_color(AccountId(2), None),
+            "{line:?}"
+        );
+        // And the goal's own name is not an account, so it stays plain.
+        assert_eq!(fg("Mom & Dad"), ratatui::style::Color::Reset, "{line:?}");
     }
 
     #[test]
@@ -1457,6 +1626,207 @@ mod tests {
         let row = destination(&planning, Line::Bills);
         assert_eq!(row.value, "no such goal");
         assert_eq!(row.tone, Tone::Negative);
+    }
+
+    /// The tint reaches the transfer's account name and stops at the indent
+    /// in front of it. Planning indents its labels to show nesting, and an
+    /// indent is structure rather than content -- a colored run of leading
+    /// spaces is invisible until something reverses the row, and then it is
+    /// a block of background sitting in front of the name.
+    #[test]
+    fn a_transfer_label_is_tinted_from_its_first_glyph() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let planning = screen();
+        let height = planning.rows().len() as u16 + 5;
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &planning);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let (y, line) = (0..height)
+            .map(|y| {
+                (
+                    y,
+                    (0..MIN_WIDTH)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>(),
+                )
+            })
+            .find(|(_, line)| line.contains("Rainy Day") && !line.contains("spread"))
+            .expect("no Rainy Day transfer row");
+
+        let at = super::super::column_of(&line, "Rainy Day");
+        let expected = super::super::style::account_color(AccountId(1), None);
+        assert_eq!(buffer[(at, y)].fg, expected, "{line:?}");
+        // The indent in front of it is untinted, and so is everything before.
+        for x in 0..at {
+            assert_eq!(
+                buffer[(x, y)].fg,
+                super::super::style::Color::Reset,
+                "column {x} of {line:?} is tinted"
+            );
+        }
+    }
+
+    /// The transfers block heads each row with the account the money lands
+    /// in, so that name is tinted like the same account everywhere else --
+    /// in the *label* column, which is where a transfer names its account
+    /// and where no other row on the screen names one.
+    #[test]
+    fn a_transfer_row_is_tinted_by_the_account_it_lands_in() {
+        let planning = screen();
+        let row = planning
+            .rows()
+            .iter()
+            .find(|r| r.label.trim() == "Rainy Day")
+            .expect("no Rainy Day transfer row");
+        assert_eq!(
+            row.account,
+            Some(Tint {
+                column: Column::Label,
+                id: AccountId(1),
+                color: None
+            })
+        );
+    }
+
+    /// The account is said once, at the head of the group it heads. The
+    /// lines beneath it are the plan's own labels and name no account, so a
+    /// tint on them would claim they did.
+    #[test]
+    fn the_lines_under_a_transfer_carry_no_tint_of_their_own() {
+        let planning = screen();
+        let rows = planning.rows();
+        let head = rows
+            .iter()
+            .position(|r| r.label.trim() == "Rainy Day")
+            .expect("no Rainy Day transfer row");
+        // Every row until the next one carrying a tint or heading a block.
+        let children = rows[head + 1..]
+            .iter()
+            .take_while(|r| r.label.starts_with("    "));
+        let mut counted = 0;
+        for child in children {
+            assert_eq!(child.account, None, "{:?} is tinted", child.label);
+            counted += 1;
+        }
+        assert!(counted > 0, "the transfer had no lines under it");
+    }
+
+    /// Money leaving the tracked system lands in no account, so the
+    /// Withdrawal row has nothing to be tinted by -- the same way the
+    /// Destinations block draws a withdrawal plain.
+    #[test]
+    fn a_withdrawal_row_carries_no_tint() {
+        let mut v = view(None, None);
+        v.transfers = vec![transfer::Row::Withdrawal {
+            line: Line::Retirement,
+            cents: Cents::from_dollars(2_070),
+        }];
+        let mut planning = Planning::new();
+        planning.set_view(v).unwrap();
+
+        let row = planning
+            .rows()
+            .iter()
+            .find(|r| r.label.trim() == "Withdrawal")
+            .expect("no Withdrawal row");
+        assert_eq!(row.account, None);
+    }
+
+    /// A container named here is the same account named on Savings and on the
+    /// ledgers, so it takes the same color -- which is the whole request.
+    /// It sits in the `extra` column, where the container name goes.
+    #[test]
+    fn a_destination_carries_its_containers_color_in_the_extra_column() {
+        let planning = screen();
+        let row = destination(&planning, Line::MomAndDad);
+        assert_eq!(row.extra, "Brokerage");
+        // In the extra column, where the container name goes -- the value
+        // column names a *goal*, which belongs to no account.
+        assert_eq!(
+            row.account,
+            Some(Tint {
+                column: Column::Extra,
+                id: AccountId(2),
+                color: None
+            })
+        );
+    }
+
+    /// The two account-backed lines name an account in the value column
+    /// rather than a container in the extra one, so that is where their tint
+    /// goes.
+    #[test]
+    fn an_account_backed_destination_carries_its_color_in_the_value_column() {
+        let planning = screen_with(
+            Line::Retirement,
+            Landing::Account {
+                account: container("Brokerage"),
+            },
+        );
+        let row = destination(&planning, Line::Retirement);
+        assert_eq!(row.value, "Brokerage");
+        assert_eq!(
+            row.account,
+            Some(Tint {
+                column: Column::Value,
+                id: AccountId(2),
+                color: None
+            })
+        );
+    }
+
+    /// The plug spreads into one container, and that container is an account
+    /// like any other.
+    #[test]
+    fn the_plugs_container_is_tinted_like_every_other_container() {
+        let planning = screen();
+        let row = destination(&planning, Line::Goals);
+        assert_eq!(row.value, "spread");
+        assert_eq!(
+            row.account,
+            Some(Tint {
+                column: Column::Extra,
+                id: AccountId(1),
+                color: None
+            })
+        );
+    }
+
+    /// A suggestion *displaces* the container, so what is in that cell is a
+    /// goal's name. Leaving the tint behind would paint a goal in an
+    /// account's color and claim a relationship that is not there.
+    #[test]
+    fn a_suggestion_leaves_no_container_tint_behind_it() {
+        let planning = screen();
+        let row = destination(&planning, Line::FutureHousing);
+        assert_eq!(row.extra, "Home Down Payment?");
+        assert_eq!(row.account, None);
+    }
+
+    /// Nothing single is named, so there is nothing to tint: an ambiguous
+    /// plug spans several containers and a withdrawal leaves the system.
+    #[test]
+    fn a_landing_naming_no_single_account_carries_no_tint() {
+        let ambiguous = screen_with(
+            Line::Goals,
+            Landing::Ambiguous {
+                containers: vec!["Rainy Day".to_string(), "Brokerage".to_string()],
+            },
+        );
+        let row = destination(&ambiguous, Line::Goals);
+        assert_eq!(row.account, None);
+
+        let plain = screen();
+        let withdrawal = destination(&plain, Line::Retirement);
+        assert_eq!(withdrawal.value, "withdrawal");
+        assert_eq!(withdrawal.account, None);
     }
 
     /// The Roth and Emergency Fund lines borrow the *gate's* key -- one id,
@@ -2161,6 +2531,7 @@ mod tests {
             transfer::Row::Transfer {
                 to: crate::db::AccountId(1),
                 name: "Brokerage".to_string(),
+                color: None,
                 cents: Cents(123_456),
                 lines: Vec::new(),
             },

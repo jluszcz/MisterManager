@@ -9,16 +9,17 @@ mm            # launch the application
 ```
 
 Screens are `1` Overview, `2` Cash, `3` Credit, `4` Savings, `5` Planning,
-`6` Funds, `7` Recurring Txns, `8` Recurring Goals, `9` Accounts; `q` quits.
+`6` Funds, `7` Recurring Goals, `8` Recurring Txns, `9` Accounts; `q` quits.
 Accounts read by the name you gave them — `Everyday`, `Rainy Day` — everywhere
-but Recurring Txns, whose columns leave room only for the code.
+but Recurring Txns, whose columns leave room only for the code, and each one in
+the color you gave it on screen `9`.
 Tabs `7` and `8` are abbreviated because the bar is a row of shortcuts; each
 screen's own title spells its name out. The screens are laid out for a terminal
 at least 120 columns wide. Overview stacks the accounts in bands — checking, then
 savings, then the cards — with a subtotal under each and a total under each
 kind; its `←`/`→` scrub the Paycheck-Eve date against the baseline derived
-from the paycheck transaction, and Planning quotes its excess at whatever that
-scrub leaves it at. Cash and Credit share one month: `[` and `]`
+from the paycheck transaction — `Shift+←`/`Shift+→` move it a week at a time — and
+Planning quotes its excess at whatever that scrub leaves it at. Cash and Credit share one month: `[` and `]`
 step both so the two always compare the same weeks, and `Esc` returns them to
 the month around today. Each title ends with the balance of whatever `Tab`
 narrows the screen to — `Cash · Aug 2026 · All · Today $42,000.00` — which is
@@ -59,7 +60,8 @@ split, and where each line lands. `↑`/`↓` move between the editable constant
 and skip everything computed; `e` edits the selected one, `E` opens a bill's
 whole row — label, amount, and category — `a` adds a bill, `d` deletes the
 selected bill, and `p` pins the excess so the plan stops moving underneath a
-payday — pressing it again unpins. The excess is the checking balance at
+payday — pressing it again re-pins at whatever the excess reads now, and `P`
+unpins. The excess is the checking balance at
 Paycheck-Eve, so the Overview's `←`/`→` move the whole waterfall with it; a
 scrubbed plan names its date beside `Excess (Actual)`, and `t` and `p` act on
 the figures shown rather than on the derived date.
@@ -79,7 +81,7 @@ opens a one-field form asking for it; `Esc` leaves that fund's target blank
 rather than guessing, and the screen asks again the next time it has no
 answer.
 
-`7` Recurring Transactions holds the rows whose amount and date are known in
+`8` Recurring Transactions holds the rows whose amount and date are known in
 advance — the paycheck and the monthlies. `a` adds one, `e` edits, and
 `d` deletes it and *releases* its ledger rows rather than deleting them. `g`
 regenerates the selected one and `G` every one, and `P` marks the transaction
@@ -91,7 +93,7 @@ date the schedule no longer produces — the mortgage moved by hand from the
 *released* back to the ledger rather than deleted. It reports
 `removed / released / adopted / inserted` so all of that is visible.
 
-`8` Recurring Goals is the table each round of goals is created from: `a`,
+`7` Recurring Goals is the table each round of goals is created from: `a`,
 `e`, and `d`, with `d` refused while any goal still references the entry, and
 `s`, which opens the picker — `Space` toggles an entry, `Enter` creates every
 ticked one as a goal in the container the Savings screen's `Tab` names, all in
@@ -134,8 +136,8 @@ steps — the mapping is read before anything is cleared and written back
 after, so `--replace` cannot reopen it.
 
 The accounts arrive named after their codes, in the kind's default band. The
-name, band, position, interest policy and `Savings` block are all yours, set
-on screen `9`, and no import touches them again: `account` is deliberately
+name, color, band, position, interest policy and `Savings` block are all yours,
+set on screen `9`, and no import touches them again: `account` is deliberately
 outside the tables a `--replace` clears. Neither is `recurring_txn` — the
 rules you typed, and the paycheck flag among them, survive a re-import.
 
@@ -183,7 +185,7 @@ to re-enter.
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, and regeneration. |
 | `src/tui/` | The terminal UI: screens, forms, key handling. |
 | `src/tui/fund.rs` | The Funds screen and its form. |
-| `src/tui/accounts.rs` | The Accounts screen — the five things the workbook does not say about an account. |
+| `src/tui/accounts.rs` | The Accounts screen — the six things the workbook does not say about an account. |
 
 `ratatui` (which re-exports `crossterm`) is named only inside `src/tui/`, the
 same discipline that confines `rusqlite` to `src/db/` and `calamine` to

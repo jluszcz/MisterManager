@@ -111,11 +111,18 @@ pub(super) enum Topic {
     PlanTransfers,
 }
 
-const OVERVIEW: [Entry; 1] = [Entry {
-    key: "←/→",
-    label: Label::Own("scrub"),
-    detail: "Move the Paycheck-Eve column a day at a time. View state only: the baseline is derived from the paycheck recurring transaction, so nothing here is saved and restarting discards it.",
-}];
+const OVERVIEW: [Entry; 2] = [
+    Entry {
+        key: "←/→",
+        label: Label::Own("scrub"),
+        detail: "Move the Paycheck-Eve column a day at a time. View state only: the baseline is derived from the paycheck recurring transaction, so nothing here is saved and restarting discards it.",
+    },
+    Entry {
+        key: "Shift+←/→",
+        label: Label::Own("week"),
+        detail: "The same scrub, a week at a time. The paycheck runs on a fortnightly cadence, so a week is the step that reaches the middle of the next cycle in one press and the one after in two. Shift rather than Ctrl because macOS claims Ctrl and the arrows for its own spaces, and a key the terminal never receives is a key that does nothing with nothing on screen to say why.",
+    },
+];
 
 const LEDGER: [Entry; 11] = [
     Entry {
@@ -219,7 +226,7 @@ const SAVINGS: [Entry; 12] = [
     Entry {
         key: "n",
         label: Label::Own("new"),
-        detail: "Create a goal from scratch -- a name, a target and a date -- in the container Tab names. Not a, which is taken here by the allocation this screen is mostly used for. Goals created from recurring goal entries are s on screen 8, over on the table those entries live in.",
+        detail: "Create a goal from scratch -- a name, a target and a date -- in the container Tab names. Not a, which is taken here by the allocation this screen is mostly used for. Goals created from recurring goal entries are s on screen 7, over on the table those entries live in.",
     },
     Entry {
         key: "c",
@@ -238,7 +245,7 @@ const SAVINGS: [Entry; 12] = [
     },
 ];
 
-const PLANNING: [Entry; 7] = [
+const PLANNING: [Entry; 8] = [
     Entry {
         key: "e",
         label: Label::Own("edit"),
@@ -272,7 +279,12 @@ const PLANNING: [Entry; 7] = [
     Entry {
         key: "p",
         label: Label::Own("pin"),
-        detail: "Record today's excess and the date beside the live figure, so a later edit can be read against what it replaced. Pressing it again clears the pin.",
+        detail: "Freeze Excess (Actual) at its whole-dollar floor, so the waterfall holds still while a payday's legs are entered -- transfers land before the ad-hoc date, so each leg entered would otherwise collapse the excess under you with the rest still to go. Always pins, and replaces a pin already there rather than clearing it: the press after a forgotten pin is the next payday's, and the drift line under the plan exists to say a pin has gone stale, which a fresh pin is the answer to. The date moves with the figure, so the drift starts again from zero.",
+    },
+    Entry {
+        key: "P",
+        label: Label::Own("unpin"),
+        detail: "Put the waterfall back on the live balance -- the other half of the payday p covers, and the only way out of a pin. A capital here is not the usual \"same verb, wider object\": it is the inverse of p, which earns its own key because p always pins, and it sits beside p so the pair reads as one. Named on the footer only while something is pinned, though the key is live either way.",
     },
 ];
 
@@ -1044,7 +1056,10 @@ mod tests {
     /// so no footer names them.
     #[test]
     fn each_screen_topic_joins_the_footer_it_always_showed() {
-        assert_eq!(Topic::Overview.footer(), "←/→ scrub · 1-9 screens · q quit");
+        assert_eq!(
+            Topic::Overview.footer(),
+            "←/→ scrub · Shift+←/→ week · 1-9 screens · q quit"
+        );
         assert_eq!(
             Topic::Ledger.footer(),
             "[ ] month · Esc today · Tab account · / search · r target · a add · t transfer · p pay · e edit · d delete · q quit"
@@ -1055,7 +1070,7 @@ mod tests {
         );
         assert_eq!(
             Topic::Planning.footer(),
-            "e edit · E/a/d bill · t transfers · Enter why · p pin · 1-9 screens · q quit"
+            "e edit · E/a/d bill · t transfers · Enter why · p pin · P unpin · 1-9 screens · q quit"
         );
         assert_eq!(
             Topic::RecurringTxns.footer(),
@@ -1094,7 +1109,7 @@ mod tests {
     fn omitting_a_key_inside_a_shared_group_shrinks_it() {
         assert_eq!(
             Topic::Planning.footer_without(&["a"]),
-            "e edit · E/d bill · t transfers · Enter why · p pin · 1-9 screens · q quit"
+            "e edit · E/d bill · t transfers · Enter why · p pin · P unpin · 1-9 screens · q quit"
         );
     }
 

@@ -32,7 +32,7 @@ mod search;
 pub mod style;
 pub mod worksheet;
 
-use crate::db::account::Account;
+use crate::db::account::{Account, AccountColor};
 use crate::db::goal::GoalWithBalance;
 use crate::db::{AccountId, Db};
 use anyhow::{Result, ensure};
@@ -44,6 +44,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Cell, TableState};
 use std::time::Duration;
+use style::Color;
 
 /// How long a draw waits for input before looping. Nothing animates, so this
 /// decides how quickly a resize is picked up, and how closely a status
@@ -182,11 +183,59 @@ fn right_header(text: &str) -> Cell<'static> {
 }
 
 fn money_cell(cents: Cents, text: String) -> Cell<'static> {
-    let cell = Cell::from(TextLine::from(text).right_aligned());
-    match style::amount_color(cents) {
-        Some(color) => cell.style(Style::default().fg(color)),
-        None => cell,
+    tinted(
+        TextLine::from(text).right_aligned(),
+        style::amount_color(cents),
+    )
+}
+
+/// A cell whose color sits on its *text* rather than on the cell.
+///
+/// A `Cell`'s own style covers its whole area, padding included, and a
+/// table's `row_highlight_style` is patched over the row *after* the cells
+/// have drawn -- so `Style::patch` leaves each cell's foreground in place and
+/// `REVERSED` turns it into a background. A colored cell on the cursor row
+/// therefore used to render as a solid block the full width of its column,
+/// and two colored columns side by side read as one column of the wrong
+/// width. Styling the span instead leaves the padding to the row: nothing
+/// changes on an ordinary row, where padding has no glyphs to color, and on
+/// the cursor row the color covers exactly the characters it belongs to.
+///
+/// The color goes on each *span*, not on the `Line`: a line's own style
+/// fills its whole area exactly as a cell's does, so setting it there would
+/// move the block rather than remove it.
+///
+/// The tint also starts at the first glyph rather than at the start of the
+/// text. Planning indents its labels to show nesting, and an indent is
+/// structure rather than content -- a colored run of leading spaces is
+/// invisible until something reverses the row, and then it is a block of
+/// background in front of the name. Same rule as the padding, stated once.
+///
+/// `None` leaves the line alone entirely rather than setting `Color::Reset`,
+/// so a cell composes with the style its row already carries -- the ledger
+/// dims rows dated after today.
+fn tinted(mut line: TextLine<'static>, color: Option<Color>) -> Cell<'static> {
+    let Some(color) = color else {
+        return Cell::from(line);
+    };
+    // Split any leading indent off the first span, so the tint below starts
+    // at the first glyph rather than at the start of the cell.
+    let mut from = 0;
+    if let Some(span) = line.spans.first() {
+        let text = span.content.to_string();
+        let indent = text.len() - text.trim_start().len();
+        if indent > 0 {
+            let style = span.style;
+            line.spans[0] = Span::raw(text[..indent].to_string());
+            line.spans
+                .insert(1, Span::styled(text[indent..].to_string(), style));
+            from = 1;
+        }
     }
+    for span in line.spans.iter_mut().skip(from) {
+        span.style = span.style.patch(Style::default().fg(color));
+    }
+    Cell::from(line)
 }
 
 /// The same figure as a span, for the money that lands somewhere other than a
@@ -232,9 +281,22 @@ fn money_text(cents: Cents) -> String {
 /// which half of an account they show: Recurring Transactions prints the code,
 /// having no room for more; Overview, the ledgers and Savings print the name.
 /// The id is what ties them together, so the same account is the same color on
-/// all four.
-fn account_cell(text: String, id: AccountId) -> Cell<'static> {
-    Cell::from(text).style(Style::default().fg(style::account_color(id)))
+/// all four -- and `color` is the owner's choice for it, which every caller
+/// carries beside the id for exactly that reason.
+fn account_cell(text: String, id: AccountId, color: Option<AccountColor>) -> Cell<'static> {
+    tinted(TextLine::from(text), Some(style::account_color(id, color)))
+}
+
+/// An account's chosen color, looked up by id.
+///
+/// `None` for an account nobody has colored *and* for an id with no account:
+/// the two are the same answer here, because [`style::account_color`] falls
+/// back to the shade the id derives either way, and a corrupt row is not a
+/// reason to stop drawing the screen. It is the third of the trio beside
+/// [`account_code`] and [`account_name`], and exists so the screens holding
+/// their own `Vec<Account>` resolve it the one way.
+fn account_color_of(accounts: &[Account], id: AccountId) -> Option<AccountColor> {
+    accounts.iter().find(|a| a.id == id).and_then(|a| a.color)
 }
 
 /// A recurring goal entry's month, abbreviated for a table column.
@@ -313,6 +375,22 @@ fn ends_in_order(line: &str, labels: &[&str]) -> Vec<usize> {
             at
         })
         .collect()
+}
+
+/// The buffer *column* a needle starts at, for the tests that read a cell's
+/// color back off a drawn row.
+///
+/// Not `str::find`, which answers in bytes: every screen draws inside a
+/// border, and `│` is three bytes and one column. Reading the fg at a byte
+/// offset lands two columns to the right of the word asked for, which for a
+/// word longer than two characters is still inside it -- so the mistake
+/// passes rather than failing, and the test stops saying what it claims to.
+#[cfg(test)]
+fn column_of(line: &str, needle: &str) -> u16 {
+    let byte = line
+        .find(needle)
+        .unwrap_or_else(|| panic!("no {needle:?} in {line:?}"));
+    line[..byte].chars().count() as u16
 }
 
 pub fn run(db: Db, today: NaiveDate) -> Result<()> {
