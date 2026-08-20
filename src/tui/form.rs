@@ -838,6 +838,24 @@ pub(super) fn field_line_tinted(
     ])
 }
 
+/// The same as [`field_line_noted`], but the label is itself a [`Label`]
+/// rather than a plain `&str` -- the Reconcile modal's field label, which
+/// carries the same colored account segment its border does two lines above.
+///
+/// The pad is measured off the label's flattened character count, the same
+/// count `format!("{label:>12}  ")` would have padded to had the label stayed
+/// a `String` -- so a colored label lines up exactly where an uncolored one
+/// used to sit, and only the color has moved.
+pub(super) fn field_line_labeled(label: &Label, value: Label, focused: bool) -> TextLine<'static> {
+    let width = label.plain_text().trim().chars().count();
+    let mut spans = vec![Span::raw(" ".repeat(12usize.saturating_sub(width)))];
+    spans.extend(label_line(label).spans);
+    spans.push(Span::raw("  "));
+    spans.extend(label_line(&value).spans);
+    spans.push(Span::raw(trailer(focused, "")));
+    TextLine::from(spans)
+}
+
 /// The caret and the note that follow every field's value.
 fn trailer(focused: bool, note: &str) -> String {
     let caret = if focused { "▌" } else { "" };
@@ -871,9 +889,8 @@ pub(super) fn render_fields(
 }
 
 pub fn render_value(frame: &mut Frame, form: &ValueForm) {
-    let label_text = form.label().plain_text();
-    let lines = vec![field_line(
-        label_text.trim(),
+    let lines = vec![field_line_labeled(
+        form.label(),
         Label::from(form.value()),
         true,
     )];
@@ -1591,6 +1608,82 @@ mod tests {
             form.title().plain_text(),
             "Edit Target — Enter save · Esc cancel"
         );
+    }
+
+    /// `prepend` is invented for exactly this: "Edit " has to land ahead of a
+    /// label that already carries a colored account segment -- the Reconcile
+    /// modal's -- without flattening the segment on the way. The wording is
+    /// the same regression `a_value_forms_title_reads_edit_then_its_label`
+    /// guards for the plain case; this is its account-bearing sibling.
+    #[test]
+    fn the_value_forms_title_keeps_its_account_as_a_segment_through_prepend() {
+        let all = accounts();
+        let label = Label::plain("Target · ").account(Account::named(&all, AccountId(1)));
+        let form = ValueForm::new(label, "1,200.00");
+        let title = form.title();
+        assert_eq!(
+            title.plain_text(),
+            "Edit Target · Everyday — Enter save · Esc cancel"
+        );
+        assert_eq!(title.accounts().len(), 1);
+        assert_eq!(title.accounts()[0].id(), AccountId(1));
+    }
+
+    /// The Reconcile modal names its account twice -- once in the border and
+    /// once in the field label two lines down -- and both have to be the same
+    /// color, or the modal would draw one account two ways. `render_value`
+    /// used to flatten this label back to a `String` with `plain_text()`
+    /// before drawing it, which is exactly how that happened.
+    #[test]
+    fn the_value_forms_field_label_draws_its_account_in_the_accounts_color() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let all = accounts();
+        let label = Label::plain("Target · ").account(Account::named(&all, AccountId(1)));
+        let form = ValueForm::new(label, "1,200.00");
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+        terminal.draw(|frame| render_value(frame, &form)).unwrap();
+        let buffer = terminal.backend().buffer();
+
+        // The field label, not the border title: the title also says
+        // "Everyday" but is the only row carrying "Edit".
+        let (y, line) = (0..10u16)
+            .map(|y| {
+                (
+                    y,
+                    (0..80u16)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>(),
+                )
+            })
+            .find(|(_, line)| line.contains("Everyday") && !line.contains("Edit"))
+            .expect("the field label was not drawn");
+
+        let expected = crate::tui::style::account_color(AccountId(1), None);
+        let at = crate::tui::column_of(&line, "Everyday");
+        assert_eq!(buffer[(at, y)].fg, expected, "{line:?}");
+    }
+
+    /// `field_line_labeled` replaced a `format!("{label:>12}  ")` with a
+    /// pad span measured off `Label::plain_text()`. For a label with no
+    /// account the two must draw the identical characters, whether the label
+    /// is short enough to need padding or long enough to overrun it --
+    /// otherwise every other `ValueForm` (Planning's constants, Actual
+    /// Value, Birth Date) would have shifted along with the Reconcile fix.
+    #[test]
+    fn a_labeled_field_with_no_account_reads_identically_to_field_line() {
+        fn joined(line: &TextLine) -> String {
+            line.spans.iter().map(|s| s.content.as_ref()).collect()
+        }
+        for label in ["Target", "A Very Long Label Indeed"] {
+            for focused in [false, true] {
+                let plain = field_line(label, Label::from("26"), focused);
+                let labeled = field_line_labeled(&Label::from(label), Label::from("26"), focused);
+                assert_eq!(joined(&plain), joined(&labeled), "{label:?}");
+            }
+        }
     }
 
     /// One field means `Tab` has nowhere to go and `←`/`→` have nothing to
