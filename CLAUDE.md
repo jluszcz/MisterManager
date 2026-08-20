@@ -229,9 +229,10 @@ matches, since nothing but a test ties them together.
   enum because it is a fact about *it* — which variant an id lands on — while what a variant looks
   like is `tui::style::palette`'s to say and nothing else's, which is what keeps colour decided in
   one module.
-  Which screens honour that is not left to each screen: `tui::label::Account` is the only way an
-  account reaches a glyph and it colors what it draws, and `AccountName`/`AccountCode` have no
-  `Display`, so an account cannot be flattened into a `String` on the way.
+  Which screens honour that is not left to each screen: an account reaches a glyph through
+  `tui::label::Account`, which colors what it draws, everywhere but the residual list in
+  `src/tui/CLAUDE.md`'s account-color section, and `AccountName`/`AccountCode` have no `Display`,
+  so an account cannot be flattened into a `String` on the way.
 - **Three things about the owner's accounts are in no cell of the workbook, and all three are
   configured on the Accounts screen.** The `Savings` sheet names its two blocks by *position* --
   `A:E` and `I:K` -- with no account code beside either, and nothing anywhere says which account is
