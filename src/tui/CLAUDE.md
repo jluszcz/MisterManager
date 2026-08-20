@@ -226,8 +226,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   unset line with nothing to suggest is drawn plain, because a warning that is always on is a
   warning nobody reads.
 - **A tinted cell colors its characters, never its padding and never its indent.** `tui::tinted`
-  is the one place that happens; `account_cell`, `money_cell`, `savings::percent`, Planning's three
-  columns and `form::field_line_tinted` all go through it or its rule. A `Cell`'s own style — and a
+  is the one place that happens; `account_cell`, `money_cell`, `savings::percent`,
+  `fund::tinted_percent`, Planning's three columns and `form::field_line_tinted` all go through it
+  or its rule. **A `Cell::style` carrying an `fg` anywhere under `src/tui/` is this bug**, and the
+  sweep is one line: `grep -rn '.style(Style::default().fg(' src/tui/` should match nothing outside
+  `mod.rs` and `style.rs`. A `Cell`'s own style — and a
   `Line`'s — covers the cell's whole area, and a table's `row_highlight_style` is patched over the
   row *after* its cells have drawn, so `Style::patch` leaves each cell's foreground in place and
   `REVERSED` turns it into a background. A colored cell on the cursor row therefore drew as a solid

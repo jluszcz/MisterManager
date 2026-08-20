@@ -328,8 +328,19 @@ use ratatui::widgets::{Block, Cell, Row as TableRow, Table};
 
 /// A right-aligned percentage cell, or `—` where there is no figure.
 fn percent(bp: Option<BasisPoints>) -> Cell<'static> {
+    tinted_percent(bp, None)
+}
+
+/// The same cell in a color, for the one row that takes one.
+///
+/// Through `tui::tinted` rather than `Cell::style`, which would cover the
+/// cell's padding as well as its figure -- and `row_highlight_style` is
+/// patched over the row after its cells draw, so on the cursor row that
+/// padding becomes a block of background the full width of the column. See
+/// the tint invariant in `src/tui/CLAUDE.md`.
+fn tinted_percent(bp: Option<BasisPoints>, color: Option<style::Color>) -> Cell<'static> {
     let text = bp.map_or_else(|| "—".to_string(), format_bp);
-    Cell::from(TextLine::from(text).right_aligned())
+    super::tinted(TextLine::from(text).right_aligned(), color)
 }
 
 pub fn render_form(frame: &mut Frame, form: &FundForm) {
@@ -351,7 +362,7 @@ pub fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> usize {
         .map(|(i, r)| {
             let lowest = funds.furthest_down() == Some(i);
             let delta = match lowest {
-                true => percent(r.delta).style(Style::default().fg(style::NEGATIVE)),
+                true => tinted_percent(r.delta, Some(style::NEGATIVE)),
                 false => percent(r.delta),
             };
             let row = TableRow::new(vec![
@@ -662,6 +673,61 @@ mod tests {
         (0..9)
             .map(|y| (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect())
             .collect()
+    }
+
+    /// The one colored cell on this screen, held to the same rule as every
+    /// other: a `Cell`'s own style covers its padding, and
+    /// `row_highlight_style` is patched over the row *after* its cells draw,
+    /// so on the cursor row that padding becomes a block of background the
+    /// full width of the column. The furthest-down row is both the red one
+    /// and, here, the one under the cursor -- which is exactly when it shows.
+    #[test]
+    fn the_furthest_down_delta_tints_its_figure_and_not_its_padding() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut funds = screen();
+        // `furthest_down` is the third row, so park the cursor on it.
+        funds.select_last();
+        assert_eq!(funds.selected_index(), funds.furthest_down().unwrap());
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 9)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &funds);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let (y, line) = (0..9u16)
+            .map(|y| {
+                (
+                    y,
+                    (0..MIN_WIDTH)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>(),
+                )
+            })
+            .find(|(_, line)| line.contains("Domestic"))
+            .expect("no Domestic row");
+
+        // The delta figure carries the red. Located past the Actual column,
+        // because `4.00` also occurs inside the `54.00` two columns to its
+        // left and a plain search would find that one.
+        let past_actual = line.find("50.00").expect("no Actual column") + "50.00".len();
+        let rel = line[past_actual..].find("4.00").expect("no Delta column");
+        let at = line[..past_actual + rel].chars().count() as u16;
+        assert_eq!(buffer[(at, y)].fg, style::NEGATIVE, "{line:?}");
+        // ...and nothing that is not a character carries anything.
+        for x in 0..MIN_WIDTH {
+            if buffer[(x, y)].symbol() == " " {
+                assert_eq!(
+                    buffer[(x, y)].fg,
+                    style::Color::Reset,
+                    "padding at column {x} is tinted: {line:?}"
+                );
+            }
+        }
     }
 
     /// A right-aligned cell that gets truncated loses its *leading*
