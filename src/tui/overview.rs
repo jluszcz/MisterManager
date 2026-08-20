@@ -135,7 +135,8 @@ impl Overview {
                     Line {
                         account_id: Some(account.id),
                         color: account.color,
-                        label: account.name.clone(),
+                        // FIXME(task 2): tui::Account carries the id, the text and the color together.
+                        label: account.name.as_str().to_string(),
                         // Credit is stored as debt, and this screen is the
                         // only one that negates it -- which is what makes Net
                         // a single addition rather than a subtraction with a

@@ -245,7 +245,8 @@ impl RecurringTxnForm {
             RecurringTxnField::Account => self
                 .accounts
                 .get(self.account)
-                .map(|a| format!("{} — {}", a.code, a.name))
+                // FIXME(task 4): a Label with one Account segment, so the selector is tinted.
+                .map(|a| format!("{} — {}", a.code.as_str(), a.name.as_str()))
                 .unwrap_or_default(),
             RecurringTxnField::Cadence => Cadence::ALL[self.cadence].as_str().to_string(),
         }
@@ -461,8 +462,8 @@ mod tests {
         vec![
             Account {
                 id: AccountId(1),
-                code: "CHK".to_string(),
-                name: "Everyday".to_string(),
+                code: "CHK".into(),
+                name: "Everyday".into(),
                 kind: Kind::Cash,
                 sort: 0,
                 group: Group::Savings,
@@ -470,8 +471,8 @@ mod tests {
             },
             Account {
                 id: AccountId(2),
-                code: "SAV".to_string(),
-                name: "Rainy Day".to_string(),
+                code: "SAV".into(),
+                name: "Rainy Day".into(),
                 kind: Kind::Cash,
                 sort: 1,
                 group: Group::Savings,

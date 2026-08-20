@@ -1237,8 +1237,9 @@ impl App {
         for account in &accounts {
             rows.push(accounts_screen::Row {
                 account_id: account.id,
-                code: account.code.clone(),
-                name: account.name.clone(),
+                // FIXME(task 2): tui::Account carries the id, the text and the color together.
+                code: account.code.as_str().to_string(),
+                name: account.name.as_str().to_string(),
                 kind: account.kind,
                 group: account.group,
                 policy: account::interest_policy(&self.db, account.id)?,
@@ -1850,7 +1851,8 @@ impl App {
         let mut sheet = Worksheet::new(
             goal::BatchKind::Paycheck,
             container,
-            &name,
+            // seeds Worksheet's own container_name field, not a display of an account
+            name.as_str(),
             self.today,
             prefill,
         );

@@ -524,8 +524,8 @@ mod tests {
         vec![
             Account {
                 id: AccountId(1),
-                code: "CHK".to_string(),
-                name: "Everyday".to_string(),
+                code: "CHK".into(),
+                name: "Everyday".into(),
                 kind: Kind::Cash,
                 sort: 0,
                 group: Group::Savings,
@@ -533,8 +533,8 @@ mod tests {
             },
             Account {
                 id: AccountId(2),
-                code: "BKR".to_string(),
-                name: "Brokerage".to_string(),
+                code: "BKR".into(),
+                name: "Brokerage".into(),
                 kind: Kind::Cash,
                 sort: 1,
                 group: Group::Savings,

@@ -218,7 +218,8 @@ impl AccountForm {
             account_id: account.id,
             focus: AccountField::Name,
             kind: account.kind,
-            name: Field::given(account.name.clone()),
+            // seeds the form's editable Name field, not a display of an account
+            name: Field::given(account.name.as_str().to_string()),
             // The color the account is *being drawn in*, which for one
             // nobody has picked for is the shade its id derives rather than
             // `—`. Opening on `—` meant the first `→` jumped to the head of
@@ -529,8 +530,8 @@ mod tests {
     fn account(id: i64, name: &str, kind: Kind, group: Group) -> Account {
         Account {
             id: AccountId(id),
-            code: "CHK".to_string(),
-            name: name.to_string(),
+            code: "CHK".into(),
+            name: name.into(),
             kind,
             sort: 0,
             group,
@@ -922,8 +923,8 @@ mod savings_block_tests {
     fn account(id: i64, name: &str, kind: Kind, group: Group) -> Account {
         Account {
             id: AccountId(id),
-            code: "CHK".to_string(),
-            name: name.to_string(),
+            code: "CHK".into(),
+            name: name.into(),
             kind,
             sort: 0,
             group,

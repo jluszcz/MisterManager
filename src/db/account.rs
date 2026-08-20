@@ -1,6 +1,7 @@
 use super::{AccountId, Db};
 use anyhow::{Context, Result, bail, ensure};
-use rusqlite::{OptionalExtension, Row, params};
+use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
+use rusqlite::{OptionalExtension, Result as SqlResult, Row, ToSql, params};
 use std::str::FromStr;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -270,11 +271,96 @@ impl FromStr for AccountColor {
     }
 }
 
+/// The two pieces of text an account is named by, each its own type.
+///
+/// Neither implements `Display`, and that absence is the whole point. Every
+/// account that reaches a screen with no color on it gets there through a
+/// `format!` -- a `String` cannot carry a tint, so an account that becomes
+/// one has lost its color before any render function can see it. With no
+/// `Display`, that does not compile, and the only route from an account to a
+/// glyph is `tui::Account`, which colors what it draws.
+///
+/// `as_str` is the deliberate escape, for the handful of uses that are not
+/// displays of an account: a description prefill, a search filter folding
+/// case, a form seeding its editable field. It is named plainly rather than
+/// hidden, so reaching for it is visible in a diff.
+///
+/// `PartialEq<&str>` so an assertion reads as it always did, and
+/// `ToSql`/`FromSql` so `from_row` and every query are untouched.
+macro_rules! account_text {
+    ($name:ident, $what:literal) => {
+        #[doc = concat!("An account's ", $what, ".")]
+        ///
+        /// Text the database stores, and deliberately **not** something
+        /// `format!` will take:
+        ///
+        /// ```compile_fail
+        /// use mistermanager::db::{self, account::Kind};
+        /// let db = db::open_in_memory().unwrap();
+        /// let id = db::account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        /// let account = db::account::get(&db, id).unwrap();
+        /// println!("{}", account.name);
+        /// ```
+        #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+        pub struct $name(String);
+
+        impl $name {
+            /// The text, with no color on it.
+            ///
+            /// Not for drawing an account -- `tui::Account` draws one, and it
+            /// colors what it draws. This is for the uses that are not
+            /// displays at all.
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl From<&str> for $name {
+            fn from(s: &str) -> $name {
+                $name(s.to_string())
+            }
+        }
+
+        impl From<String> for $name {
+            fn from(s: String) -> $name {
+                $name(s)
+            }
+        }
+
+        impl PartialEq<&str> for $name {
+            fn eq(&self, other: &&str) -> bool {
+                self.0 == *other
+            }
+        }
+
+        impl ToSql for $name {
+            fn to_sql(&self) -> SqlResult<ToSqlOutput<'_>> {
+                self.0.to_sql()
+            }
+        }
+
+        impl FromSql for $name {
+            fn column_result(value: ValueRef<'_>) -> FromSqlResult<$name> {
+                String::column_result(value).map($name)
+            }
+        }
+    };
+}
+
+account_text!(
+    AccountCode,
+    "short code, as the workbook's `Constants` sheet carries it"
+);
+account_text!(
+    AccountName,
+    "name, which is the owner's rather than the workbook's"
+);
+
 #[derive(Clone, Debug)]
 pub struct Account {
     pub id: AccountId,
-    pub code: String,
-    pub name: String,
+    pub code: AccountCode,
+    pub name: AccountName,
     pub kind: Kind,
     pub sort: i64,
     pub group: Group,
@@ -427,6 +513,7 @@ pub fn checking(db: &Db) -> Result<Account> {
         found.len(),
         found
             .iter()
+            // names the offenders in the ambiguity error, not a display of an account
             .map(|a| a.name.as_str())
             .collect::<Vec<_>>()
             .join(", ")
@@ -736,7 +823,11 @@ mod tests {
         insert(&db, "BBB", "B Cash", Kind::Cash, 0).unwrap();
         insert(&db, "CCC", "C Credit", Kind::Credit, 0).unwrap();
 
-        let codes: Vec<String> = list(&db).unwrap().into_iter().map(|a| a.code).collect();
+        let codes: Vec<String> = list(&db)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.code.as_str().to_string())
+            .collect();
         // "cash" < "credit" alphabetically, so all cash accounts sort first;
         // within a kind, sort then code.
         assert_eq!(codes, vec!["BBB", "AAA", "CCC", "ZZZ"]);
@@ -753,14 +844,14 @@ mod tests {
         let cash_codes: Vec<String> = list_by_kind(&db, Kind::Cash)
             .unwrap()
             .into_iter()
-            .map(|a| a.code)
+            .map(|a| a.code.as_str().to_string())
             .collect();
         assert_eq!(cash_codes, vec!["BBB", "AAA"]);
 
         let credit_codes: Vec<String> = list_by_kind(&db, Kind::Credit)
             .unwrap()
             .into_iter()
-            .map(|a| a.code)
+            .map(|a| a.code.as_str().to_string())
             .collect();
         assert_eq!(credit_codes, vec!["CCC", "ZZZ"]);
     }
@@ -867,5 +958,18 @@ mod tests {
             assert_eq!(policy.as_str().parse::<InterestPolicy>().unwrap(), policy);
         }
         assert!("prorata".parse::<InterestPolicy>().is_err());
+    }
+
+    /// The names go to SQLite as text and come back as the same text. A `ToSql`
+    /// that stored the debug form would put `AccountName("Rainy Day")` in the
+    /// column, and every `by_code` lookup and every screen would read it back.
+    #[test]
+    fn an_accounts_name_and_code_survive_a_round_trip_through_the_database() {
+        let db = db::open_in_memory().unwrap();
+        let id = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let account = get(&db, id).unwrap();
+        assert_eq!(account.code, "SAV");
+        assert_eq!(account.name, "Rainy Day");
+        assert_eq!(account.name.as_str(), "Rainy Day");
     }
 }

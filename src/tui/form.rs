@@ -321,7 +321,8 @@ impl TxnForm {
             TxnField::Account => self
                 .accounts
                 .get(self.account)
-                .map(|a| format!("{} — {}", a.code, a.name))
+                // FIXME(task 4): a Label with one Account segment, so the selector is tinted.
+                .map(|a| format!("{} — {}", a.code.as_str(), a.name.as_str()))
                 .unwrap_or_default(),
         }
     }
@@ -643,7 +644,9 @@ impl TransferForm {
             return;
         }
         if let Some(card) = self.to_accounts.get(self.to) {
-            self.description.fill(format!("{} Payment", card.code));
+            // prefills a description, not a display of an account
+            self.description
+                .fill(format!("{} Payment", card.code.as_str()));
         }
     }
 
@@ -654,7 +657,8 @@ impl TransferForm {
     pub fn display(&self, field: TransferField) -> String {
         let account = |list: &[Account], i: usize| {
             list.get(i)
-                .map(|a| format!("{} — {}", a.code, a.name))
+                // FIXME(task 4): a Label with one Account segment, so the selector is tinted.
+                .map(|a| format!("{} — {}", a.code.as_str(), a.name.as_str()))
                 .unwrap_or_default()
         };
         match field {
@@ -678,7 +682,8 @@ impl TransferForm {
         ensure!(
             from.id != to.id,
             "a transfer needs two different accounts, not {} twice",
-            from.code
+            // names the source in an error about a transfer to itself
+            from.code.as_str()
         );
         let cents = parse_amount(self.amount.value())?;
         // `insert_transfer` applies the sign per the destination's kind, so a
@@ -1067,8 +1072,8 @@ mod tests {
         vec![
             Account {
                 id: AccountId(1),
-                code: "CHK".to_string(),
-                name: "Everyday".to_string(),
+                code: "CHK".into(),
+                name: "Everyday".into(),
                 kind: Kind::Cash,
                 sort: 0,
                 group: Group::Savings,
@@ -1076,8 +1081,8 @@ mod tests {
             },
             Account {
                 id: AccountId(2),
-                code: "SAV".to_string(),
-                name: "Rainy Day".to_string(),
+                code: "SAV".into(),
+                name: "Rainy Day".into(),
                 kind: Kind::Cash,
                 sort: 1,
                 group: Group::Savings,
@@ -1090,8 +1095,8 @@ mod tests {
         let mut all = accounts();
         all.push(Account {
             id: AccountId(3),
-            code: "CC1".to_string(),
-            name: "Card One".to_string(),
+            code: "CC1".into(),
+            name: "Card One".into(),
             kind: Kind::Credit,
             sort: 0,
             group: Group::Credit,
@@ -1099,8 +1104,8 @@ mod tests {
         });
         all.push(Account {
             id: AccountId(4),
-            code: "CC2".to_string(),
-            name: "Card Two".to_string(),
+            code: "CC2".into(),
+            name: "Card Two".into(),
             kind: Kind::Credit,
             sort: 1,
             group: Group::Credit,
