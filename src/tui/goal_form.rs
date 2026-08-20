@@ -9,6 +9,7 @@ use super::form::{
     Field, FormFields, field_line, field_line_noted, next_in, parse_date, parse_share,
     parse_whole_amount, render_fields, step_index,
 };
+use super::{Account, Label};
 use crate::db::goal::GoalEdit;
 use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
@@ -219,10 +220,7 @@ pub enum GoalTarget {
 /// border would then say one thing while the commit did another.
 #[derive(Debug)]
 enum Subject {
-    New {
-        container: AccountId,
-        container_name: String,
-    },
+    New { container: Account },
     Existing(GoalId),
 }
 
@@ -250,12 +248,9 @@ pub struct GoalForm {
 
 impl GoalForm {
     /// A blank form, for a goal that does not exist yet.
-    pub fn add(container: AccountId, container_name: &str) -> GoalForm {
+    pub fn add(container: Account) -> GoalForm {
         GoalForm {
-            subject: Subject::New {
-                container,
-                container_name: container_name.to_string(),
-            },
+            subject: Subject::New { container },
             focus: GoalField::Name,
             name: Field::prefilled(""),
             target: Field::prefilled(""),
@@ -290,18 +285,18 @@ impl GoalForm {
     /// container. Read off the same field the border is, so the write cannot
     /// land somewhere the form did not say it would.
     pub fn target(&self) -> GoalTarget {
-        match self.subject {
-            Subject::Existing(id) => GoalTarget::Update(id),
-            Subject::New { container, .. } => GoalTarget::Create(container),
+        match &self.subject {
+            Subject::Existing(id) => GoalTarget::Update(*id),
+            Subject::New { container } => GoalTarget::Create(container.id()),
         }
     }
 
-    pub fn title(&self) -> String {
+    pub fn title(&self) -> Label {
         match &self.subject {
-            Subject::Existing(_) => "Edit goal — Tab field · Enter save · Esc cancel".to_string(),
-            Subject::New { container_name, .. } => {
-                format!("New goal in {container_name} — Tab field · Enter save · Esc cancel")
-            }
+            Subject::Existing(_) => Label::from("Edit goal — Tab field · Enter save · Esc cancel"),
+            Subject::New { container } => Label::plain("New goal in ")
+                .account(container.clone())
+                .text(" — Tab field · Enter save · Esc cancel"),
         }
     }
 
@@ -568,9 +563,33 @@ pub fn render_close(frame: &mut Frame, form: &CloseForm) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::account::{self, Group, Kind};
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    fn accounts() -> Vec<account::Account> {
+        vec![
+            account::Account {
+                id: AccountId(1),
+                code: "SAV".into(),
+                name: "Rainy Day".into(),
+                kind: Kind::Cash,
+                sort: 0,
+                group: Group::Savings,
+                color: None,
+            },
+            account::Account {
+                id: AccountId(2),
+                code: "NST".into(),
+                name: "Nest Egg".into(),
+                kind: Kind::Cash,
+                sort: 1,
+                group: Group::Savings,
+                color: None,
+            },
+        ]
     }
 
     /// The container and its remainder matter only to `/N`; every test that
@@ -839,11 +858,28 @@ mod tests {
     /// ever had.
     #[test]
     fn a_goal_typed_from_scratch_opens_interest_eligible() {
-        let mut form = GoalForm::add(AccountId(1), "Rainy Day");
+        let mut form = GoalForm::add(Account::named(&accounts(), AccountId(1)));
         typed_goal(&mut form, GoalField::Name, "Couch");
         typed_goal(&mut form, GoalField::Target, "1000");
         assert_eq!(form.display(GoalField::Interest), "yes");
         assert!(form.commit().unwrap().interest_eligible);
+    }
+
+    /// A new goal's container is named in the border in the same color the
+    /// Account column would give it, since under the Savings screen's All
+    /// filter this is the only place on screen that says which container `n`
+    /// defaulted to.
+    #[test]
+    fn the_new_goal_title_names_its_container_as_an_account() {
+        let form = GoalForm::add(Account::named(&accounts(), AccountId(2)));
+        let title = form.title();
+        assert!(
+            title.plain_text().contains("New goal in Nest Egg"),
+            "{}",
+            title.plain_text()
+        );
+        assert_eq!(title.accounts().len(), 1);
+        assert_eq!(title.accounts()[0].id(), AccountId(2));
     }
 
     /// The field is a selector, so a keystroke meant for a text field must

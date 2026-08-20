@@ -3,9 +3,10 @@
 //! `style::account_color` decides what an account looks like; this module is
 //! what makes that decision unavoidable. [`Account`] holds an account's id,
 //! the text a screen shows for it, and the owner's color, with **no reader
-//! for the text outside this file**. So the only route from an account to a
-//! glyph is [`account_cell`], which colors what it draws, and a screen that
-//! wants an uncolored account has no way to ask for one.
+//! for the text outside this file**. So the only routes from an account to a
+//! glyph are [`account_cell`], which colors a table cell, and [`Label`]
+//! through [`label_line`], which does the same for a title -- and a screen
+//! that wants an uncolored account has no way to ask for one.
 //!
 //! That is a stronger arrangement than a helper every screen is supposed to
 //! remember. The tables all did remember; the titles and the form selectors
@@ -117,6 +118,105 @@ pub(super) fn account_cell(account: &Account) -> Cell<'static> {
     )
 }
 
+/// A string a view-state type may return that still knows which of its words
+/// are accounts.
+///
+/// A title cannot be a `String` and be tinted: `format!` flattens the account
+/// into text and the color is gone before any render function is reached,
+/// which is how every uncolored title on this app got that way. It cannot be
+/// a ratatui `Line` either -- view-state types hold no ratatui, so
+/// `Savings::title` could not return one. So it is neither: a sequence of
+/// plain runs and [`Account`]s, which [`label_line`] turns into spans and
+/// which a test can read without a terminal.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Label(Vec<Segment>);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Segment {
+    Plain(String),
+    Account(Account),
+}
+
+impl Label {
+    /// Opens a label with some text. [`Label::text`] appends more of it, and
+    /// [`Label::account`] appends the one kind of segment that takes a color.
+    pub fn plain(text: impl Into<String>) -> Label {
+        Label(vec![Segment::Plain(text.into())])
+    }
+
+    pub fn text(mut self, text: impl Into<String>) -> Label {
+        self.0.push(Segment::Plain(text.into()));
+        self
+    }
+
+    pub fn account(mut self, account: Account) -> Label {
+        self.0.push(Segment::Account(account));
+        self
+    }
+
+    /// The whole label as text, for the assertions that check wording.
+    ///
+    /// Not a `Display` impl: this type exists to stop an account being
+    /// flattened by accident, and a `Display` on the thing that holds one
+    /// would put the flattening back within reach of a `format!`.
+    pub fn plain_text(&self) -> String {
+        self.0
+            .iter()
+            .map(|s| match s {
+                Segment::Plain(text) => text.as_str(),
+                Segment::Account(account) => account.as_text(),
+            })
+            .collect()
+    }
+
+    /// The accounts this label names, for the assertions that check a title
+    /// names one *as an account* rather than as text.
+    pub fn accounts(&self) -> Vec<&Account> {
+        self.0
+            .iter()
+            .filter_map(|s| match s {
+                Segment::Account(account) => Some(account),
+                Segment::Plain(_) => None,
+            })
+            .collect()
+    }
+}
+
+impl From<&str> for Label {
+    fn from(text: &str) -> Label {
+        Label::plain(text)
+    }
+}
+
+impl From<String> for Label {
+    fn from(text: String) -> Label {
+        Label::plain(text)
+    }
+}
+
+/// A label as a line of spans, with every account segment in its own color
+/// and nothing else colored at all.
+///
+/// The second of this module's two exits, beside [`account_cell`], and the
+/// same guarantee: an account that reaches a screen through here is colored.
+pub(super) fn label_line(label: &Label) -> TextLine<'static> {
+    use ratatui::style::Style;
+    use ratatui::text::Span;
+    TextLine::from(
+        label
+            .0
+            .iter()
+            .map(|segment| match segment {
+                Segment::Plain(text) => Span::raw(text.clone()),
+                Segment::Account(account) => Span::styled(
+                    account.as_text().to_string(),
+                    Style::default().fg(account.color()),
+                ),
+            })
+            .collect::<Vec<Span<'static>>>(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +320,49 @@ mod tests {
         )
         .render(area, &mut buffer);
         buffer[(0, 0)].style().fg
+    }
+
+    /// The point of the type: a title that names an account carries it as an
+    /// account, so the render half can tint it. A title already flattened to a
+    /// String could not be tinted by anything.
+    #[test]
+    fn a_label_keeps_its_accounts_apart_from_its_text() {
+        let all = accounts();
+        let label = Label::plain("Savings · ")
+            .account(Account::named(&all, AccountId(2)))
+            .text(" · Aug 2026");
+        assert_eq!(label.plain_text(), "Savings · Nest Egg · Aug 2026");
+        assert_eq!(label.accounts().len(), 1);
+        assert_eq!(label.accounts()[0].id(), AccountId(2));
+    }
+
+    /// Exactly the account segments are colored. A title is mostly chrome, and
+    /// chrome in an account's color would say the whole line is about that
+    /// account rather than the two words that are.
+    #[test]
+    fn only_the_account_segments_of_a_label_are_colored() {
+        let all = accounts();
+        let label = Label::plain("Savings · ").account(Account::named(&all, AccountId(2)));
+        let colors: Vec<Option<style::Color>> = label_line(&label)
+            .spans
+            .iter()
+            .map(|s| s.style.fg)
+            .collect();
+        assert_eq!(
+            colors,
+            vec![
+                None,
+                Some(style::account_color(AccountId(2), Some(AccountColor::Teal)))
+            ]
+        );
+    }
+
+    /// A title naming nothing is still a Label, so one function draws every
+    /// title rather than one for the plain ones and one for the rest.
+    #[test]
+    fn a_label_with_no_account_draws_as_plain_text() {
+        let line = label_line(&Label::from("Edit goal"));
+        assert_eq!(line.spans.len(), 1);
+        assert_eq!(line.spans[0].style.fg, None);
     }
 }

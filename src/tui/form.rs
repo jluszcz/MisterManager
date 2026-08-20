@@ -429,7 +429,7 @@ impl FormFields for TxnForm {
 /// form only collects the characters.
 #[derive(Debug)]
 pub struct ValueForm {
-    label: String,
+    label: Label,
     field: Field,
     /// Whether the one field holds a date, and so whether `←`/`→` step it.
     /// The caller is the only one who knows: a figure that happens to read as
@@ -438,9 +438,9 @@ pub struct ValueForm {
 }
 
 impl ValueForm {
-    pub fn new(label: &str, prefill: &str) -> ValueForm {
+    pub fn new(label: impl Into<Label>, prefill: &str) -> ValueForm {
         ValueForm {
-            label: label.to_string(),
+            label: label.into(),
             // `given`, not `prefilled`: the text on screen is a real figure
             // the user can see. Nothing here takes suggestions, but the
             // distinction is the one `Field` exists to make.
@@ -451,14 +451,14 @@ impl ValueForm {
 
     /// The same form over a date -- the Funds screen's birth-date prompt.
     /// `←`/`→` step it a day, as they do on every other date field.
-    pub fn date(label: &str, prefill: &str) -> ValueForm {
+    pub fn date(label: impl Into<Label>, prefill: &str) -> ValueForm {
         ValueForm {
             is_date: true,
             ..ValueForm::new(label, prefill)
         }
     }
 
-    pub fn label(&self) -> &str {
+    pub fn label(&self) -> &Label {
         &self.label
     }
 
@@ -466,8 +466,12 @@ impl ValueForm {
         self.field.value()
     }
 
-    pub fn title(&self) -> String {
-        format!("Edit {} — Enter save · Esc cancel", self.label.trim())
+    /// The label, wherever it was built -- with an account segment, on the
+    /// Reconcile modal -- carries straight through into the border: appending
+    /// text is the whole of what a `Label` can do to itself, which is what
+    /// keeps the color in place all the way to the screen.
+    pub fn title(&self) -> Label {
+        self.label.clone().text(" — Enter save · Esc cancel")
     }
 }
 
@@ -769,6 +773,7 @@ impl FormFields for TransferForm {
 
 use super::autocomplete::Autocomplete;
 use super::style::Color;
+use super::{Label, label_line};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -860,21 +865,22 @@ fn field_line_parts(
 /// the fields.
 pub(super) fn render_fields(
     frame: &mut Frame,
-    title: impl Into<String>,
+    title: impl Into<Label>,
     lines: Vec<TextLine<'static>>,
 ) -> Rect {
     let area = centered(frame.area(), FORM_WIDTH, lines.len() as u16 + 2);
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(lines).block(Block::bordered().title(title.into())),
+        Paragraph::new(lines).block(Block::bordered().title(label_line(&title.into()))),
         area,
     );
     area
 }
 
 pub fn render_value(frame: &mut Frame, form: &ValueForm) {
+    let label_text = form.label().plain_text();
     let lines = vec![field_line(
-        form.label().trim(),
+        label_text.trim(),
         form.value().to_string(),
         true,
     )];
@@ -1498,7 +1504,7 @@ mod tests {
     #[test]
     fn a_value_form_opens_prefilled_and_returns_what_was_typed() {
         let mut form = ValueForm::new("Target", "13,500.00");
-        assert_eq!(form.label(), "Target");
+        assert_eq!(form.label().plain_text(), "Target");
         assert_eq!(form.value(), "13,500.00");
 
         for _ in 0..9 {

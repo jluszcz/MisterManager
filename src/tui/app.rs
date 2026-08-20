@@ -16,6 +16,7 @@ use super::recurring_txn::{self as recurring_txn_screen, RecurringTxnForm, Recur
 use super::savings::{self, Savings};
 use super::search::{self, Search};
 use super::worksheet::{self, Worksheet};
+use super::{Account, Label};
 use crate::calc;
 use crate::db::account::{self, Kind};
 use crate::db::bill;
@@ -336,7 +337,7 @@ impl App {
             KeyCode::Char('i') => self.open_interest()?,
             KeyCode::Char('e') => self.open_goal_edit()?,
             KeyCode::Char('c') => self.open_close_out()?,
-            KeyCode::Char('n') => self.open_new_goal(),
+            KeyCode::Char('n') => self.open_new_goal()?,
             KeyCode::Char('U') => self.open_undo()?,
             _ => {}
         }
@@ -492,7 +493,7 @@ impl App {
         match opened {
             None | Some((None, _, _)) => self.status = NOTHING_SELECTED.to_string(),
             Some((Some(planning::Editable::Constant(target)), label, prefill)) => {
-                self.modal = Some(Modal::Value(target, ValueForm::new(&label, &prefill)));
+                self.modal = Some(Modal::Value(target, ValueForm::new(label, &prefill)));
             }
             Some((Some(planning::Editable::Destination(line)), _, _)) => {
                 self.open_destination(line)?
@@ -633,7 +634,7 @@ impl App {
         // Parsed before the modal closes, so a rejected edit keeps the form
         // and everything typed into it.
         target.write(&self.db, form.value())?;
-        self.status = format!("{} saved", form.label().trim());
+        self.status = format!("{} saved", form.label().plain_text().trim());
         self.close_modal();
         self.reload()
     }
@@ -1107,9 +1108,9 @@ impl App {
             self.status = "reconcile needs an account filter".to_string();
             return;
         };
-        let label = format!("Target · {}", ledger.account_name(id));
+        let label = Label::plain("Target · ").account(Account::named(ledger.accounts(), id));
         let prefill = ledger.target().map(|t| t.to_string()).unwrap_or_default();
-        self.modal = Some(Modal::Reconcile(id, ValueForm::new(&label, &prefill)));
+        self.modal = Some(Modal::Reconcile(id, ValueForm::new(label, &prefill)));
     }
 
     /// An empty field clears the target: that is how one goes away, since
@@ -1669,13 +1670,17 @@ impl App {
     /// `n`: a goal typed from scratch, in the container the screen defaults
     /// to. The container is checked here rather than only at commit, so the
     /// form never opens over a container it invented.
-    fn open_new_goal(&mut self) {
+    fn open_new_goal(&mut self) -> Result<()> {
         let Some(container) = self.savings.default_container() else {
             self.status = "no container holds goals yet".to_string();
-            return;
+            return Ok(());
         };
-        let name = self.savings.account_name(container).to_string();
-        self.modal = Some(Modal::Goal(GoalForm::add(container, &name)));
+        let account = account::get(&self.db, container)?;
+        self.modal = Some(Modal::Goal(GoalForm::add(Account::named(
+            std::slice::from_ref(&account),
+            container,
+        ))));
+        Ok(())
     }
 
     fn open_goal_edit(&mut self) -> Result<()> {
@@ -1852,12 +1857,10 @@ impl App {
         for g in goal::list_with_balances(&self.db, container)? {
             prefill.push((g.goal.id, g.goal.name, Cents::ZERO));
         }
-        let name = account::get(&self.db, container)?.name;
+        let account = account::get(&self.db, container)?;
         let mut sheet = Worksheet::new(
             goal::BatchKind::Paycheck,
-            container,
-            // seeds Worksheet's own container_name field, not a display of an account
-            name.as_str(),
+            Account::named(std::slice::from_ref(&account), container),
             self.today,
             prefill,
         );
@@ -1891,9 +1894,12 @@ impl App {
             let ask = super::paycheck_ask(&g, self.today, self.period_days)?;
             prefill.push((g.goal.id, g.goal.name, ask.unwrap_or(Cents::ZERO)));
         }
-        let name = self.savings.account_name(container).to_string();
+        let account = account::get(&self.db, container)?;
         Ok(Some(Worksheet::new(
-            kind, container, &name, self.today, prefill,
+            kind,
+            Account::named(std::slice::from_ref(&account), container),
+            self.today,
+            prefill,
         )))
     }
 
@@ -2012,13 +2018,12 @@ impl App {
             .filter(|e| counts.get(&e.id).copied().unwrap_or(0) == 0)
             .map(|e| e.id)
             .collect();
-        let name = self.savings.account_name(container).to_string();
+        let account = account::get(&self.db, container)?;
         self.modal = Some(Modal::Picker(Picker::new(
             entries,
             counts,
             &preselected,
-            container,
-            &name,
+            Account::named(std::slice::from_ref(&account), container),
         )));
         Ok(())
     }

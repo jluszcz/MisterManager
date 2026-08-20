@@ -38,7 +38,7 @@ use crate::db::goal::GoalWithBalance;
 use anyhow::{Result, ensure};
 use app::App;
 use chrono::NaiveDate;
-use label::{Account, account_cell};
+use label::{Account, Label, account_cell, label_line};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use ratatui::style::Style;

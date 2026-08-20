@@ -244,17 +244,18 @@ impl Savings {
         self.visible.get(self.cursor.index()).map(|i| &self.all[*i])
     }
 
-    pub fn title(&self) -> String {
-        let container = match self.container {
-            None => "All".to_string(),
-            Some(id) => self.account_name(id).to_string(),
+    pub fn title(&self) -> Label {
+        let mut title = match self.container {
+            None => Label::plain("Savings · All"),
+            Some(id) => {
+                Label::plain("Savings · ").account(super::Account::named(&self.accounts, id))
+            }
         };
-        let mut title = format!("Savings · {container}");
         if let Some(month) = self.month.selected() {
-            title.push_str(&format!(" · {}", month.label()));
+            title = title.text(format!(" · {}", month.label()));
         }
         if !self.search().is_empty() {
-            title.push_str(&format!(" · /{}", self.search()));
+            title = title.text(format!(" · /{}", self.search()));
         }
         title
     }
@@ -306,7 +307,7 @@ impl Scroll for Savings {
     }
 }
 
-use super::{account_cell, right_header, table_state, whole_amount};
+use super::{Label, account_cell, label_line, right_header, table_state, whole_amount};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -396,7 +397,7 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
         .header(header)
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .highlight_symbol("> ")
-        .block(Block::bordered().title(savings.title()));
+        .block(Block::bordered().title(label_line(&savings.title())));
 
     // Two borders and the header row are not available to data rows.
     let height = usize::from(table_area.height).saturating_sub(3);
@@ -665,9 +666,12 @@ mod tests {
     #[test]
     fn the_title_names_the_month_only_once_one_is_selected() {
         let mut savings = dated();
-        assert_eq!(savings.title(), "Savings \u{b7} All");
+        assert_eq!(savings.title().plain_text(), "Savings \u{b7} All");
         savings.next_month();
-        assert_eq!(savings.title(), "Savings \u{b7} All \u{b7} Aug 2026");
+        assert_eq!(
+            savings.title().plain_text(),
+            "Savings \u{b7} All \u{b7} Aug 2026"
+        );
     }
 
     /// 87%, 97%, 0%, 106% -- rounded to the nearest whole percent, not
@@ -1092,11 +1096,34 @@ mod tests {
     #[test]
     fn the_title_names_the_container_filter_and_the_search() {
         let mut savings = savings();
-        assert_eq!(savings.title(), "Savings · All");
+        assert_eq!(savings.title().plain_text(), "Savings · All");
         savings.next_container();
-        assert_eq!(savings.title(), "Savings · Rainy Day");
+        assert_eq!(savings.title().plain_text(), "Savings · Rainy Day");
         savings.begin_search();
         savings.push_search('D');
-        assert_eq!(savings.title(), "Savings · Rainy Day · /D");
+        assert_eq!(savings.title().plain_text(), "Savings · Rainy Day · /D");
+    }
+
+    /// The container in the title is the same account the Account column
+    /// names, so it is the same color there too -- a title is where a reader
+    /// looks to find out which container they are in.
+    #[test]
+    fn the_savings_title_names_its_container_as_an_account() {
+        let mut savings = Savings::new(accounts(), today(), 14);
+        savings.set_containers(vec![AccountId(1), AccountId(2)]);
+        savings.next_container();
+        let title = savings.title();
+        assert_eq!(title.plain_text(), "Savings · Rainy Day");
+        assert_eq!(title.accounts().len(), 1);
+        assert_eq!(title.accounts()[0].id(), AccountId(1));
+    }
+
+    /// `All` is not an account and takes no color: coloring it would make the
+    /// unfiltered screen look like it was filtered to something.
+    #[test]
+    fn the_unfiltered_savings_title_names_no_account() {
+        let savings = Savings::new(accounts(), today(), 14);
+        assert_eq!(savings.title().plain_text(), "Savings · All");
+        assert!(savings.title().accounts().is_empty());
     }
 }

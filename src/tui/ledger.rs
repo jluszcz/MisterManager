@@ -353,18 +353,18 @@ impl Ledger {
         &self.accounts
     }
 
-    pub fn title(&self) -> String {
+    pub fn title(&self) -> Label {
         let kind = match self.kind {
             Kind::Cash => "Cash",
             Kind::Credit => "Credit",
         };
-        let account = match self.account {
-            None => "All",
-            Some(i) => self.accounts[i].code.as_str(),
+        let mut title = Label::plain(format!("{kind} · {} · ", self.window.label()));
+        title = match self.account {
+            None => title.text("All"),
+            Some(i) => title.account(super::Account::coded(&self.accounts, self.accounts[i].id)),
         };
-        let mut title = format!("{kind} · {} · {account}", self.window.label());
         if !self.search().is_empty() {
-            title.push_str(&format!(" · /{}", self.search()));
+            title = title.text(format!(" · /{}", self.search()));
         }
         title
     }
@@ -397,28 +397,29 @@ impl Scroll for Ledger {
     }
 }
 
-use super::{account_cell, amount, money_span, money_text, right_header, table_state};
+use super::{
+    Label, account_cell, amount, label_line, money_span, money_text, right_header, table_state,
+};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Block, Cell, Row, Table};
 
-/// The filter chain, and then the balance that chain names.
+/// [`Ledger::title`]'s spans, and then the balance that chain names.
 ///
-/// A `Line` of spans rather than the one string [`Ledger::title`] returns, so
-/// the figure carries [`super::style::amount_color`] the way every money cell
-/// does. The figure goes last and the filter terms stay contiguous, so it sits
-/// in the same place whether or not a search is running.
+/// The figure carries [`super::style::amount_color`] the way every money cell
+/// does, which a bare [`Label`] cannot -- only an account segment takes a
+/// color. The figure goes last and the filter terms stay contiguous, so it
+/// sits in the same place whether or not a search is running.
 ///
 /// `Today` is not decoration: `Aug 2026` is two terms to its left, and without
 /// the word the figure reads as a total of the month on show rather than a
 /// balance at a date.
 fn title_line(ledger: &Ledger) -> TextLine<'static> {
-    let mut spans = vec![
-        Span::raw(format!("{} · Today ", ledger.title())),
-        money_span(ledger.total()),
-    ];
+    let mut spans = label_line(&ledger.title()).spans;
+    spans.push(Span::raw(" · Today "));
+    spans.push(money_span(ledger.total()));
     if let (Some(target), Some(delta)) = (ledger.target(), ledger.delta()) {
         spans.push(Span::raw(" · Target "));
         spans.push(money_span(target));
@@ -563,6 +564,23 @@ mod tests {
     /// unclamped unless a test sets one.
     fn ledger(today: NaiveDate) -> Ledger {
         Ledger::new(Kind::Cash, accounts(), None, today)
+    }
+
+    /// A ledger with its `Tab` filter cycled onto `id`.
+    fn filtered_ledger(id: AccountId) -> Ledger {
+        let mut ledger = ledger(day(2026, 8, 15));
+        for _ in 0..accounts().len() {
+            if ledger.selected_account() == Some(id) {
+                return ledger;
+            }
+            ledger.next_account();
+        }
+        panic!("no account {id:?} in the fixture");
+    }
+
+    /// A ledger under its `All` filter.
+    fn unfiltered_ledger() -> Ledger {
+        ledger(day(2026, 8, 15))
     }
 
     /// The **column** a substring starts at in a rendered row.
@@ -1032,12 +1050,30 @@ mod tests {
     #[test]
     fn the_title_names_the_kind_the_window_and_the_account_filter() {
         let mut ledger = ledger(day(2026, 8, 15));
-        assert_eq!(ledger.title(), "Cash · Aug 2026 · All");
+        assert_eq!(ledger.title().plain_text(), "Cash · Aug 2026 · All");
         ledger.next_account();
-        assert_eq!(ledger.title(), "Cash · Aug 2026 · CHK");
+        assert_eq!(ledger.title().plain_text(), "Cash · Aug 2026 · CHK");
         ledger.begin_search();
         ledger.push_search('F');
-        assert_eq!(ledger.title(), "Cash · Aug 2026 · CHK · /F");
+        assert_eq!(ledger.title().plain_text(), "Cash · Aug 2026 · CHK · /F");
+    }
+
+    /// The ledger's account filter names the account by code, and takes the
+    /// same color the Account column below it does -- the title is what says
+    /// which account the rows have been narrowed to.
+    #[test]
+    fn a_filtered_ledger_title_names_its_account_by_code() {
+        let ledger = filtered_ledger(AccountId(1));
+        let title = ledger.title();
+        assert!(title.plain_text().contains("CHK"), "{}", title.plain_text());
+        assert_eq!(title.accounts().len(), 1);
+        assert_eq!(title.accounts()[0].id(), AccountId(1));
+    }
+
+    /// An unfiltered ledger is `All`, which is not an account.
+    #[test]
+    fn an_unfiltered_ledger_title_names_no_account() {
+        assert!(unfiltered_ledger().title().accounts().is_empty());
     }
 
     /// The target is the figure the owner is reconciling against, so it
@@ -1449,7 +1485,10 @@ mod tests {
 
     #[test]
     fn a_two_month_window_names_both_months() {
-        assert_eq!(ledger(day(2026, 8, 3)).title(), "Cash · Jul–Aug 2026 · All");
+        assert_eq!(
+            ledger(day(2026, 8, 3)).title().plain_text(),
+            "Cash · Jul–Aug 2026 · All"
+        );
     }
 
     /// A window straddling New Year names the year on both sides, since
@@ -1457,7 +1496,7 @@ mod tests {
     #[test]
     fn a_window_straddling_new_year_names_both_years() {
         assert_eq!(
-            ledger(day(2026, 12, 28)).title(),
+            ledger(day(2026, 12, 28)).title().plain_text(),
             "Cash · Dec 2026 – Jan 2027 · All"
         );
     }
