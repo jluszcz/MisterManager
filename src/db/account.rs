@@ -288,7 +288,7 @@ impl FromStr for AccountColor {
 /// `PartialEq<&str>` so an assertion reads as it always did, and
 /// `ToSql`/`FromSql` so `from_row` and every query are untouched.
 macro_rules! account_text {
-    ($name:ident, $what:literal) => {
+    ($name:ident, $field:ident, $what:literal) => {
         #[doc = concat!("An account's ", $what, ".")]
         ///
         /// Text the database stores, and deliberately **not** something
@@ -299,7 +299,7 @@ macro_rules! account_text {
         /// let db = db::open_in_memory().unwrap();
         /// let id = db::account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
         /// let account = db::account::get(&db, id).unwrap();
-        /// println!("{}", account.name);
+        #[doc = concat!("println!(\"{}\", account.", stringify!($field), ");")]
         /// ```
         #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
         pub struct $name(String);
@@ -349,10 +349,12 @@ macro_rules! account_text {
 
 account_text!(
     AccountCode,
+    code,
     "short code, as the workbook's `Constants` sheet carries it"
 );
 account_text!(
     AccountName,
+    name,
     "name, which is the owner's rather than the workbook's"
 );
 
