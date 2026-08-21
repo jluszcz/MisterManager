@@ -26,8 +26,8 @@ MM_REQUIRE_WORKBOOK=1 MM_WORKBOOK=<workbook> \
 
 `pre-commit install` wires up `.pre-commit-config.yaml`. CI (`.github/workflows/ci.yml`) delegates to
 shared reusable workflows: `rust-ci.yml` runs build, test, `cargo fmt --check`, and clippy with
-`-D warnings`; `terraform-ci.yml` runs `terraform fmt -check -recursive` and `terraform validate`
-with `-backend=false`, matching the `terraform_fmt`/`terraform_validate` pre-commit hooks.
+`-D warnings`; `terraform-ci.yml` runs `terraform fmt -check -recursive`, then
+`terraform init -backend=false` and `terraform validate`, matching the `terraform_fmt`/`terraform_validate` pre-commit hooks.
 Terraform is never *applied* by CI.
 
 ## The workbook is the test oracle
