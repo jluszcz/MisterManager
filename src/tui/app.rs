@@ -4196,6 +4196,27 @@ mod tests {
         assert_eq!(modal_transfer_amount(&app, Line::FutureHousing), expected);
     }
 
+    /// `t`'s confirmation is the one date field that opens neither on today
+    /// nor blank: its rows are dated for when the transfers *land*, two
+    /// business days out. The fixture's today is a Saturday, so this pins the
+    /// weekend skip as well as the offset -- and pins the one opening date
+    /// nothing else in the suite held down, which is how the invariant listing
+    /// them came to be short by one.
+    #[test]
+    fn the_transfer_confirmation_opens_two_business_days_out() {
+        let mut app = planning_app();
+        assert_eq!(app.today.weekday(), chrono::Weekday::Sat);
+
+        press(&mut app, KeyCode::Char('5'));
+        press(&mut app, KeyCode::Char('t'));
+
+        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
+            panic!("no transfer confirmation is open");
+        };
+        assert_eq!(confirm.date_value(), "2026-08-18");
+        assert_eq!(confirm.commit().unwrap(), day(2026, 8, 18));
+    }
+
     /// What `t`'s confirmation modal says it will move for one line.
     fn modal_transfer_amount(app: &App, wanted: Line) -> Cents {
         let Some(Modal::PlanTransfers(confirm)) = &app.modal else {

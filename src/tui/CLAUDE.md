@@ -201,11 +201,21 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   at all — which is the distinction made visible. Every `M/D` reading is present or future and a
   birth date is decades past, so a shorthand there could only ever be a wrong year that nothing
   refuses.
-- **Every date field opens on today, and the three that do not each say why.** A new goal's
-  `Goal Date` opens on the first of the next month, through `GoalForm::opening_date`: a goal date
-  is a *deadline*, and today is never one. A recurring transaction's `Horizon` and the birth-date
-  prompt open blank, because blank is a supported state in both — a rule that does not end, and a
-  date not on record — and `parse_opt` is what reads the first of those back.
+- **A date field entering something new opens on today, and the four that do not each say why.**
+  `DateField::today` is the default and most fields take it. The exceptions:
+  - A new goal's `Goal Date` opens on the first of the next month, through `GoalForm::opening_date`:
+    a goal date is a *deadline*, and today is never one.
+  - `t`'s confirmation opens two business days out, through `calc::business_day::add(today, 2)`:
+    the rows it writes are dated for when the transfers *land* rather than for when the plan was
+    read. `business_day::add` skips weekends and deliberately carries no holiday calendar, which
+    is the other half of why this date is editable at all.
+  - A recurring transaction's `Horizon` and the birth-date prompt open blank, because blank is a
+    supported state in both — a rule that does not end, and a date not on record — and `parse_opt`
+    is what reads the first of those back.
+
+  A field **editing** an existing row is not an exception and takes `DateField::given`: it opens on
+  that row's own date, which is what editing one means. `given` marks it touched for the same
+  reason `Field::given` does — a real date the owner can see and did not ask to change.
 - **`←`/`→` on the Overview is the one key that changes another screen.** It moves `App::adhoc`,
   and Planning reads that same date: `Excess (Actual)` is the checking balance at it, and so is
   every figure below. `App::scrub` therefore reloads both screens, and `t` and `p` act on the
