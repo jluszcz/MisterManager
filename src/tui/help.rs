@@ -133,7 +133,7 @@ const LEDGER: [Entry; 11] = [
     Entry {
         key: "Esc",
         label: Label::Own("today"),
-        detail: "Return the window to the month containing today. The ledgers have no All to clear to -- the window bounds the query itself, so \"no filter\" would be every transaction ever -- so clearing it can only mean the window the screen opens on. Cash and Credit share one window, so this re-syncs both ledgers, the same as [ ].",
+        detail: "Clear a kept search if one is narrowing the rows; otherwise return the window to the month containing today. The ledgers have no All to clear to -- the window bounds the query itself, so \"no filter\" would be every transaction ever -- so clearing it can only mean the window the screen opens on. Cash and Credit share one window, so that half re-syncs both ledgers, the same as [ ]; a search belongs to one ledger and is cleared on its own.",
     },
     Entry {
         key: "Tab",
@@ -148,7 +148,7 @@ const LEDGER: [Entry; 11] = [
     Entry {
         key: "/",
         label: Label::Own("search"),
-        detail: "Filter rows by description as you type. Enter keeps the filter and leaves the box; Esc clears it.",
+        detail: "Filter rows by description or amount as you type -- 1234 finds a row of $1,234.56, with the separators left out. Enter keeps the filter and leaves the box; Esc clears it.",
     },
     Entry {
         key: "r",
@@ -201,12 +201,12 @@ const SAVINGS: [Entry; 13] = [
     Entry {
         key: "Esc",
         label: Label::Own("all"),
-        detail: "Clear both filters at once -- the container and the month, whichever of them is set -- showing every goal again, undated ones included. The next month step re-enters at today's month, or at the nearer end of the dated span when today falls outside it -- never the month you left, so no state crosses the All filter.",
+        detail: "Clear a kept search if one is narrowing the list; otherwise clear both filters at once -- the container and the month, whichever of them is set -- showing every goal again, undated ones included. The next month step re-enters at today's month, or at the nearer end of the dated span when today falls outside it -- never the month you left, so no state crosses the All filter.",
     },
     Entry {
         key: "/",
         label: Label::Own("search"),
-        detail: "Filter goals by name as you type, entirely in memory. Enter keeps the filter and leaves the box, so a, c and e stay usable on the narrowed list; Esc clears it.",
+        detail: "Filter goals by name, balance or target as you type -- 1234 finds a goal at $1,234.56, with the separators left out. The % and $/Pay columns are derived from the two figures beside them and are not searched. Enter keeps the filter and leaves the box, so a, c and e stay usable on the narrowed list; Esc clears it.",
     },
     Entry {
         key: "a",
@@ -396,8 +396,8 @@ const RECURRING_GOALS: [Entry; 6] = [
     },
 ];
 
-/// Shared by all three search boxes: the keys are the same and only the list
-/// underneath differs.
+/// Shared by all four search boxes: the keys are the same, and only the rows
+/// underneath and the figures they answer to differ.
 const SEARCH: [Entry; 4] = [
     Entry {
         key: "Enter",
@@ -407,7 +407,7 @@ const SEARCH: [Entry; 4] = [
     Entry {
         key: "Esc",
         label: Label::Hidden,
-        detail: "Clear the filter and leave the box.",
+        detail: "Clear the filter and leave the box. Enter leaves it and keeps the filter instead, and Esc on the screen behind is then what clears a kept one.",
     },
     Entry {
         key: "Backspace",
@@ -475,7 +475,7 @@ const WORKSHEET: [Entry; 13] = [
     Entry {
         key: "/N",
         label: Label::Hidden,
-        detail: "With a digit: divide the selected lines by it. With anything else: begin a name filter.",
+        detail: "With a digit: divide the selected lines by it. With anything else: begin a filter over the line names and the amounts they currently hold.",
     },
     Entry {
         key: "Enter",
@@ -485,7 +485,7 @@ const WORKSHEET: [Entry; 13] = [
     Entry {
         key: "Esc",
         label: Label::Hidden,
-        detail: "Discard the worksheet. Nothing has been written yet.",
+        detail: "Clear a kept filter if one is narrowing the lines; otherwise discard the worksheet. Nothing has been written yet.",
     },
 ];
 
@@ -521,7 +521,7 @@ const DESTINATION: [Entry; 3] = [
     Entry {
         key: "Esc",
         label: Label::Hidden,
-        detail: "Close without changing where the line lands.",
+        detail: "Clear a kept filter if one is narrowing the list; otherwise close without changing where the line lands.",
     },
 ];
 

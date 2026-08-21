@@ -326,7 +326,6 @@ mod tests {
             account_id: None,
             from: day(2000, 1, 1),
             to: day(2100, 1, 1),
-            search: None,
         }
     }
 

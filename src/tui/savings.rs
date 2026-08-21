@@ -287,8 +287,13 @@ impl Search for Savings {
     /// The container filter, the month, and the search, in one pass — so the
     /// three cannot narrow to different lists. Also the hook `Tab` and `[`/`]`
     /// call when they move.
+    ///
+    /// A row answers to its name and to the two figures it is *about*. `%` and
+    /// `$/Pay` are derived from those two and are deliberately not offered:
+    /// a needle reaching a readout would narrow through a column nobody was
+    /// searching. The date is not offered either — `[`/`]` is its filter.
     fn refilter(&mut self) {
-        let needle = self.search().to_lowercase();
+        let matcher = self.matcher();
         let container = self.container;
         let month = self.month.selected();
         self.visible = self
@@ -299,7 +304,7 @@ impl Search for Savings {
             // A goal with no date belongs to no month, so a month filter
             // drops it: All is the only place it can be seen.
             .filter(|(_, row)| month.is_none_or(|m| row.goal_date.is_some_and(|d| m.contains(d))))
-            .filter(|(_, row)| needle.is_empty() || row.name.to_lowercase().contains(&needle))
+            .filter(|(_, row)| matcher.matches(&row.name, &[row.current, row.goal]))
             .map(|(i, _)| i)
             .collect();
         self.cursor.clamp(self.visible.len());
@@ -900,6 +905,41 @@ mod tests {
         savings.backspace_search();
         savings.backspace_search();
         assert_eq!(names(&savings).len(), 4);
+    }
+
+    /// The figure the row is *at*, typed without the separators the column
+    /// draws.
+    #[test]
+    fn search_matches_a_goals_current_balance() {
+        let mut savings = savings();
+        savings.begin_search();
+        for c in "485".chars() {
+            savings.push_search(c);
+        }
+        assert_eq!(names(&savings), ["Apple Watch"]);
+    }
+
+    #[test]
+    fn search_matches_a_goals_target() {
+        let mut savings = savings();
+        savings.begin_search();
+        for c in "150.00".chars() {
+            savings.push_search(c);
+        }
+        assert_eq!(names(&savings), ["Dropbox"]);
+    }
+
+    /// `%` and `$/Pay` are readouts derived from the two figures beside them,
+    /// and a needle reaching them would hit rows through a column the owner
+    /// was not searching. Apple Watch sits at 97%; nothing answers to it.
+    #[test]
+    fn search_does_not_reach_the_derived_columns() {
+        let mut savings = savings();
+        savings.begin_search();
+        for c in "97".chars() {
+            savings.push_search(c);
+        }
+        assert!(names(&savings).is_empty());
     }
 
     /// A selection left past the end would make `a`, `c` and `e` operate on

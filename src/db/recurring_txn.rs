@@ -586,7 +586,6 @@ mod tests {
             account_id: None,
             from: NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
             to: NaiveDate::from_ymd_opt(2100, 1, 1).unwrap(),
-            search: None,
         }
     }
 

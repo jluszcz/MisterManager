@@ -17,9 +17,10 @@ pub struct NewTxn {
 
 /// Escape a user-typed string for a `LIKE` pattern used with `ESCAPE '\'`.
 ///
-/// A `%` or `_` the user typed is a literal. Unescaped, a single `%` in the
-/// search box matches the whole ledger, which reads as a broken search rather
-/// than as a wildcard doing its job.
+/// A `%` or `_` the user typed is a literal. [`autocomplete`] matches a
+/// description the owner is part-way through typing, and one typed into a
+/// description containing a percent sign would otherwise suggest every
+/// description in the table.
 fn like_escape(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('%', "\\%")
@@ -82,31 +83,28 @@ pub struct Filter {
     /// Newest date shown, inclusive. A window is built from the first and
     /// last day of a month, so both bounds have to be inclusive.
     pub to: NaiveDate,
-    /// Description substring. `%` and `_` in it are literals.
-    pub search: Option<String>,
 }
 
 /// The rows one ledger screen shows, oldest first.
+///
+/// The `/` needle is deliberately not a term here: the window already bounds
+/// what comes back, so the screen narrows these rows in memory against the
+/// same `tui::search::Matcher` every other `/` screen uses. See the `Search`
+/// impl on `tui::ledger::Ledger`.
 pub fn list(db: &Db, filter: &Filter) -> Result<Vec<Txn>> {
     let mut stmt = db.conn.prepare(select_txn!(
         "JOIN account a ON a.id = t.account_id
           WHERE a.kind = ?1
             AND t.date BETWEEN ?2 AND ?3
             AND (?4 IS NULL OR t.account_id = ?4)
-            AND (?5 IS NULL OR t.description LIKE ?5 ESCAPE '\\')
           ORDER BY t.date, t.id"
     ))?;
-    let search = filter
-        .search
-        .as_deref()
-        .map(|s| format!("%{}%", like_escape(s)));
     let rows = stmt.query_map(
         params![
             filter.kind.as_str(),
             iso(filter.from),
             iso(filter.to),
-            filter.account_id,
-            search
+            filter.account_id
         ],
         from_row,
     )?;
@@ -856,7 +854,6 @@ mod tests {
             account_id: None,
             from,
             to,
-            search: None,
         }
     }
 
@@ -910,45 +907,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(descriptions(&filtered), vec!["savings"]);
-    }
-
-    #[test]
-    fn list_searches_descriptions_anywhere_in_the_string() {
-        let (db, checking, _, _) = fixture();
-        add(&db, checking, day(2026, 1, 1), 100, "Whole Foods");
-        add(&db, checking, day(2026, 1, 2), 100, "Foods R Us");
-        add(&db, checking, day(2026, 1, 3), 100, "Mortgage");
-
-        let rows = list(
-            &db,
-            &Filter {
-                search: Some("Foods".to_string()),
-                ..cash_2026()
-            },
-        )
-        .unwrap();
-        assert_eq!(descriptions(&rows), vec!["Whole Foods", "Foods R Us"]);
-    }
-
-    /// A `%` typed into the search box is a literal. Without the escape it is
-    /// a wildcard, so searching for it matches the entire ledger -- the
-    /// search box would look broken exactly when it is used on a real
-    /// description containing a percent sign.
-    #[test]
-    fn a_percent_in_a_search_string_is_a_literal_not_a_wildcard() {
-        let (db, checking, _, _) = fixture();
-        add(&db, checking, day(2026, 1, 1), 100, "5% APY bonus");
-        add(&db, checking, day(2026, 1, 2), 100, "Mortgage");
-
-        let rows = list(
-            &db,
-            &Filter {
-                search: Some("%".to_string()),
-                ..cash_2026()
-            },
-        )
-        .unwrap();
-        assert_eq!(descriptions(&rows), vec!["5% APY bonus"]);
     }
 
     #[test]
