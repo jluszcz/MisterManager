@@ -74,7 +74,7 @@ fn the_savings_screens_goal_rows_agree_with_the_workbook() {
     let rows: Vec<&Row> = screen
         .rows()
         .iter()
-        .filter(|r| r.container == goals)
+        .filter(|r| r.container.id() == goals)
         .copied()
         .collect();
     assert!(rows.len() > 40, "only {} goals on screen", rows.len());
@@ -138,7 +138,7 @@ fn the_savings_screens_bucket_rows_agree_with_the_workbook() {
     let rows: Vec<&Row> = screen
         .rows()
         .iter()
-        .filter(|r| r.container == buckets)
+        .filter(|r| r.container.id() == buckets)
         .copied()
         .collect();
     assert!(!rows.is_empty(), "no buckets on screen");

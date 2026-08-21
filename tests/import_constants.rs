@@ -41,16 +41,25 @@ fn every_code_becomes_an_account_named_by_itself_in_sheet_order() {
         let imported = account::list_by_kind(&db, kind).unwrap();
 
         assert_eq!(
-            imported.iter().map(|a| a.code.clone()).collect::<Vec<_>>(),
+            imported
+                .iter()
+                .map(|a| a.code.as_str().to_string())
+                .collect::<Vec<_>>(),
             expected,
             "{kind:?} accounts are not in sheet order"
         );
         for account in &imported {
             assert_eq!(
-                account.name, account.code,
+                account.name.as_str(),
+                account.code.as_str(),
                 "an account arrived under a name the sheet does not carry"
             );
-            assert_eq!(account.group, default_band, "{} was placed", account.code);
+            assert_eq!(
+                account.group,
+                default_band,
+                "{} was placed",
+                account.code.as_str()
+            );
         }
         assert_eq!(
             imported.iter().map(|a| a.sort).collect::<Vec<_>>(),

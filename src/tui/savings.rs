@@ -1,7 +1,7 @@
 use super::cursor::{Cursor, Scroll};
 use super::month::{MonthCycle, YearMonth};
 use super::search::{Search, SearchBox};
-use crate::db::account::{Account, AccountColor};
+use crate::db::account::Account;
 use crate::db::goal::GoalWithBalance;
 use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
@@ -15,11 +15,9 @@ use chrono::NaiveDate;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     pub goal_id: GoalId,
-    pub container: AccountId,
-    pub account_name: String,
-    /// The color the owner picked for that container, if any -- snapshotted
-    /// beside its name, and for the same reason.
-    pub account_color: Option<AccountColor>,
+    /// The container this goal sits in, as the Account column shows it. One
+    /// value rather than an id, a name and a color kept in step by hand.
+    pub container: super::Account,
     pub name: String,
     pub current: Cents,
     pub goal: Cents,
@@ -107,9 +105,7 @@ impl Savings {
             let per_paycheck = super::paycheck_ask(&g, self.today, self.period_days)?;
             rows.push(Row {
                 goal_id: g.goal.id,
-                container: g.goal.container_account_id,
-                account_name: self.account_name(g.goal.container_account_id).to_string(),
-                account_color: super::account_color_of(&self.accounts, g.goal.container_account_id),
+                container: super::Account::named(&self.accounts, g.goal.container_account_id),
                 percent: percent_complete(g.current, g.goal.goal_cents),
                 expired: g.goal.goal_date.is_some_and(|d| d < self.today)
                     && g.current < g.goal.goal_cents,
@@ -150,8 +146,18 @@ impl Savings {
         &self.excess
     }
 
+    /// The container's name as text, for the two callers that cannot take an
+    /// `Account`: the reconciliation footer below, a status strip rather
+    /// than a place a reader looks to identify an account, and
+    /// `App::open_allocate`'s prefill for the Allocation modal's
+    /// `container_name`, which draws into that modal's body. The second is
+    /// the residual, listed with its reason in `src/tui/CLAUDE.md`'s
+    /// account-color section -- `AllocationForm` is outside this guarantee.
     pub fn account_name(&self, id: AccountId) -> &str {
-        super::account_name(&self.accounts, id)
+        self.accounts
+            .iter()
+            .find(|a| a.id == id)
+            .map_or("?", |a| a.name.as_str())
     }
 
     /// `Tab`: All -> each container in `goal::containers` order -> All.
@@ -240,17 +246,18 @@ impl Savings {
         self.visible.get(self.cursor.index()).map(|i| &self.all[*i])
     }
 
-    pub fn title(&self) -> String {
-        let container = match self.container {
-            None => "All".to_string(),
-            Some(id) => self.account_name(id).to_string(),
+    pub fn title(&self) -> Label {
+        let mut title = match self.container {
+            None => Label::plain("Savings · All"),
+            Some(id) => {
+                Label::plain("Savings · ").account(super::Account::named(&self.accounts, id))
+            }
         };
-        let mut title = format!("Savings · {container}");
         if let Some(month) = self.month.selected() {
-            title.push_str(&format!(" · {}", month.label()));
+            title = title.text(format!(" · {}", month.label()));
         }
         if !self.search().is_empty() {
-            title.push_str(&format!(" · /{}", self.search()));
+            title = title.text(format!(" · /{}", self.search()));
         }
         title
     }
@@ -276,7 +283,7 @@ impl Search for Savings {
             .all
             .iter()
             .enumerate()
-            .filter(|(_, row)| container.is_none_or(|id| row.container == id))
+            .filter(|(_, row)| container.is_none_or(|id| row.container.id() == id))
             // A goal with no date belongs to no month, so a month filter
             // drops it: All is the only place it can be seen.
             .filter(|(_, row)| month.is_none_or(|m| row.goal_date.is_some_and(|d| m.contains(d))))
@@ -302,7 +309,7 @@ impl Scroll for Savings {
     }
 }
 
-use super::{account_cell, right_header, table_state, whole_amount};
+use super::{Label, account_cell, label_line, right_header, table_state, whole_amount};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -351,7 +358,7 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
         .iter()
         .map(|r| {
             TableRow::new(vec![
-                account_cell(r.account_name.clone(), r.container, r.account_color),
+                account_cell(&r.container),
                 Cell::from(r.name.clone()),
                 whole_amount(r.current),
                 whole_amount(r.goal),
@@ -392,7 +399,7 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
         .header(header)
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .highlight_symbol("> ")
-        .block(Block::bordered().title(savings.title()));
+        .block(Block::bordered().title(label_line(&savings.title())));
 
     // Two borders and the header row are not available to data rows.
     let height = usize::from(table_area.height).saturating_sub(3);
@@ -439,8 +446,8 @@ mod tests {
         vec![
             Account {
                 id: AccountId(1),
-                code: "SAV".to_string(),
-                name: "Rainy Day".to_string(),
+                code: "SAV".into(),
+                name: "Rainy Day".into(),
                 kind: Kind::Cash,
                 sort: 0,
                 group: Group::Savings,
@@ -448,8 +455,8 @@ mod tests {
             },
             Account {
                 id: AccountId(2),
-                code: "BKR".to_string(),
-                name: "Brokerage".to_string(),
+                code: "BKR".into(),
+                name: "Brokerage".into(),
                 kind: Kind::Cash,
                 sort: 1,
                 group: Group::Savings,
@@ -661,9 +668,12 @@ mod tests {
     #[test]
     fn the_title_names_the_month_only_once_one_is_selected() {
         let mut savings = dated();
-        assert_eq!(savings.title(), "Savings \u{b7} All");
+        assert_eq!(savings.title().plain_text(), "Savings \u{b7} All");
         savings.next_month();
-        assert_eq!(savings.title(), "Savings \u{b7} All \u{b7} Aug 2026");
+        assert_eq!(
+            savings.title().plain_text(),
+            "Savings \u{b7} All \u{b7} Aug 2026"
+        );
     }
 
     /// 87%, 97%, 0%, 106% -- rounded to the nearest whole percent, not
@@ -862,11 +872,7 @@ mod tests {
     #[test]
     fn the_account_column_names_each_goals_container() {
         let savings = savings();
-        let names: Vec<&str> = savings
-            .rows()
-            .iter()
-            .map(|r| r.account_name.as_str())
-            .collect();
+        let names: Vec<&str> = savings.rows().iter().map(|r| r.container.text()).collect();
         assert_eq!(names, ["Rainy Day", "Rainy Day", "Rainy Day", "Brokerage"]);
     }
 
@@ -1092,11 +1098,34 @@ mod tests {
     #[test]
     fn the_title_names_the_container_filter_and_the_search() {
         let mut savings = savings();
-        assert_eq!(savings.title(), "Savings · All");
+        assert_eq!(savings.title().plain_text(), "Savings · All");
         savings.next_container();
-        assert_eq!(savings.title(), "Savings · Rainy Day");
+        assert_eq!(savings.title().plain_text(), "Savings · Rainy Day");
         savings.begin_search();
         savings.push_search('D');
-        assert_eq!(savings.title(), "Savings · Rainy Day · /D");
+        assert_eq!(savings.title().plain_text(), "Savings · Rainy Day · /D");
+    }
+
+    /// The container in the title is the same account the Account column
+    /// names, so it is the same color there too -- a title is where a reader
+    /// looks to find out which container they are in.
+    #[test]
+    fn the_savings_title_names_its_container_as_an_account() {
+        let mut savings = Savings::new(accounts(), today(), 14);
+        savings.set_containers(vec![AccountId(1), AccountId(2)]);
+        savings.next_container();
+        let title = savings.title();
+        assert_eq!(title.plain_text(), "Savings · Rainy Day");
+        assert_eq!(title.accounts().len(), 1);
+        assert_eq!(title.accounts()[0].id(), AccountId(1));
+    }
+
+    /// `All` is not an account and takes no color: coloring it would make the
+    /// unfiltered screen look like it was filtered to something.
+    #[test]
+    fn the_unfiltered_savings_title_names_no_account() {
+        let savings = Savings::new(accounts(), today(), 14);
+        assert_eq!(savings.title().plain_text(), "Savings · All");
+        assert!(savings.title().accounts().is_empty());
     }
 }

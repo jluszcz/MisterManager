@@ -10,6 +10,7 @@
 use super::cursor::{Cursor, Scroll};
 use super::form::{Field, parse_date};
 use super::search::{Search, SearchBox};
+use super::{Account, Label};
 use crate::calc;
 use crate::db::account::InterestPolicy;
 use crate::db::goal::BatchKind;
@@ -119,8 +120,7 @@ pub fn interest_prefill(
 
 pub struct Worksheet {
     kind: BatchKind,
-    container: AccountId,
-    container_name: String,
+    container: Account,
     amount: Cents,
     amount_typed: bool,
     date: Field,
@@ -139,8 +139,7 @@ impl Worksheet {
     /// opens at zero remaining; `set_amount` overrides it for interest.
     pub fn new(
         kind: BatchKind,
-        container: AccountId,
-        container_name: &str,
+        container: Account,
         today: NaiveDate,
         prefill: Vec<(GoalId, String, Cents)>,
     ) -> Worksheet {
@@ -160,7 +159,6 @@ impl Worksheet {
         Worksheet {
             kind,
             container,
-            container_name: container_name.to_string(),
             amount,
             amount_typed: false,
             date: Field::date(today),
@@ -197,7 +195,7 @@ impl Worksheet {
     }
 
     pub fn container(&self) -> AccountId {
-        self.container
+        self.container.id()
     }
 
     pub fn amount(&self) -> Cents {
@@ -291,17 +289,16 @@ impl Worksheet {
         self.date.value()
     }
 
-    pub fn title(&self) -> String {
+    pub fn title(&self) -> Label {
         let kind = match self.kind {
             BatchKind::Paycheck => "Payday",
             BatchKind::Interest => "Interest",
             BatchKind::Adhoc => "Allocate",
             BatchKind::Import => "Import",
         };
-        format!(
-            "{kind} — post {} to {} · Tab field · Enter commit · Esc cancel",
-            self.amount, self.container_name
-        )
+        Label::plain(format!("{kind} — post {} to ", self.amount))
+            .account(self.container.clone())
+            .text(" · Tab field · Enter commit · Esc cancel")
     }
 
     /// Zero lines are dropped: a goal the user chose not to fund must not get
@@ -521,7 +518,7 @@ impl Scroll for Worksheet {
 }
 
 use super::form::centered;
-use super::{amount, table_state};
+use super::{amount, label_line, table_state};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Modifier, Style};
@@ -537,7 +534,7 @@ pub fn render(frame: &mut Frame, sheet: &Worksheet) -> usize {
         frame.area().height.saturating_sub(4).max(8),
     );
     frame.render_widget(Clear, area);
-    frame.render_widget(Block::bordered().title(sheet.title()), area);
+    frame.render_widget(Block::bordered().title(label_line(&sheet.title())), area);
     let inner = area.inner(ratatui::layout::Margin::new(1, 1));
 
     let [header_area, lines_area, footer_area] = Layout::vertical([
@@ -618,9 +615,42 @@ pub fn render(frame: &mut Frame, sheet: &Worksheet) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::account::{self, Group, Kind};
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    fn accounts() -> Vec<account::Account> {
+        vec![
+            account::Account {
+                id: AccountId(1),
+                code: "SAV".into(),
+                name: "Rainy Day".into(),
+                kind: Kind::Cash,
+                sort: 0,
+                group: Group::Savings,
+                color: None,
+            },
+            account::Account {
+                id: AccountId(2),
+                code: "BKR".into(),
+                name: "Brokerage".into(),
+                kind: Kind::Cash,
+                sort: 1,
+                group: Group::Savings,
+                color: None,
+            },
+            account::Account {
+                id: AccountId(3),
+                code: "NST".into(),
+                name: "Nest Egg".into(),
+                kind: Kind::Cash,
+                sort: 2,
+                group: Group::Savings,
+                color: None,
+            },
+        ]
     }
 
     fn prefill() -> Vec<(GoalId, String, Cents)> {
@@ -634,8 +664,7 @@ mod tests {
     fn sheet() -> Worksheet {
         Worksheet::new(
             BatchKind::Paycheck,
-            AccountId(1),
-            "Rainy Day",
+            Account::named(&accounts(), AccountId(1)),
             day(2026, 8, 14),
             prefill(),
         )
@@ -689,8 +718,7 @@ mod tests {
     fn a_prefill_keeps_its_cents_until_a_digit_is_typed_over_it() {
         let mut sheet = Worksheet::new(
             BatchKind::Interest,
-            AccountId(1),
-            "Rainy Day",
+            Account::named(&accounts(), AccountId(1)),
             day(2026, 7, 31),
             vec![(GoalId(1), "Emergency Savings".to_string(), Cents(130_048))],
         );
@@ -809,8 +837,7 @@ mod tests {
     fn a_worksheet_with_nothing_allocated_is_refused() {
         let mut sheet = Worksheet::new(
             BatchKind::Adhoc,
-            AccountId(1),
-            "Rainy Day",
+            Account::named(&accounts(), AccountId(1)),
             day(2026, 8, 14),
             vec![(GoalId(1), "Bill Payments".to_string(), Cents::ZERO)],
         );
@@ -823,8 +850,28 @@ mod tests {
     fn the_title_names_the_amount_the_container_and_the_kind() {
         let sheet = sheet();
         let title = sheet.title();
-        assert!(title.contains("3,247.00"), "{title}");
-        assert!(title.contains("Rainy Day"), "{title}");
+        assert!(title.plain_text().contains("3,247.00"), "{title:?}");
+        assert!(title.plain_text().contains("Rainy Day"), "{title:?}");
+    }
+
+    /// The container in the title is the same account the goal rows land in,
+    /// so it is worth naming with the same color.
+    #[test]
+    fn the_worksheet_title_names_its_container_as_an_account() {
+        let sheet = Worksheet::new(
+            BatchKind::Paycheck,
+            Account::named(&accounts(), AccountId(3)),
+            day(2026, 8, 14),
+            vec![(GoalId(1), "Bill Payments".to_string(), Cents(20_000))],
+        );
+        let title = sheet.title();
+        assert!(
+            title.plain_text().contains("post 200.00 to Nest Egg"),
+            "{}",
+            title.plain_text()
+        );
+        assert_eq!(title.accounts().len(), 1);
+        assert_eq!(title.accounts()[0].id(), AccountId(3));
     }
 
     #[test]
@@ -909,8 +956,7 @@ mod tests {
     fn weighted_sheet() -> Worksheet {
         Worksheet::new(
             BatchKind::Interest,
-            AccountId(1),
-            "Brokerage",
+            Account::named(&accounts(), AccountId(2)),
             day(2026, 8, 14),
             vec![
                 (GoalId(1), "Home Down Payment".to_string(), Cents::ZERO),

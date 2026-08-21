@@ -1,4 +1,4 @@
-use crate::db::account::{self, AccountColor, Group, Kind};
+use crate::db::account::{self, Group, Kind};
 use crate::db::{AccountId, Db, txn};
 use crate::money::Cents;
 use crate::projection::Dates;
@@ -47,17 +47,11 @@ impl Sum for Balances {
 /// One labelled row of the table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line {
+    /// The account this row is, or `None` for a subtotal, which names a band
+    /// rather than an account and takes no tint.
+    pub account: Option<super::Account>,
+    /// What a subtotal row is labelled. Empty when `account` is set.
     pub label: String,
-    /// The account this row is, or `None` for the subtotal and Net rows --
-    /// which are sums over accounts rather than accounts, so tinting one with
-    /// an account's color would claim it belongs to that account.
-    pub account_id: Option<AccountId>,
-    /// The color the owner picked for that account, if any. Carried beside
-    /// the id rather than looked up at render time, for the reason every
-    /// other screen snapshots what it draws: the row is built from the
-    /// account list once, and a second reading is a second chance to
-    /// disagree with it.
-    pub color: Option<AccountColor>,
     pub balances: Balances,
 }
 
@@ -133,9 +127,8 @@ impl Overview {
                         month_end: held(&month_end),
                     };
                     Line {
-                        account_id: Some(account.id),
-                        color: account.color,
-                        label: account.name.clone(),
+                        account: Some(super::Account::named(&accounts, account.id)),
+                        label: String::new(),
                         // Credit is stored as debt, and this screen is the
                         // only one that negates it -- which is what makes Net
                         // a single addition rather than a subtraction with a
@@ -188,17 +181,12 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Cell, Row, Table};
 
-/// A data row. `account_id` tints the label; the subtotals pass `None` and
-/// keep the plain foreground.
-fn table_row(
-    label: &str,
-    account: Option<(AccountId, Option<AccountColor>)>,
-    balances: Balances,
-    style: Style,
-) -> Row<'static> {
-    let label = match account {
-        Some((id, color)) => account_cell(label.to_string(), id, color),
-        None => Cell::from(label.to_string()),
+/// A data row. An account row is tinted by its account; a subtotal names a
+/// band rather than an account, so it takes the plain foreground.
+fn table_row(line: &Line, balances: Balances, style: Style) -> Row<'static> {
+    let label = match &line.account {
+        Some(account) => account_cell(account),
+        None => Cell::from(line.label.clone()),
     };
     Row::new(vec![
         label,
@@ -239,8 +227,11 @@ fn spacer() -> Row<'static> {
 /// they are the only unbolded rows on the screen.
 fn subtotal_row(label: &str, balances: Balances) -> Row<'static> {
     table_row(
-        label,
-        None,
+        &Line {
+            account: None,
+            label: label.to_string(),
+            balances,
+        },
         balances,
         Style::default().add_modifier(Modifier::BOLD),
     )
@@ -276,14 +267,7 @@ pub fn render(frame: &mut Frame, area: Rect, overview: &Overview, scrubbed: bool
     let mut rows: Vec<Row> = Vec::new();
     for section in [&overview.cash, &overview.credit] {
         for band in &section.bands {
-            rows.extend(band.lines.iter().map(|l| {
-                table_row(
-                    &l.label,
-                    l.account_id.map(|id| (id, l.color)),
-                    l.balances,
-                    plain,
-                )
-            }));
+            rows.extend(band.lines.iter().map(|l| table_row(l, l.balances, plain)));
             if section.breaks_down() {
                 rows.push(subtotal_row(band.group.label(), band.total));
             }
@@ -291,7 +275,15 @@ pub fn render(frame: &mut Frame, area: Rect, overview: &Overview, scrubbed: bool
         rows.push(subtotal_row(section.kind.label(), section.total));
         rows.push(spacer());
     }
-    rows.push(table_row("Net", None, overview.net, bold));
+    rows.push(table_row(
+        &Line {
+            account: None,
+            label: "Net".to_string(),
+            balances: overview.net,
+        },
+        overview.net,
+        bold,
+    ));
 
     let [to_date, adhoc, month_end] = column_headers(overview.dates, scrubbed);
     let header = Row::new(vec![
@@ -369,13 +361,13 @@ mod tests {
         id
     }
 
-    fn line<'a>(section: &'a Section, label: &str) -> &'a Line {
+    fn line<'a>(section: &'a Section, name: &str) -> &'a Line {
         section
             .bands
             .iter()
             .flat_map(|b| &b.lines)
-            .find(|l| l.label == label)
-            .unwrap_or_else(|| panic!("no line labelled {label:?}"))
+            .find(|l| l.account.as_ref().is_some_and(|a| a.text() == name))
+            .unwrap_or_else(|| panic!("no line for account {name:?}"))
     }
 
     fn band(section: &Section, group: Group) -> &Band {

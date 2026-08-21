@@ -13,6 +13,7 @@
 //! scrolled out of rather than a cage.
 
 use super::cursor::{Cursor, Scroll};
+use super::{Account, Label};
 use crate::db::recurring_goal::{Cadence, Entry};
 use crate::db::{AccountId, RecurringGoalId};
 use anyhow::{Context, Result};
@@ -62,8 +63,7 @@ pub struct Picker {
     /// goals are created in.
     selected: Vec<bool>,
     cursor: Cursor,
-    container: AccountId,
-    container_name: String,
+    container: Account,
 }
 
 impl Picker {
@@ -71,8 +71,7 @@ impl Picker {
         entries: Vec<Entry>,
         open_counts: HashMap<RecurringGoalId, i64>,
         preselected: &HashSet<RecurringGoalId>,
-        container: AccountId,
-        container_name: &str,
+        container: Account,
     ) -> Picker {
         // A stable partition, so the table's own order survives inside each
         // group: `selected` is built from the boundary rather than from a
@@ -90,7 +89,6 @@ impl Picker {
             selected,
             cursor: Cursor::new(),
             container,
-            container_name: container_name.to_string(),
         }
     }
 
@@ -99,7 +97,7 @@ impl Picker {
     }
 
     pub fn container(&self) -> AccountId {
-        self.container
+        self.container.id()
     }
 
     pub fn open_count(&self, id: RecurringGoalId) -> i64 {
@@ -129,12 +127,13 @@ impl Picker {
             .collect()
     }
 
-    pub fn title(&self) -> String {
-        format!(
-            "Recurring goals — {} selected · Space toggles · Enter creates in {} · Esc cancel",
-            self.selected_count(),
-            self.container_name
-        )
+    pub fn title(&self) -> Label {
+        Label::plain(format!(
+            "Recurring goals — {} selected · Space toggles · Enter creates in ",
+            self.selected_count()
+        ))
+        .account(self.container.clone())
+        .text(" · Esc cancel")
     }
 }
 
@@ -153,7 +152,7 @@ impl Scroll for Picker {
 }
 
 use super::form::centered;
-use super::{amount, month_name, table_state};
+use super::{amount, label_line, month_name, table_state};
 use ratatui::Frame;
 use ratatui::layout::Constraint;
 use ratatui::style::{Modifier, Style};
@@ -170,7 +169,7 @@ pub fn render(frame: &mut Frame, picker: &Picker) -> usize {
         frame.area().height.saturating_sub(4).max(8),
     );
     frame.render_widget(Clear, area);
-    frame.render_widget(Block::bordered().title(picker.title()), area);
+    frame.render_widget(Block::bordered().title(label_line(&picker.title())), area);
     let inner = area.inner(ratatui::layout::Margin::new(1, 1));
 
     let rows: Vec<Row> = picker
@@ -217,10 +216,34 @@ pub fn render(frame: &mut Frame, picker: &Picker) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::account::{self, Group, Kind};
     use crate::money::Cents;
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    fn accounts() -> Vec<account::Account> {
+        vec![
+            account::Account {
+                id: AccountId(1),
+                code: "SAV".into(),
+                name: "Rainy Day".into(),
+                kind: Kind::Cash,
+                sort: 0,
+                group: Group::Savings,
+                color: None,
+            },
+            account::Account {
+                id: AccountId(2),
+                code: "NST".into(),
+                name: "Nest Egg".into(),
+                kind: Kind::Cash,
+                sort: 1,
+                group: Group::Savings,
+                color: None,
+            },
+        ]
     }
 
     fn entry(id: i64, name: &str, month: i64, cadence: Cadence) -> Entry {
@@ -335,8 +358,7 @@ mod tests {
             entries,
             HashMap::new(),
             &HashSet::new(),
-            AccountId(1),
-            "Rainy Day",
+            Account::named(&accounts(), AccountId(1)),
         );
         assert_eq!(picker.selected_count(), 0);
 
@@ -357,8 +379,34 @@ mod tests {
     fn the_open_column_counts_a_catalog_entrys_existing_goals() {
         let entries = vec![entry(1, "Dropbox", 9, Cadence::Annual)];
         let counts = HashMap::from([(RecurringGoalId(1), 2)]);
-        let picker = Picker::new(entries, counts, &HashSet::new(), AccountId(1), "Rainy Day");
+        let picker = Picker::new(
+            entries,
+            counts,
+            &HashSet::new(),
+            Account::named(&accounts(), AccountId(1)),
+        );
         assert_eq!(picker.open_count(RecurringGoalId(1)), 2);
         assert_eq!(picker.open_count(RecurringGoalId(9)), 0);
+    }
+
+    /// The picker's title is the only thing on screen naming the container
+    /// its goals will be created in, which is why the title carries a
+    /// container at all -- so it is the one word on the line worth a color.
+    #[test]
+    fn the_picker_title_names_the_container_it_creates_in() {
+        let picker = Picker::new(
+            vec![entry(1, "Dropbox", 9, Cadence::Annual)],
+            HashMap::new(),
+            &HashSet::new(),
+            Account::named(&accounts(), AccountId(2)),
+        );
+        let title = picker.title();
+        assert!(
+            title.plain_text().contains("creates in Nest Egg"),
+            "{}",
+            title.plain_text()
+        );
+        assert_eq!(title.accounts().len(), 1);
+        assert_eq!(title.accounts()[0].id(), AccountId(2));
     }
 }

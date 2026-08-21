@@ -208,7 +208,8 @@ pub fn spread_container(db: &Db) -> Result<Option<AccountId>> {
 
 fn container_names(db: &Db, ids: &[AccountId]) -> Result<Vec<String>> {
     ids.iter()
-        .map(|id| Ok(account::get(db, *id)?.name))
+        // names the containers in a text report, not a display of an account
+        .map(|id| Ok(account::get(db, *id)?.name.as_str().to_string()))
         .collect()
 }
 
@@ -298,7 +299,10 @@ pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
     let container_of = |id: AccountId| {
         accounts.iter().find(|a| a.id == id).map(|a| Container {
             id: a.id,
-            name: a.name.clone(),
+            // A `String`, not a `tui::label::Account`: the Planning screen
+            // tints this through `planning::Tint` instead -- see
+            // `src/tui/CLAUDE.md`'s account-color section.
+            name: a.name.as_str().to_string(),
             color: a.color,
         })
     };
@@ -503,7 +507,10 @@ fn unclaimed_by_container(db: &Db) -> Result<Vec<String>> {
         } else {
             String::new()
         };
-        out.push(format!("  {}: {count}{listed}", account::get(db, id)?.name));
+        out.push(format!(
+            "  {}: {count}{listed}",
+            account::get(db, id)?.name.as_str()
+        ));
     }
     Ok(out)
 }
@@ -604,7 +611,10 @@ fn merge_transfer(
     let account = account::get(db, to)?;
     transfers.push(Row::Transfer {
         to,
-        name: account.name,
+        // A `String`, not a `tui::label::Account`: the Planning screen tints
+        // this through `planning::Tint` instead -- see `src/tui/CLAUDE.md`'s
+        // account-color section.
+        name: account.name.as_str().to_string(),
         color: account.color,
         cents,
         lines: vec![(line, cents)],
@@ -1014,7 +1024,10 @@ mod tests {
         let account = account::by_code(db, code, Kind::Cash).unwrap().unwrap();
         Container {
             id: account.id,
-            name: account.name,
+            // A `String`, not a `tui::label::Account`: the Planning screen
+            // tints this through `planning::Tint` instead -- see
+            // `src/tui/CLAUDE.md`'s account-color section.
+            name: account.name.as_str().to_string(),
             color: account.color,
         }
     }

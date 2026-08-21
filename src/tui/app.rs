@@ -16,6 +16,7 @@ use super::recurring_txn::{self as recurring_txn_screen, RecurringTxnForm, Recur
 use super::savings::{self, Savings};
 use super::search::{self, Search};
 use super::worksheet::{self, Worksheet};
+use super::{Account, Label};
 use crate::calc;
 use crate::db::account::{self, Kind};
 use crate::db::bill;
@@ -336,7 +337,7 @@ impl App {
             KeyCode::Char('i') => self.open_interest()?,
             KeyCode::Char('e') => self.open_goal_edit()?,
             KeyCode::Char('c') => self.open_close_out()?,
-            KeyCode::Char('n') => self.open_new_goal(),
+            KeyCode::Char('n') => self.open_new_goal()?,
             KeyCode::Char('U') => self.open_undo()?,
             _ => {}
         }
@@ -492,7 +493,10 @@ impl App {
         match opened {
             None | Some((None, _, _)) => self.status = NOTHING_SELECTED.to_string(),
             Some((Some(planning::Editable::Constant(target)), label, prefill)) => {
-                self.modal = Some(Modal::Value(target, ValueForm::new(&label, &prefill)));
+                self.modal = Some(Modal::Value(
+                    target,
+                    ValueForm::new(label.trim().to_string(), &prefill),
+                ));
             }
             Some((Some(planning::Editable::Destination(line)), _, _)) => {
                 self.open_destination(line)?
@@ -542,7 +546,11 @@ impl App {
     fn open_destination(&mut self, line: Line) -> Result<()> {
         let accounts = account::list(&self.db)?;
         let offer = |goal: goal::Goal| destination::Offered {
-            container: super::account_name(&accounts, goal.container_account_id).to_string(),
+            container: accounts
+                .iter()
+                .find(|a| a.id == goal.container_account_id)
+                .map_or("?", |a| a.name.as_str())
+                .to_string(),
             id: goal.id,
             name: goal.name,
         };
@@ -629,7 +637,7 @@ impl App {
         // Parsed before the modal closes, so a rejected edit keeps the form
         // and everything typed into it.
         target.write(&self.db, form.value())?;
-        self.status = format!("{} saved", form.label().trim());
+        self.status = format!("{} saved", form.label().plain_text().trim());
         self.close_modal();
         self.reload()
     }
@@ -1103,9 +1111,9 @@ impl App {
             self.status = "reconcile needs an account filter".to_string();
             return;
         };
-        let label = format!("Target · {}", ledger.account_name(id));
+        let label = Label::plain("Target · ").account(Account::named(ledger.accounts(), id));
         let prefill = ledger.target().map(|t| t.to_string()).unwrap_or_default();
-        self.modal = Some(Modal::Reconcile(id, ValueForm::new(&label, &prefill)));
+        self.modal = Some(Modal::Reconcile(id, ValueForm::new(label, &prefill)));
     }
 
     /// An empty field clears the target: that is how one goes away, since
@@ -1236,13 +1244,11 @@ impl App {
         let mut rows = Vec::with_capacity(accounts.len());
         for account in &accounts {
             rows.push(accounts_screen::Row {
-                account_id: account.id,
-                code: account.code.clone(),
-                name: account.name.clone(),
+                account: super::Account::named(&accounts, account.id),
+                code: account.code.as_str().to_string(),
                 kind: account.kind,
                 group: account.group,
                 policy: account::interest_policy(&self.db, account.id)?,
-                color: account.color,
                 block: self.savings_block_of(account.id)?,
             });
         }
@@ -1291,7 +1297,7 @@ impl App {
         let Some(row) = self.accounts.selected() else {
             return self.nothing_selected();
         };
-        let id = row.account_id;
+        let id = row.account.id();
         let (position, of_kind) = self
             .accounts
             .position_of(id)
@@ -1623,7 +1629,7 @@ impl App {
         let Some(row) = self.savings.selected() else {
             return self.nothing_selected();
         };
-        let (goal_id, name, container) = (row.goal_id, row.name.clone(), row.container);
+        let (goal_id, name, container) = (row.goal_id, row.name.clone(), row.container.id());
         // The pot `/N` divides. A container with nothing unallocated is not an
         // error -- the form still opens, and `/N` there is zero.
         let unallocated = self
@@ -1667,13 +1673,17 @@ impl App {
     /// `n`: a goal typed from scratch, in the container the screen defaults
     /// to. The container is checked here rather than only at commit, so the
     /// form never opens over a container it invented.
-    fn open_new_goal(&mut self) {
+    fn open_new_goal(&mut self) -> Result<()> {
         let Some(container) = self.savings.default_container() else {
             self.status = "no container holds goals yet".to_string();
-            return;
+            return Ok(());
         };
-        let name = self.savings.account_name(container).to_string();
-        self.modal = Some(Modal::Goal(GoalForm::add(container, &name)));
+        let account = account::get(&self.db, container)?;
+        self.modal = Some(Modal::Goal(GoalForm::add(Account::named(
+            std::slice::from_ref(&account),
+            container,
+        ))));
+        Ok(())
     }
 
     fn open_goal_edit(&mut self) -> Result<()> {
@@ -1729,8 +1739,12 @@ impl App {
         let Some(row) = self.savings.selected() else {
             return self.nothing_selected();
         };
-        let (goal_id, name, container, current) =
-            (row.goal_id, row.name.clone(), row.container, row.current);
+        let (goal_id, name, container, current) = (
+            row.goal_id,
+            row.name.clone(),
+            row.container.id(),
+            row.current,
+        );
         // Built from the container, not from the screen's filtered rows: a
         // search must not narrow what a close-out may move value into.
         let siblings = goal::list_with_balances(&self.db, container)?
@@ -1846,11 +1860,10 @@ impl App {
         for g in goal::list_with_balances(&self.db, container)? {
             prefill.push((g.goal.id, g.goal.name, Cents::ZERO));
         }
-        let name = account::get(&self.db, container)?.name;
+        let account = account::get(&self.db, container)?;
         let mut sheet = Worksheet::new(
             goal::BatchKind::Paycheck,
-            container,
-            &name,
+            Account::named(std::slice::from_ref(&account), container),
             self.today,
             prefill,
         );
@@ -1884,9 +1897,12 @@ impl App {
             let ask = super::paycheck_ask(&g, self.today, self.period_days)?;
             prefill.push((g.goal.id, g.goal.name, ask.unwrap_or(Cents::ZERO)));
         }
-        let name = self.savings.account_name(container).to_string();
+        let account = account::get(&self.db, container)?;
         Ok(Some(Worksheet::new(
-            kind, container, &name, self.today, prefill,
+            kind,
+            Account::named(std::slice::from_ref(&account), container),
+            self.today,
+            prefill,
         )))
     }
 
@@ -2005,13 +2021,12 @@ impl App {
             .filter(|e| counts.get(&e.id).copied().unwrap_or(0) == 0)
             .map(|e| e.id)
             .collect();
-        let name = self.savings.account_name(container).to_string();
+        let account = account::get(&self.db, container)?;
         self.modal = Some(Modal::Picker(Picker::new(
             entries,
             counts,
             &preselected,
-            container,
-            &name,
+            Account::named(std::slice::from_ref(&account), container),
         )));
         Ok(())
     }
@@ -3203,7 +3218,10 @@ mod tests {
         assert_eq!(descriptions(&app.credit), ["Batteries"]);
 
         press(&mut app, KeyCode::Char('a'));
-        assert_eq!(form(&app).display(TxnField::Account), "CC2 — Card Two");
+        assert_eq!(
+            form(&app).display(TxnField::Account).plain_text(),
+            "CC2 — Card Two"
+        );
     }
 
     /// The Savings container filter cycles both ways too, so `BackTab` backs
@@ -3229,7 +3247,10 @@ mod tests {
         press(&mut app, KeyCode::Char('3'));
         press(&mut app, KeyCode::Char('a'));
 
-        assert_eq!(form(&app).display(TxnField::Account), "CC1 — Card One");
+        assert_eq!(
+            form(&app).display(TxnField::Account).plain_text(),
+            "CC1 — Card One"
+        );
     }
 
     /// Without this the only way out of the popup is `Esc`, which discarded
@@ -3684,7 +3705,7 @@ mod tests {
             panic!("e opens the goal form");
         };
         assert_eq!(
-            form.display(goal_form::GoalField::Name),
+            form.display(goal_form::GoalField::Name).plain_text(),
             "Home Down Payment"
         );
         for _ in 0..3 {
@@ -4334,8 +4355,11 @@ mod tests {
         match &app.modal {
             Some(Modal::Bill(form)) => {
                 assert_eq!(form.editing, Some(bill.id));
-                assert_eq!(form.display(BillField::Label), bill.label);
-                assert_eq!(form.display(BillField::Amount), bill.cents.to_string());
+                assert_eq!(form.display(BillField::Label).plain_text(), bill.label);
+                assert_eq!(
+                    form.display(BillField::Amount).plain_text(),
+                    bill.cents.to_string()
+                );
                 assert_eq!(form.category(), bill.category);
             }
             _ => panic!("no bill form is open"),
@@ -5595,7 +5619,8 @@ mod tests {
         match &app.modal {
             Some(Modal::RecurringTxn(form)) => {
                 assert_eq!(
-                    form.display(crate::tui::recurring_txn::RecurringTxnField::Description),
+                    form.display(crate::tui::recurring_txn::RecurringTxnField::Description)
+                        .plain_text(),
                     "Mortgage"
                 );
                 assert_eq!(
@@ -5891,7 +5916,8 @@ mod tests {
         match &app.modal {
             Some(Modal::RecurringGoalEntry(form)) => {
                 assert_eq!(
-                    form.display(crate::tui::recurring_goal::RecurringGoalField::Name),
+                    form.display(crate::tui::recurring_goal::RecurringGoalField::Name)
+                        .plain_text(),
                     "Dropbox"
                 );
                 assert_eq!(
@@ -6800,12 +6826,18 @@ mod tests {
         assert_eq!(form(&app).focus, TxnField::Date, "a form opens on its date");
 
         press(&mut app, KeyCode::Right);
-        assert_eq!(form(&app).display(TxnField::Date), "2026-08-16");
-        press(&mut app, KeyCode::Left);
-        press(&mut app, KeyCode::Left);
-        assert_eq!(form(&app).display(TxnField::Date), "2026-08-14");
         assert_eq!(
-            form(&app).display(TxnField::Account),
+            form(&app).display(TxnField::Date).plain_text(),
+            "2026-08-16"
+        );
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Left);
+        assert_eq!(
+            form(&app).display(TxnField::Date).plain_text(),
+            "2026-08-14"
+        );
+        assert_eq!(
+            form(&app).display(TxnField::Account).plain_text(),
             "CHK — Everyday",
             "the account selector sits on its own field"
         );
@@ -6939,7 +6971,7 @@ mod tests {
             GoalTarget::Create(app.savings.default_container().unwrap()),
             "a new goal has no id to edit, and lands in the default container"
         );
-        assert_eq!(form.display(goal_form::GoalField::Name), "");
+        assert_eq!(form.display(goal_form::GoalField::Name).plain_text(), "");
     }
 
     #[test]
@@ -6963,7 +6995,7 @@ mod tests {
         assert_eq!(bike.goal, Cents::from_dollars(1_200));
         assert_eq!(bike.goal_date, Some(day(2027, 5, 1)));
         assert_eq!(
-            bike.container,
+            bike.container.id(),
             app.savings.default_container().unwrap(),
             "the new goal landed outside the container the screen defaults to"
         );
@@ -7144,14 +7176,14 @@ mod tests {
         // The three screens holding their own account list see it without a
         // restart, which is what `reload_accounts` is for.
         assert_eq!(app.savings.account_name(id), "Nest Egg");
-        assert_eq!(app.accounts.rows()[1].name, "Nest Egg");
+        assert_eq!(app.accounts.rows()[1].account.text(), "Nest Egg");
         assert!(
             app.overview
                 .cash
                 .bands
                 .iter()
                 .flat_map(|b| &b.lines)
-                .any(|l| l.label == "Nest Egg")
+                .any(|l| l.account.as_ref().is_some_and(|a| a.text() == "Nest Egg"))
         );
         // The cached column, which only moves if `reload` refreshes the account
         // list before it re-sets the goals.
@@ -7159,8 +7191,8 @@ mod tests {
             .savings
             .rows()
             .iter()
-            .filter(|r| r.container == id)
-            .map(|r| r.account_name.as_str())
+            .filter(|r| r.container.id() == id)
+            .map(|r| r.container.text())
             .collect();
         assert!(
             !cached.is_empty(),
@@ -7192,7 +7224,7 @@ mod tests {
             press(&mut app, KeyCode::Down);
         }
         assert_eq!(
-            app.accounts.selected().unwrap().account_id,
+            app.accounts.selected().unwrap().account.id(),
             *before.last().unwrap()
         );
         press(&mut app, KeyCode::Char('e'));
@@ -7265,7 +7297,11 @@ mod tests {
         let mut app = app();
         press(&mut app, KeyCode::Char('9'));
         let before = app.accounts.selected().unwrap().clone();
-        assert_eq!(before.color, None, "an account starts with no color");
+        assert_eq!(
+            account::get(&app.db, before.account.id()).unwrap().color,
+            None,
+            "an account starts with no color"
+        );
 
         press(&mut app, KeyCode::Char('e'));
         let Some(Modal::Account(form)) = &mut app.modal else {
@@ -7273,7 +7309,7 @@ mod tests {
         };
         // The form opens on the shade the row is already drawn in, so one
         // step off it is the *next* color rather than the head of the list.
-        let opening = account::AccountColor::derived(before.account_id);
+        let opening = account::AccountColor::derived(before.account.id());
         form.next_choice_on(accounts_screen::AccountField::Color);
         let picked = form
             .color_choice()
@@ -7285,13 +7321,12 @@ mod tests {
             .accounts
             .rows()
             .iter()
-            .find(|r| r.account_id == before.account_id)
+            .find(|r| r.account.id() == before.account.id())
             .expect("the account is gone");
-        assert_eq!(after.color, Some(picked));
-        assert_eq!(after.name, before.name);
+        assert_eq!(after.account.text(), before.account.text());
         assert_eq!(after.group, before.group);
         assert_eq!(
-            account::get(&app.db, before.account_id).unwrap().color,
+            account::get(&app.db, before.account.id()).unwrap().color,
             Some(picked),
             "the color did not reach the database"
         );
@@ -7306,7 +7341,7 @@ mod tests {
     fn enter_on_an_untouched_account_form_pins_the_derived_color() {
         let mut app = app();
         press(&mut app, KeyCode::Char('9'));
-        let id = app.accounts.selected().unwrap().account_id;
+        let id = app.accounts.selected().unwrap().account.id();
         assert_eq!(account::get(&app.db, id).unwrap().color, None);
 
         press(&mut app, KeyCode::Char('e'));
@@ -7329,7 +7364,7 @@ mod tests {
     fn a_color_can_be_cleared_from_the_accounts_screen() {
         let mut app = app();
         press(&mut app, KeyCode::Char('9'));
-        let id = app.accounts.selected().unwrap().account_id;
+        let id = app.accounts.selected().unwrap().account.id();
         account::set_color(&app.db, id, Some(account::AccountColor::Rose)).unwrap();
         app.reload().unwrap();
 
@@ -7340,12 +7375,20 @@ mod tests {
         // Step round to `—` rather than counting to it: how long the cycle
         // is, is the form's business and not this test's.
         for _ in 0..=account::AccountColor::ALL.len() {
-            if form.display(accounts_screen::AccountField::Color) == "—" {
+            if form
+                .display(accounts_screen::AccountField::Color)
+                .plain_text()
+                == "—"
+            {
                 break;
             }
             form.next_choice_on(accounts_screen::AccountField::Color);
         }
-        assert_eq!(form.display(accounts_screen::AccountField::Color), "—");
+        assert_eq!(
+            form.display(accounts_screen::AccountField::Color)
+                .plain_text(),
+            "—"
+        );
         press(&mut app, KeyCode::Enter);
 
         assert_eq!(account::get(&app.db, id).unwrap().color, None);

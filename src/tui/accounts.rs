@@ -13,6 +13,7 @@
 //! View state only -- no ratatui above the render functions at the bottom,
 //! and no `Db` on the type. `App` runs the queries and hands the results in.
 
+use super::Label;
 use super::cursor::{Cursor, Scroll};
 use super::form::{Field, FormFields, next_in, step_index};
 use crate::db::AccountId;
@@ -23,15 +24,11 @@ use anyhow::{Result, ensure};
 /// One account as the screen shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
-    pub account_id: AccountId,
+    pub account: super::Account,
     pub code: String,
-    pub name: String,
     pub kind: Kind,
     pub group: Group,
     pub policy: InterestPolicy,
-    /// The color the owner picked, if any. `None` draws in the shade the id
-    /// derives, which is what every account starts at.
-    pub color: Option<AccountColor>,
     /// Which block of the `Savings` sheet this account is the container for,
     /// if either. The one thing on this screen that the import *reads* rather
     /// than merely leaves alone: without both blocks pointed somewhere,
@@ -74,9 +71,9 @@ impl Accounts {
     /// `set_rows` takes `account::list` order, which is `kind, sort, code`,
     /// so the accounts of one kind are contiguous and in position order.
     pub fn position_of(&self, id: AccountId) -> Option<(usize, usize)> {
-        let row = self.rows.iter().find(|r| r.account_id == id)?;
+        let row = self.rows.iter().find(|r| r.account.id() == id)?;
         let of_kind: Vec<&Row> = self.rows.iter().filter(|r| r.kind == row.kind).collect();
-        let position = of_kind.iter().position(|r| r.account_id == id)?;
+        let position = of_kind.iter().position(|r| r.account.id() == id)?;
         Some((position, of_kind.len()))
     }
 
@@ -218,7 +215,8 @@ impl AccountForm {
             account_id: account.id,
             focus: AccountField::Name,
             kind: account.kind,
-            name: Field::given(account.name.clone()),
+            // seeds the form's editable Name field, not a display of an account
+            name: Field::given(account.name.as_str().to_string()),
             // The color the account is *being drawn in*, which for one
             // nobody has picked for is the shade its id derives rather than
             // `—`. Opening on `—` meant the first `→` jumped to the head of
@@ -278,8 +276,8 @@ impl AccountForm {
         "Edit account — Tab field · ←/→ choice · Enter save · Esc cancel"
     }
 
-    pub fn display(&self, field: AccountField) -> String {
-        match field {
+    pub fn display(&self, field: AccountField) -> Label {
+        Label::plain(match field {
             AccountField::Name => self.name.value().to_string(),
             AccountField::Color => match color_choices()[self.color] {
                 None => "—".to_string(),
@@ -293,7 +291,7 @@ impl AccountForm {
                 None => "—".to_string(),
                 Some(block) => block.label().to_string(),
             },
-        }
+        })
     }
 
     /// Cycle one particular field's selector, whatever the focus is. The
@@ -417,7 +415,7 @@ pub fn render_form(frame: &mut Frame, form: &AccountForm) {
                 // take rather than nothing at all.
                 AccountField::Color => field_line_tinted(
                     f.label(),
-                    value,
+                    value.plain_text(),
                     focused,
                     super::style::account_color(form.account_id, form.color_choice()),
                 ),
@@ -436,7 +434,7 @@ pub fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> usize {
         .map(|r| {
             TableRow::new(vec![
                 Cell::from(r.code.clone()),
-                account_cell(r.name.clone(), r.account_id, r.color),
+                account_cell(&r.account),
                 Cell::from(r.kind.label()),
                 Cell::from(r.group.label()),
                 // Only a cash account holds goals, so only a cash account has
@@ -499,14 +497,21 @@ mod tests {
     use crate::tui::MIN_WIDTH;
 
     fn row(id: i64, code: &str, name: &str, kind: Kind, group: Group) -> Row {
+        let accounts = [Account {
+            id: AccountId(id),
+            code: code.into(),
+            name: name.into(),
+            kind,
+            sort: 0,
+            group,
+            color: None,
+        }];
         Row {
-            account_id: AccountId(id),
+            account: super::super::Account::named(&accounts, AccountId(id)),
             code: code.to_string(),
-            name: name.to_string(),
             kind,
             group,
             policy: InterestPolicy::Manual,
-            color: None,
             block: None,
         }
     }
@@ -529,8 +534,8 @@ mod tests {
     fn account(id: i64, name: &str, kind: Kind, group: Group) -> Account {
         Account {
             id: AccountId(id),
-            code: "CHK".to_string(),
-            name: name.to_string(),
+            code: "CHK".into(),
+            name: name.into(),
             kind,
             sort: 0,
             group,
@@ -598,9 +603,9 @@ mod tests {
             3,
             None,
         );
-        assert_eq!(form.display(AccountField::Band), "Checking");
+        assert_eq!(form.display(AccountField::Band).plain_text(), "Checking");
         form.next_choice_on(AccountField::Band);
-        assert_eq!(form.display(AccountField::Band), "Savings");
+        assert_eq!(form.display(AccountField::Band).plain_text(), "Savings");
         assert_eq!(form.commit().unwrap().group, Group::Savings);
         // Two bands, so a second step wraps back rather than reaching Credit.
         form.next_choice_on(AccountField::Band);
@@ -618,16 +623,16 @@ mod tests {
             3,
             None,
         );
-        assert_eq!(form.display(AccountField::Order), "3 of 3");
+        assert_eq!(form.display(AccountField::Order).plain_text(), "3 of 3");
         assert_eq!(form.commit().unwrap().position, 2);
 
         form.next_choice_on(AccountField::Order);
-        assert_eq!(form.display(AccountField::Order), "1 of 3");
+        assert_eq!(form.display(AccountField::Order).plain_text(), "1 of 3");
         assert_eq!(form.commit().unwrap().position, 0);
 
         form.previous_choice();
         // Focus is still Name, so the arrow must not have moved the order.
-        assert_eq!(form.display(AccountField::Order), "1 of 3");
+        assert_eq!(form.display(AccountField::Order).plain_text(), "1 of 3");
     }
 
     /// `—` first, then one entry per name: the choice the owner takes back
@@ -680,7 +685,7 @@ mod tests {
         let mut account = account(2, "Rainy Day", Kind::Cash, Group::Savings);
         account.color = Some(AccountColor::Violet);
         let form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None);
-        assert_eq!(form.display(AccountField::Color), "Violet");
+        assert_eq!(form.display(AccountField::Color).plain_text(), "Violet");
         assert_eq!(form.commit().unwrap().color, Some(AccountColor::Violet));
     }
 
@@ -740,14 +745,14 @@ mod tests {
     #[test]
     fn the_cursor_stays_inside_the_list() {
         let mut accounts = screen();
-        assert_eq!(accounts.selected().unwrap().account_id, AccountId(1));
+        assert_eq!(accounts.selected().unwrap().account.id(), AccountId(1));
         accounts.select_previous();
-        assert_eq!(accounts.selected().unwrap().account_id, AccountId(1));
+        assert_eq!(accounts.selected().unwrap().account.id(), AccountId(1));
 
         accounts.select_last();
-        assert_eq!(accounts.selected().unwrap().account_id, AccountId(5));
+        assert_eq!(accounts.selected().unwrap().account.id(), AccountId(5));
         accounts.select_next();
-        assert_eq!(accounts.selected().unwrap().account_id, AccountId(5));
+        assert_eq!(accounts.selected().unwrap().account.id(), AccountId(5));
     }
 
     #[test]
@@ -870,7 +875,10 @@ mod tests {
             None,
         );
         let derived = AccountColor::derived(AccountId(2));
-        assert_eq!(form.display(AccountField::Color), derived.label());
+        assert_eq!(
+            form.display(AccountField::Color).plain_text(),
+            derived.label()
+        );
         assert_eq!(form.color_choice(), Some(derived));
         // And it is the same shade the row was drawn in before the form
         // opened -- the choice names what was there, it does not change it.
@@ -894,7 +902,7 @@ mod tests {
         while form.color_choice().is_some() {
             form.next_choice_on(AccountField::Color);
         }
-        assert_eq!(form.display(AccountField::Color), "—");
+        assert_eq!(form.display(AccountField::Color).plain_text(), "—");
         assert_eq!(
             crate::tui::style::account_color(AccountId(2), form.color_choice()),
             crate::tui::style::account_color(AccountId(2), None),
@@ -922,8 +930,8 @@ mod savings_block_tests {
     fn account(id: i64, name: &str, kind: Kind, group: Group) -> Account {
         Account {
             id: AccountId(id),
-            code: "CHK".to_string(),
-            name: name.to_string(),
+            code: "CHK".into(),
+            name: name.into(),
             kind,
             sort: 0,
             group,
@@ -952,7 +960,7 @@ mod savings_block_tests {
             3,
             None,
         );
-        assert_eq!(form.display(AccountField::Savings), "—");
+        assert_eq!(form.display(AccountField::Savings).plain_text(), "—");
         assert_eq!(form.commit().unwrap().block, None);
 
         form.next_choice_on(AccountField::Savings);
@@ -993,7 +1001,7 @@ mod savings_block_tests {
             Some(SavingsBlock::Buckets),
         );
         assert_eq!(
-            form.display(AccountField::Savings),
+            form.display(AccountField::Savings).plain_text(),
             SavingsBlock::Buckets.label()
         );
         assert_eq!(form.commit().unwrap().block, Some(SavingsBlock::Buckets));

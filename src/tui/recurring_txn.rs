@@ -4,12 +4,13 @@
 //! View state only -- no ratatui above the render functions at the bottom, and
 //! no `Db` on the type. `App` runs the queries and hands the results in.
 
+use super::Label;
 use super::cursor::{Cursor, Scroll};
 use super::form::{Field, FormFields, next_in, parse_amount, parse_date, step_index};
-use crate::db::account::{Account, AccountColor};
+use crate::db::RecurringTxnId;
+use crate::db::account::Account;
 use crate::db::recurring_txn::{Cadence, NewRecurringTxn, RecurringTxn};
 use crate::db::txn::Suggestion;
-use crate::db::{AccountId, RecurringTxnId};
 use crate::money::Cents;
 use anyhow::{Result, ensure};
 use chrono::NaiveDate;
@@ -20,11 +21,9 @@ use std::collections::HashMap;
 pub struct Row {
     pub recurring_txn_id: RecurringTxnId,
     pub description: String,
-    pub account_id: AccountId,
-    pub account_code: String,
-    /// The color the owner picked for that account, if any -- snapshotted
-    /// beside its code, and for the same reason.
-    pub account_color: Option<AccountColor>,
+    /// The account this row belongs to, as the Account column shows it: its
+    /// code, since the other columns pin the row down already.
+    pub account: super::Account,
     pub cents: Cents,
     pub cadence: Cadence,
     pub anchor_date: NaiveDate,
@@ -67,9 +66,7 @@ impl RecurringTxns {
         self.rows = txns
             .into_iter()
             .map(|txn| Row {
-                account_id: txn.account_id,
-                account_code: self.account_code(txn.account_id).to_string(),
-                account_color: super::account_color_of(&self.accounts, txn.account_id),
+                account: super::Account::coded(&self.accounts, txn.account_id),
                 owned: owned.get(&txn.id).copied().unwrap_or(0),
                 last_owned: last_owned.get(&txn.id).copied(),
                 recurring_txn_id: txn.id,
@@ -81,10 +78,6 @@ impl RecurringTxns {
             })
             .collect();
         self.cursor.clamp(self.rows.len());
-    }
-
-    pub fn account_code(&self, id: AccountId) -> &str {
-        super::account_code(&self.accounts, id)
     }
 
     pub fn rows(&self) -> &[Row] {
@@ -236,18 +229,17 @@ impl RecurringTxnForm {
         }
     }
 
-    pub fn display(&self, field: RecurringTxnField) -> String {
+    pub fn display(&self, field: RecurringTxnField) -> Label {
         match field {
-            RecurringTxnField::Description => self.description.value().to_string(),
-            RecurringTxnField::Amount => self.amount.value().to_string(),
-            RecurringTxnField::Anchor => self.anchor.value().to_string(),
-            RecurringTxnField::Horizon => self.horizon.value().to_string(),
-            RecurringTxnField::Account => self
-                .accounts
-                .get(self.account)
-                .map(|a| format!("{} — {}", a.code, a.name))
-                .unwrap_or_default(),
-            RecurringTxnField::Cadence => Cadence::ALL[self.cadence].as_str().to_string(),
+            RecurringTxnField::Description => Label::from(self.description.value()),
+            RecurringTxnField::Amount => Label::from(self.amount.value()),
+            RecurringTxnField::Anchor => Label::from(self.anchor.value()),
+            RecurringTxnField::Horizon => Label::from(self.horizon.value()),
+            RecurringTxnField::Account => match self.accounts.get(self.account) {
+                Some(a) => Label::default().account(super::Account::labelled(a)),
+                None => Label::default(),
+            },
+            RecurringTxnField::Cadence => Label::from(Cadence::ALL[self.cadence].as_str()),
         }
     }
 
@@ -397,7 +389,7 @@ pub fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> usize {
             TableRow::new(vec![
                 Cell::from(if r.is_paycheck { "$" } else { " " }),
                 Cell::from(r.description.clone()),
-                account_cell(r.account_code.clone(), r.account_id, r.account_color),
+                account_cell(&r.account),
                 amount(r.cents),
                 Cell::from(r.cadence.as_str()),
                 Cell::from(r.anchor_date.to_string()),
@@ -450,6 +442,7 @@ pub fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::AccountId;
     use crate::db::account::{Group, Kind};
     use crate::tui::MIN_WIDTH;
 
@@ -457,12 +450,16 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
 
+    fn today() -> NaiveDate {
+        day(2026, 8, 16)
+    }
+
     fn accounts() -> Vec<Account> {
         vec![
             Account {
                 id: AccountId(1),
-                code: "CHK".to_string(),
-                name: "Everyday".to_string(),
+                code: "CHK".into(),
+                name: "Everyday".into(),
                 kind: Kind::Cash,
                 sort: 0,
                 group: Group::Savings,
@@ -470,8 +467,8 @@ mod tests {
             },
             Account {
                 id: AccountId(2),
-                code: "SAV".to_string(),
-                name: "Rainy Day".to_string(),
+                code: "SAV".into(),
+                name: "Rainy Day".into(),
                 kind: Kind::Cash,
                 sort: 1,
                 group: Group::Savings,
@@ -545,7 +542,7 @@ mod tests {
     #[test]
     fn each_row_names_its_rules_account_by_code() {
         let list = screen();
-        assert!(list.rows().iter().all(|r| r.account_code == "CHK"));
+        assert!(list.rows().iter().all(|r| r.account.text() == "CHK"));
     }
 
     /// An account id with no account is a corrupt row, not a reason to stop
@@ -558,7 +555,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
         );
-        assert_eq!(list.rows()[0].account_code, "?");
+        assert_eq!(list.rows()[0].account.text(), "?");
     }
 
     #[test]
@@ -615,11 +612,25 @@ mod tests {
         assert!(list.selected().is_none());
     }
 
+    /// The form's selector names the same account its Account column does, in
+    /// the same color -- the column shows a code and the form shows both
+    /// halves, but they are one account.
+    #[test]
+    fn the_recurring_transaction_selector_shows_one_colored_account() {
+        let form = RecurringTxnForm::add(accounts(), today()).unwrap();
+        let value = form.display(RecurringTxnField::Account);
+        assert_eq!(value.plain_text(), "CHK — Everyday");
+        assert_eq!(value.accounts().len(), 1);
+    }
+
     #[test]
     fn a_rule_form_commits_what_was_typed() {
         let mut form = RecurringTxnForm::add(accounts(), day(2026, 8, 16)).unwrap();
         assert_eq!(form.editing, None);
-        assert_eq!(form.display(RecurringTxnField::Anchor), "2026-08-16");
+        assert_eq!(
+            form.display(RecurringTxnField::Anchor).plain_text(),
+            "2026-08-16"
+        );
 
         for c in "Mortgage".chars() {
             form.type_char(c);
@@ -676,12 +687,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(form.editing, Some(RecurringTxnId(2)));
-        assert_eq!(form.display(RecurringTxnField::Description), "Mortgage");
-        assert_eq!(form.display(RecurringTxnField::Amount), "-1,200.00");
-        assert_eq!(form.display(RecurringTxnField::Account), "CHK — Everyday");
-        assert_eq!(form.display(RecurringTxnField::Cadence), "monthly");
-        assert_eq!(form.display(RecurringTxnField::Anchor), "2026-08-28");
-        assert_eq!(form.display(RecurringTxnField::Horizon), "2026-12-18");
+        assert_eq!(
+            form.display(RecurringTxnField::Description).plain_text(),
+            "Mortgage"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Amount).plain_text(),
+            "-1,200.00"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Account).plain_text(),
+            "CHK — Everyday"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Cadence).plain_text(),
+            "monthly"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Anchor).plain_text(),
+            "2026-08-28"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Horizon).plain_text(),
+            "2026-12-18"
+        );
     }
 
     #[test]
@@ -769,9 +798,18 @@ mod tests {
 
         form.apply_suggestion(&suggestion("Mortgage", AccountId(2), -120_000));
 
-        assert_eq!(form.display(RecurringTxnField::Description), "Mortgage");
-        assert_eq!(form.display(RecurringTxnField::Amount), "-1,200.00");
-        assert_eq!(form.display(RecurringTxnField::Account), "SAV — Rainy Day");
+        assert_eq!(
+            form.display(RecurringTxnField::Description).plain_text(),
+            "Mortgage"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Amount).plain_text(),
+            "-1,200.00"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Account).plain_text(),
+            "SAV — Rainy Day"
+        );
     }
 
     /// Touched is not the same as non-empty: an amount typed and then
@@ -783,13 +821,16 @@ mod tests {
         typed(&mut form, RecurringTxnField::Amount, "22");
         form.backspace();
         form.backspace();
-        assert_eq!(form.display(RecurringTxnField::Amount), "");
+        assert_eq!(form.display(RecurringTxnField::Amount).plain_text(), "");
         typed(&mut form, RecurringTxnField::Description, "Mort");
 
         form.apply_suggestion(&suggestion("Mortgage", AccountId(2), -120_000));
 
-        assert_eq!(form.display(RecurringTxnField::Description), "Mortgage");
-        assert_eq!(form.display(RecurringTxnField::Amount), "");
+        assert_eq!(
+            form.display(RecurringTxnField::Description).plain_text(),
+            "Mortgage"
+        );
+        assert_eq!(form.display(RecurringTxnField::Amount).plain_text(), "");
     }
 
     /// An account the user chose is not the suggestion's to move.
@@ -804,7 +845,10 @@ mod tests {
 
         form.apply_suggestion(&suggestion("Mortgage", AccountId(1), -120_000));
 
-        assert_eq!(form.display(RecurringTxnField::Account), "SAV — Rainy Day");
+        assert_eq!(
+            form.display(RecurringTxnField::Account).plain_text(),
+            "SAV — Rainy Day"
+        );
     }
 
     /// An existing recurring transaction's amount and account are real figures
@@ -819,9 +863,18 @@ mod tests {
 
         form.apply_suggestion(&suggestion("Mortgage", AccountId(2), -300_000));
 
-        assert_eq!(form.display(RecurringTxnField::Description), "Mortgage");
-        assert_eq!(form.display(RecurringTxnField::Amount), "-1,200.00");
-        assert_eq!(form.display(RecurringTxnField::Account), "CHK — Everyday");
+        assert_eq!(
+            form.display(RecurringTxnField::Description).plain_text(),
+            "Mortgage"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Amount).plain_text(),
+            "-1,200.00"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Account).plain_text(),
+            "CHK — Everyday"
+        );
     }
 
     /// Only the description field opens the suggestion popup.
@@ -839,15 +892,30 @@ mod tests {
         while form.focus != RecurringTxnField::Account {
             form.next_field();
         }
-        assert_eq!(form.display(RecurringTxnField::Account), "CHK — Everyday");
+        assert_eq!(
+            form.display(RecurringTxnField::Account).plain_text(),
+            "CHK — Everyday"
+        );
         form.next_choice();
-        assert_eq!(form.display(RecurringTxnField::Account), "SAV — Rainy Day");
+        assert_eq!(
+            form.display(RecurringTxnField::Account).plain_text(),
+            "SAV — Rainy Day"
+        );
         form.next_choice();
-        assert_eq!(form.display(RecurringTxnField::Account), "CHK — Everyday");
+        assert_eq!(
+            form.display(RecurringTxnField::Account).plain_text(),
+            "CHK — Everyday"
+        );
         form.previous_choice();
-        assert_eq!(form.display(RecurringTxnField::Account), "SAV — Rainy Day");
+        assert_eq!(
+            form.display(RecurringTxnField::Account).plain_text(),
+            "SAV — Rainy Day"
+        );
         form.previous_choice();
-        assert_eq!(form.display(RecurringTxnField::Account), "CHK — Everyday");
+        assert_eq!(
+            form.display(RecurringTxnField::Account).plain_text(),
+            "CHK — Everyday"
+        );
     }
 
     #[test]
@@ -856,15 +924,30 @@ mod tests {
         while form.focus != RecurringTxnField::Cadence {
             form.next_field();
         }
-        assert_eq!(form.display(RecurringTxnField::Cadence), "biweekly");
+        assert_eq!(
+            form.display(RecurringTxnField::Cadence).plain_text(),
+            "biweekly"
+        );
         form.next_choice();
-        assert_eq!(form.display(RecurringTxnField::Cadence), "monthly");
+        assert_eq!(
+            form.display(RecurringTxnField::Cadence).plain_text(),
+            "monthly"
+        );
         form.next_choice();
-        assert_eq!(form.display(RecurringTxnField::Cadence), "biweekly");
+        assert_eq!(
+            form.display(RecurringTxnField::Cadence).plain_text(),
+            "biweekly"
+        );
         form.previous_choice();
-        assert_eq!(form.display(RecurringTxnField::Cadence), "monthly");
+        assert_eq!(
+            form.display(RecurringTxnField::Cadence).plain_text(),
+            "monthly"
+        );
         form.previous_choice();
-        assert_eq!(form.display(RecurringTxnField::Cadence), "biweekly");
+        assert_eq!(
+            form.display(RecurringTxnField::Cadence).plain_text(),
+            "biweekly"
+        );
     }
 
     /// Both dates on this form step a day at a time, the same as every other
@@ -881,16 +964,25 @@ mod tests {
             form.next_field();
         }
         form.next_choice();
-        assert_eq!(form.display(RecurringTxnField::Anchor), "2026-08-29");
+        assert_eq!(
+            form.display(RecurringTxnField::Anchor).plain_text(),
+            "2026-08-29"
+        );
         form.previous_choice();
         form.previous_choice();
-        assert_eq!(form.display(RecurringTxnField::Anchor), "2026-08-27");
+        assert_eq!(
+            form.display(RecurringTxnField::Anchor).plain_text(),
+            "2026-08-27"
+        );
 
         while form.focus != RecurringTxnField::Horizon {
             form.next_field();
         }
         form.next_choice();
-        assert_eq!(form.display(RecurringTxnField::Horizon), "2026-12-19");
+        assert_eq!(
+            form.display(RecurringTxnField::Horizon).plain_text(),
+            "2026-12-19"
+        );
     }
 
     /// An empty horizon is a rule that does not end. Seeding it from an arrow
@@ -903,7 +995,7 @@ mod tests {
         }
         form.next_choice();
         form.previous_choice();
-        assert_eq!(form.display(RecurringTxnField::Horizon), "");
+        assert_eq!(form.display(RecurringTxnField::Horizon).plain_text(), "");
     }
 
     /// `←`/`→` on a text field must not silently change the account or the
@@ -916,12 +1008,24 @@ mod tests {
         assert_eq!(form.focus, RecurringTxnField::Description);
 
         form.next_choice();
-        assert_eq!(form.display(RecurringTxnField::Account), "CHK — Everyday");
-        assert_eq!(form.display(RecurringTxnField::Cadence), "biweekly");
+        assert_eq!(
+            form.display(RecurringTxnField::Account).plain_text(),
+            "CHK — Everyday"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Cadence).plain_text(),
+            "biweekly"
+        );
 
         form.previous_choice();
-        assert_eq!(form.display(RecurringTxnField::Account), "CHK — Everyday");
-        assert_eq!(form.display(RecurringTxnField::Cadence), "biweekly");
+        assert_eq!(
+            form.display(RecurringTxnField::Account).plain_text(),
+            "CHK — Everyday"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Cadence).plain_text(),
+            "biweekly"
+        );
     }
 
     /// Every column at `MIN_WIDTH`, all read for one test.

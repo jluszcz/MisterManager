@@ -9,6 +9,7 @@ use super::form::{
     Field, FormFields, field_line, field_line_noted, next_in, parse_date, parse_share,
     parse_whole_amount, render_fields, step_index,
 };
+use super::{Account, Label};
 use crate::db::goal::GoalEdit;
 use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
@@ -118,12 +119,12 @@ impl AllocationForm {
         )
     }
 
-    pub fn display(&self, field: AllocField) -> String {
-        match field {
+    pub fn display(&self, field: AllocField) -> Label {
+        Label::plain(match field {
             AllocField::Date => self.date.value().to_string(),
             AllocField::Amount => self.amount.value().to_string(),
             AllocField::Note => self.note.value().to_string(),
-        }
+        })
     }
 
     pub fn commit(&self) -> Result<Allocation> {
@@ -219,10 +220,7 @@ pub enum GoalTarget {
 /// border would then say one thing while the commit did another.
 #[derive(Debug)]
 enum Subject {
-    New {
-        container: AccountId,
-        container_name: String,
-    },
+    New { container: Account },
     Existing(GoalId),
 }
 
@@ -250,12 +248,9 @@ pub struct GoalForm {
 
 impl GoalForm {
     /// A blank form, for a goal that does not exist yet.
-    pub fn add(container: AccountId, container_name: &str) -> GoalForm {
+    pub fn add(container: Account) -> GoalForm {
         GoalForm {
-            subject: Subject::New {
-                container,
-                container_name: container_name.to_string(),
-            },
+            subject: Subject::New { container },
             focus: GoalField::Name,
             name: Field::prefilled(""),
             target: Field::prefilled(""),
@@ -290,28 +285,28 @@ impl GoalForm {
     /// container. Read off the same field the border is, so the write cannot
     /// land somewhere the form did not say it would.
     pub fn target(&self) -> GoalTarget {
-        match self.subject {
-            Subject::Existing(id) => GoalTarget::Update(id),
-            Subject::New { container, .. } => GoalTarget::Create(container),
-        }
-    }
-
-    pub fn title(&self) -> String {
         match &self.subject {
-            Subject::Existing(_) => "Edit goal — Tab field · Enter save · Esc cancel".to_string(),
-            Subject::New { container_name, .. } => {
-                format!("New goal in {container_name} — Tab field · Enter save · Esc cancel")
-            }
+            Subject::Existing(id) => GoalTarget::Update(*id),
+            Subject::New { container } => GoalTarget::Create(container.id()),
         }
     }
 
-    pub fn display(&self, field: GoalField) -> String {
-        match field {
+    pub fn title(&self) -> Label {
+        match &self.subject {
+            Subject::Existing(_) => Label::from("Edit goal — Tab field · Enter save · Esc cancel"),
+            Subject::New { container } => Label::plain("New goal in ")
+                .account(container.clone())
+                .text(" — Tab field · Enter save · Esc cancel"),
+        }
+    }
+
+    pub fn display(&self, field: GoalField) -> Label {
+        Label::plain(match field {
             GoalField::Name => self.name.value().to_string(),
             GoalField::Target => self.target.value().to_string(),
             GoalField::Date => self.date.value().to_string(),
             GoalField::Interest => if self.eligible { "yes" } else { "no" }.to_string(),
-        }
+        })
     }
 
     pub fn commit(&self) -> Result<GoalEdit> {
@@ -456,15 +451,15 @@ impl CloseForm {
         )
     }
 
-    pub fn display(&self, field: CloseField) -> String {
-        match field {
+    pub fn display(&self, field: CloseField) -> Label {
+        Label::plain(match field {
             CloseField::Date => self.date.value().to_string(),
             CloseField::Destination => self
                 .destinations
                 .get(self.destination)
                 .map(|(_, label)| label.clone())
                 .unwrap_or_default(),
-        }
+        })
     }
 
     pub fn commit(&self) -> Result<CloseOut> {
@@ -568,9 +563,33 @@ pub fn render_close(frame: &mut Frame, form: &CloseForm) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::account::{self, Group, Kind};
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    fn accounts() -> Vec<account::Account> {
+        vec![
+            account::Account {
+                id: AccountId(1),
+                code: "SAV".into(),
+                name: "Rainy Day".into(),
+                kind: Kind::Cash,
+                sort: 0,
+                group: Group::Savings,
+                color: None,
+            },
+            account::Account {
+                id: AccountId(2),
+                code: "NST".into(),
+                name: "Nest Egg".into(),
+                kind: Kind::Cash,
+                sort: 1,
+                group: Group::Savings,
+                color: None,
+            },
+        ]
     }
 
     /// The container and its remainder matter only to `/N`; every test that
@@ -591,7 +610,7 @@ mod tests {
     #[test]
     fn an_allocation_prefills_todays_date_and_commits_what_was_typed() {
         let mut form = alloc("Apple Watch");
-        assert_eq!(form.display(AllocField::Date), "2026-08-16");
+        assert_eq!(form.display(AllocField::Date).plain_text(), "2026-08-16");
 
         typed(&mut form, AllocField::Amount, "$72");
         typed(&mut form, AllocField::Note, "birthday money");
@@ -750,9 +769,9 @@ mod tests {
             Some(day(2026, 12, 1)),
             true,
         );
-        assert_eq!(form.display(GoalField::Name), "Couch");
-        assert_eq!(form.display(GoalField::Target), "1,000.00");
-        assert_eq!(form.display(GoalField::Date), "2026-12-01");
+        assert_eq!(form.display(GoalField::Name).plain_text(), "Couch");
+        assert_eq!(form.display(GoalField::Target).plain_text(), "1,000.00");
+        assert_eq!(form.display(GoalField::Date).plain_text(), "2026-12-01");
 
         typed_goal(&mut form, GoalField::Name, " Mk II");
         let edit = form.commit().unwrap();
@@ -768,7 +787,7 @@ mod tests {
     #[test]
     fn a_goal_target_with_cents_in_it_is_refused() {
         let mut form = GoalForm::new(GoalId(7), "Couch", Cents(100_050), None, true);
-        assert_eq!(form.display(GoalField::Target), "1,000.50");
+        assert_eq!(form.display(GoalField::Target).plain_text(), "1,000.50");
         let err = form.commit().unwrap_err().to_string();
         assert!(err.contains("1,000.50"), "{err}");
 
@@ -807,7 +826,7 @@ mod tests {
     #[test]
     fn an_undated_goal_opens_with_an_empty_date_field() {
         let form = GoalForm::new(GoalId(7), "Bill Payments", Cents(1_500_000), None, true);
-        assert_eq!(form.display(GoalField::Date), "");
+        assert_eq!(form.display(GoalField::Date).plain_text(), "");
         assert_eq!(form.commit().unwrap().goal_date, None);
     }
 
@@ -816,14 +835,14 @@ mod tests {
     #[test]
     fn the_choice_keys_flip_interest_eligibility() {
         let mut form = GoalForm::new(GoalId(7), "Down Payment", Cents(100_000), None, false);
-        assert_eq!(form.display(GoalField::Interest), "no");
+        assert_eq!(form.display(GoalField::Interest).plain_text(), "no");
 
         while form.focus != GoalField::Interest {
             form.next_field();
         }
         form.next_choice();
 
-        assert_eq!(form.display(GoalField::Interest), "yes");
+        assert_eq!(form.display(GoalField::Interest).plain_text(), "yes");
         assert!(form.commit().unwrap().interest_eligible);
     }
 
@@ -839,11 +858,28 @@ mod tests {
     /// ever had.
     #[test]
     fn a_goal_typed_from_scratch_opens_interest_eligible() {
-        let mut form = GoalForm::add(AccountId(1), "Rainy Day");
+        let mut form = GoalForm::add(Account::named(&accounts(), AccountId(1)));
         typed_goal(&mut form, GoalField::Name, "Couch");
         typed_goal(&mut form, GoalField::Target, "1000");
-        assert_eq!(form.display(GoalField::Interest), "yes");
+        assert_eq!(form.display(GoalField::Interest).plain_text(), "yes");
         assert!(form.commit().unwrap().interest_eligible);
+    }
+
+    /// A new goal's container is named in the border in the same color the
+    /// Account column would give it, since under the Savings screen's All
+    /// filter this is the only place on screen that says which container `n`
+    /// defaulted to.
+    #[test]
+    fn the_new_goal_title_names_its_container_as_an_account() {
+        let form = GoalForm::add(Account::named(&accounts(), AccountId(2)));
+        let title = form.title();
+        assert!(
+            title.plain_text().contains("New goal in Nest Egg"),
+            "{}",
+            title.plain_text()
+        );
+        assert_eq!(title.accounts().len(), 1);
+        assert_eq!(title.accounts()[0].id(), AccountId(2));
     }
 
     /// The field is a selector, so a keystroke meant for a text field must
@@ -853,8 +889,8 @@ mod tests {
         let mut form = GoalForm::new(GoalId(7), "Couch", Cents(100_000), None, true);
         typed_goal(&mut form, GoalField::Interest, "no");
 
-        assert_eq!(form.display(GoalField::Interest), "yes");
-        assert_eq!(form.display(GoalField::Name), "Couch");
+        assert_eq!(form.display(GoalField::Interest).plain_text(), "yes");
+        assert_eq!(form.display(GoalField::Name).plain_text(), "Couch");
     }
 
     #[test]
@@ -886,21 +922,24 @@ mod tests {
             siblings(),
             day(2026, 8, 16),
         );
-        assert_eq!(form.display(CloseField::Destination), "— unallocated —");
+        assert_eq!(
+            form.display(CloseField::Destination).plain_text(),
+            "— unallocated —"
+        );
         assert_eq!(form.commit().unwrap().to, None, "the default is abandon");
 
         while form.focus != CloseField::Destination {
             form.next_field();
         }
         form.next_choice();
-        assert_eq!(form.display(CloseField::Destination), "Rug");
+        assert_eq!(form.display(CloseField::Destination).plain_text(), "Rug");
         assert_eq!(form.commit().unwrap().to, Some(GoalId(8)));
 
         form.next_choice();
-        assert_eq!(form.display(CloseField::Destination), "Lamp");
+        assert_eq!(form.display(CloseField::Destination).plain_text(), "Lamp");
         form.next_choice();
         assert_eq!(
-            form.display(CloseField::Destination),
+            form.display(CloseField::Destination).plain_text(),
             "— unallocated —",
             "the cycle wraps back to abandon"
         );
@@ -927,10 +966,10 @@ mod tests {
     fn the_arrows_step_an_allocation_date_by_a_day() {
         let mut form = alloc("Apple Watch");
         form.next_choice();
-        assert_eq!(form.display(AllocField::Date), "2026-08-17");
+        assert_eq!(form.display(AllocField::Date).plain_text(), "2026-08-17");
         form.previous_choice();
         form.previous_choice();
-        assert_eq!(form.display(AllocField::Date), "2026-08-15");
+        assert_eq!(form.display(AllocField::Date).plain_text(), "2026-08-15");
     }
 
     /// The arrows are a nudge on a date that is already there: a field the
@@ -948,7 +987,7 @@ mod tests {
             form.type_char(c);
         }
         form.next_choice();
-        assert_eq!(form.display(AllocField::Date), "2026-");
+        assert_eq!(form.display(AllocField::Date).plain_text(), "2026-");
     }
 
     /// The amount is where `/N` lives and the note is free text: neither may
@@ -959,8 +998,8 @@ mod tests {
         typed(&mut form, AllocField::Amount, "72");
         form.next_choice();
         form.previous_choice();
-        assert_eq!(form.display(AllocField::Amount), "72");
-        assert_eq!(form.display(AllocField::Date), "2026-08-16");
+        assert_eq!(form.display(AllocField::Amount).plain_text(), "72");
+        assert_eq!(form.display(AllocField::Date).plain_text(), "2026-08-16");
     }
 
     #[test]
@@ -974,7 +1013,7 @@ mod tests {
         );
         form.next_choice();
         assert_eq!(
-            form.display(GoalField::Date),
+            form.display(GoalField::Date).plain_text(),
             "2026-12-31",
             "the name field is focused, and the arrows must stay off the date"
         );
@@ -983,7 +1022,7 @@ mod tests {
             form.next_field();
         }
         form.next_choice();
-        assert_eq!(form.display(GoalField::Date), "2027-01-01");
+        assert_eq!(form.display(GoalField::Date).plain_text(), "2027-01-01");
     }
 
     /// An undated goal stays undated: there is no date to step, and seeding
@@ -996,7 +1035,7 @@ mod tests {
         }
         form.next_choice();
         form.previous_choice();
-        assert_eq!(form.display(GoalField::Date), "");
+        assert_eq!(form.display(GoalField::Date).plain_text(), "");
         assert_eq!(form.commit().unwrap().goal_date, None);
     }
 
@@ -1010,9 +1049,9 @@ mod tests {
             day(2026, 8, 16),
         );
         form.previous_choice();
-        assert_eq!(form.display(CloseField::Date), "2026-08-15");
+        assert_eq!(form.display(CloseField::Date).plain_text(), "2026-08-15");
         assert_eq!(
-            form.display(CloseField::Destination),
+            form.display(CloseField::Destination).plain_text(),
             "— unallocated —",
             "stepping the date must not move the destination"
         );
@@ -1032,7 +1071,10 @@ mod tests {
             form.next_field();
         }
         form.next_choice();
-        assert_eq!(form.display(CloseField::Destination), "— unallocated —");
+        assert_eq!(
+            form.display(CloseField::Destination).plain_text(),
+            "— unallocated —"
+        );
         assert_eq!(form.commit().unwrap().to, None);
     }
 }

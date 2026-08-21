@@ -141,12 +141,12 @@ fn separates_two_accounts_sharing_a_code() {
         .unwrap()
         .into_iter()
         .find(|cash| {
-            account::by_code(&db, &cash.code, Kind::Credit)
+            account::by_code(&db, cash.code.as_str(), Kind::Credit)
                 .unwrap()
                 .is_some()
         })
         .expect("the workbook lists no code under both kinds");
-    let card = account::by_code(&db, &shared.code, Kind::Credit)
+    let card = account::by_code(&db, shared.code.as_str(), Kind::Credit)
         .unwrap()
         .unwrap();
     assert_ne!(shared.id, card.id);
