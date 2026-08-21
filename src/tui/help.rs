@@ -201,7 +201,7 @@ const SAVINGS: [Entry; 13] = [
     Entry {
         key: "Esc",
         label: Label::Own("all"),
-        detail: "Return to All, showing every goal again, undated ones included. The next step re-enters at today's month, or at the nearer end of the dated span when today falls outside it -- never the month you left, so no state crosses the All filter.",
+        detail: "Clear both filters at once -- the container and the month, whichever of them is set -- showing every goal again, undated ones included. The next month step re-enters at today's month, or at the nearer end of the dated span when today falls outside it -- never the month you left, so no state crosses the All filter.",
     },
     Entry {
         key: "/",

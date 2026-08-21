@@ -46,7 +46,10 @@ before it is committed.
 The month filter opens showing every goal; the first `[` or `]` narrows it to
 the current month, and from there they step across the months the goal dates
 span, the last wrapping back to the first. A goal with no date belongs to no
-month, so it shows only unfiltered. `Esc` shows every goal again.
+month, so it shows only unfiltered. `Esc` shows every goal again, clearing the
+container filter along with the month — the screen narrows two ways, and one
+key out of either saves working out which of them is hiding the goal you are
+looking for.
 
 `A` opens the allocation worksheet for the container — one amount, a line per
 goal, and a live remaining counter; `Space` ticks the goals a posting funds and

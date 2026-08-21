@@ -228,8 +228,14 @@ impl Savings {
         self.refilter();
     }
 
-    /// `Esc`: show every goal again, undated ones included.
-    pub fn clear_month(&mut self) {
+    /// `Esc`: show every goal again, undated ones included -- both filters
+    /// at once, whichever of them is set. The screen narrows two ways and
+    /// the title shows them side by side, so one key that clears whatever is
+    /// there is a reflex where "Esc means month, Tab back around to All"
+    /// asks the owner to remember which of the two narrowed the list they
+    /// are looking at.
+    pub fn clear_filters(&mut self) {
+        self.container = None;
         self.month.clear();
         self.refilter();
     }
@@ -617,9 +623,48 @@ mod tests {
     fn esc_shows_every_goal_again() {
         let mut savings = dated();
         savings.next_month();
-        savings.clear_month();
+        savings.clear_filters();
         assert_eq!(savings.selected_month(), None);
         assert_eq!(names(&savings).len(), 5);
+    }
+
+    /// The screen narrows two ways, and `Esc` is the one key out of either.
+    #[test]
+    fn esc_clears_the_container_filter() {
+        let mut savings = dated();
+        savings.next_container();
+        assert_eq!(savings.selected_container(), Some(AccountId(1)));
+        savings.clear_filters();
+        assert_eq!(savings.selected_container(), None);
+        assert_eq!(names(&savings).len(), 5);
+    }
+
+    #[test]
+    fn esc_clears_the_container_and_the_month_in_one_press() {
+        let mut savings = dated();
+        savings.next_container();
+        savings.next_month();
+        assert_eq!(savings.selected_container(), Some(AccountId(1)));
+        assert_eq!(savings.selected_month(), Some(month(2026, 8)));
+        savings.clear_filters();
+        assert_eq!(savings.selected_container(), None);
+        assert_eq!(savings.selected_month(), None);
+        assert_eq!(names(&savings).len(), 5);
+    }
+
+    /// `Esc` clears what the two filters narrowed and leaves the search
+    /// alone: the box has its own `Esc`, and it is the same box the ledgers
+    /// and the worksheet use.
+    #[test]
+    fn esc_leaves_the_search_alone() {
+        let mut savings = dated();
+        for c in "lego".chars() {
+            savings.push_search(c);
+        }
+        savings.next_container();
+        savings.clear_filters();
+        assert_eq!(savings.search(), "lego");
+        assert_eq!(names(&savings), vec!["Lego"]);
     }
 
     #[test]
@@ -627,7 +672,7 @@ mod tests {
         let mut savings = dated();
         savings.next_month();
         savings.next_month();
-        savings.clear_month();
+        savings.clear_filters();
         savings.next_month();
         assert_eq!(savings.selected_month(), Some(month(2026, 8)));
     }

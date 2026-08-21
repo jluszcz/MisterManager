@@ -610,6 +610,13 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   today's month; both wrap at the ends; `Esc` returns to All and the next step re-enters at today's
   month rather than a remembered one — no state crosses the All filter. Neither re-queries: both
   screens already hold every row.
+  - **On Savings `Esc` clears the container filter too**, because that screen narrows two ways and
+    the key is one way out of either. A screen showing a `Tab` filter and a `[`/`]` filter side by
+    side in one title asks the owner to work out *which* of the two is hiding the goal they are
+    looking for before they can widen it, and `Esc` clearing only one of them is exactly the
+    "one action wearing two letters" the key vocabulary exists to avoid. The search box is not
+    swept up in it: `/` has its own `Esc`, the one `search::search_key` answers on every screen
+    that has a box, and a screen-level `Esc` reaching into it would make Savings the odd one out.
   - **A goal with no date belongs to no month**, so any month filter drops it and All is the only
     place it appears. That is what the filter is *for*, not an edge case.
   - **The cycle is the span, not the set of months that have rows.** Recurring Goals steps all
