@@ -6,7 +6,7 @@
 
 use super::Label;
 use super::cursor::{Cursor, Scroll};
-use super::form::{Field, FormFields, next_in, parse_amount, parse_date, step_index};
+use super::form::{DateField, Field, FormFields, Step, next_in, parse_amount, step_index};
 use crate::db::RecurringTxnId;
 use crate::db::account::Account;
 use crate::db::recurring_txn::{Cadence, NewRecurringTxn, RecurringTxn};
@@ -153,8 +153,8 @@ pub struct RecurringTxnForm {
     pub focus: RecurringTxnField,
     description: Field,
     amount: Field,
-    anchor: Field,
-    horizon: Field,
+    anchor: DateField,
+    horizon: DateField,
     accounts: Vec<Account>,
     account: usize,
     account_touched: bool,
@@ -172,8 +172,8 @@ impl RecurringTxnForm {
             focus: RecurringTxnField::Description,
             description: Field::default(),
             amount: Field::default(),
-            anchor: Field::date(today),
-            horizon: Field::default(),
+            anchor: DateField::today(today),
+            horizon: DateField::blank(today),
             accounts,
             account: 0,
             account_touched: false,
@@ -181,7 +181,11 @@ impl RecurringTxnForm {
         })
     }
 
-    pub fn edit(accounts: Vec<Account>, txn: &RecurringTxn) -> Result<RecurringTxnForm> {
+    pub fn edit(
+        accounts: Vec<Account>,
+        today: NaiveDate,
+        txn: &RecurringTxn,
+    ) -> Result<RecurringTxnForm> {
         ensure!(
             !accounts.is_empty(),
             "there is no account to write a recurring transaction against"
@@ -195,12 +199,8 @@ impl RecurringTxnForm {
             focus: RecurringTxnField::Description,
             description: Field::given(txn.description.clone()),
             amount: Field::given(txn.cents.to_string()),
-            anchor: Field::given(txn.anchor_date.format("%Y-%m-%d").to_string()),
-            horizon: Field::given(
-                txn.horizon
-                    .map(|d| d.format("%Y-%m-%d").to_string())
-                    .unwrap_or_default(),
-            ),
+            anchor: DateField::given(today, Some(txn.anchor_date)),
+            horizon: DateField::given(today, txn.horizon),
             accounts,
             account,
             // The recurring transaction's own account, which the user can see
@@ -233,8 +233,13 @@ impl RecurringTxnForm {
         match field {
             RecurringTxnField::Description => Label::from(self.description.value()),
             RecurringTxnField::Amount => Label::from(self.amount.value()),
-            RecurringTxnField::Anchor => Label::from(self.anchor.value()),
-            RecurringTxnField::Horizon => Label::from(self.horizon.value()),
+            RecurringTxnField::Anchor => {
+                Label::from(self.anchor.display(self.focus == RecurringTxnField::Anchor))
+            }
+            RecurringTxnField::Horizon => Label::from(
+                self.horizon
+                    .display(self.focus == RecurringTxnField::Horizon),
+            ),
             RecurringTxnField::Account => match self.accounts.get(self.account) {
                 Some(a) => Label::default().account(super::Account::labelled(a)),
                 None => Label::default(),
@@ -251,7 +256,6 @@ impl RecurringTxnForm {
             .ok_or_else(|| anyhow::anyhow!("no account is selected"))?;
         let description = self.description.value().trim().to_string();
         ensure!(!description.is_empty(), "description must not be empty");
-        let raw_horizon = self.horizon.value().trim();
         Ok(NewRecurringTxn {
             description,
             // Signed exactly as the ledger is, and `parse_amount` refuses an
@@ -260,14 +264,10 @@ impl RecurringTxnForm {
             cents: parse_amount(self.amount.value())?,
             account_id: account,
             cadence: Cadence::ALL[self.cadence],
-            anchor_date: parse_date(self.anchor.value())?,
+            anchor_date: self.anchor.parse()?,
             // An empty horizon is a recurring transaction that does not end --
             // the paycheck.
-            horizon: if raw_horizon.is_empty() {
-                None
-            } else {
-                Some(parse_date(raw_horizon)?)
-            },
+            horizon: self.horizon.parse_opt()?,
         })
     }
 }
@@ -284,32 +284,17 @@ impl FormFields for RecurringTxnForm {
     /// Cycle a selector or step a date, whichever is focused. Both dates
     /// step; an empty horizon has none, and stepping one out of nothing would
     /// give a rule that does not end an end date nobody typed.
-    fn next_choice(&mut self) {
+    fn choice(&mut self, step: Step) {
         match self.focus {
             RecurringTxnField::Account => {
-                self.account = step_index(self.account, self.accounts.len(), 1);
+                self.account = step_index(self.account, self.accounts.len(), step.direction());
                 self.account_touched = true;
             }
             RecurringTxnField::Cadence => {
-                self.cadence = step_index(self.cadence, Cadence::ALL.len(), 1)
+                self.cadence = step_index(self.cadence, Cadence::ALL.len(), step.direction())
             }
-            RecurringTxnField::Anchor => self.anchor.step_date(1),
-            RecurringTxnField::Horizon => self.horizon.step_date(1),
-            RecurringTxnField::Description | RecurringTxnField::Amount => {}
-        }
-    }
-
-    fn previous_choice(&mut self) {
-        match self.focus {
-            RecurringTxnField::Account => {
-                self.account = step_index(self.account, self.accounts.len(), -1);
-                self.account_touched = true;
-            }
-            RecurringTxnField::Cadence => {
-                self.cadence = step_index(self.cadence, Cadence::ALL.len(), -1)
-            }
-            RecurringTxnField::Anchor => self.anchor.step_date(-1),
-            RecurringTxnField::Horizon => self.horizon.step_date(-1),
+            RecurringTxnField::Anchor => self.anchor.step(step.days()),
+            RecurringTxnField::Horizon => self.horizon.step(step.days()),
             RecurringTxnField::Description | RecurringTxnField::Amount => {}
         }
     }
@@ -640,9 +625,9 @@ mod tests {
             form.type_char(c);
         }
         form.next_field();
-        form.next_choice();
+        form.choice(Step::NEXT);
         form.next_field();
-        form.next_choice();
+        form.choice(Step::NEXT);
         form.next_field();
         for _ in 0..10 {
             form.backspace();
@@ -683,6 +668,7 @@ mod tests {
     fn a_rule_form_opened_on_a_rule_prefills_every_field() {
         let form = RecurringTxnForm::edit(
             accounts(),
+            today(),
             &recurring_txn(2, "Mortgage", -120_000, Cadence::Monthly, false),
         )
         .unwrap();
@@ -765,6 +751,7 @@ mod tests {
     fn opening_a_form_to_edit_with_no_account_to_write_to_is_refused() {
         let err = RecurringTxnForm::edit(
             Vec::new(),
+            today(),
             &recurring_txn(2, "Mortgage", -120_000, Cadence::Monthly, false),
         )
         .unwrap_err();
@@ -840,7 +827,7 @@ mod tests {
         while form.focus != RecurringTxnField::Account {
             form.next_field();
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         typed(&mut form, RecurringTxnField::Description, "Mort");
 
         form.apply_suggestion(&suggestion("Mortgage", AccountId(1), -120_000));
@@ -857,6 +844,7 @@ mod tests {
     fn editing_a_rule_protects_its_amount_and_account_from_suggestions() {
         let mut form = RecurringTxnForm::edit(
             accounts(),
+            today(),
             &recurring_txn(2, "Mortgag", -120_000, Cadence::Monthly, false),
         )
         .unwrap();
@@ -896,22 +884,22 @@ mod tests {
             form.display(RecurringTxnField::Account).plain_text(),
             "CHK — Everyday"
         );
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringTxnField::Account).plain_text(),
             "SAV — Rainy Day"
         );
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringTxnField::Account).plain_text(),
             "CHK — Everyday"
         );
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         assert_eq!(
             form.display(RecurringTxnField::Account).plain_text(),
             "SAV — Rainy Day"
         );
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         assert_eq!(
             form.display(RecurringTxnField::Account).plain_text(),
             "CHK — Everyday"
@@ -928,22 +916,22 @@ mod tests {
             form.display(RecurringTxnField::Cadence).plain_text(),
             "biweekly"
         );
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringTxnField::Cadence).plain_text(),
             "monthly"
         );
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringTxnField::Cadence).plain_text(),
             "biweekly"
         );
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         assert_eq!(
             form.display(RecurringTxnField::Cadence).plain_text(),
             "monthly"
         );
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         assert_eq!(
             form.display(RecurringTxnField::Cadence).plain_text(),
             "biweekly"
@@ -956,6 +944,7 @@ mod tests {
     fn the_arrows_step_the_anchor_and_the_horizon_by_a_day() {
         let mut form = RecurringTxnForm::edit(
             accounts(),
+            today(),
             &recurring_txn(2, "Mortgage", -120_000, Cadence::Monthly, false),
         )
         .unwrap();
@@ -963,13 +952,13 @@ mod tests {
         while form.focus != RecurringTxnField::Anchor {
             form.next_field();
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringTxnField::Anchor).plain_text(),
             "2026-08-29"
         );
-        form.previous_choice();
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
+        form.choice(Step::PREVIOUS);
         assert_eq!(
             form.display(RecurringTxnField::Anchor).plain_text(),
             "2026-08-27"
@@ -978,7 +967,7 @@ mod tests {
         while form.focus != RecurringTxnField::Horizon {
             form.next_field();
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringTxnField::Horizon).plain_text(),
             "2026-12-19"
@@ -993,8 +982,8 @@ mod tests {
         while form.focus != RecurringTxnField::Horizon {
             form.next_field();
         }
-        form.next_choice();
-        form.previous_choice();
+        form.choice(Step::NEXT);
+        form.choice(Step::PREVIOUS);
         assert_eq!(form.display(RecurringTxnField::Horizon).plain_text(), "");
     }
 
@@ -1007,7 +996,7 @@ mod tests {
         let mut form = RecurringTxnForm::add(accounts(), day(2026, 8, 16)).unwrap();
         assert_eq!(form.focus, RecurringTxnField::Description);
 
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringTxnField::Account).plain_text(),
             "CHK — Everyday"
@@ -1017,7 +1006,7 @@ mod tests {
             "biweekly"
         );
 
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         assert_eq!(
             form.display(RecurringTxnField::Account).plain_text(),
             "CHK — Everyday"

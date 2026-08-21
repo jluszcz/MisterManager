@@ -15,7 +15,7 @@
 
 use super::Label;
 use super::cursor::{Cursor, Scroll};
-use super::form::{Field, FormFields, next_in, step_index};
+use super::form::{Field, FormFields, Step, next_in, step_index};
 use crate::db::AccountId;
 use crate::db::account::{Account, AccountColor, Group, InterestPolicy, Kind};
 use crate::savings_block::Block as SavingsBlock;
@@ -299,7 +299,7 @@ impl AccountForm {
     pub fn next_choice_on(&mut self, field: AccountField) {
         let was = self.focus;
         self.focus = field;
-        self.next_choice();
+        self.choice(Step::NEXT);
         self.focus = was;
     }
 
@@ -334,12 +334,8 @@ impl FormFields for AccountForm {
         self.focus = next_in(&self.fields(), self.focus, -1);
     }
 
-    fn next_choice(&mut self) {
-        self.step_choice(1);
-    }
-
-    fn previous_choice(&mut self) {
-        self.step_choice(-1);
+    fn choice(&mut self, step: Step) {
+        self.step_choice(step.direction());
     }
 
     fn type_char(&mut self, c: char) {
@@ -630,7 +626,7 @@ mod tests {
         assert_eq!(form.display(AccountField::Order).plain_text(), "1 of 3");
         assert_eq!(form.commit().unwrap().position, 0);
 
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         // Focus is still Name, so the arrow must not have moved the order.
         assert_eq!(form.display(AccountField::Order).plain_text(), "1 of 3");
     }

@@ -2,7 +2,7 @@ use super::accounts::{self as accounts_screen, AccountForm, Accounts};
 use super::autocomplete::Autocomplete;
 use super::cursor::{self, Scroll};
 use super::destination;
-use super::form::{self, TransferForm, TxnForm, ValueForm};
+use super::form::{self, Step, TransferForm, TxnForm, ValueForm};
 use super::fund::{self as fund_screen, FundForm, Funds};
 use super::goal_form::{AllocationForm, CloseForm, GoalForm, GoalTarget};
 use super::help::{self, Help, Topic};
@@ -82,13 +82,21 @@ impl Screen {
     }
 }
 
-/// How far `Shift+←`/`Shift+→` move the Overview's Paycheck-Eve column.
+/// Which step an arrow press stands for: `week` while `Shift` is held, `day`
+/// otherwise.
 ///
-/// A week, because the column answers "what does this look like if the
-/// paycheck lands on a different day" and a fortnight is the cadence the
-/// paycheck itself runs on -- so a week is the step that reaches the middle
-/// of the next cycle and the one after in two presses.
-const SCRUB_WEEK: i64 = 7;
+/// The three handlers that answer an arrow themselves -- the Overview scrub,
+/// the worksheet, and `t`'s confirmation -- read the modifier through this
+/// rather than each testing it, so `Shift` cannot come to mean a week on two
+/// of them and nothing on the third. `form_key` inlines the same test because
+/// it already holds the answer for the `Tab` arms beside it.
+fn week_step(key: KeyEvent, week: Step, day: Step) -> Step {
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        week
+    } else {
+        day
+    }
+}
 
 /// How long a status message holds the footer before the screen's own keys
 /// come back.
@@ -393,7 +401,9 @@ impl App {
             // second run with a corrected date is a real case.
             self.status = format!("{date} already carries matching rows");
         }
-        self.modal = Some(Modal::PlanTransfers(TransferConfirm::new(rows, date)));
+        self.modal = Some(Modal::PlanTransfers(TransferConfirm::new(
+            rows, self.today, date,
+        )));
         Ok(())
     }
 
@@ -841,7 +851,7 @@ impl App {
         let found = recurring_txn::get(&self.db, row.recurring_txn_id)?;
         let accounts = account::list(&self.db)?;
         self.modal = Some(Modal::RecurringTxn(RecurringTxnForm::edit(
-            accounts, &found,
+            accounts, self.today, &found,
         )?));
         Ok(())
     }
@@ -1021,8 +1031,7 @@ impl App {
         // out is a plausible question here, and nowhere else, so the bigger
         // step is a modifier on the key that already means "move this date"
         // rather than a second letter for the same action.
-        let week = key.modifiers.contains(KeyModifiers::SHIFT);
-        let step = if week { SCRUB_WEEK } else { 1 };
+        let step = week_step(key, Step::NEXT_WEEK, Step::NEXT).days();
         match key.code {
             KeyCode::Left => self.scrub(-step)?,
             KeyCode::Right => self.scrub(step)?,
@@ -1592,7 +1601,7 @@ impl App {
             return self.nothing_selected();
         };
         let accounts = account::list_by_kind(&self.db, self.kind())?;
-        self.modal = Some(Modal::Txn(TxnForm::edit(accounts, &row)?));
+        self.modal = Some(Modal::Txn(TxnForm::edit(accounts, self.today, &row)?));
         Ok(())
     }
 
@@ -1679,10 +1688,10 @@ impl App {
             return Ok(());
         };
         let account = account::get(&self.db, container)?;
-        self.modal = Some(Modal::Goal(GoalForm::add(Account::named(
-            std::slice::from_ref(&account),
-            container,
-        ))));
+        self.modal = Some(Modal::Goal(GoalForm::add(
+            Account::named(std::slice::from_ref(&account), container),
+            self.today,
+        )));
         Ok(())
     }
 
@@ -1696,6 +1705,7 @@ impl App {
             row.goal,
             row.goal_date,
             row.interest_eligible,
+            self.today,
         )));
         Ok(())
     }
@@ -1816,8 +1826,8 @@ impl App {
             // Only the date focus has a date to move; `step_date` is where
             // that is decided, so the two digit focuses are unreachable from
             // here.
-            KeyCode::Left => sheet.step_date(-1),
-            KeyCode::Right => sheet.step_date(1),
+            KeyCode::Left => sheet.step_date(week_step(key, Step::PREVIOUS_WEEK, Step::PREVIOUS)),
+            KeyCode::Right => sheet.step_date(week_step(key, Step::NEXT_WEEK, Step::NEXT)),
             // The operators are line-editing keys, but they are live from the
             // amount too: that field takes digits and drops everything else,
             // so gating them on `Lines` only made them dead keys on the
@@ -2217,12 +2227,12 @@ impl App {
                     }
                     KeyCode::Left => {
                         if let Some(Modal::PlanTransfers(c)) = &mut self.modal {
-                            c.step_date(-1);
+                            c.step_date(week_step(key, Step::PREVIOUS_WEEK, Step::PREVIOUS));
                         }
                     }
                     KeyCode::Right => {
                         if let Some(Modal::PlanTransfers(c)) = &mut self.modal {
-                            c.step_date(1);
+                            c.step_date(week_step(key, Step::NEXT_WEEK, Step::NEXT));
                         }
                     }
                     KeyCode::Char(c) => {
@@ -2295,12 +2305,21 @@ impl App {
         let Some(fields) = self.modal.as_mut().and_then(Modal::fields_mut) else {
             return Ok(());
         };
+        // Shift is the same nudge with a bigger step, on the key that already
+        // means "move this", rather than a second key for one action. A
+        // selector has no week to move and takes the direction alone, which is
+        // `Step`'s to decide rather than this handler's.
+        let week = key.modifiers.contains(KeyModifiers::SHIFT);
         let mut edited = false;
         match key.code {
             KeyCode::Tab => fields.next_field(),
             KeyCode::BackTab => fields.previous_field(),
-            KeyCode::Left => fields.previous_choice(),
-            KeyCode::Right => fields.next_choice(),
+            KeyCode::Left => fields.choice(if week {
+                Step::PREVIOUS_WEEK
+            } else {
+                Step::PREVIOUS
+            }),
+            KeyCode::Right => fields.choice(if week { Step::NEXT_WEEK } else { Step::NEXT }),
             KeyCode::Backspace => {
                 fields.backspace();
                 edited = true;
@@ -6437,7 +6456,19 @@ mod tests {
             (
                 Topic::Worksheet,
                 &[
-                    "Tab", "BackTab", "←/→", "Space", "*", "-", "z", "s", "w", "/N", "Enter", "Esc",
+                    "Tab",
+                    "BackTab",
+                    "←/→",
+                    "Shift+←/→",
+                    "Space",
+                    "*",
+                    "-",
+                    "z",
+                    "s",
+                    "w",
+                    "/N",
+                    "Enter",
+                    "Esc",
                 ],
             ),
             (Topic::Picker, &["Space", "Enter", "Esc"]),
@@ -6449,7 +6480,16 @@ mod tests {
             (Topic::Confirm, &["y", "any", "?"]),
             (
                 Topic::Form,
-                &["Tab", "BackTab", "Backspace", "←/→", "Enter", "Esc", "F1"],
+                &[
+                    "Tab",
+                    "BackTab",
+                    "Backspace",
+                    "←/→",
+                    "Shift+←/→",
+                    "Enter",
+                    "Esc",
+                    "F1",
+                ],
             ),
             (
                 Topic::SuggestForm,
@@ -6459,6 +6499,7 @@ mod tests {
                     "Backspace",
                     "↑/↓",
                     "←/→",
+                    "Shift+←/→",
                     "Enter",
                     "Esc",
                     "F1",
@@ -6467,7 +6508,10 @@ mod tests {
             (Topic::LedgerSearch, &["Enter", "Esc", "Backspace", "F1"]),
             (Topic::SavingsSearch, &["Enter", "Esc", "Backspace", "F1"]),
             (Topic::WorksheetSearch, &["Enter", "Esc", "Backspace", "F1"]),
-            (Topic::PlanTransfers, &["Esc", "←/→", "Enter", "Backspace"]),
+            (
+                Topic::PlanTransfers,
+                &["Esc", "←/→", "Shift+←/→", "Enter", "Backspace"],
+            ),
         ];
         assert_documented(&handlers);
     }
@@ -6893,6 +6937,95 @@ mod tests {
         );
     }
 
+    /// Shift with an arrow is the same nudge with a bigger step wherever
+    /// there is a date, not a scrub-only trick. On a form it arrives through
+    /// the shared `form_key`, so this pins the one handler that answers every
+    /// field-driven modal in the app.
+    #[test]
+    fn shift_and_an_arrow_step_a_forms_date_a_week() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('a'));
+
+        shift_press(&mut app, KeyCode::Right);
+        assert_eq!(
+            form(&app).display(TxnField::Date).plain_text(),
+            "2026-08-22"
+        );
+
+        shift_press(&mut app, KeyCode::Left);
+        shift_press(&mut app, KeyCode::Left);
+        assert_eq!(
+            form(&app).display(TxnField::Date).plain_text(),
+            "2026-08-08"
+        );
+    }
+
+    /// A selector has no week to move, so Shift moves it one choice rather
+    /// than nothing: a modified arrow the terminal delivers and the app drops
+    /// is a dead key with nothing on screen to say why.
+    #[test]
+    fn shift_and_an_arrow_move_a_selector_one_choice() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('a'));
+        focus(&mut app, TxnField::Account);
+
+        let first = form(&app).display(TxnField::Account).plain_text();
+        shift_press(&mut app, KeyCode::Right);
+        let second = form(&app).display(TxnField::Account).plain_text();
+        shift_press(&mut app, KeyCode::Left);
+
+        assert_ne!(first, second);
+        assert_eq!(form(&app).display(TxnField::Account).plain_text(), first);
+    }
+
+    /// The worksheet answers its own keys rather than going through
+    /// `form_key`, so its date takes the modifier separately.
+    #[test]
+    fn shift_and_an_arrow_step_the_worksheet_date_a_week() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('A'));
+        press(&mut app, KeyCode::Tab);
+
+        shift_press(&mut app, KeyCode::Right);
+        let Some(Modal::Worksheet(sheet)) = &app.modal else {
+            panic!("no worksheet is open");
+        };
+        assert_eq!(sheet.date_text(), "2026-08-22");
+
+        shift_press(&mut app, KeyCode::Left);
+        shift_press(&mut app, KeyCode::Left);
+        let Some(Modal::Worksheet(sheet)) = &app.modal else {
+            panic!("no worksheet is open");
+        };
+        assert_eq!(sheet.date_text(), "2026-08-08");
+    }
+
+    /// `t`'s confirmation answers its own keys too, and its date is the one
+    /// every payday transfer is stamped with.
+    #[test]
+    fn shift_and_an_arrow_step_the_transfer_confirmations_date_a_week() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        press(&mut app, KeyCode::Char('t'));
+
+        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
+            panic!("no transfer confirmation is open");
+        };
+        let opened = confirm.commit().unwrap();
+
+        shift_press(&mut app, KeyCode::Right);
+        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
+            panic!("no transfer confirmation is open");
+        };
+        assert_eq!(
+            confirm.commit().unwrap(),
+            opened + chrono::TimeDelta::days(7)
+        );
+    }
+
     /// The worksheet is a modal, so it is reached through the Savings screen rather
     /// than a screen key -- but it implements the same `Scroll` and must answer the
     /// same keys.
@@ -6983,6 +7116,11 @@ mod tests {
         press(&mut app, KeyCode::Tab);
         type_str(&mut app, "1200");
         press(&mut app, KeyCode::Tab);
+        // The date opens prefilled, so a typed one replaces it the way it
+        // replaces the prefilled date on every other form.
+        for _ in 0.."2026-09-01".len() {
+            press(&mut app, KeyCode::Backspace);
+        }
         type_str(&mut app, "2027-05-01");
         press(&mut app, KeyCode::Enter);
 
