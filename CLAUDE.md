@@ -485,8 +485,7 @@ matches, since nothing but a test ties them together.
   needs no such step. Owning the bucket is what makes the
   lifecycle rule declarable at all: `aws_s3_bucket_lifecycle_configuration` is a whole-bucket
   resource, so two repositories declaring one would revert each other on every apply. The rule
-  tiers to `INTELLIGENT_TIERING` after a day and expires at 365 — not `STANDARD_IA`, which S3
-  refuses to transition into inside 30 days of an object's creation.
+  expires an object at 365 days.
 - **The scheduled check is the default database's, and `--db` opts out of it.** It runs after every
   arm but `backup` itself, and the state file it stamps records *when* an upload last happened
   rather than *what* was uploaded — so a scratch database backed up on the schedule would take the
