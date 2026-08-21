@@ -180,10 +180,16 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   and Planning reads that same date: `Excess (Actual)` is the checking balance at it, and so is
   every figure below. `App::scrub` therefore reloads both screens, and `t` and `p` act on the
   scrubbed plan, since a confirmation or a pin quoting a different day than the rows above it is
-  the failure this exists to prevent. Overview marks the scrub on its column header and in the
-  footer drift; Planning has no header to mark, so `build` puts the date in the `Excess (Actual)`
-  extra column, `*`-suffixed, and only when `View::scrubbed_adhoc` is `Some`. `App` decides
-  whether the plan is scrubbed — the screen only renders what it is handed.
+  the failure this exists to prevent. Overview marks the scrub on its column header; Planning has no
+  header to mark, so `build` puts the date in the `Excess (Actual)` extra column, `*`-suffixed, and
+  only when `View::scrubbed_adhoc` is `Some`. `App` decides whether the plan is scrubbed — the
+  screen only renders what it is handed.
+  **The drift the press reports is a status message**, written by `App::scrub` and expiring with
+  every other one. It says what the press did rather than what the screen is, so a scrub left
+  standing while its columns are read costs the Overview's keys for four seconds rather than for
+  as long as it stands; the `*` is what carries the state after the message has gone. Landing back
+  on the baseline reports that instead of a `+0d` drift, since an arrow that undoes a scrub is
+  still an arrow that did something.
 - **`p` always pins, and `P` is the only way out of a pin.** The pin freezes `excess_used` so the
   waterfall holds still while a payday's legs are entered — transfers land *before* the ad-hoc
   date, so each leg entered collapses `Excess (Actual)` with the rest still to go, which is the
