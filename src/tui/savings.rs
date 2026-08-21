@@ -30,6 +30,11 @@ pub struct Row {
     /// Whether an interest posting weights this goal. Carried so `e` can
     /// prefill the form from the row it already has.
     pub interest_eligible: bool,
+    /// The owner's mark, drawn as a band behind the whole row. It changes
+    /// nothing else: the row keeps its place under every filter and every
+    /// sort, because standing out and coming first are different requests
+    /// and only the first one was made.
+    pub favorite: bool,
 }
 
 /// `current / goal`, as a whole percent rounded to nearest.
@@ -115,6 +120,7 @@ impl Savings {
                 goal_date: g.goal.goal_date,
                 per_paycheck,
                 interest_eligible: g.goal.interest_eligible,
+                favorite: g.goal.favorite,
             });
         }
         self.all = rows;
@@ -353,6 +359,13 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
     let [table_area, footer_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).areas(area);
 
+    // The band is the *row's* style rather than any cell's, which is the one
+    // place a color may cover padding: it is the row that is marked, so a
+    // band stopping at the last glyph of each column would read as seven
+    // marks. Every cell patches over it, so the account tint and the funding
+    // ramp are untouched -- and the bold is what survives the cursor's
+    // `REVERSED`, which swaps the band's two halves away.
+    let band = super::style::favorite().add_modifier(Modifier::BOLD);
     let rows: Vec<TableRow> = savings
         .rows()
         .iter()
@@ -366,6 +379,7 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
                 optional(goal_date(r)),
                 optional(r.per_paycheck.map(Cents::to_whole_dollars)),
             ])
+            .style(if r.favorite { band } else { Style::default() })
         })
         .collect();
 
@@ -486,6 +500,7 @@ mod tests {
                 interest_eligible: true,
                 closed: false,
                 sort: id,
+                favorite: false,
             },
             current: Cents(current),
         }
@@ -1002,6 +1017,187 @@ mod tests {
             .find(|x| buffer[(*x, 4)].symbol() == "—")
             .expect("the goal with no target renders an em dash");
         assert_eq!(buffer[(dash, 4)].fg, Color::Reset);
+    }
+
+    /// The same goal, marked. A helper rather than an eighth parameter on
+    /// `goal`: every other test in this file is about a goal that is not
+    /// favorited, and a `false` on each of them would say nothing.
+    fn favorited(mut g: GoalWithBalance) -> GoalWithBalance {
+        g.goal.favorite = true;
+        g
+    }
+
+    /// The flag is carried on the row so `render` and the `f` toggle read the
+    /// same value the database holds, rather than either re-querying.
+    #[test]
+    fn a_favorited_goal_arrives_on_the_row_it_belongs_to() {
+        let mut savings = Savings::new(accounts(), today(), 14);
+        savings.set_containers(vec![AccountId(1)]);
+        savings
+            .set_goals(vec![
+                goal(1, 1, "Plain", 0, 10_000, None),
+                favorited(goal(2, 1, "Marked", 0, 10_000, None)),
+            ])
+            .unwrap();
+
+        let marked: Vec<bool> = savings.rows().iter().map(|r| r.favorite).collect();
+        assert_eq!(marked, vec![false, true]);
+    }
+
+    /// The mark is a highlight and nothing else: it does not sort a goal up,
+    /// and it does not survive a filter the goal itself would not.
+    #[test]
+    fn favoriting_a_goal_moves_it_nowhere() {
+        let mut savings = Savings::new(accounts(), today(), 14);
+        savings.set_containers(vec![AccountId(1), AccountId(2)]);
+        savings
+            .set_goals(vec![
+                goal(1, 1, "Bill Payments", 1_300_000, 1_500_000, None),
+                goal(2, 1, "Apple Watch", 48_500, 50_000, Some(day(2026, 9, 1))),
+                favorited(goal(3, 1, "Dropbox", 0, 15_000, Some(day(2026, 9, 1)))),
+                favorited(goal(
+                    4,
+                    2,
+                    "Emergency Savings",
+                    10_600_195,
+                    10_000_000,
+                    None,
+                )),
+            ])
+            .unwrap();
+
+        assert_eq!(
+            names(&savings),
+            vec![
+                "Bill Payments",
+                "Apple Watch",
+                "Dropbox",
+                "Emergency Savings"
+            ]
+        );
+
+        savings.next_container();
+        assert_eq!(
+            names(&savings),
+            vec!["Bill Payments", "Apple Watch", "Dropbox"],
+            "a favorited goal in another container is still filtered out"
+        );
+    }
+
+    /// The four-goal fixture with the third goal marked, drawn at
+    /// `MIN_WIDTH`. Rows sit at `y = 2..6`, under the border and the header.
+    fn banded() -> Savings {
+        let mut savings = Savings::new(accounts(), today(), 14);
+        savings.set_containers(vec![AccountId(1)]);
+        savings
+            .set_goals(vec![
+                goal(1, 1, "Bill Payments", 1_300_000, 1_500_000, None),
+                goal(2, 1, "Apple Watch", 48_500, 50_000, Some(day(2026, 9, 1))),
+                favorited(goal(3, 1, "Dropbox", 0, 15_000, Some(day(2026, 9, 1)))),
+            ])
+            .unwrap();
+        savings
+    }
+
+    /// Where a word starts on a drawn row. `column_of` and not `str::find`:
+    /// the border is three bytes and one column, so a byte offset lands two
+    /// columns right of the word asked for.
+    fn word_at(buffer: &ratatui::buffer::Buffer, y: u16, word: &str) -> u16 {
+        let line: String = (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect();
+        super::super::column_of(&line, word)
+    }
+
+    fn band_buffer(savings: &Savings) -> ratatui::buffer::Buffer {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 9)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), savings);
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// A band, not a tint: it runs the row's whole width, padding and gaps
+    /// included, which is exactly what a cell-level color may never do.
+    #[test]
+    fn a_favorited_row_is_banded_across_its_whole_width() {
+        let buffer = band_buffer(&banded());
+        // Inside the two borders. Row 4 is the third goal.
+        for x in 1..MIN_WIDTH - 1 {
+            assert_eq!(
+                buffer[(x, 4)].bg,
+                super::super::style::FAVORITE_BG,
+                "column {x}: {:?}",
+                buffer[(x, 4)]
+            );
+        }
+    }
+
+    /// A band on every row is a band nobody reads. Row 3 is the unmarked
+    /// goal directly above the marked one.
+    #[test]
+    fn an_unfavorited_row_carries_no_band() {
+        use ratatui::style::Color;
+
+        let buffer = band_buffer(&banded());
+        for x in 1..MIN_WIDTH - 1 {
+            assert_eq!(
+                buffer[(x, 3)].bg,
+                Color::Reset,
+                "column {x}: {:?}",
+                buffer[(x, 3)]
+            );
+        }
+    }
+
+    /// The band is the row's base style and every cell patches over it, so
+    /// the account tint and the funding ramp are unchanged by it -- the row
+    /// still says which account and how funded, in the colors it always did.
+    #[test]
+    fn the_band_leaves_the_cell_colors_on_top_of_it() {
+        let buffer = band_buffer(&banded());
+        // Left border, then the two-column highlight symbol, then `Acct`.
+        assert_eq!(buffer[(3, 4)].symbol(), "R", "{:?}", buffer[(3, 4)]);
+        assert_eq!(
+            buffer[(3, 4)].fg,
+            super::super::style::account_color(AccountId(1), None)
+        );
+
+        let percent_sign = (0..MIN_WIDTH)
+            .find(|x| buffer[(*x, 4)].symbol() == "%")
+            .expect("the marked goal shows a percentage");
+        assert_eq!(
+            buffer[(percent_sign, 4)].fg,
+            super::super::style::percent_color(Percent::ZERO)
+        );
+    }
+
+    /// A cell the band alone colors takes the band's own foreground, or the
+    /// row would be the terminal's default text on a fixed background --
+    /// readable under one theme and invisible under the other.
+    #[test]
+    fn a_banded_cell_with_no_color_of_its_own_takes_the_bands_foreground() {
+        let buffer = band_buffer(&banded());
+        let name = word_at(&buffer, 4, "Dropbox");
+        assert_eq!(buffer[(name, 4)].fg, super::super::style::FAVORITE_FG);
+    }
+
+    /// The cursor's `REVERSED` is patched over the row after its cells draw,
+    /// so it swaps the band's two halves and a marked row under the cursor
+    /// would otherwise be indistinguishable from any other cursor row. The
+    /// bold is what survives the swap and keeps the mark readable there.
+    #[test]
+    fn a_favorited_row_under_the_cursor_is_still_marked() {
+        let mut savings = banded();
+        savings.select_last();
+        let buffer = band_buffer(&savings);
+
+        let cell = &buffer[(word_at(&buffer, 4, "Dropbox"), 4)];
+        assert!(cell.modifier.contains(Modifier::REVERSED), "{cell:?}");
+        assert!(cell.modifier.contains(Modifier::BOLD), "{cell:?}");
     }
 
     /// Every rendered line of the four-goal fixture, inside the border.

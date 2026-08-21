@@ -369,6 +369,17 @@ matches, since nothing but a test ties them together.
   the **same container**) — and it closes the goal itself, in one transaction. The next round of a
   recurring goal is created from the `recurring_goal` table. Crossing containers is refused: no cash moved between
   the accounts, so allowing it would break both reconciliations at once.
+- **`goal.favorite` is the owner's, and it is the one owner-set field the import can take away.**
+  `f` on Savings toggles it and `goal::set_favorite` is the column's one writer — not a field on
+  `GoalEdit`, for the reason `recurring_txn::set_paycheck` is not one on `update`: the goal form
+  has no field for it, so an edit that wrote the whole row would clear a mark the owner never
+  touched. The comparison worth drawing is `account.color`, which is also the owner's and also
+  absent from the sheet — but `account` is in `PRESERVED_TABLES` and `goal` is not, so a
+  `--replace` keeps a color and loses every favorite along with the goals themselves. Nothing can
+  fix that: goal names are not unique, so there is no key to re-attach a mark by. What makes it
+  affordable is that a favorite is a highlight and nothing else — it moves no money, gates
+  nothing, and changes no figure on any screen, so losing one costs a keystroke rather than a
+  reconciliation.
 - **One worksheet commit is one `batch`.** `goal::insert_allocations` opens the batch itself, so a
   fumbled payday is one `delete_batch` rather than dozens of deletions. `U` undoes the most recent
   batch by insert order and **never an `Import` batch** — that one holds every opening balance in the
