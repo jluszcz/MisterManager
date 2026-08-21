@@ -198,6 +198,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     screen edits a pay-period count and a split percentage through the same modal it edits a target
     through. `planning::Target::is_money` is what picks between them, and it is the other half of
     `Target::write`'s match: a target is money exactly when its arm parses with `parse_amount`.
+  - **`search::searchable_amount` is a match key, not a figure, and is never masked.** A needle is
+    matched against the amount itself rather than against what the screen drew, so `mm --demo`
+    narrows a list by amount exactly as an ordinary run does; masking it would turn every row's key
+    into the mask and leave the owner unable to find anything mid-demonstration. The needle stays
+    visible for the same reason — it is a query being typed, not a figure off a row.
   - **Percentages, dates, counts and names are never masked.** A percentage is a shape rather than a
     sum — it is what makes the Funds and Planning screens worth demonstrating at all — and a goal's
     name is already the owner's own word for it. The mask is six blocks wide, plus a sign where the
