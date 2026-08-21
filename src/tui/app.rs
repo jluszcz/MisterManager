@@ -346,6 +346,7 @@ impl App {
             KeyCode::Char('e') => self.open_goal_edit()?,
             KeyCode::Char('c') => self.open_close_out()?,
             KeyCode::Char('n') => self.open_new_goal()?,
+            KeyCode::Char('f') => self.toggle_favorite()?,
             KeyCode::Char('U') => self.open_undo()?,
             _ => {}
         }
@@ -1745,6 +1746,24 @@ impl App {
         self.reload()
     }
 
+    /// Mark or unmark the selected goal, and redraw the screen from the
+    /// database.
+    ///
+    /// `reload_savings` rather than a write to the row in hand: the row is a
+    /// copy of what the query returned, and one write that updated the copy
+    /// instead of re-reading is how a screen starts disagreeing with the
+    /// table under it. It is also cheap here -- every goal is already loaded
+    /// for the reconciliation line -- and it keeps the cursor, which is an
+    /// index into rows this does not reorder.
+    fn toggle_favorite(&mut self) -> Result<()> {
+        let Some(row) = self.savings.selected() else {
+            return self.nothing_selected();
+        };
+        let (id, favorite) = (row.goal_id, row.favorite);
+        goal::set_favorite(&self.db, id, !favorite)?;
+        self.reload_savings()
+    }
+
     fn open_close_out(&mut self) -> Result<()> {
         let Some(row) = self.savings.selected() else {
             return self.nothing_selected();
@@ -2585,6 +2604,68 @@ mod tests {
         for c in text.chars() {
             press(app, KeyCode::Char(c));
         }
+    }
+
+    fn savings_favorites(app: &App) -> Vec<bool> {
+        app.savings.rows().iter().map(|r| r.favorite).collect()
+    }
+
+    /// `f` is a toggle over the selected row, written straight through: there
+    /// is nothing to confirm and nothing to type, so a modal would be a
+    /// keystroke asking whether the owner meant the keystroke.
+    #[test]
+    fn f_marks_the_selected_goal_and_pressing_it_again_takes_the_mark_back() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        assert_eq!(savings_favorites(&app), vec![false, false]);
+
+        press(&mut app, KeyCode::Char('f'));
+        assert_eq!(savings_favorites(&app), vec![true, false]);
+
+        press(&mut app, KeyCode::Char('f'));
+        assert_eq!(savings_favorites(&app), vec![false, false]);
+    }
+
+    /// The write has to reach the database, not just the row: a mark that
+    /// lived on the view would be gone at the next reload and the owner would
+    /// not find out until the next launch.
+    #[test]
+    fn a_mark_survives_a_reload() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('f'));
+
+        app.reload().unwrap();
+
+        assert_eq!(savings_favorites(&app), vec![true, false]);
+    }
+
+    /// The mark is a highlight, so it must not move the cursor off the row it
+    /// was pressed on -- pressing `f` twice has to be the same row twice.
+    #[test]
+    fn marking_a_goal_leaves_the_cursor_where_it_was() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
+        let before = app.savings.selected().unwrap().goal_id;
+
+        press(&mut app, KeyCode::Char('f'));
+
+        assert_eq!(app.savings.selected().unwrap().goal_id, before);
+        assert_eq!(savings_favorites(&app), vec![false, true]);
+    }
+
+    /// Every other row key on this screen says so rather than doing nothing,
+    /// and an empty list is the state a fresh database opens in.
+    #[test]
+    fn f_with_nothing_selected_says_so() {
+        let db = db::open_in_memory().unwrap();
+        let mut app = App::new(db, today()).unwrap();
+        press(&mut app, KeyCode::Char('4'));
+
+        press(&mut app, KeyCode::Char('f'));
+
+        assert!(!app.status.is_empty(), "{:?}", app.status);
     }
 
     /// The footer is the screen's keys, and a message borrows it rather than
@@ -6129,7 +6210,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '4'),
-            "Tab container · [ ] month · Esc all · / search · a allocate · A payday · i interest · n new · c close · e edit · U undo · q quit"
+            "Tab container · [ ] month · Esc all · / search · a allocate · A payday · i interest · n new · c close · e edit · f favorite · U undo · q quit"
         );
         assert_eq!(
             footer_of(&mut app, '5'),
@@ -6382,7 +6463,7 @@ mod tests {
             (
                 Topic::Savings,
                 &[
-                    "Tab", "BackTab", "[ ]", "Esc", "/", "a", "A", "i", "e", "c", "n", "U",
+                    "Tab", "BackTab", "[ ]", "Esc", "/", "a", "A", "i", "e", "c", "n", "f", "U",
                 ],
             ),
             (

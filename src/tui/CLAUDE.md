@@ -285,6 +285,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     columns right of the word asked for — which for a word longer than two characters is still
     inside it, so the mistake passes and the test quietly stops checking what it says. `column_of`
     in `mod.rs` is what the color tests use instead.
+  - **A `Row::style` is the exception, and it is a different thing rather than the same bug
+    tolerated.** The rule above is about a *cell* coloring the column it sits in; a row style is
+    the row's base, which every cell then patches over, so it is the one place a color may cover
+    padding — and covering the padding is the whole point where what is marked is the row.
+    `ledger`'s `future` dim and `savings`'s favorite band are the two, and both reach their style
+    through `style` rather than naming a `Color`, so the sweep above still finds nothing.
 - **An account is one color everywhere, and the owner picks it.** `account.color` is an
   `AccountColor` — a name in a `TEXT` column with the schema's `CHECK` behind it, the same
   construction as `kind`, `grp` and `interest_policy`, so that reordering a palette array cannot
@@ -519,6 +525,39 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   line naming the container and its remainder, at full precision as the Savings footer does, and
   annotates the amount with what a `/N` resolves to. The remainder is snapshotted at open: the
   form writes once and closes, and nothing can move the figure while it is up.
+- **A favorited goal is drawn as a band and moved nowhere.** `f` on Savings toggles
+  `goal.favorite`, and `render` gives that row `style::favorite()` plus a bold. Standing out and
+  coming first are different requests, so `refilter` and the `all_with_balances` order never read
+  the flag: a marked goal in another container is still filtered out by `Tab`, and a marked goal
+  outside the month is still dropped by `[`/`]`.
+  - **The band is a background, so it carries its own foreground.** `FAVORITE_BG` alone would be
+    the terminal's default text on a fixed band — readable under one theme and invisible under the
+    other — so `style::favorite()` is the pair, and it is a `Style` rather than two constants
+    precisely so no screen can take half of it.
+  - **How light the band may go is decided by `NEGATIVE`, and that is the whole of the ceiling.**
+    Every color that lands *on* the band — the account palette, the funding ramp, a negative
+    figure — is a mid-tone chosen to read against a *terminal's* background rather than against
+    this one, so the band has to stay under all of them, and the red at luma 77 is the lowest of
+    them. At 68 the band clears it by nine points and nothing else is near. A genuinely mid-tone
+    band, around luma 95, is what the eye asks for and what the ramp's unfunded red cannot
+    survive: it would land within four points of it and erase the `%` column on exactly the goals
+    that column exists for. Lifting the band again means deciding about that red first.
+  - **A cast, not a hue.** A flat grey reads as dirt beside the saturated colors around it, so the
+    band is cool — but its channels spread 16 where the flattest entry in `palette` spreads 70, and
+    the test measures against the palette rather than a number, so what counts as desaturated is
+    said by the colors the band could hide rather than by whoever last edited it. Both this and
+    the ceiling above are pinned in `style`'s tests, and both bite: a hued band and a mid-tone one
+    each fail one of them.
+  - **The bold is not decoration; it is what survives the cursor.** `row_highlight_style`'s
+    `REVERSED` is patched over the row after its cells draw, and it swaps the band's two halves —
+    so a marked row under the cursor would otherwise be indistinguishable from any other cursor
+    row. `REVERSED` leaves an independent modifier alone, which is what keeps the mark readable on
+    the one row the owner is always sitting on.
+  - **The toggle re-reads rather than writing the row in hand.** `App::toggle_favorite` writes
+    through `goal::set_favorite` and then calls `reload_savings`: the row is a copy of what the
+    query returned, and updating the copy instead is how a screen starts disagreeing with the
+    table under it. It costs nothing here — every goal is already loaded for the reconciliation
+    line — and the cursor keeps its index, because nothing reorders.
 - **A container reconciles when `|excess| < $1.00`**, through `tui::is_reconciled`, called by the
   Savings screen's `Unallocated` footer — the one place the reconciliation is shown. One container
   has sat a few cents out for months; a warning that is always on is a warning nobody reads.

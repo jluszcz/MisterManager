@@ -182,7 +182,7 @@ const LEDGER: [Entry; 11] = [
     },
 ];
 
-const SAVINGS: [Entry; 12] = [
+const SAVINGS: [Entry; 13] = [
     Entry {
         key: "Tab",
         label: Label::Own("container"),
@@ -237,6 +237,11 @@ const SAVINGS: [Entry; 12] = [
         key: "e",
         label: Label::Own("edit"),
         detail: "Edit the selected goal's name, target and date.",
+    },
+    Entry {
+        key: "f",
+        label: Label::Own("favorite"),
+        detail: "Mark the selected goal, or take the mark back. A marked goal's row is drawn as a band so it stands out among the rest, and that is the whole of what it does: it does not sort the goal up and it does not survive a filter the goal itself would not. Its own letter because nothing else in the app marks a row for the owner's own attention -- and the mark is stored on the goal, so mm import --replace loses it along with the goals it belongs to.",
     },
     Entry {
         key: "U",
@@ -1086,7 +1091,7 @@ mod tests {
         );
         assert_eq!(
             Topic::Savings.footer(),
-            "Tab container · [ ] month · Esc all · / search · a allocate · A payday · i interest · n new · c close · e edit · U undo · q quit"
+            "Tab container · [ ] month · Esc all · / search · a allocate · A payday · i interest · n new · c close · e edit · f favorite · U undo · q quit"
         );
         assert_eq!(
             Topic::Planning.footer(),

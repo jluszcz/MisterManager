@@ -1292,6 +1292,7 @@ mod tests {
             interest_eligible: true,
             closed: false,
             sort: 0,
+            favorite: false,
         }
     }
 
