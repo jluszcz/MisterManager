@@ -1,4 +1,6 @@
+pub mod backup;
 pub mod calc;
+pub mod config;
 pub mod db;
 pub mod fund;
 pub mod gate;

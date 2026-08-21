@@ -81,6 +81,26 @@ pub fn open_in_memory() -> Result<Db> {
     Ok(Db { conn })
 }
 
+/// Write a consistent copy of the database at `src` to `dest`, which must not
+/// already exist.
+///
+/// `VACUUM INTO` rather than a file copy: the database runs in WAL mode, so
+/// the `.db` file on its own is a torn read of whatever had not been
+/// checkpointed. This writes a checkpointed, compacted copy in one statement.
+///
+/// Deliberately opens the connection without `prepare`: taking a backup
+/// must not migrate the database as a side effect.
+pub fn snapshot(src: &Path, dest: &Path) -> Result<()> {
+    let dest = dest
+        .to_str()
+        .with_context(|| format!("{} is not valid UTF-8", dest.display()))?;
+    let conn =
+        Connection::open(src).with_context(|| format!("opening database at {}", src.display()))?;
+    conn.execute("VACUUM INTO ?1", [dest])
+        .with_context(|| format!("snapshotting to {dest}"))?;
+    Ok(())
+}
+
 /// Tables an import writes to, in foreign-key-safe delete order.
 ///
 /// `allocation.goal_id` cascades from `goal` (`ON DELETE CASCADE`), but it is
@@ -503,5 +523,39 @@ mod tests {
                 .unwrap();
             assert_eq!(remaining, 1, "{table} was cleared");
         }
+    }
+
+    /// A plain file copy of a live database with a hot WAL is not a consistent
+    /// file. This is what would fail if `VACUUM INTO` were ever replaced by one.
+    #[test]
+    fn a_snapshot_carries_the_rows_and_the_schema_version() {
+        let dir =
+            std::env::temp_dir().join(format!("mistermanager_snapshot_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("money.db");
+        let dest = dir.join("snapshot.db");
+
+        {
+            let db = open(&src).unwrap();
+            account::insert(&db, "CHK", "Everyday", account::Kind::Cash, 0).unwrap();
+            setting::set(&db, setting::key::PAY_PERIODS_PER_YEAR, 26).unwrap();
+            snapshot(&src, &dest).unwrap();
+        }
+
+        let copy = open(&dest).unwrap();
+        assert_eq!(account::list(&copy).unwrap().len(), 1);
+        assert_eq!(
+            setting::get(&copy, setting::key::PAY_PERIODS_PER_YEAR).unwrap(),
+            Some(26)
+        );
+
+        let version: i64 = Connection::open(&dest)
+            .unwrap()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

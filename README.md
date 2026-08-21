@@ -164,6 +164,75 @@ Every figure comes back out of the workbook; what does not — the recurring
 transactions, and the naming, banding and ordering of the accounts — is quick
 to re-enter.
 
+## Backups
+
+`mm` uploads a copy of the database to S3 when the last upload is older than `interval_days`. The
+check runs last, after the TUI has already torn its screen down, so a slow network holds up only
+the shell prompt returning, and a failure prints to stderr rather than making the run fail.
+
+Backups are off until a config file switches them on:
+
+```toml
+# ~/.config/mistermanager/config.toml
+[backup]
+bucket        = "..."             # required
+profile       = "mistermanager"   # default; a profile in ~/.aws/credentials
+interval_days = 7                 # default
+```
+
+The key prefix is not a setting. Objects go under `mistermanager/`, which is fixed in
+`backup::PREFIX` because the IAM policy is scoped to that path and only a `terraform apply` can
+widen it — a knob here could only ever be turned into `AccessDenied`. A `prefix` line in the config
+file is refused rather than ignored, so the mismatch cannot happen quietly.
+
+One-time setup: `terraform apply` creates the bucket, the IAM user and its access key, and its
+outputs feed the `mistermanager` profile and the config file directly:
+
+```bash
+aws configure set aws_access_key_id "$(terraform output -raw mistermanager_access_key_id)" --profile mistermanager
+aws configure set aws_secret_access_key "$(terraform output -raw mistermanager_access_key_secret)" --profile mistermanager
+aws configure set region us-east-2 --profile mistermanager
+terraform output -raw backup_bucket   # goes in config.toml's `bucket`
+```
+
+The third line is not optional. The region is read from the profile rather than from the config
+file above — a second copy could only ever disagree with the first — so without it every upload
+fails, and `AWS_REGION` is the only other place the SDK will look.
+
+The bucket is created here too, as `mistermanager-<account id>-<region>-an`. The name is composed
+from the caller's own account and region rather than chosen, which is what lets it sit in a public
+repository: a name someone picked would say where the owner's finances are backed up, while a
+derived one is legible only to whoever already holds the profile. Nothing about it is public —
+public access is blocked four ways, and the only identity pointed at it may `PutObject` and nothing
+else.
+
+Its lifecycle rule tiers objects to Intelligent-Tiering after a day and deletes them at 365. Not
+Standard-IA: S3 refuses to transition an object there inside 30 days of its creation, and
+Intelligent-Tiering has no such floor — it moves an untouched object to its own infrequent-access
+tier at 30 days anyway.
+
+The profile must carry static access keys: the AWS SDK is built here with `sso` and
+`credentials-process` support left off along with the default HTTPS client, so an SSO profile or
+one using `credential_process` will not authenticate.
+
+`mm backup --status` prints the last upload and the next due date; `mm backup --force` uploads
+regardless of the schedule.
+
+To restore, quit `mm` first, then list the prefix and copy the object you want over the database:
+
+```bash
+aws s3 ls s3://<bucket>/mistermanager/
+rm -f ~/.local/share/mistermanager/money.db-wal ~/.local/share/mistermanager/money.db-shm
+aws s3 cp s3://<bucket>/mistermanager/money-20260820T140305Z.db ~/.local/share/mistermanager/money.db
+```
+
+The database runs in WAL mode, so a `-wal` file left over from a crash holds writes of its own; if
+it is still there, SQLite replays it into the restored file the next time `mm` opens it, which is
+why it has to go first.
+
+Both commands use your own identity. The `mistermanager` profile can only `PutObject` — it cannot
+read a backup, delete one, or list the prefix.
+
 ## Layout
 
 | Path | Responsibility |
@@ -183,13 +252,17 @@ to re-enter.
 | `src/plan.rs` | Runs the Planning waterfall against imported settings. |
 | `src/fund.rs` | Feeds the fund table and the birth date to the fund-allocation derivation. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, and regeneration. |
+| `src/config.rs` | The TOML config file — the `[backup]` section, unset means backups are off. |
+| `src/backup/` | The schedule, the snapshot, and the S3 upload. `aws-config`, `aws-sdk-s3` and `tokio` are named only in `src/backup/s3.rs`. |
 | `src/tui/` | The terminal UI: screens, forms, key handling. |
 | `src/tui/fund.rs` | The Funds screen and its form. |
 | `src/tui/accounts.rs` | The Accounts screen — the six things the workbook does not say about an account. |
 
 `ratatui` (which re-exports `crossterm`) is named only inside `src/tui/`, the
-same discipline that confines `rusqlite` to `src/db/` and `calamine` to
-`src/import/`.
+same discipline that confines `rusqlite` to `src/db/`, `calamine` to
+`src/import/`, `serde` and `toml` to `src/config.rs` (and again in
+`src/backup/state.rs`), and `aws-config`, `aws-sdk-s3` and `tokio` to
+`src/backup/s3.rs`.
 
 `rusqlite` is named only inside `src/db/`. Everything else holds a `db::Db`,
 whose connection is private, and reaches the database through
@@ -203,8 +276,9 @@ cannot be passed where a different table's id belongs.
 ## Development
 
 `pre-commit install` wires up the hooks in `.pre-commit-config.yaml`, which run
-`cargo fmt --check` alongside the usual whitespace and YAML/TOML checks. GitHub
-Actions builds and tests every pull request.
+`cargo fmt --check` and the Terraform `fmt`/`validate` hooks — the latter two need `terraform` on
+`PATH` — alongside the usual whitespace and YAML/TOML checks. GitHub Actions builds and tests every
+pull request.
 
 ## Tests
 
