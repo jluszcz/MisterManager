@@ -36,13 +36,14 @@ impl Block {
         }
     }
 
-    /// What the Accounts screen calls this block. It names the columns as
-    /// well as the contents: the two blocks are told apart by position in the
-    /// sheet, so the position is half of what identifies one.
+    /// What the Accounts screen calls this block. The contents, not the
+    /// columns: the sheet's own `A:E`/`I:K` is what an *import* tells the two
+    /// blocks apart by, and the owner picking a container is choosing between
+    /// goals and buckets rather than between two spans of a spreadsheet.
     pub fn label(self) -> &'static str {
         match self {
-            Block::Goals => "goals (A:E)",
-            Block::Buckets => "buckets (I:K)",
+            Block::Goals => "goals",
+            Block::Buckets => "buckets",
         }
     }
 }

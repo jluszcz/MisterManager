@@ -338,7 +338,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     ledger *title* show a code, the one because its other columns pin the row down already and
     the other because a title is a chain of filter terms; the three form selectors show
     `CHK — Everyday` as one segment, because both halves name the same account and splitting
-    them would leave the code reading as chrome in front of a colored name.
+    them would leave the code reading as chrome in front of a colored name. An account still
+    named after its own code — which is every account an import has just written — shows that
+    text once rather than joined to itself.
   - **`Label` is what lets a title carry a tint.** A title cannot be a `String` and be colored,
     and it cannot be a ratatui `Line` because view-state types hold no ratatui. So it is a
     sequence of plain runs and `Account`s: `Savings::title`, `Ledger::title`, `Picker::title`,
@@ -420,6 +422,10 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     than validated. `Group::bands` is what the band selector offers, and it offers exactly what
     `account::set_group` accepts; the `Savings` selector holds one value per account, which is what
     makes the both-blocks state impossible to type.
+  - **The `Savings` selector names the block's contents, not its columns.** `Block::label` is
+    `goals` and `buckets`: `Savings!A:E` and `Savings!I:K` are what the *import* tells the two
+    blocks apart by, and the owner pointing a container at one is choosing between two sets of
+    goals rather than between two spans of a spreadsheet.
   - **The `Savings` field is the one thing on this screen the import reads.** Until both blocks
     have been pointed at a container, `mm import` writes the accounts and stops — the sheet names
     its blocks by position and carries no account code, so there is nowhere else to learn it from.
