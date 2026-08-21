@@ -18,7 +18,8 @@ screen's own title spells its name out. The screens are laid out for a terminal
 at least 120 columns wide. Overview stacks the accounts in bands — checking, then
 savings, then the cards — with a subtotal under each and a total under each
 kind; its `←`/`→` scrub the Paycheck-Eve date against the baseline derived
-from the paycheck transaction — `Shift+←`/`Shift+→` move it a week at a time — and
+from the paycheck transaction — `Shift+←`/`Shift+→` move it a week, as they do on
+every date in the app — and
 Planning quotes its excess at whatever that scrub leaves it at. Cash and Credit share one month: `[` and `]`
 step both so the two always compare the same weeks, and `Esc` returns them to
 the month around today. Each title ends with the balance of whatever `Tab`
@@ -114,6 +115,22 @@ long. Every entry is still listed below them, so the filter is a starting
 point rather than a cage, and an entry that already has an open goal is left
 unticked and sinks with the rest — `Space` still adds it, since a second open
 goal against one entry is legitimate.
+
+Every date the app asks for is typed as `YYYY-MM-DD` or as `M/D`, which takes
+the next year that month comes round — typed in August, `9/10` is this
+September and `3/4` is next March. The year turns on the month alone, so `8/1`
+in August is the first of this August, which is what makes backdating a row a
+fortnight a three-keystroke job. A field shows what was typed while the caret
+is in it and the date it means once focus leaves. `←`/`→` nudge a date a day
+wherever there is one, `Shift` with them a week, and a date field stays
+typeable either way. A form editing a row opens on that row's own date; one
+entering something new opens on today, bar four. A new goal's opens on the
+first of the next month, since a goal date is a deadline. `t`'s confirmation
+opens two business days out, dated for when the transfers land rather than for
+when the plan was read — weekends skipped, holidays not, which is part of why
+that date is editable. A recurring transaction's horizon and the Funds
+birth-date prompt open blank, because blank means something in both — a rule
+that does not end, and a date not on record.
 
 Each goal is dated for the year ahead: a year past the next occurrence of the
 entry's month, so a September entry created in August 2026 is dated September

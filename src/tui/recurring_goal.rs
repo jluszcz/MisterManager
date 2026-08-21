@@ -6,7 +6,7 @@
 
 use super::Label;
 use super::cursor::{Cursor, Scroll};
-use super::form::{Field, FormFields, next_in, parse_whole_amount, step_index};
+use super::form::{Field, FormFields, Step, next_in, parse_whole_amount, step_index};
 use super::month::MonthCycle;
 use crate::db::RecurringGoalId;
 use crate::db::recurring_goal::{Cadence, Entry, NewEntry};
@@ -170,8 +170,8 @@ impl RecurringGoalField {
 /// January back to December. The form's Month selector steps the same
 /// calendar the screen's filter does, but as a field rather than a filter --
 /// it has no All to fall out of, so it is not a [`MonthCycle`].
-fn wrapped_month(month: i64, delta: i64) -> i64 {
-    (month - 1 + delta).rem_euclid(12) + 1
+fn wrapped_month(month: i64, delta: isize) -> i64 {
+    (month - 1 + delta as i64).rem_euclid(12) + 1
 }
 
 /// Adding or editing one recurring goal entry. Backs `a` and `e`.
@@ -261,23 +261,12 @@ impl FormFields for RecurringGoalForm {
         self.focus = next_in(&RecurringGoalField::ORDER, self.focus, -1);
     }
 
-    fn next_choice(&mut self) {
+    fn choice(&mut self, step: Step) {
         match self.focus {
-            RecurringGoalField::Month => self.month = wrapped_month(self.month, 1),
+            RecurringGoalField::Month => self.month = wrapped_month(self.month, step.direction()),
             RecurringGoalField::Taxed => self.taxed = !self.taxed,
             RecurringGoalField::Cadence => {
-                self.cadence = step_index(self.cadence, Cadence::ALL.len(), 1)
-            }
-            _ => {}
-        }
-    }
-
-    fn previous_choice(&mut self) {
-        match self.focus {
-            RecurringGoalField::Month => self.month = wrapped_month(self.month, -1),
-            RecurringGoalField::Taxed => self.taxed = !self.taxed,
-            RecurringGoalField::Cadence => {
-                self.cadence = step_index(self.cadence, Cadence::ALL.len(), -1)
+                self.cadence = step_index(self.cadence, Cadence::ALL.len(), step.direction())
             }
             _ => {}
         }
@@ -613,16 +602,16 @@ mod tests {
         }
         form.next_field();
         for _ in 1..9 {
-            form.next_choice();
+            form.choice(Step::NEXT);
         }
         form.next_field();
         for c in "128".chars() {
             form.type_char(c);
         }
         form.next_field();
-        form.next_choice();
+        form.choice(Step::NEXT);
         form.next_field();
-        form.next_choice();
+        form.choice(Step::NEXT);
 
         let new = form.commit().unwrap();
         assert_eq!(new.name, "Dropbox");
@@ -704,20 +693,20 @@ mod tests {
             "January"
         );
 
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringGoalField::Month).plain_text(),
             "February"
         );
 
-        form.previous_choice();
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
+        form.choice(Step::PREVIOUS);
         assert_eq!(
             form.display(RecurringGoalField::Month).plain_text(),
             "December"
         );
 
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringGoalField::Month).plain_text(),
             "January"
@@ -754,13 +743,13 @@ mod tests {
             form.next_field();
         }
         assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "no");
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "yes");
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "no");
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "yes");
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "no");
     }
 
@@ -774,22 +763,22 @@ mod tests {
             form.display(RecurringGoalField::Cadence).plain_text(),
             "annual"
         );
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringGoalField::Cadence).plain_text(),
             "biennial"
         );
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringGoalField::Cadence).plain_text(),
             "annual"
         );
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         assert_eq!(
             form.display(RecurringGoalField::Cadence).plain_text(),
             "biennial"
         );
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         assert_eq!(
             form.display(RecurringGoalField::Cadence).plain_text(),
             "annual"
@@ -806,7 +795,7 @@ mod tests {
         let mut form = RecurringGoalForm::add();
         assert_eq!(form.focus, RecurringGoalField::Name);
 
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringGoalField::Month).plain_text(),
             "January"
@@ -817,7 +806,7 @@ mod tests {
             "annual"
         );
 
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         assert_eq!(
             form.display(RecurringGoalField::Month).plain_text(),
             "January"
