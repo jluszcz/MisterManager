@@ -16,8 +16,9 @@
 //!
 //! **The app-wide keys are footer chrome, not panel rows.** `1-9` and `q` are
 //! answered in `App::dispatch` for every screen at once, so no table carries
-//! them and no panel repeats them; `Topic::chrome` appends them to the
-//! footers instead, which still name them. Their guard is
+//! them and no panel repeats them; [`chrome`] states them once for the whole
+//! app, and the draw sets that against the footer's right edge while a
+//! [`Topic`] fills the left. Their guard is
 //! `app::tests::the_app_wide_keys_work_from_every_screen`.
 
 use super::form;
@@ -67,6 +68,79 @@ const QUIT_KEY: Chrome = Chrome {
     key: "q",
     word: "quit",
 };
+
+/// A filter key more than one screen offers: the key, and the single word
+/// every footer that names it takes.
+///
+/// The word lives here rather than in each screen's table because a filter
+/// over the same thing called two names by two screens is the reflex this
+/// app is built to protect -- the same rule as `the same action takes the
+/// same key`, one level down, at what the action is *called*. A screen still
+/// writes its own `detail`: what `Esc` clears is genuinely different on the
+/// ledgers and on Savings, and the panel is where that belongs.
+#[derive(Copy, Clone)]
+struct Filter {
+    key: &'static str,
+    word: &'static str,
+}
+
+/// The shared filters, in the order they lead a footer: widest scope first,
+/// down to the one that reads what you type.
+///
+/// The order and the four words are stated here and nowhere else -- the
+/// constants below are handles into this array rather than four more
+/// literals. A screen offering some of these shows them in this order,
+/// before the first key it owns alone;
+/// `the_shared_filters_lead_every_screen_footer_in_one_order` is what holds
+/// that up, and `every_filter_key_is_labelled_with_its_shared_word` is what
+/// stops a table naming one of these keys itself.
+const FILTERS: [Filter; 4] = [
+    Filter {
+        key: "Tab",
+        word: "acct",
+    },
+    Filter {
+        key: "[ ]",
+        word: "month",
+    },
+    // `clear` rather than `all`: Savings and Recurring Goals do clear to All,
+    // but the ledgers have no All to reach -- their window bounds the query
+    // itself -- and a word true on two screens of three is how a shared
+    // filter starts meaning two things.
+    Filter {
+        key: "Esc",
+        word: "clear",
+    },
+    Filter {
+        key: "/",
+        word: "search",
+    },
+];
+
+/// Cycle what the screen is scoped to.
+const ACCOUNT_FILTER: Filter = FILTERS[0];
+
+/// Step the month the screen is scoped to.
+const MONTH_FILTER: Filter = FILTERS[1];
+
+/// Back out of whatever is narrowing the screen.
+const CLEAR_FILTER: Filter = FILTERS[2];
+
+/// Narrow the rows by typing.
+const SEARCH_FILTER: Filter = FILTERS[3];
+
+impl Entry {
+    /// One of the shared filters, with the sentence this screen tells about
+    /// it. The key and the footer word come from the [`Filter`], which is
+    /// what keeps them from being written per-screen.
+    const fn filter(filter: Filter, detail: &'static str) -> Entry {
+        Entry {
+            key: filter.key,
+            label: Label::Own(filter.word),
+            detail,
+        }
+    }
+}
 
 /// A set of keys that are live together.
 ///
@@ -125,31 +199,24 @@ const OVERVIEW: [Entry; 2] = [
 ];
 
 const LEDGER: [Entry; 11] = [
-    Entry {
-        key: "[ ]",
-        label: Label::Own("month"),
-        detail: "Step the month shown. Cash and Credit share one window, so both ledgers move together and always compare the same weeks.",
-    },
-    Entry {
-        key: "Esc",
-        label: Label::Own("today"),
-        detail: "Clear a kept search if one is narrowing the rows; otherwise return the window to the month containing today. The ledgers have no All to clear to -- the window bounds the query itself, so \"no filter\" would be every transaction ever -- so clearing it can only mean the window the screen opens on. Cash and Credit share one window, so that half re-syncs both ledgers, the same as [ ]; a search belongs to one ledger and is cleared on its own.",
-    },
-    Entry {
-        key: "Tab",
-        label: Label::Own("account"),
-        detail: "Cycle the account filter, All included.",
-    },
+    Entry::filter(ACCOUNT_FILTER, "Cycle the account filter, All included."),
     Entry {
         key: "BackTab",
         label: Label::Hidden,
         detail: "Cycle the account filter the other way. Unlabelled: it is Tab read backwards, and a footer word of its own would say the same thing twice.",
     },
-    Entry {
-        key: "/",
-        label: Label::Own("search"),
-        detail: "Filter rows by description or amount as you type -- 1234 finds a row of $1,234.56, with the separators left out. Enter keeps the filter and leaves the box; Esc clears it.",
-    },
+    Entry::filter(
+        MONTH_FILTER,
+        "Step the month shown. Cash and Credit share one window, so both ledgers move together and always compare the same weeks.",
+    ),
+    Entry::filter(
+        CLEAR_FILTER,
+        "Clear a kept search if one is narrowing the rows; otherwise return the window to the month containing today. The ledgers have no All to clear to -- the window bounds the query itself, so \"no filter\" would be every transaction ever -- so clearing it can only mean the window the screen opens on, which is why the shared word is clear rather than all. Cash and Credit share one window, so that half re-syncs both ledgers, the same as [ ]; a search belongs to one ledger and is cleared on its own.",
+    ),
+    Entry::filter(
+        SEARCH_FILTER,
+        "Filter rows by description or amount as you type -- 1234 finds a row of $1,234.56, with the separators left out. Enter keeps the filter and leaves the box; Esc clears it.",
+    ),
     Entry {
         key: "r",
         label: Label::Own("target"),
@@ -157,17 +224,17 @@ const LEDGER: [Entry; 11] = [
     },
     Entry {
         key: "a",
-        label: Label::Own("add"),
-        detail: "Add a transaction, opening on the account the ledger is filtered to, or the first when the filter is All.",
+        label: Label::Shared("money"),
+        detail: "Add a transaction, opening on the account the ledger is filtered to, or the first when the filter is All. Grouped with t and p under one footer word: all three write new rows, where e and d act on the one selected -- and the ledgers' footer is the widest in the app, so the verbs are spent here and read back in this panel.",
     },
     Entry {
         key: "t",
-        label: Label::Own("transfer"),
+        label: Label::Shared("money"),
         detail: "Move money between two cash accounts. Cash ledger only: a transfer leaves an account you hold, so there is nothing on a card for it to start from.",
     },
     Entry {
         key: "p",
-        label: Label::Own("pay"),
+        label: Label::Shared("money"),
         detail: "Pay a credit card from a cash account, writing both sides.",
     },
     Entry {
@@ -183,31 +250,27 @@ const LEDGER: [Entry; 11] = [
 ];
 
 const SAVINGS: [Entry; 13] = [
-    Entry {
-        key: "Tab",
-        label: Label::Own("account"),
-        detail: "Cycle the container filter: All, then one entry per account that holds goals. The footer word is the ledgers' -- one filter over the same accounts should not be called two things by two screens -- and the goals themselves are what make that account a container.",
-    },
+    Entry::filter(
+        ACCOUNT_FILTER,
+        "Cycle the container filter: All, then one entry per account that holds goals. The footer word is the shared one -- a filter over the same accounts should not be called two things by two screens -- and the goals themselves are what make that account a container.",
+    ),
     Entry {
         key: "BackTab",
         label: Label::Hidden,
         detail: "Cycle the container filter the other way. Unlabelled: it is Tab read backwards, and a footer word of its own would say the same thing twice.",
     },
-    Entry {
-        key: "[ ]",
-        label: Label::Own("month"),
-        detail: "Step the goal-date filter, wrapping at either end. Pure view state, unlike the ledgers': every goal is already loaded for the reconciliation line, so there is nothing to re-query.",
-    },
-    Entry {
-        key: "Esc",
-        label: Label::Own("all"),
-        detail: "Clear a kept search if one is narrowing the list; otherwise clear both filters at once -- the container and the month, whichever of them is set -- showing every goal again, undated ones included. The next month step re-enters at today's month, or at the nearer end of the dated span when today falls outside it -- never the month you left, so no state crosses the All filter.",
-    },
-    Entry {
-        key: "/",
-        label: Label::Own("search"),
-        detail: "Filter goals by name, balance or target as you type -- 1234 finds a goal at $1,234.56, with the separators left out. The % and $/Pay columns are derived from the two figures beside them and are not searched. Enter keeps the filter and leaves the box, so a, c and e stay usable on the narrowed list; Esc clears it.",
-    },
+    Entry::filter(
+        MONTH_FILTER,
+        "Step the goal-date filter, wrapping at either end. Pure view state, unlike the ledgers': every goal is already loaded for the reconciliation line, so there is nothing to re-query.",
+    ),
+    Entry::filter(
+        CLEAR_FILTER,
+        "Clear a kept search if one is narrowing the list; otherwise clear both filters at once -- the container and the month, whichever of them is set -- showing every goal again, undated ones included. The next month step re-enters at today's month, or at the nearer end of the dated span when today falls outside it -- never the month you left, so no state crosses the All filter.",
+    ),
+    Entry::filter(
+        SEARCH_FILTER,
+        "Filter goals by name, balance or target as you type -- 1234 finds a goal at $1,234.56, with the separators left out. The % and $/Pay columns are derived from the two figures beside them and are not searched. Enter keeps the filter and leaves the box, so a, c and e stay usable on the narrowed list; Esc clears it.",
+    ),
     Entry {
         key: "a",
         label: Label::Shared("allocate"),
@@ -364,16 +427,14 @@ const RECURRING_TXNS: [Entry; 7] = [
 ];
 
 const RECURRING_GOALS: [Entry; 6] = [
-    Entry {
-        key: "[ ]",
-        label: Label::Own("month"),
-        detail: "Step the month filter. Entries carry a month and no date, so the cycle is the calendar: December wraps to January. The screen opens on All, and the first step enters at this month.",
-    },
-    Entry {
-        key: "Esc",
-        label: Label::Own("all"),
-        detail: "Return to All. The next step re-enters at this month rather than the one you left, so no state crosses the All filter.",
-    },
+    Entry::filter(
+        MONTH_FILTER,
+        "Step the month filter. Entries carry a month and no date, so the cycle is the calendar: December wraps to January. The screen opens on All, and the first step enters at this month.",
+    ),
+    Entry::filter(
+        CLEAR_FILTER,
+        "Return to All. The next step re-enters at this month rather than the one you left, so no state crosses the All filter.",
+    ),
     Entry {
         key: "a",
         label: Label::Own("add"),
@@ -725,6 +786,46 @@ impl Topic {
         }
     }
 
+    /// Whether `App::dispatch` answers the app-wide keys in this context --
+    /// which is the whole of what decides whether [`chrome`] may be shown.
+    ///
+    /// The eight screens, and nothing else. `dispatch` returns into
+    /// `modal_key` above the `q` and `1-9` arms, so every modal makes both
+    /// dead: a digit typed into a worksheet's `/` box is part of the needle,
+    /// a `q` under a confirm dialog is one of the "any key" that cancels it,
+    /// and a form takes both as text. The two screen-level search boxes are
+    /// the same case one layer up. Naming a key that does nothing is worse
+    /// than naming none: `q quit` under an unanswered question reads as a way
+    /// out of it.
+    ///
+    /// An exhaustive match rather than a check of `self.modal` at the call
+    /// site, so a topic added for a new modal has to answer this here instead
+    /// of inheriting a footer's word for keys it does not answer.
+    pub(super) fn answers_app_wide_keys(self) -> bool {
+        match self {
+            Topic::Overview
+            | Topic::Ledger
+            | Topic::Savings
+            | Topic::Planning
+            | Topic::Funds
+            | Topic::RecurringTxns
+            | Topic::RecurringGoals
+            | Topic::Accounts => true,
+            Topic::LedgerSearch
+            | Topic::SavingsSearch
+            | Topic::WorksheetSearch
+            | Topic::DestinationSearch
+            | Topic::Worksheet
+            | Topic::Picker
+            | Topic::Destination
+            | Topic::Details
+            | Topic::Confirm
+            | Topic::Form
+            | Topic::SuggestForm
+            | Topic::PlanTransfers => false,
+        }
+    }
+
     /// Whether `?` is a character the reader may mean to type here.
     ///
     /// True only where a printable key reaches a text field. The worksheet is
@@ -759,36 +860,10 @@ impl Topic {
         }
     }
 
-    /// The app-wide keys this context's footer ends with.
+    /// The footer line: this context's own labelled entries, joined.
     ///
-    /// Empty for every modal and search topic, which set no footer at all;
-    /// `q` alone for the two ledgers and Savings, whose footers are the
-    /// longest in the app and drop `1-9` rather than grow.
-    fn chrome(self) -> &'static [Chrome] {
-        match self {
-            Topic::Overview
-            | Topic::Planning
-            | Topic::Funds
-            | Topic::RecurringTxns
-            | Topic::RecurringGoals
-            | Topic::Accounts => &[SCREEN_KEYS, QUIT_KEY],
-            Topic::Ledger | Topic::Savings => &[QUIT_KEY],
-            Topic::LedgerSearch
-            | Topic::SavingsSearch
-            | Topic::WorksheetSearch
-            | Topic::DestinationSearch
-            | Topic::Worksheet
-            | Topic::Picker
-            | Topic::Destination
-            | Topic::Details
-            | Topic::Confirm
-            | Topic::Form
-            | Topic::SuggestForm
-            | Topic::PlanTransfers => &[],
-        }
-    }
-
-    /// The footer line: the labelled entries, joined, then the chrome.
+    /// Not the app-wide keys, which are [`chrome`] and are drawn against the
+    /// right edge rather than after the last of these.
     pub(super) fn footer(self) -> String {
         self.footer_without(&[])
     }
@@ -803,7 +878,7 @@ impl Topic {
     /// `Shared` run shrinks the group rather than splitting or dropping it.
     ///
     /// Table entries only: the chrome is not omittable, since every screen
-    /// that shows a footer shows all of its own.
+    /// that shows a footer shows all of it.
     pub(super) fn footer_without(self, omit: &[&str]) -> String {
         let live: Vec<Entry> = self
             .keys()
@@ -811,14 +886,28 @@ impl Topic {
             .filter(|entry| !omit.contains(&entry.key))
             .copied()
             .collect();
-        let mut items = footer_items(&live);
-        items.extend(
-            self.chrome()
-                .iter()
-                .map(|chrome| format!("{} {}", chrome.key, chrome.word)),
-        );
-        items.join(SEPARATOR)
+        footer_items(&live).join(SEPARATOR)
     }
+}
+
+/// The app-wide keys, as the footer's right edge says them.
+///
+/// One string for the whole app rather than a list per topic: `1-9` and `q`
+/// are answered in `App::dispatch` above every screen handler, so every
+/// screen offers exactly these and no screen has a say in it. They are drawn
+/// against the right edge, which is what makes that true of the widest footer
+/// as well as the narrowest -- a screen out of room shortens its own words
+/// rather than dropping the two keys every screen has.
+///
+/// Who *shows* it is still a question, and `Topic::answers_app_wide_keys` is
+/// what settles it: only the contexts where `App::dispatch` reaches those two
+/// keys at all.
+pub(super) fn chrome() -> String {
+    [SCREEN_KEYS, QUIT_KEY]
+        .iter()
+        .map(|chrome| format!("{} {}", chrome.key, chrome.word))
+        .collect::<Vec<String>>()
+        .join(SEPARATOR)
 }
 
 /// What separates one footer item from the next.
@@ -1054,20 +1143,80 @@ mod tests {
         }
     }
 
-    /// A footer wider than the terminal is truncated from the right, so the
-    /// keys it loses are the ones at the end -- `q quit` first, which is the
-    /// one every screen shows. This measures every screen at once, where
-    /// `app`'s two width tests measure the footers `App::footer` composes at
-    /// runtime; the lever when a screen runs out of room is `Label::Shared`,
-    /// which puts several keys under one word.
+    /// The whole footer line -- a screen's own keys, the gap, and the
+    /// app-wide keys against the right edge -- has to fit, or the two halves
+    /// meet in the middle and the left one is truncated into the right. The
+    /// keys lost are the ones at the end of the screen's own list, since the
+    /// chrome holds its own width; the lever when a screen runs out of room
+    /// is `Label::Shared`, which puts several keys under one word.
+    ///
+    /// This measures every screen at once, where `app`'s two width tests
+    /// measure the footers `App::footer` composes at runtime.
     #[test]
     fn every_screen_footer_fits_the_minimum_width() {
         for topic in SCREENS {
-            let footer = topic.footer();
+            let footer = [topic.footer(), chrome()].join(SEPARATOR);
             let width = footer.chars().count();
             assert!(
                 width <= MIN_WIDTH as usize,
                 "{topic:?} footer is {width} wide: {footer}"
+            );
+        }
+    }
+
+    /// A screen may not name a shared filter key itself. `Entry::filter` is
+    /// the only way to label one, so a hand-written `Label::Own` beside `Tab`
+    /// or `Esc` is what this catches -- the way one filter starts being
+    /// called two things.
+    ///
+    /// Over every topic, not just the eight with footers: a modal that grew a
+    /// labelled `Esc` would be the same drift arriving by another door.
+    /// `Label::Hidden` is exempt, which is how the forms and the worksheet
+    /// answer these keys without advertising them.
+    #[test]
+    fn every_filter_key_is_labelled_with_its_shared_word() {
+        for topic in ALL {
+            for entry in topic.keys() {
+                let Some(filter) = FILTERS.iter().find(|filter| filter.key == entry.key) else {
+                    continue;
+                };
+                let allowed = [Label::Hidden, Label::Own(filter.word)];
+                assert!(
+                    allowed.contains(&entry.label),
+                    "{topic:?} labels {} something other than {:?}",
+                    entry.key,
+                    filter.word
+                );
+            }
+        }
+    }
+
+    /// Whichever of the shared filters a screen offers lead its footer, in
+    /// `FILTERS` order, before the first key the screen owns alone. The hand
+    /// reaching for a filter then finds it in the same place on every screen
+    /// that has one, rather than wherever that screen's table happened to put
+    /// it.
+    #[test]
+    fn the_shared_filters_lead_every_screen_footer_in_one_order() {
+        for topic in SCREENS {
+            let items = footer_items(topic.keys());
+            let places: Vec<Option<usize>> = items
+                .iter()
+                .map(|item| {
+                    FILTERS
+                        .iter()
+                        .position(|filter| *item == format!("{} {}", filter.key, filter.word))
+                })
+                .collect();
+            let filters: Vec<usize> = places.iter().flatten().copied().collect();
+            assert_eq!(
+                places[..filters.len()].iter().flatten().count(),
+                filters.len(),
+                "{topic:?} footer has a filter after a key of its own: {items:?}"
+            );
+            assert!(
+                filters.windows(2).all(|pair| pair[0] < pair[1]),
+                "{topic:?} footer takes the filters out of order: {items:?}"
             );
         }
     }
@@ -1099,39 +1248,33 @@ mod tests {
     /// so no footer names them.
     #[test]
     fn each_screen_topic_joins_the_footer_it_always_showed() {
-        assert_eq!(
-            Topic::Overview.footer(),
-            "←/→ scrub · Shift+←/→ week · 1-9 screens · q quit"
-        );
+        assert_eq!(Topic::Overview.footer(), "←/→ scrub · Shift+←/→ week");
         assert_eq!(
             Topic::Ledger.footer(),
-            "[ ] month · Esc today · Tab account · / search · r target · a add · t transfer · p pay · e edit · d delete · q quit"
+            "Tab acct · [ ] month · Esc clear · / search · r target · a/t/p money · e edit · d delete"
         );
         assert_eq!(
             Topic::Savings.footer(),
-            "Tab account · [ ] month · Esc all · / search · a/A/i allocate · n/e/c goal · f fave · U undo · q quit"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c goal · f fave · U undo"
         );
         assert_eq!(
             Topic::Planning.footer(),
-            "e edit · E/a/d bill · t transfers · Enter why · p pin · P unpin · 1-9 screens · q quit"
+            "e edit · E/a/d bill · t transfers · Enter why · p pin · P unpin"
         );
         assert_eq!(
             Topic::RecurringTxns.footer(),
-            "a add · e edit · d delete · g regen · G all · x extend · P paycheck · 1-9 screens · q quit"
+            "a add · e edit · d delete · g regen · G all · x extend · P paycheck"
         );
         assert_eq!(
             Topic::RecurringGoals.footer(),
-            "[ ] month · Esc all · a add · e edit · d delete · s savings · 1-9 screens · q quit"
+            "[ ] month · Esc clear · a add · e edit · d delete · s savings"
         );
-        assert_eq!(Topic::Accounts.footer(), "e edit · 1-9 screens · q quit");
+        assert_eq!(Topic::Accounts.footer(), "e edit");
     }
 
     #[test]
     fn the_funds_footer_names_every_key_the_screen_answers() {
-        assert_eq!(
-            Topic::Funds.footer(),
-            "a add · e value · E edit · d delete · 1-9 screens · q quit"
-        );
+        assert_eq!(Topic::Funds.footer(), "a add · e value · E edit · d delete");
     }
 
     /// The Credit ledger shares the Ledger topic with Cash but has no `t`:
@@ -1141,7 +1284,7 @@ mod tests {
     fn the_credit_footer_is_the_ledger_footer_without_transfer() {
         assert_eq!(
             Topic::Ledger.footer_without(&["t"]),
-            "[ ] month · Esc today · Tab account · / search · r target · a add · p pay · e edit · d delete · q quit"
+            "Tab acct · [ ] month · Esc clear · / search · r target · a/p money · e edit · d delete"
         );
     }
 
@@ -1152,7 +1295,7 @@ mod tests {
     fn omitting_a_key_inside_a_shared_group_shrinks_it() {
         assert_eq!(
             Topic::Planning.footer_without(&["a"]),
-            "e edit · E/d bill · t transfers · Enter why · p pin · P unpin · 1-9 screens · q quit"
+            "e edit · E/d bill · t transfers · Enter why · p pin · P unpin"
         );
     }
 

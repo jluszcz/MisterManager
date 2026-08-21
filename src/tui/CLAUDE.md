@@ -58,25 +58,55 @@ app-wide keys are footer chrome rather than table entries — every screen has t
 for. The scroll keys are absent from both, for the same reason and one better:
 `cursor::scroll_key` answers them identically on every list in the app.
 
-**A footer must fit `MIN_WIDTH`, and the budget is what decides how a key is labelled.** ratatui
-truncates a `Paragraph` from the right, so an over-wide footer drops the keys at its end — `q quit`
-first, the one item every screen carries — with nothing on screen to say a word went missing.
-`help::tests::every_screen_footer_fits_the_minimum_width` measures every screen topic; `app`'s two
-own width tests measure the footers `App::footer` composes at runtime, which a `Topic` alone does not
-see. The first lever when a screen runs out of room is `Label::Shared`: several keys join under one
-word naming what they act *on* — `E/a/d bill` on Planning, `a/A/i allocate` and `n/e/c goal` on
-Savings — which buys back a whole item's separator per key absorbed, and the verbs it costs are a
-keystroke away in the panel, which has room for them. A shorter word is the smaller adjustment
-beside it — `f fave`, and `Tab account` where a neighbouring screen already had the shorter word for
-the same thing. What neither of them does is drop a key: a key nothing advertises is a key nobody
-presses, so `Label::Hidden` stays for the entries a footer word would only say twice, `BackTab`
-being the one.
+**The chrome is one string for the whole app, and it is drawn against the right edge.**
+`help::chrome` states `1-9 screens · q quit` once — no screen has a say in it, because `1-9` and `q`
+are answered in `App::dispatch` above every screen handler — and `App::render` splits the footer row
+in two, a screen's own keys filling the left and the chrome holding exactly its own width on the
+right. The two keys every screen answers are therefore found in the same place whatever the screen in
+front of them costs, and the half ratatui truncates when a terminal is narrower than `MIN_WIDTH` is
+the screen's own, not `q quit`.
 
-Regrouped, Savings is no longer the screen closest to the edge: **the ledgers' footer is**, by some
-margin, so the next key that needs a group is likelier to be Cash or Credit's than this screen's.
-Those two and Savings are also the only screens whose chrome omits `1-9 screens`, which is
-`Topic::chrome`'s decision rather than anything a screen says for itself — and it is spent, so a
-footer that overflows again has the grouping to fall back on and nothing else.
+Who *shows* it is a separate question, and the rule is that the chrome appears only where `dispatch`
+actually answers those two keys. `Topic::answers_app_wide_keys` states it — the eight screens, and
+nothing else — and `App::footer_chrome` asks it through `App::topic`, so one question covers every
+modal and all four search boxes rather than a list of screens re-derived at the call site. That
+`dispatch` returns into `modal_key` *above* its `q` and `1-9` arms is what makes the answer false
+under a modal: a digit typed into a worksheet's `/` box is part of the needle, a `q` under a confirm
+dialog is one of the "any key" that cancels it, and naming a key that does nothing is worse than
+naming none. The open Help panel is the one context outside that match — it is not a `Topic`, and
+`dispatch` returns into `help_key` above everything — so `footer_chrome` asks about it separately. A
+status message withholds the chrome for an unrelated reason: it borrows the whole line for
+`STATUS_TTL` and gives it back.
+
+**The shared filter keys lead every footer that has them, in one order, under one word each.**
+`Tab acct`, `[ ] month`, `Esc clear`, `/ search` — `help::FILTERS` states the order and the four
+words, and a table reaches them through `Entry::filter` rather than writing a `Label::Own` of its
+own, so a filter over the same thing cannot be called two names by two screens. What a screen still
+writes is the `detail`: `Esc` genuinely clears to different places — today's window on the ledgers,
+All on Savings and Recurring Goals — and the panel is where that difference belongs, which is why
+the shared word is `clear` rather than one screen's answer imposed on the others. Two tests hold it
+up: `every_filter_key_is_labelled_with_its_shared_word` over every topic there is, and
+`the_shared_filters_lead_every_screen_footer_in_one_order` over the eight with footers.
+
+**A footer must fit `MIN_WIDTH`, and the budget is what decides how a key is labelled.** ratatui
+truncates a `Paragraph` from the right, so an over-wide left half runs into the chrome and drops its
+own last keys with nothing on screen to say a word went missing.
+`help::tests::every_screen_footer_fits_the_minimum_width` measures every screen topic against both
+halves plus the separator; `app`'s two own width tests measure what `App::footer` composes at
+runtime, which a `Topic` alone does not see. The first lever when a screen runs out of room is
+`Label::Shared`: several keys join under one word naming what they act *on* — `E/a/d bill` on
+Planning, `a/A/i allocate` and `n/e/c goal` on Savings, `a/t/p money` on the ledgers, where the
+three keys that write new rows join against the `e` and `d` that act on the one selected — which
+buys back a whole item's separator per key absorbed, and the verbs it costs are a keystroke away in
+the panel, which has room for them. A shorter word is the smaller adjustment beside it — `f fave`,
+and the `acct` every screen's `Tab` takes. What neither of them does is drop a key: a key nothing
+advertises is a key nobody presses, so `Label::Hidden` stays for the entries a footer word would
+only say twice, `BackTab` being the one.
+
+**The ledgers' footer is the one closest to the edge**, by some margin, so the next key that needs a
+group is likelier to be Cash or Credit's than any other screen's — and both of its levers are now
+spent, the grouping on `a/t/p` and the shorter word on `Tab`. A footer that overflows again has
+nothing left to fall back on but a shorter word somewhere.
 
 A status message — a write's result, a parse error, a "nothing selected" — borrows the footer rather
 than owning it, and gives it back on its own after `app::STATUS_TTL`. A key press still clears it
@@ -695,8 +725,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
 - **Cash and Credit share one month, and it is a window, not a `MonthCycle`.** The ledgers' window
   is a one-or-two month span clamped to the data's range and pushed down into the SQL, so they have
   no All to clear to: "no filter" there would be every transaction ever. `Esc` therefore means the
-  window the screen opens on, `Window::containing(today)` — the footer says `Esc today` where the
-  other two say `Esc all`. `[`, `]`, and `Esc` all step the active ledger and then go through
+  window the screen opens on, `Window::containing(today)` — which is why the footer word shared with the
+  other two screens is `clear` rather than `all`, a state these two have no way to reach; what `Esc`
+  clears *to* is the panel's to say. `[`, `]`, and `Esc` all step the active ledger and then go through
   `App::sync_month`, which copies the resulting window onto the other and re-anchors both cursors —
   so `2` and `3` always compare the same weeks. It re-queries both ledgers, because a synced window
   over stale rows shows one month's rows under another's heading. Purely view state: nothing
