@@ -468,7 +468,7 @@ pub fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> usize {
         Constraint::Length(8),
         Constraint::Length(10),
         Constraint::Length(16),
-        Constraint::Length(14),
+        Constraint::Length(8),
     ];
 
     // Two borders and the header row are not available to data rows.

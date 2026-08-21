@@ -55,10 +55,22 @@ impl Account {
     /// One segment rather than two: both halves name the same account, and
     /// splitting them would leave the code reading as chrome in front of a
     /// colored name.
+    ///
+    /// An account whose name is still its code shows that text once. The
+    /// import names every new account after its own code, so `CHK — CHK` is
+    /// what this reads as until the owner renames the row on the Accounts
+    /// screen -- and a selector saying the same word twice reads as two
+    /// facts about the account rather than one it has yet to be told.
     pub fn labelled(account: &account::Account) -> Account {
+        let code = account.code.as_str();
+        let name = account.name.as_str();
         Account {
             id: account.id,
-            text: format!("{} — {}", account.code.as_str(), account.name.as_str()),
+            text: if code == name {
+                code.to_string()
+            } else {
+                format!("{code} — {name}")
+            },
             color: account.color,
         }
     }
@@ -281,6 +293,16 @@ mod tests {
     #[test]
     fn a_selectors_label_shows_the_code_and_the_name_as_one_account() {
         assert_eq!(Account::labelled(&accounts()[0]).text(), "CHK — Everyday");
+    }
+
+    /// The state every account is imported in: `name = code`, until the owner
+    /// renames the row. Both halves are the same word, so the selector says
+    /// it once rather than joining it to itself.
+    #[test]
+    fn a_selectors_label_says_a_name_that_is_still_its_code_once() {
+        let mut unnamed = accounts()[0].clone();
+        unnamed.name = unnamed.code.as_str().into();
+        assert_eq!(Account::labelled(&unnamed).text(), "CHK");
     }
 
     /// An id with no account is a corrupt row, not a reason to stop drawing
