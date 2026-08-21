@@ -69,6 +69,11 @@ pub struct Goal {
     pub interest_eligible: bool,
     pub closed: bool,
     pub sort: i64,
+    /// The owner's own mark on a goal, drawn as a band on the Savings screen.
+    /// Not a fact the workbook carries and not one the import ever writes:
+    /// a goal arrives unfavorited and `set_favorite` is the only way out of
+    /// that.
+    pub favorite: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -88,6 +93,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Goal> {
         interest_eligible: row.get::<_, i64>(6)? != 0,
         closed: row.get::<_, i64>(7)? != 0,
         sort: row.get(8)?,
+        favorite: row.get::<_, i64>(9)? != 0,
     })
 }
 
@@ -96,14 +102,14 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Goal> {
 /// idiom.
 ///
 /// The `with_balance` arm is those same columns qualified with the `g` alias
-/// a join needs, followed by the goal's allocation sum as column index 9 --
+/// a join needs, followed by the goal's allocation sum as column index 10 --
 /// what [`GoalWithBalance`] reads. Two lists rather than one, but adjacent,
 /// so a column added to the table is one edit in one place.
 macro_rules! select_goal {
     ($tail:literal) => {
         concat!(
             "SELECT id, name, container_account_id, goal_cents, goal_date,
-                    recurring_goal_id, interest_eligible, closed, sort
+                    recurring_goal_id, interest_eligible, closed, sort, favorite
                FROM goal ",
             $tail
         )
@@ -111,7 +117,7 @@ macro_rules! select_goal {
     (with_balance $tail:literal) => {
         concat!(
             "SELECT g.id, g.name, g.container_account_id, g.goal_cents, g.goal_date,
-                    g.recurring_goal_id, g.interest_eligible, g.closed, g.sort,
+                    g.recurring_goal_id, g.interest_eligible, g.closed, g.sort, g.favorite,
                     COALESCE((SELECT SUM(a.cents) FROM allocation a WHERE a.goal_id = g.id), 0)
                FROM goal g ",
             $tail
@@ -266,7 +272,7 @@ pub fn list_with_balances(
     let rows = stmt.query_map(params![container_account_id], |row| {
         Ok(GoalWithBalance {
             goal: from_row(row)?,
-            current: Cents(row.get(9)?),
+            current: Cents(row.get(10)?),
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -288,7 +294,7 @@ pub fn all_with_balances(db: &Db) -> Result<Vec<GoalWithBalance>> {
     let rows = stmt.query_map([], |row| {
         Ok(GoalWithBalance {
             goal: from_row(row)?,
-            current: Cents(row.get(9)?),
+            current: Cents(row.get(10)?),
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -467,6 +473,20 @@ pub fn close(db: &Db, id: GoalId) -> Result<()> {
     let changed = db
         .conn
         .execute("UPDATE goal SET closed = 1 WHERE id = ?1", params![id])?;
+    ensure!(changed == 1, "no goal with id {id}");
+    Ok(())
+}
+
+/// Mark or unmark a goal as one of the owner's favorites.
+///
+/// The column's one writer, the way `recurring_txn::set_paycheck` is its
+/// flag's: the goal form has no field for this and `update` must not touch
+/// it, or an edit would silently clear a mark the owner set with `f`.
+pub fn set_favorite(db: &Db, id: GoalId, favorite: bool) -> Result<()> {
+    let changed = db.conn.execute(
+        "UPDATE goal SET favorite = ?2 WHERE id = ?1",
+        params![id, favorite as i64],
+    )?;
     ensure!(changed == 1, "no goal with id {id}");
     Ok(())
 }
@@ -1248,6 +1268,64 @@ mod tests {
         .unwrap();
 
         assert!(!get(&db, id).unwrap().unwrap().interest_eligible);
+    }
+
+    /// A goal arrives unfavorited: the highlight on the Savings screen is an
+    /// override the owner applies, never a state a goal is imported into.
+    #[test]
+    fn a_goal_is_not_favorited_until_it_is_made_one() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let id = insert(&db, &new_goal("Down Payment", savings, 1_000)).unwrap();
+
+        assert!(!get(&db, id).unwrap().unwrap().favorite);
+    }
+
+    /// `f` is a toggle, so both directions have to land -- a favorite that
+    /// could be set and not cleared would be a decision the owner cannot take
+    /// back.
+    #[test]
+    fn favoriting_a_goal_round_trips_and_can_be_taken_back() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let id = insert(&db, &new_goal("Down Payment", savings, 1_000)).unwrap();
+
+        set_favorite(&db, id, true).unwrap();
+        assert!(get(&db, id).unwrap().unwrap().favorite);
+
+        set_favorite(&db, id, false).unwrap();
+        assert!(!get(&db, id).unwrap().unwrap().favorite);
+    }
+
+    /// The column has one writer, and the edit form is not it: `update`
+    /// rewrites the three fields the form carries and must leave a favorite
+    /// exactly where the toggle put it.
+    #[test]
+    fn editing_a_goal_leaves_its_favorite_alone() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let id = insert(&db, &new_goal("Down Payment", savings, 1_000)).unwrap();
+        set_favorite(&db, id, true).unwrap();
+
+        update(
+            &db,
+            id,
+            &GoalEdit {
+                name: "Home Down Payment".to_string(),
+                goal_cents: Cents::from_dollars(2_000),
+                goal_date: None,
+                interest_eligible: true,
+            },
+        )
+        .unwrap();
+
+        assert!(get(&db, id).unwrap().unwrap().favorite);
+    }
+
+    #[test]
+    fn favoriting_a_missing_goal_is_an_error() {
+        let db = db::open_in_memory().unwrap();
+        assert!(set_favorite(&db, GoalId(999), true).is_err());
     }
 
     #[test]
