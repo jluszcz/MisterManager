@@ -1593,20 +1593,23 @@ impl App {
     }
 
     /// The app-wide keys, drawn against the footer's right edge -- or nothing,
-    /// on the two footers where they would be a lie.
+    /// wherever they would be a lie.
     ///
-    /// A search box is one: `1-9` there is a digit being typed into the
-    /// needle, not a screen switch, and 1234 finding a row of $1,234.56 is
-    /// exactly what that box is for. A status message is the other: it
-    /// borrows the whole line for `STATUS_TTL` and gives it back, and a line
-    /// half message and half key list reads as neither.
+    /// Three things withhold them, and the first two are the same rule: show
+    /// them only where `dispatch` answers them. `Topic::answers_app_wide_keys`
+    /// is that rule, and `App::topic` is what resolves the context, so a modal
+    /// and the two screen-level search boxes are covered by one question
+    /// rather than a list of screens re-derived here. The open Help panel is
+    /// the third: it is not a `Topic` -- `dispatch` returns into `help_key`
+    /// above everything, which takes Esc and the scroll keys and drops the
+    /// rest -- so it is asked about separately.
+    ///
+    /// A status message withholds them too, for a different reason: it borrows
+    /// the whole line for `STATUS_TTL` and gives it back, and a line half
+    /// message and half key list reads as neither.
     fn footer_chrome(&self) -> String {
-        let searching = match self.screen {
-            Screen::Cash | Screen::Credit => self.ledger().is_searching(),
-            Screen::Savings => self.savings.is_searching(),
-            _ => false,
-        };
-        match self.status.is_empty() && !searching {
+        let live = self.help.is_none() && self.topic().answers_app_wide_keys();
+        match self.status.is_empty() && live {
             true => help::chrome(),
             false => String::new(),
         }
@@ -4707,6 +4710,53 @@ mod tests {
             press(&mut app, KeyCode::Esc);
             assert_eq!(app.footer_chrome(), help::chrome(), "screen {screen}");
         }
+    }
+
+    /// The chrome may only be shown where `App::dispatch` actually answers
+    /// those keys, and it answers neither under a modal: the `modal_key`
+    /// return sits above the `q` and `1-9` arms, so every form, confirm,
+    /// worksheet, picker and chooser makes both of them dead. The footer row
+    /// is drawn before the popup and no popup covers it, so a chrome that
+    /// stayed would be read off a line the modal is sitting on top of.
+    #[test]
+    fn no_modal_shows_the_app_wide_keys() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('A'));
+        assert!(app.modal.is_some());
+        assert_eq!(app.footer_chrome(), "");
+        assert!(!footer_row(&mut app).contains("1-9 screens"));
+    }
+
+    /// The worksheet and the destination chooser host the app's other two
+    /// search boxes, and a digit typed in either goes into the needle -- in
+    /// the worksheet's case `/` then a digit is a whole other key, the one
+    /// that takes 1/N of the pot.
+    #[test]
+    fn a_modal_hosted_search_box_shows_no_app_wide_keys() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('A'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('/'));
+        press(&mut app, KeyCode::Char('C'));
+        assert!(worksheet(&app).is_searching());
+        assert_eq!(app.footer_chrome(), "");
+        assert!(!footer_row(&mut app).contains("1-9 screens"));
+    }
+
+    /// The panel is the third context whose keys `dispatch` answers ahead of
+    /// the app-wide ones -- it takes Esc and the scroll keys and drops the
+    /// rest, so `q` there quits nothing.
+    #[test]
+    fn the_open_help_panel_shows_no_app_wide_keys() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('?'));
+        assert!(app.help.is_some());
+        assert_eq!(app.footer_chrome(), "");
+        assert!(!footer_row(&mut app).contains("1-9 screens"));
     }
 
     /// A status message borrows the whole line for `STATUS_TTL` and gives it

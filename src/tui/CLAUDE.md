@@ -64,10 +64,19 @@ are answered in `App::dispatch` above every screen handler — and `App::render`
 in two, a screen's own keys filling the left and the chrome holding exactly its own width on the
 right. The two keys every screen answers are therefore found in the same place whatever the screen in
 front of them costs, and the half ratatui truncates when a terminal is narrower than `MIN_WIDTH` is
-the screen's own, not `q quit`. Who *shows* it is still a question, and `App::footer_chrome` answers
-it: a search box shows none, since `1-9` there is a digit being typed into the needle rather than a
-screen switch, and neither does a status message, which borrows the whole line for `STATUS_TTL` and
-gives it back.
+the screen's own, not `q quit`.
+
+Who *shows* it is a separate question, and the rule is that the chrome appears only where `dispatch`
+actually answers those two keys. `Topic::answers_app_wide_keys` states it — the eight screens, and
+nothing else — and `App::footer_chrome` asks it through `App::topic`, so one question covers every
+modal and all four search boxes rather than a list of screens re-derived at the call site. That
+`dispatch` returns into `modal_key` *above* its `q` and `1-9` arms is what makes the answer false
+under a modal: a digit typed into a worksheet's `/` box is part of the needle, a `q` under a confirm
+dialog is one of the "any key" that cancels it, and naming a key that does nothing is worse than
+naming none. The open Help panel is the one context outside that match — it is not a `Topic`, and
+`dispatch` returns into `help_key` above everything — so `footer_chrome` asks about it separately. A
+status message withholds the chrome for an unrelated reason: it borrows the whole line for
+`STATUS_TTL` and gives it back.
 
 **The shared filter keys lead every footer that has them, in one order, under one word each.**
 `Tab acct`, `[ ] month`, `Esc clear`, `/ search` — `help::FILTERS` states the order and the four

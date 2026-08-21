@@ -786,6 +786,46 @@ impl Topic {
         }
     }
 
+    /// Whether `App::dispatch` answers the app-wide keys in this context --
+    /// which is the whole of what decides whether [`chrome`] may be shown.
+    ///
+    /// The eight screens, and nothing else. `dispatch` returns into
+    /// `modal_key` above the `q` and `1-9` arms, so every modal makes both
+    /// dead: a digit typed into a worksheet's `/` box is part of the needle,
+    /// a `q` under a confirm dialog is one of the "any key" that cancels it,
+    /// and a form takes both as text. The two screen-level search boxes are
+    /// the same case one layer up. Naming a key that does nothing is worse
+    /// than naming none: `q quit` under an unanswered question reads as a way
+    /// out of it.
+    ///
+    /// An exhaustive match rather than a check of `self.modal` at the call
+    /// site, so a topic added for a new modal has to answer this here instead
+    /// of inheriting a footer's word for keys it does not answer.
+    pub(super) fn answers_app_wide_keys(self) -> bool {
+        match self {
+            Topic::Overview
+            | Topic::Ledger
+            | Topic::Savings
+            | Topic::Planning
+            | Topic::Funds
+            | Topic::RecurringTxns
+            | Topic::RecurringGoals
+            | Topic::Accounts => true,
+            Topic::LedgerSearch
+            | Topic::SavingsSearch
+            | Topic::WorksheetSearch
+            | Topic::DestinationSearch
+            | Topic::Worksheet
+            | Topic::Picker
+            | Topic::Destination
+            | Topic::Details
+            | Topic::Confirm
+            | Topic::Form
+            | Topic::SuggestForm
+            | Topic::PlanTransfers => false,
+        }
+    }
+
     /// Whether `?` is a character the reader may mean to type here.
     ///
     /// True only where a printable key reaches a text field. The worksheet is
@@ -859,9 +899,9 @@ impl Topic {
 /// as well as the narrowest -- a screen out of room shortens its own words
 /// rather than dropping the two keys every screen has.
 ///
-/// Who *shows* it is still a question, and `App::footer_chrome` answers it:
-/// a search box must not advertise `1-9` where a digit is a character being
-/// typed.
+/// Who *shows* it is still a question, and `Topic::answers_app_wide_keys` is
+/// what settles it: only the contexts where `App::dispatch` reaches those two
+/// keys at all.
 pub(super) fn chrome() -> String {
     [SCREEN_KEYS, QUIT_KEY]
         .iter()
