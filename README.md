@@ -238,10 +238,7 @@ derived one is legible only to whoever already holds the profile. Nothing about 
 public access is blocked four ways, and the only identity pointed at it may `PutObject` and nothing
 else.
 
-Its lifecycle rule tiers objects to Intelligent-Tiering after a day and deletes them at 365. Not
-Standard-IA: S3 refuses to transition an object there inside 30 days of its creation, and
-Intelligent-Tiering has no such floor — it moves an untouched object to its own infrequent-access
-tier at 30 days anyway.
+Its lifecycle rule deletes objects at 365 days.
 
 The profile must carry static access keys: the AWS SDK is built here with `sso` and
 `credentials-process` support left off along with the default HTTPS client, so an SSO profile or

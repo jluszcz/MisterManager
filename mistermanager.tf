@@ -86,27 +86,16 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "backup" {
 # Owned outright, which is the point of a bucket of this application's own: a
 # lifecycle configuration is a whole-bucket resource, so this rule can only be
 # written where nothing else is declaring one.
-#
-# Intelligent-Tiering rather than Standard-IA: S3 refuses a Standard-IA
-# transition inside 30 days of an object's creation, and this class has no such
-# floor. It moves an untouched object to its own infrequent-access tier at 30
-# days regardless, so the aging is what a day-1 Standard-IA rule would have
-# asked for, minus the wait.
 resource "aws_s3_bucket_lifecycle_configuration" "backup" {
   bucket = aws_s3_bucket.backup.id
 
   rule {
-    id     = "tier-then-expire"
+    id     = "expire"
     status = "Enabled"
 
     # Every object in the bucket. It exists for the backups and holds nothing
     # else.
     filter {}
-
-    transition {
-      days          = 1
-      storage_class = "INTELLIGENT_TIERING"
-    }
 
     expiration {
       days = 365
