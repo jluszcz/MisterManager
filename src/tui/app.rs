@@ -1592,6 +1592,26 @@ impl App {
         }
     }
 
+    /// The app-wide keys, drawn against the footer's right edge -- or nothing,
+    /// on the two footers where they would be a lie.
+    ///
+    /// A search box is one: `1-9` there is a digit being typed into the
+    /// needle, not a screen switch, and 1234 finding a row of $1,234.56 is
+    /// exactly what that box is for. A status message is the other: it
+    /// borrows the whole line for `STATUS_TTL` and gives it back, and a line
+    /// half message and half key list reads as neither.
+    fn footer_chrome(&self) -> String {
+        let searching = match self.screen {
+            Screen::Cash | Screen::Credit => self.ledger().is_searching(),
+            Screen::Savings => self.savings.is_searching(),
+            _ => false,
+        };
+        match self.status.is_empty() && !searching {
+            true => help::chrome(),
+            false => String::new(),
+        }
+    }
+
     /// Opens on the account the ledger is filtered to, or on the first when
     /// the filter is All.
     fn open_add(&mut self) -> Result<()> {
@@ -2489,7 +2509,21 @@ impl App {
             }
         }
 
-        frame.render_widget(Paragraph::new(self.footer()), footer);
+        // Two paragraphs rather than one string: the app-wide keys sit
+        // against the right edge, so they hold one place on every screen
+        // whatever the screen's own keys cost. The split gives them exactly
+        // their own width and leaves the rest to the left half, which is what
+        // ratatui truncates from when a terminal is narrower than MIN_WIDTH --
+        // an over-wide footer drops the last key the *screen* names rather
+        // than `q quit`.
+        let chrome = self.footer_chrome();
+        let [keys, app_wide] = Layout::horizontal([
+            Constraint::Min(0),
+            Constraint::Length(chrome.chars().count() as u16),
+        ])
+        .areas(footer);
+        frame.render_widget(Paragraph::new(self.footer()), keys);
+        frame.render_widget(Paragraph::new(chrome), app_wide);
 
         // Runs before the next key is read, which is what keeps the popup's
         // cursor off a row this draw clipped away.
@@ -4616,6 +4650,82 @@ mod tests {
         assert!(app.planning.pin_line().unwrap().contains("pinned"));
     }
 
+    /// The whole footer line as it is drawn: the screen's own keys, the gap,
+    /// and the app-wide keys against the right edge. `App::footer` is only
+    /// the left half now, so a width test that measured it alone would stop
+    /// seeing the twenty columns the chrome holds.
+    fn footer_line(app: &App) -> String {
+        [app.footer(), app.footer_chrome()].join(" · ")
+    }
+
+    /// The footer row as the terminal receives it, trailing spaces and all.
+    fn footer_row(app: &mut App) -> String {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 24)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..MIN_WIDTH).map(|x| buffer[(x, 23)].symbol()).collect()
+    }
+
+    /// `1-9 screens · q quit` ends the line rather than following the last key
+    /// the screen names, so the two keys every screen answers are found in one
+    /// place whatever the screen in front of them costs.
+    #[test]
+    fn the_app_wide_keys_sit_against_the_right_edge_of_every_screen() {
+        let mut app = app();
+        for screen in ['1', '2', '3', '4', '5', '6', '7', '8'] {
+            press(&mut app, KeyCode::Char(screen));
+            // A screen key can leave a status message, which takes the line.
+            press(&mut app, KeyCode::Down);
+            let row = footer_row(&mut app);
+            assert!(
+                row.ends_with("1-9 screens · q quit"),
+                "screen {screen}: {row:?}"
+            );
+            assert!(
+                row.contains("  1-9 screens"),
+                "screen {screen} has no gap before the chrome: {row:?}"
+            );
+        }
+    }
+
+    /// A search box must not advertise `1-9`: a digit typed there is part of
+    /// the needle -- 1234 finds a row of $1,234.56 -- and naming a screen
+    /// switch beside a box that answers digits with text is the one place the
+    /// chrome would be a lie.
+    #[test]
+    fn a_search_box_shows_no_app_wide_keys() {
+        let mut app = app();
+        for screen in ['2', '3', '4'] {
+            press(&mut app, KeyCode::Char(screen));
+            press(&mut app, KeyCode::Char('/'));
+            assert_eq!(app.footer_chrome(), "", "screen {screen}");
+            let row = footer_row(&mut app);
+            assert!(!row.contains("1-9 screens"), "screen {screen}: {row:?}");
+            press(&mut app, KeyCode::Esc);
+            assert_eq!(app.footer_chrome(), help::chrome(), "screen {screen}");
+        }
+    }
+
+    /// A status message borrows the whole line for `STATUS_TTL` and gives it
+    /// back. Half a message and half a key list reads as neither, and the keys
+    /// are live either way.
+    #[test]
+    fn a_status_message_takes_the_whole_footer_line() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        press(&mut app, KeyCode::Char('p'));
+        assert!(!app.status.is_empty());
+        assert_eq!(app.footer_chrome(), "");
+        assert!(!footer_row(&mut app).contains("1-9 screens"));
+
+        // The next key clears the message, and the keys come back with it.
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.footer_chrome(), help::chrome());
+    }
+
     /// Nothing pinned the Planning footer's width before, and it drifted
     /// fifteen columns past the width it was laid out for without anyone
     /// noticing. `p unpin` is two
@@ -4625,7 +4735,7 @@ mod tests {
     fn the_planning_footers_key_hints_fit_the_minimum_width_in_both_pin_states() {
         let mut app = planning_app();
         press(&mut app, KeyCode::Char('5'));
-        let unpinned = app.footer();
+        let unpinned = footer_line(&app);
         assert!(
             unpinned.chars().count() <= usize::from(MIN_WIDTH),
             "{} ({})",
@@ -4639,7 +4749,7 @@ mod tests {
         // clears it without touching the pin, so the hint line underneath is
         // what gets measured.
         press(&mut app, KeyCode::Down);
-        let pinned = app.footer();
+        let pinned = footer_line(&app);
         assert!(pinned.contains("unpin"), "{pinned}");
         assert!(
             pinned.chars().count() <= usize::from(MIN_WIDTH),
@@ -4649,14 +4759,15 @@ mod tests {
         );
     }
 
-    /// The ledger footer is the longest of the eight, and `r target` was the
-    /// last thing it had room for. Cash is the state that gets measured: it
-    /// is the Credit footer plus `t transfer`.
+    /// The ledger footer is the longest of the eight, and grouping `a/t/p`
+    /// under one word is what bought it room for the app-wide keys. Cash is
+    /// the state that gets measured: it is the Credit footer plus `t`, which
+    /// is one key inside that group.
     #[test]
     fn the_ledger_footers_key_hints_fit_the_minimum_width() {
         let mut app = app();
         press(&mut app, KeyCode::Char('2'));
-        let footer = app.footer();
+        let footer = footer_line(&app);
         assert!(footer.contains("r target"), "{footer}");
         assert!(
             footer.chars().count() <= usize::from(MIN_WIDTH),
@@ -6017,16 +6128,17 @@ mod tests {
         let mut app = app();
         press(&mut app, KeyCode::Char('4'));
         assert!(app.footer().contains("[ ] month"));
-        assert!(app.footer().contains("Esc all"));
+        assert!(app.footer().contains("Esc clear"));
     }
 
-    /// The ledgers clear to today's window rather than to All, and the hint
-    /// says which.
+    /// The ledgers answer Esc with the rest of them, under the word every
+    /// screen with a filter uses. What it clears *to* differs -- today's
+    /// window here, All on Savings -- and that is the panel's to say.
     #[test]
-    fn the_ledger_footer_advertises_esc_as_returning_to_today() {
+    fn the_ledger_footer_advertises_esc_as_clearing() {
         let mut app = app();
         press(&mut app, KeyCode::Char('2'));
-        assert!(app.footer().contains("Esc today"));
+        assert!(app.footer().contains("Esc clear"));
     }
 
     /// The keys reach the Savings screen. `app()` holds one dated goal
@@ -6371,42 +6483,41 @@ mod tests {
 
     /// The eight footers as they read, with Planning's leading `↑/↓ constant`
     /// deliberately absent: the six scroll keys are uniform across every list,
-    /// so no footer names them. Every line here is user-visible and must survive
-    /// byte for byte.
+    /// so no footer names them. The app-wide keys are absent too -- they are
+    /// `help::chrome`, drawn against the right edge rather than joined onto
+    /// the end of these. Every line here is user-visible and must survive byte
+    /// for byte.
     #[test]
     fn every_screen_footer_reads_as_it_always_has() {
         let mut app = app();
-        assert_eq!(
-            footer_of(&mut app, '1'),
-            "←/→ scrub · Shift+←/→ week · 1-9 screens · q quit"
-        );
+        assert_eq!(footer_of(&mut app, '1'), "←/→ scrub · Shift+←/→ week");
         assert_eq!(
             footer_of(&mut app, '2'),
-            "[ ] month · Esc today · Tab account · / search · r target · a add · t transfer · p pay · e edit · d delete · q quit"
+            "Tab acct · [ ] month · Esc clear · / search · r target · a/t/p money · e edit · d delete"
         );
         assert_eq!(
             footer_of(&mut app, '3'),
-            "[ ] month · Esc today · Tab account · / search · r target · a add · p pay · e edit · d delete · q quit"
+            "Tab acct · [ ] month · Esc clear · / search · r target · a/p money · e edit · d delete"
         );
         assert_eq!(
             footer_of(&mut app, '4'),
-            "Tab account · [ ] month · Esc all · / search · a/A/i allocate · n/e/c goal · f fave · U undo · q quit"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c goal · f fave · U undo"
         );
         assert_eq!(
             footer_of(&mut app, '5'),
-            "e edit · E/a/d bill · t transfers · Enter why · p pin · 1-9 screens · q quit"
+            "e edit · E/a/d bill · t transfers · Enter why · p pin"
         );
         assert_eq!(
             footer_of(&mut app, '6'),
-            "a add · e value · E edit · d delete · 1-9 screens · q quit"
+            "a add · e value · E edit · d delete"
         );
         assert_eq!(
             footer_of(&mut app, '7'),
-            "[ ] month · Esc all · a add · e edit · d delete · s savings · 1-9 screens · q quit"
+            "[ ] month · Esc clear · a add · e edit · d delete · s savings"
         );
         assert_eq!(
             footer_of(&mut app, '8'),
-            "a add · e edit · d delete · g regen · G all · x extend · P paycheck · 1-9 screens · q quit"
+            "a add · e edit · d delete · g regen · G all · x extend · P paycheck"
         );
     }
 
