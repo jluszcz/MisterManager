@@ -338,7 +338,7 @@ impl App {
             // reconciliation, so there is nothing to re-query.
             KeyCode::Char('[') => self.savings.previous_month(),
             KeyCode::Char(']') => self.savings.next_month(),
-            KeyCode::Esc => self.savings.clear_month(),
+            KeyCode::Esc => self.savings.clear_filters(),
             KeyCode::Char('/') => self.savings.begin_search(),
             KeyCode::Char('a') => self.open_allocate()?,
             KeyCode::Char('A') => self.open_payday()?,
@@ -6053,6 +6053,26 @@ mod tests {
         assert_eq!(app.savings.rows().len(), 2);
     }
 
+    /// The screen narrows two ways, and `Esc` is the way out of both: an
+    /// owner who has tabbed to a container and stepped to a month should not
+    /// have to remember which of the two is hiding the goal they are looking
+    /// for.
+    #[test]
+    fn esc_on_savings_clears_the_container_filter_as_well_as_the_month() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char(']'));
+        assert!(app.savings.selected_container().is_some());
+        assert!(app.savings.selected_month().is_some());
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.savings.selected_container(), None);
+        assert_eq!(app.savings.selected_month(), None);
+        assert_eq!(app.savings.rows().len(), 2);
+    }
+
     /// `Esc` inside the search box still clears the search, which is the
     /// handler the month filter must not have taken over.
     #[test]
@@ -6251,7 +6271,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '4'),
-            "Tab container · [ ] month · Esc all · / search · a allocate · A payday · i interest · n new · c close · e edit · f favorite · U undo · q quit"
+            "Tab account · [ ] month · Esc all · / search · a/A/i allocate · n/e/c goal · f fave · U undo · q quit"
         );
         assert_eq!(
             footer_of(&mut app, '5'),

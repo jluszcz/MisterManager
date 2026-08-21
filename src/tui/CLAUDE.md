@@ -58,6 +58,26 @@ app-wide keys are footer chrome rather than table entries — every screen has t
 for. The scroll keys are absent from both, for the same reason and one better:
 `cursor::scroll_key` answers them identically on every list in the app.
 
+**A footer must fit `MIN_WIDTH`, and the budget is what decides how a key is labelled.** ratatui
+truncates a `Paragraph` from the right, so an over-wide footer drops the keys at its end — `q quit`
+first, the one item every screen carries — with nothing on screen to say a word went missing.
+`help::tests::every_screen_footer_fits_the_minimum_width` measures every screen topic; `app`'s two
+own width tests measure the footers `App::footer` composes at runtime, which a `Topic` alone does not
+see. The first lever when a screen runs out of room is `Label::Shared`: several keys join under one
+word naming what they act *on* — `E/a/d bill` on Planning, `a/A/i allocate` and `n/e/c goal` on
+Savings — which buys back a whole item's separator per key absorbed, and the verbs it costs are a
+keystroke away in the panel, which has room for them. A shorter word is the smaller adjustment
+beside it — `f fave`, and `Tab account` where a neighbouring screen already had the shorter word for
+the same thing. What neither of them does is drop a key: a key nothing advertises is a key nobody
+presses, so `Label::Hidden` stays for the entries a footer word would only say twice, `BackTab`
+being the one.
+
+Regrouped, Savings is no longer the screen closest to the edge: **the ledgers' footer is**, by some
+margin, so the next key that needs a group is likelier to be Cash or Credit's than this screen's.
+Those two and Savings are also the only screens whose chrome omits `1-9 screens`, which is
+`Topic::chrome`'s decision rather than anything a screen says for itself — and it is spent, so a
+footer that overflows again has the grouping to fall back on and nothing else.
+
 A status message — a write's result, a parse error, a "nothing selected" — borrows the footer rather
 than owning it, and gives it back on its own after `app::STATUS_TTL`. A key press still clears it
 sooner, since `on_key` clears before it dispatches; the timeout is for the owner who reads the
@@ -610,6 +630,13 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   today's month; both wrap at the ends; `Esc` returns to All and the next step re-enters at today's
   month rather than a remembered one — no state crosses the All filter. Neither re-queries: both
   screens already hold every row.
+  - **On Savings `Esc` clears the container filter too**, because that screen narrows two ways and
+    the key is one way out of either. A screen showing a `Tab` filter and a `[`/`]` filter side by
+    side in one title asks the owner to work out *which* of the two is hiding the goal they are
+    looking for before they can widen it, and `Esc` clearing only one of them is exactly the
+    "one action wearing two letters" the key vocabulary exists to avoid. The search box is not
+    swept up in it: `/` has its own `Esc`, the one `search::search_key` answers on every screen
+    that has a box, and a screen-level `Esc` reaching into it would make Savings the odd one out.
   - **A goal with no date belongs to no month**, so any month filter drops it and All is the only
     place it appears. That is what the filter is *for*, not an edge case.
   - **The cycle is the span, not the set of months that have rows.** Recurring Goals steps all
