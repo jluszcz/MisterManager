@@ -842,12 +842,16 @@ pub(super) fn field_line_tinted(
 /// rather than a plain `&str` -- the Reconcile modal's field label, which
 /// carries the same colored account segment its border does two lines above.
 ///
-/// The pad is measured off the label's flattened character count, the same
-/// count `format!("{label:>12}  ")` would have padded to had the label stayed
-/// a `String` -- so a colored label lines up exactly where an uncolored one
-/// used to sit, and only the color has moved.
+/// The pad is measured off the label's flattened character count, which is
+/// the count `format!("{label:>12}  ")` pads to, so a colored label sits in
+/// the same column an uncolored one does and only the color differs.
+///
+/// Measured off exactly the text that is then drawn, rather than off a
+/// trimmed copy of it: a label carrying surrounding space would otherwise be
+/// padded for one width and drawn at another, and the two would disagree for
+/// whoever wrote that label rather than for whoever wrote this.
 pub(super) fn field_line_labeled(label: &Label, value: Label, focused: bool) -> TextLine<'static> {
-    let width = label.plain_text().trim().chars().count();
+    let width = label.plain_text().chars().count();
     let mut spans = vec![Span::raw(" ".repeat(12usize.saturating_sub(width)))];
     spans.extend(label_line(label).spans);
     spans.push(Span::raw("  "));

@@ -404,9 +404,10 @@ mod tests {
             // in the residual list in `src/tui/CLAUDE.md`'s account-color
             // section.
             ("app.rs", "map_or(\"?\", |a| a.name.as_str())"),
-            // The `accounts::Row` `Code` column, deliberately uncolored: its
-            // row's first column already names the account in color, and
-            // coloring both would say the same thing twice.
+            // The `accounts::Row` `Code` column, deliberately uncolored: the
+            // next cell along that row already names the account in color, so
+            // tinting the code too would say it twice. The last entry in the
+            // residual list in `src/tui/CLAUDE.md`'s account-color section.
             ("app.rs", "code: account.code.as_str()"),
             // Prefills a description with the card's code. Not a display of an
             // account: it seeds an editable field the owner then owns.
@@ -467,10 +468,11 @@ mod tests {
             ("accounts.rs", "value.plain_text()"),
             // Only the char count is read, to pad a label that may carry an
             // account to the same twelve columns `format!("{label:>12}  ")`
-            // always padded a plain `&str` label to. `label_line(label)`
-            // draws the segments themselves; this flattened copy never
-            // reaches the screen.
-            ("form.rs", "label.plain_text().trim().chars().count()"),
+            // pads a plain `&str` label to. `label_line(label)` draws the
+            // segments themselves; this flattened copy never reaches the
+            // screen, and is taken of exactly the text that is drawn so the
+            // measurement and the draw cannot disagree.
+            ("form.rs", "label.plain_text().chars().count()"),
         ];
 
         let mut leaked: Vec<String> = Vec::new();

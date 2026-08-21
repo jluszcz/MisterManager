@@ -280,8 +280,10 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     says what `Teal` looks like, not which account this is.
   - **The status line is deliberately uncolored.** It is transient prose rather than a place a
     reader looks to identify an account.
-  - **Three account displays are outside this guarantee, and this is the entire list.** Each is
-    a deliberate route around `Account` rather than a gap in it:
+  - **Four account displays are outside this guarantee, and this is the entire list.** The first
+    two are gaps nothing has closed yet; the last two are routes deliberately taken around
+    `Account`, where the account is tinted by another mechanism or named in color elsewhere on
+    the same row:
     - **The destination picker's `Offered.container`**, in `app.rs`'s `open_destination` (backed
       by `destination.rs`): an uncolored account display in a picker column, a genuine gap rather
       than a justified exemption — no task has put `destination.rs` in scope.
@@ -294,11 +296,17 @@ derive it from `MIN_WIDTH` rather than write the offset out.
       an account through that mechanism (below) rather than through `label::Account`: `plan` and
       `wiring` already have the account row in hand, and `Account` would only look it up again
       for the same color.
+    - **The Accounts screen's `Code` column**, built in `app.rs` and drawn by `accounts.rs` as a
+      bare `Cell`. Deliberately plain rather than missed: the next cell along that row is
+      `account_cell`, which names the same account in color, so the row already says which
+      account it is and tinting the code as well would say it twice.
   - **`as_str` is the escape for text, and it is pinned.** `AccountName::as_str` serves the uses
     that are not displays — a description prefill, a search filter folding case, a form seeding
     its editable field — and `nothing_in_the_screens_reads_an_account_name_as_bare_text` lists
-    them with a reason each, including the destination picker's `Offered.container`, the first
-    entry above. A source scan rather than a type, because the property is "nobody reached for
+    them with a reason each. It also carries the two displays from the list above that reach
+    their text the same way — the destination picker's `Offered.container` and the Accounts
+    screen's `Code` column — so the sanctioned list is wider than "not a display" and says so
+    entry by entry. A source scan rather than a type, because the property is "nobody reached for
     the escape hatch", which no signature can state — and it is purely textual, so a reflow that
     hid an escape behind a local variable would pass it just the same. The same test's second
     clause pins `Label::plain_text`, the escape for a `Label` rather than an `AccountName`: it
