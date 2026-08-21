@@ -108,6 +108,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. |
 | `src/gate.rs` | `Gate` — the Planning gates, each owning its setting key and goal-name substring. |
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the setting key naming its container account. |
+| `src/config.rs` | The TOML config file. `serde` and `toml` are named here, and both again in `src/backup/state.rs`, whose `State` derives `Serialize` as well as `Deserialize`. |
 | `src/plan_line.rs` | Every Planning line: its label, the amount it moves, and the setting key that says where it lands. |
 | `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `pro_rata`, the Planning waterfall, `fund` (the target/actual/delta derivation), `schedule` (when a recurring thing happens). No database. |
 | `src/db/` | Schema and queries — one module per aggregate. |
@@ -122,8 +123,9 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
+| `src/backup/` | The schedule, the snapshot, and the upload. `aws_config`, `aws_sdk_s3` and `tokio` are named only in `s3.rs`. |
 | `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `tui::label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `mod.rs` rather than in whichever screen needed it first. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
-| `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `import` is the one subcommand. |
+| `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `import` and `backup` are the two subcommands. |
 
 **`rusqlite` is named only inside `src/db/`.** `Db` holds a private `Connection` and deliberately does
 not `Deref` to it — handing out a `&Connection` would put every rusqlite method back within reach of
@@ -442,6 +444,51 @@ matches, since nothing but a test ties them together.
   marks a scrubbed plan by naming the date in the `Excess (Actual)` extra column, the way the
   Overview marks its column header: this screen has no header to hang it off, and a screen quoting a
   hypothetical balance must say so.
+- **An absent config file means backups are off; an unparseable one is an error.** The first is the
+  same rule an unset `setting` key follows, and is what makes a clean checkout and an unconfigured
+  machine both do nothing. The second is why `deny_unknown_fields` is on: a misspelled key that left
+  `bucket` unset would read as "off", and a backup that silently stops running is the one failure
+  nothing downstream ever notices.
+- **`interval_days` is clamped before it reaches `TimeDelta::days`, the same rule as every
+  user-editable setting that reaches a divisor.** `backup::interval` caps it at `MAX_INTERVAL_DAYS`
+  (3653, ten years) because the value is read straight out of a hand-edited config file and
+  `DateTime`'s addition panics rather than erroring once the sum leaves chrono's calendar — a nonsense
+  setting must not take the run down, the same reasoning behind `div_ceil`'s `.max(1)` callers and the
+  recurring transaction horizon's `1..=120`-month clamp.
+- **The backup state file is advisory where a `setting` key is binding.** An unreadable
+  `~/.local/state/mistermanager/backup.toml` warns and is treated as "never backed up", rather than
+  refusing the way a dangling `setting` key does. The asymmetry is in the consequence: a dangling
+  setting key moves real money to the wrong place, while a corrupt state file costs one redundant
+  upload and is correct again as soon as it is rewritten.
+- **The backup identity may only `PutObject`.** The key in the `mistermanager` profile is
+  long-lived and unattended, so the policy is what bounds it: it cannot read a backup, delete one,
+  or list the prefix, and restores are done by the owner under their own identity.
+- **The bucket is this repository's own, and its name is composed rather than configured.**
+  `mistermanager-<account id>-<region>-an`, built in `mistermanager.tf` from
+  `aws_caller_identity` and `var.aws_region`. A name that had to be *chosen* would say where the
+  owner's finances are backed up — the same kind of fact as the workbook path — and would have to
+  reach Terraform out of band to stay unsaid; one derived from the profile is safe to commit and
+  needs no such step. Owning the bucket is what makes the
+  lifecycle rule declarable at all: `aws_s3_bucket_lifecycle_configuration` is a whole-bucket
+  resource, so two repositories declaring one would revert each other on every apply. The rule
+  tiers to `INTELLIGENT_TIERING` after a day and expires at 365 — not `STANDARD_IA`, which S3
+  refuses to transition into inside 30 days of an object's creation.
+- **The scheduled check is the default database's, and `--db` opts out of it.** It runs after every
+  arm but `backup` itself, and the state file it stamps records *when* an upload last happened
+  rather than *what* was uploaded — so a scratch database backed up on the schedule would take the
+  real one's turn as well as leaving an object nothing distinguishes from a real backup. An
+  explicit `mm backup` is exempt, because being pointed somewhere is what it was asked for.
+- **The due check reads the real clock, not `--today`.** `--today` simulates a financial date, and
+  whether a file reached S3 is a fact about wall time — `mm --today 2027-01-01` must not fire an
+  upload. `run_if_due` therefore takes `now` as `Utc::now()` from the CLI rather than the `today`
+  the rest of the application is driven by.
+- **The key prefix is a constant, not a setting, because one end of it is an IAM policy.**
+  `mistermanager` appears in `backup::PREFIX` and in `mistermanager.tf`'s policy resource path, and
+  nothing ties them together — but the policy is what the IAM user is scoped to, and only an AWS
+  apply can change it, so a config knob could only ever be turned into `AccessDenied`. Moving the
+  prefix means editing both, in that order. `Backup` carries no `prefix` field and
+  `deny_unknown_fields` refuses one, so a config file asking for another prefix fails loudly
+  instead of being silently ignored.
 
 ## Testing conventions
 

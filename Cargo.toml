@@ -6,12 +6,23 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
+# ring rather than the default aws-lc: aws-lc-sys compiles C, which the
+# aarch64-unknown-linux-musl build in CI has no toolchain for. aws-sdk-s3's
+# "rustls" feature is the ring-based client (aws-smithy-runtime/tls-rustls);
+# aws-config has no equivalent feature at all in this version, so its default
+# aws-lc-based https client is left off entirely rather than swapped.
+aws-config = { version = "1.10", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
+aws-sdk-s3 = { version = "1.142", default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
+aws-smithy-types = "1.6"
 calamine = "0.36"
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4.6", features = ["derive"] }
 ratatui = "0.30"
 rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
+tokio = { version = "1.53", features = ["rt", "net", "time"] }
+toml = "1.1"
 
 [[bin]]
 name = "mm"
