@@ -8,7 +8,7 @@
 //! reconciles against that one container's excess.
 
 use super::cursor::{Cursor, Scroll};
-use super::form::{Field, parse_date};
+use super::form::{DateField, Step};
 use super::search::{Search, SearchBox};
 use super::{Account, Label};
 use crate::calc;
@@ -123,7 +123,7 @@ pub struct Worksheet {
     container: Account,
     amount: Cents,
     amount_typed: bool,
-    date: Field,
+    date: DateField,
     lines: Vec<WorksheetLine>,
     /// Indices into `lines` that survive the name filter.
     visible: Vec<usize>,
@@ -161,7 +161,7 @@ impl Worksheet {
             container,
             amount,
             amount_typed: false,
-            date: Field::date(today),
+            date: DateField::today(today),
             lines,
             visible,
             cursor: Cursor::new(),
@@ -248,15 +248,15 @@ impl Worksheet {
         }
     }
 
-    /// Step the date by `days`, when the date is what has focus. What `←`/`→`
-    /// mean on every date field in the app.
+    /// Step the date by `step`, when the date is what has focus. What `←`/`→`
+    /// mean on every date field in the app, and `Shift` with them a week.
     ///
     /// Guarded on the focus rather than on the key: the other two focuses are
     /// digit fields, and an arrow pressed on one of them must not move the
     /// date this batch will be stamped with.
-    pub fn step_date(&mut self, days: i64) {
+    pub fn step_date(&mut self, step: Step) {
         if self.focus == Focus::Date {
-            self.date.step_date(days);
+            self.date.step(step.days());
         }
     }
 
@@ -285,8 +285,10 @@ impl Worksheet {
         self.visible.iter().map(|i| &self.lines[*i]).collect()
     }
 
-    pub fn date_text(&self) -> &str {
-        self.date.value()
+    /// The date as the modal shows it: as typed while the date has focus, and
+    /// as the date that text means once focus is elsewhere.
+    pub fn date_text(&self) -> String {
+        self.date.display(self.focus == Focus::Date)
     }
 
     pub fn title(&self) -> Label {
@@ -317,7 +319,7 @@ impl Worksheet {
             .collect();
         ensure!(!shares.is_empty(), "nothing to allocate");
         Ok(Commit {
-            date: parse_date(self.date.value())?,
+            date: self.date.parse()?,
             shares,
         })
     }
@@ -765,6 +767,27 @@ mod tests {
         assert_eq!(sheet.commit().unwrap().date, day(2026, 8, 28));
     }
 
+    /// The worksheet has three focuses, so a shorthand typed into its date
+    /// resolves on screen the moment focus moves off it -- the same rule the
+    /// field-driven forms follow, on a modal that answers its own keys.
+    #[test]
+    fn a_shorthand_worksheet_date_shows_as_the_date_it_means_once_focus_leaves() {
+        let mut sheet = sheet();
+        sheet.next_focus();
+        assert_eq!(sheet.focus(), Focus::Date);
+        for _ in 0.."2026-08-14".len() {
+            sheet.backspace();
+        }
+        for c in "9/10".chars() {
+            sheet.type_char(c);
+        }
+        assert_eq!(sheet.date_text(), "9/10");
+
+        sheet.next_focus();
+        assert_eq!(sheet.date_text(), "2026-09-10");
+        assert_eq!(sheet.commit().unwrap().date, day(2026, 9, 10));
+    }
+
     /// The date steps a day at a time under `←`/`→`, as every date field in
     /// the app does. Typing still works: the arrows are the nudge, not the
     /// only way in.
@@ -773,10 +796,10 @@ mod tests {
         let mut sheet = sheet();
         sheet.next_focus();
         assert_eq!(sheet.focus(), Focus::Date);
-        sheet.step_date(1);
+        sheet.step_date(Step::NEXT);
         assert_eq!(sheet.date_text(), "2026-08-15");
-        sheet.step_date(-1);
-        sheet.step_date(-1);
+        sheet.step_date(Step::PREVIOUS);
+        sheet.step_date(Step::PREVIOUS);
         assert_eq!(sheet.date_text(), "2026-08-13");
         assert_eq!(sheet.commit().unwrap().date, day(2026, 8, 13));
     }
@@ -787,11 +810,11 @@ mod tests {
     fn the_arrows_do_nothing_away_from_the_date_field() {
         let mut sheet = sheet();
         assert_eq!(sheet.focus(), Focus::Amount);
-        sheet.step_date(1);
+        sheet.step_date(Step::NEXT);
         sheet.next_focus();
         sheet.next_focus();
         assert_eq!(sheet.focus(), Focus::Lines);
-        sheet.step_date(1);
+        sheet.step_date(Step::NEXT);
         assert_eq!(sheet.date_text(), "2026-08-14");
     }
 

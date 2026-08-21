@@ -6,7 +6,7 @@
 
 use super::Label;
 use super::cursor::{Cursor, Scroll};
-use super::form::{self, Field, FormFields, next_in, step_index};
+use super::form::{self, Field, FormFields, Step, next_in, step_index};
 use crate::db::FundId;
 use crate::db::fund::{Fund, FundEdit, Target};
 use crate::fund::Allocation;
@@ -288,15 +288,9 @@ impl FormFields for FundForm {
         self.focus = next_in(&self.fields(), self.focus, -1);
     }
 
-    fn next_choice(&mut self) {
+    fn choice(&mut self, step: Step) {
         if self.focus == FundField::Kind {
-            self.kind = step_index(self.kind, Target::KINDS.len(), 1);
-        }
-    }
-
-    fn previous_choice(&mut self) {
-        if self.focus == FundField::Kind {
-            self.kind = step_index(self.kind, Target::KINDS.len(), -1);
+            self.kind = step_index(self.kind, Target::KINDS.len(), step.direction());
         }
     }
 
@@ -612,7 +606,7 @@ mod tests {
         }
         form.next_field();
         while !matches!(form.target_kind(), Target::RemainderShare(_)) {
-            form.next_choice();
+            form.choice(Step::NEXT);
         }
         form.next_field();
         for c in "40".chars() {

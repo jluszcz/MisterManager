@@ -120,7 +120,7 @@ const OVERVIEW: [Entry; 2] = [
     Entry {
         key: "Shift+←/→",
         label: Label::Own("week"),
-        detail: "The same scrub, a week at a time. The paycheck runs on a fortnightly cadence, so a week is the step that reaches the middle of the next cycle in one press and the one after in two. Shift rather than Ctrl because macOS claims Ctrl and the arrows for its own spaces, and a key the terminal never receives is a key that does nothing with nothing on screen to say why.",
+        detail: "The same scrub, a week at a time, as Shift does on every date in the app. The paycheck runs on a fortnightly cadence, so a week is the step that reaches the middle of the next cycle in one press and the one after in two. Shift rather than Ctrl because macOS claims Ctrl and the arrows for its own spaces, and a key the terminal never receives is a key that does nothing with nothing on screen to say why.",
     },
 ];
 
@@ -421,7 +421,7 @@ const SEARCH: [Entry; 4] = [
     },
 ];
 
-const WORKSHEET: [Entry; 12] = [
+const WORKSHEET: [Entry; 13] = [
     Entry {
         key: "Tab",
         label: Label::Hidden,
@@ -436,6 +436,11 @@ const WORKSHEET: [Entry; 12] = [
         key: "←/→",
         label: Label::Hidden,
         detail: "Step the date back or forward a day, while the date has focus. It stays typeable; this is the nudge. On the amount and the line list there is no date to move, so they do nothing.",
+    },
+    Entry {
+        key: "Shift+←/→",
+        label: Label::Hidden,
+        detail: "The same step, a week at a time.",
     },
     Entry {
         key: "Space",
@@ -475,7 +480,7 @@ const WORKSHEET: [Entry; 12] = [
     Entry {
         key: "Enter",
         label: Label::Hidden,
-        detail: "Commit every line as one batch, so a fumbled payday is one undo rather than dozens of deletions.",
+        detail: "Commit every line as one batch, so a fumbled payday is one undo rather than dozens of deletions. A date is typed as YYYY-MM-DD, or as M/D for the next year that month comes round -- so in August 9/10 is this September and 3/4 is next March. It shows as typed while the caret is in it and as the date it means once focus leaves.",
     },
     Entry {
         key: "Esc",
@@ -544,7 +549,7 @@ const CONFIRM: [Entry; 3] = [
     },
 ];
 
-const FORM: [Entry; 7] = [
+const FORM: [Entry; 8] = [
     Entry {
         key: "Tab",
         label: Label::Hidden,
@@ -561,6 +566,11 @@ const FORM: [Entry; 7] = [
         detail: "Cycle a choice field, such as a bill's category or a close-out's destination -- or, on a date field, step it back or forward a day. A date stays typeable; this is the nudge. A field holding no date, such as an undated goal's, has nothing to step.",
     },
     Entry {
+        key: "Shift+←/→",
+        label: Label::Hidden,
+        detail: "The same arrows, a week at a time on a date. A choice field has no week to move, so it steps one choice as it would unmodified.",
+    },
+    Entry {
         key: "Backspace",
         label: Label::Hidden,
         detail: "Delete the last character of the focused text field. A choice field ignores it.",
@@ -568,7 +578,7 @@ const FORM: [Entry; 7] = [
     Entry {
         key: "Enter",
         label: Label::Hidden,
-        detail: "Save. A value that will not parse reports itself in the status line and the form stays open.",
+        detail: "Save. A value that will not parse reports itself in the status line and the form stays open. A date is typed as YYYY-MM-DD, or as M/D for the next year that month comes round -- so in August 9/10 is this September and 3/4 is next March. It shows as typed while the caret is in it and as the date it means once focus leaves. The birth-date prompt is the exception and takes YYYY-MM-DD alone: every M/D reading is present or future, and a birth date is neither.",
     },
     Entry {
         key: "Esc",
@@ -582,7 +592,7 @@ const FORM: [Entry; 7] = [
     },
 ];
 
-const SUGGEST_FORM: [Entry; 8] = [
+const SUGGEST_FORM: [Entry; 9] = [
     Entry {
         key: "Tab",
         label: Label::Hidden,
@@ -604,6 +614,11 @@ const SUGGEST_FORM: [Entry; 8] = [
         detail: "Cycle a choice field, such as the account -- or, on a date field, step it back or forward a day. A date stays typeable; this is the nudge.",
     },
     Entry {
+        key: "Shift+←/→",
+        label: Label::Hidden,
+        detail: "The same arrows, a week at a time on a date. A choice field has no week to move, so it steps one choice as it would unmodified.",
+    },
+    Entry {
         key: "Backspace",
         label: Label::Hidden,
         detail: "Delete the last character of the focused text field, re-querying the suggestions: backing a letter out of the description widens them again.",
@@ -611,7 +626,7 @@ const SUGGEST_FORM: [Entry; 8] = [
     Entry {
         key: "Enter",
         label: Label::Hidden,
-        detail: "Accept the highlighted suggestion if any are on screen, otherwise save the form.",
+        detail: "Accept the highlighted suggestion if any are on screen, otherwise save the form. A date is typed as YYYY-MM-DD, or as M/D for the next year that month comes round -- so in August 9/10 is this September and 3/4 is next March. It shows as typed while the caret is in it and as the date it means once focus leaves.",
     },
     Entry {
         key: "Esc",
@@ -630,7 +645,7 @@ const SUGGEST_FORM: [Entry; 8] = [
 /// convention as [`Topic::Form`]: `TransferConfirm::type_char` forwards any
 /// `char` to the date field, which needs `-` as well as digits, so no single
 /// key stands in for it.
-const PLAN_TRANSFERS: [Entry; 4] = [
+const PLAN_TRANSFERS: [Entry; 5] = [
     Entry {
         key: "Esc",
         label: Label::Hidden,
@@ -642,9 +657,14 @@ const PLAN_TRANSFERS: [Entry; 4] = [
         detail: "Step the date back or forward a day. It stays typeable; this is the nudge.",
     },
     Entry {
+        key: "Shift+←/→",
+        label: Label::Hidden,
+        detail: "The same step, a week at a time.",
+    },
+    Entry {
         key: "Enter",
         label: Label::Hidden,
-        detail: "Parse the date and commit: writes the payday transfers, then opens the allocation worksheets prefilled. A date that will not parse reports itself in the status line and leaves the dialog open.",
+        detail: "Parse the date and commit: writes the payday transfers, then opens the allocation worksheets prefilled. A date that will not parse reports itself in the status line and leaves the dialog open. A date is typed as YYYY-MM-DD, or as M/D for the next year that month comes round -- so in August 9/10 is this September and 3/4 is next March. It shows as typed while the caret is in it and as the date it means once focus leaves.",
     },
     Entry {
         key: "Backspace",

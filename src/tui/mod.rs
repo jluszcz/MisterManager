@@ -62,6 +62,15 @@ const TICK: Duration = Duration::from_millis(250);
 /// one-line edit.
 pub const MIN_WIDTH: u16 = 120;
 
+/// The bigger step `Shift` with `←`/`→` takes on a date, in days.
+///
+/// A week is what reaches the middle of the fortnightly paycheck cycle in one
+/// press and the cycle after it in two, which is what makes it the useful
+/// second size on the one key that already means "move this date". Written
+/// once, because the Overview scrub and every date field in every form take
+/// the same step for the same reason.
+pub const WEEK: i64 = 7;
+
 use crate::money::Cents;
 
 /// How far a container's unallocated remainder may drift before it is worth

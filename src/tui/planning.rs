@@ -5,7 +5,7 @@
 
 use super::Label;
 use super::cursor::{Cursor, Scroll};
-use super::form::{Field, FormFields, next_in, parse_amount, parse_date, step_index};
+use super::form::{DateField, Field, FormFields, Step, next_in, parse_amount, step_index};
 use super::style::Tone;
 use crate::calc;
 use crate::calc::planning::{Plan, PlanSettings};
@@ -940,15 +940,9 @@ impl FormFields for BillForm {
 
     /// A no-op unless the selector is focused: `←`/`→` on a text field must
     /// not silently move a bill between subtotals.
-    fn next_choice(&mut self) {
+    fn choice(&mut self, step: Step) {
         if self.focus == BillField::Category {
-            self.category = step_index(self.category, bill::Category::ALL.len(), 1);
-        }
-    }
-
-    fn previous_choice(&mut self) {
-        if self.focus == BillField::Category {
-            self.category = step_index(self.category, bill::Category::ALL.len(), -1);
+            self.category = step_index(self.category, bill::Category::ALL.len(), step.direction());
         }
     }
 
@@ -976,14 +970,14 @@ impl FormFields for BillForm {
 /// opens next.
 pub struct TransferConfirm {
     rows: Vec<transfer::Row>,
-    date: Field,
+    date: DateField,
 }
 
 impl TransferConfirm {
-    pub fn new(rows: Vec<transfer::Row>, date: NaiveDate) -> TransferConfirm {
+    pub fn new(rows: Vec<transfer::Row>, today: NaiveDate, date: NaiveDate) -> TransferConfirm {
         TransferConfirm {
             rows,
-            date: Field::date(date),
+            date: DateField::on(today, date),
         }
     }
 
@@ -995,6 +989,12 @@ impl TransferConfirm {
         self.date.value()
     }
 
+    /// The date this dialog will write, when what was typed does not already
+    /// say it -- a `M/D` shorthand. `None` for a date typed in full.
+    pub fn resolved_date(&self) -> Option<String> {
+        self.date.resolved()
+    }
+
     pub fn type_char(&mut self, c: char) {
         self.date.push(c);
     }
@@ -1003,19 +1003,20 @@ impl TransferConfirm {
         self.date.backspace();
     }
 
-    /// Step the date by `days`, as `←`/`→` do on every date field in the app.
-    pub fn step_date(&mut self, days: i64) {
-        self.date.step_date(days);
+    /// Step the date by `step`, as `←`/`→` do on every date field in the
+    /// app, and `Shift` with them a week at a time.
+    pub fn step_date(&mut self, step: Step) {
+        self.date.step(step.days());
     }
 
     /// The date as typed. Parsed before anything is written, so a typo leaves
     /// the modal up with everything still in it.
     pub fn commit(&self) -> Result<NaiveDate> {
-        parse_date(self.date.value())
+        self.date.parse()
     }
 }
 
-use super::form::{centered, field_line, render_fields};
+use super::form::{centered, field_line, field_line_noted, render_fields};
 use super::table_state;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -1047,10 +1048,13 @@ pub fn render_transfers(frame: &mut Frame, confirm: &TransferConfirm) {
             TextLine::from(format!("{label:<40}{:>20}", cents.to_whole_dollars()))
         })
         .collect();
-    lines.push(field_line(
+    // One field, so focus never leaves it: the resolution `display` would
+    // show on any other form goes beside it instead.
+    lines.push(field_line_noted(
         "Date",
         Label::from(confirm.date_value().to_string()),
         true,
+        &confirm.resolved_date().unwrap_or_default(),
     ));
     lines.push(TextLine::from("Enter write · Esc cancel"));
     render_fields(frame, "Confirm transfers", lines);
@@ -2436,7 +2440,7 @@ mod tests {
             form.type_char(c);
         }
         form.next_field();
-        form.next_choice();
+        form.choice(Step::NEXT);
 
         let edit = form.commit().unwrap();
         assert_eq!(edit.label, "Plumber");
@@ -2488,11 +2492,11 @@ mod tests {
         form.next_field();
         form.next_field();
         assert_eq!(form.category(), Category::Housing);
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(form.category(), Category::Other);
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(form.category(), Category::Housing);
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         assert_eq!(form.category(), Category::Other);
     }
 
@@ -2500,12 +2504,55 @@ mod tests {
     #[test]
     fn cycling_does_nothing_unless_the_category_is_focused() {
         let mut form = BillForm::add();
-        form.next_choice();
-        form.next_choice();
+        form.choice(Step::NEXT);
+        form.choice(Step::NEXT);
         assert_eq!(form.category(), Category::Housing);
     }
 
     /// Every rendered line of the confirm modal, inside the border.
+    /// `t`'s confirmation is one field, so focus never leaves it and the
+    /// unfocused rendering that resolves a shorthand on every other form
+    /// never comes round. This is the dialog that moves real money, so it
+    /// says what it is about to write beside what was typed.
+    #[test]
+    fn a_shorthand_on_the_transfer_confirmation_shows_the_date_it_will_write() {
+        let mut confirm = TransferConfirm::new(Vec::new(), day(2026, 8, 21), day(2026, 8, 24));
+        for _ in 0.."2026-08-24".len() {
+            confirm.backspace();
+        }
+        for c in "9/10".chars() {
+            confirm.type_char(c);
+        }
+
+        let text = drawn_confirm(&confirm);
+        assert!(text.contains("9/10"), "{text}");
+        assert!(text.contains("2026-09-10"), "{text}");
+        assert_eq!(confirm.commit().unwrap(), day(2026, 9, 10));
+    }
+
+    /// A date already written out is not repeated: a note echoing the field
+    /// beside it is noise on every date the owner types in full.
+    #[test]
+    fn a_confirmation_date_typed_in_full_is_shown_once() {
+        let confirm = TransferConfirm::new(Vec::new(), day(2026, 8, 21), day(2026, 8, 24));
+        let text = drawn_confirm(&confirm);
+        assert_eq!(text.matches("2026-08-24").count(), 1, "{text}");
+    }
+
+    /// Half a date has no date to resolve to, so nothing is offered: a note
+    /// that guessed at one would be a date the dialog never writes.
+    #[test]
+    fn a_half_typed_confirmation_date_is_offered_no_resolution() {
+        let mut confirm = TransferConfirm::new(Vec::new(), day(2026, 8, 21), day(2026, 8, 24));
+        for _ in 0.."24".len() {
+            confirm.backspace();
+        }
+
+        let text = drawn_confirm(&confirm);
+        assert!(text.contains("2026-08-"), "{text}");
+        assert!(confirm.commit().is_err());
+    }
+
     fn drawn_confirm(confirm: &TransferConfirm) -> String {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
@@ -2546,7 +2593,11 @@ mod tests {
                 cents: Cents(197_900),
             },
         ];
-        let text = drawn_confirm(&TransferConfirm::new(rows, day(2026, 8, 24)));
+        let text = drawn_confirm(&TransferConfirm::new(
+            rows,
+            day(2026, 8, 24),
+            day(2026, 8, 24),
+        ));
 
         assert!(text.contains("1,234"), "{text}");
         assert!(text.contains("1,979"), "{text}");
@@ -2560,7 +2611,7 @@ mod tests {
     #[test]
     fn the_confirm_modal_opens_two_business_days_out_and_refuses_a_bad_date() {
         let date = crate::calc::business_day::add(day(2026, 8, 20), 2).unwrap();
-        let mut confirm = TransferConfirm::new(Vec::new(), date);
+        let mut confirm = TransferConfirm::new(Vec::new(), date, date);
         assert_eq!(confirm.date_value(), "2026-08-24");
         assert_eq!(confirm.commit().unwrap(), day(2026, 8, 24));
 
@@ -2577,11 +2628,11 @@ mod tests {
     /// the same meaning they carry on every other date field in the app.
     #[test]
     fn the_arrows_step_the_confirm_date_by_a_day() {
-        let mut confirm = TransferConfirm::new(Vec::new(), day(2026, 8, 24));
-        confirm.step_date(1);
+        let mut confirm = TransferConfirm::new(Vec::new(), day(2026, 8, 24), day(2026, 8, 24));
+        confirm.step_date(Step::NEXT);
         assert_eq!(confirm.date_value(), "2026-08-25");
-        confirm.step_date(-1);
-        confirm.step_date(-1);
+        confirm.step_date(Step::PREVIOUS);
+        confirm.step_date(Step::PREVIOUS);
         assert_eq!(confirm.commit().unwrap(), day(2026, 8, 23));
     }
 
@@ -2589,14 +2640,14 @@ mod tests {
     /// is already there rather than conjuring one.
     #[test]
     fn the_arrows_leave_a_half_typed_confirm_date_alone() {
-        let mut confirm = TransferConfirm::new(Vec::new(), day(2026, 8, 24));
+        let mut confirm = TransferConfirm::new(Vec::new(), day(2026, 8, 24), day(2026, 8, 24));
         for _ in 0..10 {
             confirm.backspace();
         }
         for c in "2026-0".chars() {
             confirm.type_char(c);
         }
-        confirm.step_date(1);
+        confirm.step_date(Step::NEXT);
         assert_eq!(confirm.date_value(), "2026-0");
     }
 }

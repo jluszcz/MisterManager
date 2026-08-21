@@ -27,6 +27,7 @@ whoever presses the key.
 | `r` | reconcile the ledgers' filtered account against a statement |
 | `[` / `]` | step the month, whatever a month filters here |
 | `←` / `→` | step a date a day at a time, or cycle the focused selector — see the invariant below |
+| `Shift`+`←` / `Shift`+`→` | the same nudge, a week at a time on a date; one choice on a selector |
 | `Esc` | back out of the innermost thing: a form, a search box, a filter, the panel |
 | `Tab` | cycle the screen's filter, or move to the next field in a form |
 | `BackTab` | the same cycle or field order backwards — `Shift`+`Tab` steps back wherever `Tab` steps forward |
@@ -140,42 +141,81 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   key as that gate's remaining shortfall, so a pick there would decide whether the gate fires and
   re-route four other lines' amounts. The Gates block is where that belongs. A destination row must
   not become a second, quieter door to it.
-- **`←`/`→` step a date a day at a time, wherever there is a date.** The Overview scrub, the
-  worksheet's date, both dates on a recurring transaction, and the date every form and confirm
-  dialog opens on all answer the same two keys the same way — the reflex is "nudge the date", not
-  "nudge the date on the screens that happen to have wired it". On a form the arrows arrive through
-  `FormFields::next_choice`/`previous_choice`, which is also what cycles a selector, so each form's
+- **A date field is `form::DateField`, and that is where every rule about one lives.** The text and
+  the reading of it are one value, because a date is the one field whose meaning depends on *when*
+  it is being typed — the `M/D` shorthand needs a `today` to resolve against — and a bare `Field`
+  beside a free `parse_date` is two halves a form has to keep in step itself. Every date in the app
+  is one: both ledger forms, the allocation, goal and close-out forms, the worksheet, both dates on
+  a recurring transaction, `t`'s confirmation, and the Funds birth-date prompt through
+  `ValueForm`'s `Entry::Date`. A new form asks for a `DateField` rather than assembling one.
+- **`←`/`→` step a date a day at a time, wherever there is a date, and `Shift` with them a week.**
+  The Overview scrub, the worksheet's date, both dates on a recurring transaction, and the date
+  every form and confirm dialog opens on all answer the same keys the same way — the reflex is
+  "nudge the date", not "nudge the date on the screens that happen to have wired it". On a form the
+  arrows arrive through `FormFields::choice`, which is also what cycles a selector, so each form's
   handler is a match on its focus: the field under the caret decides, and an arrow pressed on the
-  date must never move the account beside it. Three rules hold the meaning together:
+  date must never move the account beside it. Four rules hold the meaning together:
   - **A field that does not parse as a date is left exactly as typed.** The arrows nudge a date that
     is already there; they do not conjure one. That is what keeps them off a half-typed date, and
     off the two empty fields that mean something in their own right — an undated goal, and a
     recurring transaction with no horizon, which is the paycheck. Seeding either from an arrow press
     would date a goal, or end a rule that does not end, with a keystroke that reads as an adjustment.
-  - **A step counts as the user's own**, the same as a keystroke: `Field::step_date` marks the field
-    touched, so a date arrived at by pressing an arrow is not a prefill an accepted suggestion may
-    overwrite.
+  - **A step counts as the user's own**, the same as a keystroke: `DateField::step` writes through
+    `Field::retype`, so a date arrived at by pressing an arrow is not a prefill an accepted
+    suggestion may overwrite. `Field::fill` is the untouched counterpart, which is what a
+    suggestion uses.
   - **The typing never goes away.** A date field stays free text — the arrows are the nudge, not the
     only way in — which is why `-` still types on the worksheet's date focus and why every date is
     still parsed at commit rather than only ever assembled by arrow.
-  `ValueForm` is the one form that has to be *told*: it is one labelled field over text its caller
-  parses, so `ValueForm::date` is what marks the Funds screen's birth-date prompt as a date and
-  `ValueForm::new` leaves a figure that happens to read as one alone.
+  - **One step type, so a modifier cannot mean a week on one handler and nothing on the next.**
+    `form::Step` carries the days and hands a selector `direction()` alone; `tui::WEEK` is the only
+    place `7` is written; and `app::week_step` is how the three handlers that answer an arrow
+    themselves — the Overview scrub, the worksheet, and `t`'s confirmation — read the modifier.
+    A selector steps **one** choice under `Shift` rather than none: it has no week to move, and a
+    modified arrow the terminal delivers and the app drops is a dead key with nothing on screen to
+    say why.
 - **A form with autocomplete puts its description ahead of its amount.** Accepting a suggestion
   fills the amount, so an amount sitting *before* the description meant tabbing through a field the
   suggestion was about to write anyway — and tabbing off the description now lands on the figure
   that arrived with it, which is the one worth checking. `TxnField::ORDER` and
   `TransferField::ORDER` are both tab order and render order, so the screen and the hand cannot
   disagree; `RecurringTxnField::ORDER` already opens on its description.
-- **`Shift+←`/`Shift+→` on the Overview scrub a week, and that is the only modified arrow in the
-  app.** The plain arrows step this date a day like every other date; Shift is the same nudge with
-  a bigger step, on the key that already means "move this date", rather than a second letter for
-  one action.
-  It earns the modifier because this is the one date that is *scrubbed* rather than typed — a
-  horizon several paydays out is a plausible question here and nowhere else — and a week is the
-  step that reaches the middle of the fortnightly paycheck cycle in one press. **Shift and not
-  Ctrl**: macOS claims `Ctrl`+arrow for its own spaces, and a key the terminal never receives is a
-  key that does nothing with nothing on screen to say why.
+- **`Shift` is the only modifier the app reads, and it always means the same thing: the same nudge,
+  a bigger step.** It is on the key that already means "move this", rather than a second letter for
+  one action, and it reaches every date rather than only the Overview's — a horizon several paydays
+  out is the plausible question on the scrub, and a bill three weeks off is the same question on a
+  form. A week is the step that reaches the middle of the fortnightly paycheck cycle in one press
+  and the cycle after in two. **Shift and not Ctrl**: macOS claims `Ctrl`+arrow for its own spaces,
+  and a key the terminal never receives is a key that does nothing with nothing on screen to say
+  why.
+- **A date is typed as `YYYY-MM-DD` or as the `M/D` shorthand, and the year turns on the month
+  alone.** `M/D` takes the next year that month occurs in: typed in August, `9/10` is this
+  September and `3/4` is next March. It is deliberately **not** "the next time that date comes
+  round" — `8/1` typed in August is the first of this August, a fortnight back, because backdating
+  a ledger row a week or two is the commonest thing the shorthand is typed for and a rule that
+  always resolved forward could not express it at all. `YYYY-MM-DD` stays the display date:
+  `DateField::display` shows the text as typed while the caret is in the field and the date it
+  means once focus leaves, computed at render rather than written back, so there is no blur hook
+  for the next form to forget and no half-typed date rewritten under the cursor.
+  The Funds birth-date prompt is the one field built `DateField::iso_only`, and it needs no `today`
+  at all — which is the distinction made visible. Every `M/D` reading is present or future and a
+  birth date is decades past, so a shorthand there could only ever be a wrong year that nothing
+  refuses.
+- **A date field entering something new opens on today, and the four that do not each say why.**
+  `DateField::today` is the default and most fields take it. The exceptions:
+  - A new goal's `Goal Date` opens on the first of the next month, through `GoalForm::opening_date`:
+    a goal date is a *deadline*, and today is never one.
+  - `t`'s confirmation opens two business days out, through `calc::business_day::add(today, 2)`:
+    the rows it writes are dated for when the transfers *land* rather than for when the plan was
+    read. `business_day::add` skips weekends and deliberately carries no holiday calendar, which
+    is the other half of why this date is editable at all.
+  - A recurring transaction's `Horizon` and the birth-date prompt open blank, because blank is a
+    supported state in both — a rule that does not end, and a date not on record — and `parse_opt`
+    is what reads the first of those back.
+
+  A field **editing** an existing row is not an exception and takes `DateField::given`: it opens on
+  that row's own date, which is what editing one means. `given` marks it touched for the same
+  reason `Field::given` does — a real date the owner can see and did not ask to change.
 - **`←`/`→` on the Overview is the one key that changes another screen.** It moves `App::adhoc`,
   and Planning reads that same date: `Excess (Actual)` is the checking balance at it, and so is
   every figure below. `App::scrub` therefore reloads both screens, and `t` and `p` act on the

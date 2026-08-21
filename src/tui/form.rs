@@ -9,8 +9,8 @@ use crate::db::account::{self, Kind};
 use crate::db::txn::{NewTxn, Suggestion, Txn};
 use crate::db::{AccountId, TxnId};
 use crate::money::Cents;
-use anyhow::{Context, Result, ensure};
-use chrono::{NaiveDate, TimeDelta};
+use anyhow::{Context, Result, anyhow, ensure};
+use chrono::{Datelike, NaiveDate, TimeDelta};
 
 /// One text input: its buffer, and whether the user has typed into it.
 ///
@@ -30,14 +30,6 @@ impl Field {
             value: value.into(),
             touched: false,
         }
-    }
-
-    /// A date field opened on `date`, in the format dates are typed in.
-    ///
-    /// The untouched half of the pair on purpose: every form that opens on
-    /// today opens a date a suggestion may still move.
-    pub(super) fn date(date: NaiveDate) -> Field {
-        Field::prefilled(iso(date))
     }
 
     /// A prefilled field that counts as the user's own, so a suggestion
@@ -74,33 +66,196 @@ impl Field {
         self.value = value.into();
     }
 
+    /// Replace the contents so that they count as the user's own -- the same
+    /// as having typed them. The counterpart of [`Field::fill`], and what an
+    /// arrow-stepped date is written back with.
+    pub(super) fn retype(&mut self, value: impl Into<String>) {
+        self.value = value.into();
+        self.touched = true;
+    }
+
     /// Whether the user has typed into this field. An empty field is not the
     /// same thing: an amount typed and then deleted is still the user's.
     pub(super) fn is_touched(&self) -> bool {
         self.touched
     }
+}
 
-    /// Step the date this field holds by `days`, rewriting it in the format
-    /// it is stored in. What `←`/`→` do on every date field in the app.
+/// A date field: the text, and how that text is read back as a date.
+///
+/// A date is the one kind of field whose reading depends on *when* it is
+/// being typed, and every form used to pair a bare [`Field`] with a free
+/// `parse_date` to say so. Pairing them here means the buffer and the reading
+/// cannot come apart, and that a form asks for a date rather than assembling
+/// one out of two halves it has to keep in step itself.
+#[derive(Clone, Debug)]
+pub(super) struct DateField {
+    field: Field,
+    /// The day the `M/D` shorthand resolves against. `None` is a field that
+    /// takes `YYYY-MM-DD` and nothing else -- a birth date has no
+    /// present-or-future reading, so a shorthand there could only ever land
+    /// decades wrong in silence.
+    shorthand_from: Option<NaiveDate>,
+}
+
+impl DateField {
+    /// A field opened on `date`, untouched, so a suggestion may still move it.
+    pub(super) fn on(today: NaiveDate, date: NaiveDate) -> DateField {
+        DateField {
+            field: Field::prefilled(iso(date)),
+            shorthand_from: Some(today),
+        }
+    }
+
+    /// A field opened on today, which is what almost every form's date does.
+    pub(super) fn today(today: NaiveDate) -> DateField {
+        DateField::on(today, today)
+    }
+
+    /// A blank field, for the two dates where blank means something in its
+    /// own right: an undated goal, and a recurring transaction that does not
+    /// end.
+    pub(super) fn blank(today: NaiveDate) -> DateField {
+        DateField {
+            field: Field::prefilled(""),
+            shorthand_from: Some(today),
+        }
+    }
+
+    /// An existing row's date, which counts as the user's own. `None` is the
+    /// blank that row already carried.
+    pub(super) fn given(today: NaiveDate, date: Option<NaiveDate>) -> DateField {
+        DateField {
+            field: Field::given(date.map(iso).unwrap_or_default()),
+            shorthand_from: Some(today),
+        }
+    }
+
+    /// A field that takes `YYYY-MM-DD` and nothing else. It needs no `today`,
+    /// which is the distinction made visible: the shorthand is the reading
+    /// that depends on when you are.
+    pub(super) fn iso_only(prefill: &str) -> DateField {
+        DateField {
+            field: Field::given(prefill),
+            shorthand_from: None,
+        }
+    }
+
+    pub(super) fn value(&self) -> &str {
+        self.field.value()
+    }
+
+    /// What the field shows: the text as typed while the caret is in it, and
+    /// the date that text means once the caret leaves.
+    ///
+    /// `YYYY-MM-DD` is the display date everywhere in the app, so a shorthand
+    /// has to resolve on screen somewhere or the owner never sees what they
+    /// asked for until the row is written. Computed rather than written back,
+    /// so there is no blur hook for the next form to forget -- and so a
+    /// half-typed date is never rewritten under the cursor by the keystroke
+    /// still finishing it.
+    pub(super) fn display(&self, focused: bool) -> String {
+        match self.parse() {
+            Ok(date) if !focused => iso(date),
+            _ => self.field.value().to_string(),
+        }
+    }
+
+    pub(super) fn push(&mut self, c: char) {
+        self.field.push(c);
+    }
+
+    pub(super) fn backspace(&mut self) {
+        self.field.backspace();
+    }
+
+    /// Step the date by `days`, rewriting it as the date it now means. What
+    /// `←`/`→` do on every date field in the app, and `Shift` with them a
+    /// week at a time.
     ///
     /// A field holding something that is not a date is left exactly as it
     /// was: the arrows are a nudge on a date already there, not a way to
     /// conjure one. That is what keeps them off a half-typed date, and off
-    /// the empty fields that mean something in their own right -- an undated
-    /// goal, a recurring transaction that does not end.
+    /// the blank fields that mean something in their own right -- an undated
+    /// goal, and a recurring transaction that does not end.
     ///
     /// The step counts as the user's own, the same as a keystroke: a date
     /// arrived at by pressing an arrow is not a prefill for a suggestion to
     /// overwrite.
-    pub(super) fn step_date(&mut self, days: i64) {
-        let Ok(date) = parse_date(&self.value) else {
+    pub(super) fn step(&mut self, days: i64) {
+        let Ok(date) = self.parse() else {
             return;
         };
         let Some(stepped) = date.checked_add_signed(TimeDelta::days(days)) else {
             return;
         };
-        self.value = iso(stepped);
-        self.touched = true;
+        self.field.retype(iso(stepped));
+    }
+
+    /// The date this field means, when the text does not already say it --
+    /// what a single-field modal shows beside the field.
+    ///
+    /// `display`'s "as typed under the caret, as the date it means once focus
+    /// leaves" needs somewhere for focus to go, and a modal with one field
+    /// has nowhere. `None` for a date typed out in full, which would only be
+    /// echoed back, and for text that is not a date at all, which has nothing
+    /// to resolve to -- a guess there would be a date the dialog never writes.
+    pub(super) fn resolved(&self) -> Option<String> {
+        let text = iso(self.parse().ok()?);
+        (text != self.field.value().trim()).then_some(text)
+    }
+
+    /// The date this field holds, or the error naming the text that would not
+    /// parse.
+    pub(super) fn parse(&self) -> Result<NaiveDate> {
+        let raw = self.field.value().trim();
+        match self.shorthand_from {
+            Some(today) if raw.contains('/') => parse_shorthand(raw, today),
+            _ => parse_date(raw),
+        }
+    }
+
+    /// The same, where blank is a supported answer rather than a refusal --
+    /// an undated goal, a rule that does not end.
+    pub(super) fn parse_opt(&self) -> Result<Option<NaiveDate>> {
+        if self.field.value().trim().is_empty() {
+            return Ok(None);
+        }
+        self.parse().map(Some)
+    }
+}
+
+/// How far one arrow press moves what it is pressed on: a day, or -- with
+/// `Shift` -- a week.
+///
+/// One value rather than a direction and a magnitude, so a form's answer to
+/// the arrows is one match on its focus rather than two near-identical ones
+/// that have to be kept in step by hand. `Shift` is then the same nudge with
+/// a bigger step, by construction, rather than by a second code path beside
+/// the first.
+///
+/// A selector has no week to move, so it reads the direction and ignores the
+/// size: a modified arrow that did nothing would be a dead key on the very
+/// fields the hand reaches for it on.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Step(i64);
+
+impl Step {
+    /// `→`, and `←`.
+    pub const NEXT: Step = Step(1);
+    pub const PREVIOUS: Step = Step(-1);
+    /// `Shift` with them.
+    pub const NEXT_WEEK: Step = Step(super::WEEK);
+    pub const PREVIOUS_WEEK: Step = Step(-super::WEEK);
+
+    /// The step in days, which is what a date moves by.
+    pub fn days(self) -> i64 {
+        self.0
+    }
+
+    /// Which way, which is all a selector takes.
+    pub fn direction(self) -> isize {
+        self.0.signum() as isize
     }
 }
 
@@ -135,6 +290,28 @@ fn iso(date: NaiveDate) -> String {
 pub(super) fn parse_date(raw: &str) -> Result<NaiveDate> {
     NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d")
         .with_context(|| format!("not a YYYY-MM-DD date: {:?}", raw.trim()))
+}
+
+/// `M/D` -- a month and a day, taking the next year that month occurs in.
+///
+/// The year turns on the **month** alone, never on the whole date: `8/1`
+/// typed in August is the first of this August, a fortnight back, rather than
+/// next year's. Backdating a ledger row a week or two is the commonest thing
+/// the shorthand is typed for, and a rule that always resolved forward could
+/// not express it at all -- while a month already behind has no reading but
+/// the year ahead, which is the case the roll exists for.
+fn parse_shorthand(raw: &str, today: NaiveDate) -> Result<NaiveDate> {
+    let raw = raw.trim();
+    let malformed = || anyhow!("not a M/D date: {raw:?}");
+    let (month, day) = raw.split_once('/').ok_or_else(malformed)?;
+    let month: u32 = month.trim().parse().map_err(|_| malformed())?;
+    let day: u32 = day.trim().parse().map_err(|_| malformed())?;
+    let year = if month >= today.month() {
+        today.year()
+    } else {
+        today.year() + 1
+    };
+    NaiveDate::from_ymd_opt(year, month, day).ok_or_else(|| anyhow!("no such date: {raw:?}"))
 }
 
 /// The amount as `Cents::from_str` reads it: `$`, commas, and `.5` all work.
@@ -227,8 +404,13 @@ impl TxnField {
 pub trait FormFields {
     fn next_field(&mut self);
     fn previous_field(&mut self);
-    fn next_choice(&mut self);
-    fn previous_choice(&mut self);
+    /// Move whatever has focus by `step`: a date by that many days, a
+    /// selector by that many choices in that direction.
+    ///
+    /// One method rather than a next and a previous, because the field under
+    /// the caret is what decides either way and two methods only ever meant
+    /// two matches to keep in step.
+    fn choice(&mut self, step: Step);
     fn type_char(&mut self, c: char);
     fn backspace(&mut self);
 
@@ -251,7 +433,7 @@ pub struct TxnForm {
     /// `Some` when editing an existing row, `None` when adding one.
     pub editing: Option<TxnId>,
     pub focus: TxnField,
-    date: Field,
+    date: DateField,
     amount: Field,
     description: Field,
     accounts: Vec<account::Account>,
@@ -280,7 +462,7 @@ impl TxnForm {
         Ok(TxnForm {
             editing: None,
             focus: TxnField::Date,
-            date: Field::date(today),
+            date: DateField::today(today),
             amount: Field::default(),
             description: Field::default(),
             accounts,
@@ -289,7 +471,7 @@ impl TxnForm {
         })
     }
 
-    pub fn edit(accounts: Vec<account::Account>, txn: &Txn) -> Result<TxnForm> {
+    pub fn edit(accounts: Vec<account::Account>, today: NaiveDate, txn: &Txn) -> Result<TxnForm> {
         ensure!(
             !accounts.is_empty(),
             "there is no account of this kind to edit a transaction into"
@@ -301,7 +483,7 @@ impl TxnForm {
         Ok(TxnForm {
             editing: Some(txn.id),
             focus: TxnField::Date,
-            date: Field::given(txn.date.format("%Y-%m-%d").to_string()),
+            date: DateField::given(today, Some(txn.date)),
             amount: Field::given(txn.cents.to_string()),
             description: Field::given(txn.description.clone()),
             accounts,
@@ -316,7 +498,7 @@ impl TxnForm {
 
     pub fn display(&self, field: TxnField) -> Label {
         match field {
-            TxnField::Date => Label::from(self.date.value()),
+            TxnField::Date => Label::from(self.date.display(self.focus == TxnField::Date)),
             TxnField::Amount => Label::from(self.amount.value()),
             TxnField::Description => Label::from(self.description.value()),
             TxnField::Account => match self.accounts.get(self.account) {
@@ -334,7 +516,7 @@ impl TxnForm {
         let description = self.description.value().trim().to_string();
         ensure!(!description.is_empty(), "description must not be empty");
         Ok(NewTxn {
-            date: parse_date(self.date.value())?,
+            date: self.date.parse()?,
             cents: parse_amount(self.amount.value())?,
             account_id: account.id,
             description,
@@ -358,22 +540,11 @@ impl FormFields for TxnForm {
     /// Cycle the selector or step the date, whichever is focused. A no-op on
     /// the other two: `←`/`→` on the description must not silently change the
     /// account.
-    fn next_choice(&mut self) {
+    fn choice(&mut self, step: Step) {
         match self.focus {
-            TxnField::Date => self.date.step_date(1),
+            TxnField::Date => self.date.step(step.days()),
             TxnField::Account => {
-                self.account = step_index(self.account, self.accounts.len(), 1);
-                self.account_touched = true;
-            }
-            TxnField::Amount | TxnField::Description => {}
-        }
-    }
-
-    fn previous_choice(&mut self) {
-        match self.focus {
-            TxnField::Date => self.date.step_date(-1),
-            TxnField::Account => {
-                self.account = step_index(self.account, self.accounts.len(), -1);
+                self.account = step_index(self.account, self.accounts.len(), step.direction());
                 self.account_touched = true;
             }
             TxnField::Amount | TxnField::Description => {}
@@ -429,31 +600,54 @@ impl FormFields for TxnForm {
 #[derive(Debug)]
 pub struct ValueForm {
     label: Label,
-    field: Field,
-    /// Whether the one field holds a date, and so whether `←`/`→` step it.
-    /// The caller is the only one who knows: a figure that happens to read as
-    /// a date is still a figure.
-    is_date: bool,
+    entry: Entry,
+}
+
+/// The one field a [`ValueForm`] collects, and which reading it is.
+///
+/// An enum rather than a `Field` beside a flag: a figure and a date are two
+/// readings of one buffer, and a separate flag is a second place for this
+/// form to say which it is collecting -- one the two could disagree on.
+#[derive(Debug)]
+enum Entry {
+    /// A figure, which this form does not parse: the caller knows which
+    /// constant is being edited and therefore how its text reads.
+    ///
+    /// `given`, not `prefilled`: the text on screen is a real figure the user
+    /// can see. Nothing here takes suggestions, but the distinction is the
+    /// one `Field` exists to make.
+    Figure(Field),
+    /// A date, which `←`/`→` step like every other date in the app.
+    Date(DateField),
+}
+
+impl Entry {
+    fn value(&self) -> &str {
+        match self {
+            Entry::Figure(field) => field.value(),
+            Entry::Date(date) => date.value(),
+        }
+    }
 }
 
 impl ValueForm {
     pub fn new(label: impl Into<Label>, prefill: &str) -> ValueForm {
         ValueForm {
             label: label.into(),
-            // `given`, not `prefilled`: the text on screen is a real figure
-            // the user can see. Nothing here takes suggestions, but the
-            // distinction is the one `Field` exists to make.
-            field: Field::given(prefill),
-            is_date: false,
+            entry: Entry::Figure(Field::given(prefill)),
         }
     }
 
     /// The same form over a date -- the Funds screen's birth-date prompt.
-    /// `←`/`→` step it a day, as they do on every other date field.
+    /// `←`/`→` step it, as they do on every other date field.
+    ///
+    /// `iso_only`: every reading of the `M/D` shorthand is present or future,
+    /// and a birth date is decades past, so a shorthand here could only ever
+    /// be a wrong year that nothing refuses.
     pub fn date(label: impl Into<Label>, prefill: &str) -> ValueForm {
         ValueForm {
-            is_date: true,
-            ..ValueForm::new(label, prefill)
+            label: label.into(),
+            entry: Entry::Date(DateField::iso_only(prefill)),
         }
     }
 
@@ -462,7 +656,7 @@ impl ValueForm {
     }
 
     pub fn value(&self) -> &str {
-        self.field.value()
+        self.entry.value()
     }
 
     /// The label, wherever it was built -- with an account segment, on the
@@ -483,24 +677,24 @@ impl FormFields for ValueForm {
     fn previous_field(&mut self) {}
 
     // Nothing to cycle either, unless the field is a date, which steps.
-    fn next_choice(&mut self) {
-        if self.is_date {
-            self.field.step_date(1);
-        }
-    }
-
-    fn previous_choice(&mut self) {
-        if self.is_date {
-            self.field.step_date(-1);
+    fn choice(&mut self, step: Step) {
+        if let Entry::Date(date) = &mut self.entry {
+            date.step(step.days());
         }
     }
 
     fn type_char(&mut self, c: char) {
-        self.field.push(c);
+        match &mut self.entry {
+            Entry::Figure(field) => field.push(c),
+            Entry::Date(date) => date.push(c),
+        }
     }
 
     fn backspace(&mut self) {
-        self.field.backspace();
+        match &mut self.entry {
+            Entry::Figure(field) => field.backspace(),
+            Entry::Date(date) => date.backspace(),
+        }
     }
 }
 
@@ -562,7 +756,7 @@ enum TransferKind {
 pub struct TransferForm {
     pub focus: TransferField,
     kind: TransferKind,
-    date: Field,
+    date: DateField,
     amount: Field,
     description: Field,
     from_accounts: Vec<account::Account>,
@@ -598,7 +792,7 @@ impl TransferForm {
         Ok(TransferForm {
             focus: TransferField::Date,
             kind: TransferKind::Transfer,
-            date: Field::date(today),
+            date: DateField::today(today),
             amount: Field::default(),
             description: Field::prefilled("Transfer"),
             from_accounts: cash,
@@ -630,7 +824,7 @@ impl TransferForm {
         let mut form = TransferForm {
             focus: TransferField::Date,
             kind: TransferKind::Payment,
-            date: Field::date(today),
+            date: DateField::today(today),
             amount: Field::default(),
             description: Field::default(),
             from_accounts: cash,
@@ -666,7 +860,9 @@ impl TransferForm {
             None => Label::default(),
         };
         match field {
-            TransferField::Date => Label::from(self.date.value()),
+            TransferField::Date => {
+                Label::from(self.date.display(self.focus == TransferField::Date))
+            }
             TransferField::Amount => Label::from(self.amount.value()),
             TransferField::Description => Label::from(self.description.value()),
             TransferField::From => account(&self.from_accounts, self.from),
@@ -698,7 +894,7 @@ impl TransferForm {
         Ok(Transfer {
             from_account_id: from.id,
             to_account_id: to.id,
-            date: parse_date(self.date.value())?,
+            date: self.date.parse()?,
             cents,
             description,
         })
@@ -714,24 +910,14 @@ impl FormFields for TransferForm {
         self.focus = next_in(&TransferField::ORDER, self.focus, -1);
     }
 
-    fn next_choice(&mut self) {
+    fn choice(&mut self, step: Step) {
         match self.focus {
-            TransferField::Date => self.date.step_date(1),
-            TransferField::From => self.from = step_index(self.from, self.from_accounts.len(), 1),
-            TransferField::To => {
-                self.to = step_index(self.to, self.to_accounts.len(), 1);
-                self.refresh_payment_description();
+            TransferField::Date => self.date.step(step.days()),
+            TransferField::From => {
+                self.from = step_index(self.from, self.from_accounts.len(), step.direction())
             }
-            TransferField::Amount | TransferField::Description => {}
-        }
-    }
-
-    fn previous_choice(&mut self) {
-        match self.focus {
-            TransferField::Date => self.date.step_date(-1),
-            TransferField::From => self.from = step_index(self.from, self.from_accounts.len(), -1),
             TransferField::To => {
-                self.to = step_index(self.to, self.to_accounts.len(), -1);
+                self.to = step_index(self.to, self.to_accounts.len(), step.direction());
                 self.refresh_payment_description();
             }
             TransferField::Amount | TransferField::Description => {}
@@ -995,6 +1181,181 @@ mod tests {
     use crate::db::account::Group;
     use crate::db::{AccountId, RecurringTxnId};
 
+    /// The three worked readings of the shorthand, from one August. A month
+    /// still ahead is this year's; a month already behind is next year's.
+    #[test]
+    fn a_month_day_shorthand_takes_the_next_year_that_month_occurs_in() {
+        let today = day(2026, 8, 21);
+        let read = |raw: &str| {
+            let mut f = DateField::blank(today);
+            for c in raw.chars() {
+                f.push(c);
+            }
+            f.parse().unwrap()
+        };
+
+        assert_eq!(read("9/10"), day(2026, 9, 10));
+        assert_eq!(read("10/03"), day(2026, 10, 3));
+        assert_eq!(read("3/4"), day(2027, 3, 4));
+    }
+
+    /// The year turns on the month alone, so a day already past in the
+    /// current month reads as that day rather than rolling a year forward.
+    /// Backdating a ledger row a fortnight is the commonest thing the
+    /// shorthand is typed for, and a rule that could not express it would
+    /// send the owner back to typing the year out.
+    #[test]
+    fn a_shorthand_in_the_current_month_stays_in_it_even_once_the_day_has_passed() {
+        let mut f = DateField::blank(day(2026, 8, 21));
+        for c in "8/1".chars() {
+            f.push(c);
+        }
+        assert_eq!(f.parse().unwrap(), day(2026, 8, 1));
+    }
+
+    /// A day the month does not have is a typo, not a date to round.
+    #[test]
+    fn a_shorthand_day_its_month_does_not_have_is_refused_with_the_text_that_failed() {
+        let mut f = DateField::blank(day(2026, 8, 21));
+        for c in "2/30".chars() {
+            f.push(c);
+        }
+        let err = f.parse().unwrap_err().to_string();
+        assert!(err.contains("2/30"), "{err}");
+    }
+
+    /// `YYYY-MM-DD` is what a field is written back as, so it must read back
+    /// the same whichever kind of field it lands in.
+    #[test]
+    fn an_iso_date_reads_the_same_with_the_shorthand_on_or_off() {
+        let mut shorthand = DateField::blank(day(2026, 8, 21));
+        let mut iso = DateField::iso_only("");
+        for c in "2026-11-27".chars() {
+            shorthand.push(c);
+            iso.push(c);
+        }
+        assert_eq!(shorthand.parse().unwrap(), day(2026, 11, 27));
+        assert_eq!(iso.parse().unwrap(), day(2026, 11, 27));
+    }
+
+    /// The Funds screen's birth-date prompt. Every reading of `M/D` is
+    /// present-or-future and a birth date is decades past, so the shorthand
+    /// there could only ever be a wrong year nothing refuses.
+    #[test]
+    fn a_field_that_takes_no_shorthand_refuses_one() {
+        let mut f = DateField::iso_only("");
+        for c in "3/4".chars() {
+            f.push(c);
+        }
+        let err = f.parse().unwrap_err().to_string();
+        assert!(err.contains("3/4"), "{err}");
+    }
+
+    /// `YYYY-MM-DD` is always the display date. What was typed stands while
+    /// the caret is in the field -- rewriting under the cursor would fight
+    /// the typing -- and the date it means is shown the moment focus leaves.
+    #[test]
+    fn a_shorthand_shows_as_typed_under_the_caret_and_as_the_date_it_means_once_focus_leaves() {
+        let mut f = DateField::blank(day(2026, 8, 21));
+        for c in "9/10".chars() {
+            f.push(c);
+        }
+        assert_eq!(f.display(true), "9/10");
+        assert_eq!(f.display(false), "2026-09-10");
+    }
+
+    /// Text that is not a date has no date to show, so it stands as typed
+    /// wherever the caret is: a half-typed date must not vanish because the
+    /// user tabbed away to check something.
+    #[test]
+    fn text_that_is_not_a_date_is_shown_as_typed_whether_or_not_it_has_focus() {
+        let mut f = DateField::blank(day(2026, 8, 21));
+        for c in "2026-1".chars() {
+            f.push(c);
+        }
+        assert_eq!(f.display(true), "2026-1");
+        assert_eq!(f.display(false), "2026-1");
+        assert_eq!(DateField::blank(day(2026, 8, 21)).display(false), "");
+    }
+
+    /// The arrows nudge whatever the field means, so a shorthand steps from
+    /// the date it resolves to and is written back the way every date is.
+    #[test]
+    fn stepping_a_shorthand_rewrites_it_as_the_iso_date_it_meant() {
+        let mut f = DateField::blank(day(2026, 8, 21));
+        for c in "9/10".chars() {
+            f.push(c);
+        }
+        f.step(1);
+        assert_eq!(f.value(), "2026-09-11");
+    }
+
+    /// Blank means an undated goal and a rule that does not end. Neither is
+    /// a date an arrow may conjure, and neither is a parse failure.
+    #[test]
+    fn a_blank_date_field_is_no_date_and_no_arrow_dates_it() {
+        let mut f = DateField::blank(day(2026, 8, 21));
+        assert_eq!(f.parse_opt().unwrap(), None);
+        f.step(1);
+        f.step(-7);
+        assert_eq!(f.value(), "");
+        assert_eq!(f.parse_opt().unwrap(), None);
+    }
+
+    /// An existing row's date is the user's own, so it opens on that date
+    /// rather than on today.
+    #[test]
+    fn a_given_date_opens_on_the_date_it_was_given() {
+        let f = DateField::given(day(2026, 8, 21), Some(day(2026, 11, 27)));
+        assert_eq!(f.value(), "2026-11-27");
+        assert_eq!(
+            DateField::given(day(2026, 8, 21), None)
+                .parse_opt()
+                .unwrap(),
+            None
+        );
+    }
+
+    /// `Shift` with an arrow is the same nudge on the same key, a week at a
+    /// time.
+    #[test]
+    fn shift_steps_a_transaction_date_a_week() {
+        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        form.choice(Step::NEXT_WEEK);
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-22");
+        form.choice(Step::PREVIOUS_WEEK);
+        form.choice(Step::PREVIOUS_WEEK);
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-08");
+    }
+
+    /// A selector has no week to move, so it takes the direction and ignores
+    /// the size. A modified arrow that did nothing would be a dead key on the
+    /// very field the hand reaches for it on.
+    #[test]
+    fn a_week_step_moves_a_selector_one_choice_like_a_plain_arrow() {
+        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        while form.focus != TxnField::Account {
+            form.next_field();
+        }
+        form.choice(Step::NEXT_WEEK);
+        typed(&mut form, TxnField::Amount, "10");
+        typed(&mut form, TxnField::Description, "Transfer in");
+
+        assert_eq!(form.commit().unwrap().account_id, AccountId(2));
+    }
+
+    /// The date and the account are both reachable by the arrows, so a week
+    /// pressed on one must not reach the other.
+    #[test]
+    fn a_week_step_on_the_date_leaves_the_account_selector_alone() {
+        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        form.choice(Step::NEXT_WEEK);
+        typed(&mut form, TxnField::Amount, "10");
+        typed(&mut form, TxnField::Description, "Coffee");
+
+        assert_eq!(form.commit().unwrap().account_id, AccountId(1));
+    }
+
     #[test]
     fn stepping_an_index_wraps_at_both_ends() {
         assert_eq!(step_index(0, 3, 1), 1);
@@ -1252,7 +1613,7 @@ mod tests {
         while form.focus != TxnField::Account {
             form.next_field();
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         typed(&mut form, TxnField::Amount, "10");
         typed(&mut form, TxnField::Description, "Transfer in");
 
@@ -1265,8 +1626,8 @@ mod tests {
     fn cycling_does_nothing_unless_a_selector_is_focused() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
         typed(&mut form, TxnField::Description, "Coffee");
-        form.next_choice();
-        form.next_choice();
+        form.choice(Step::NEXT);
+        form.choice(Step::NEXT);
         typed(&mut form, TxnField::Amount, "10");
 
         assert_eq!(form.commit().unwrap().account_id, AccountId(1));
@@ -1317,7 +1678,7 @@ mod tests {
             recurring_txn_id: Some(RecurringTxnId(1)),
             edited: false,
         };
-        let mut form = TxnForm::edit(accounts(), &row).unwrap();
+        let mut form = TxnForm::edit(accounts(), today(), &row).unwrap();
 
         assert_eq!(form.editing, Some(TxnId(7)));
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-01-02");
@@ -1382,7 +1743,7 @@ mod tests {
         while form.focus != TransferField::To {
             form.next_field();
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         typed_transfer(&mut form, TransferField::Amount, "3,291.00");
 
         let moved = form.commit().unwrap();
@@ -1402,7 +1763,7 @@ mod tests {
         while form.focus != TransferField::To {
             form.next_field();
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         typed_transfer(&mut form, TransferField::Amount, "-100");
 
         let err = form.commit().unwrap_err();
@@ -1433,12 +1794,12 @@ mod tests {
         while form.focus != TransferField::To {
             form.next_field();
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(TransferField::To).plain_text(),
             "CC2 — Card Two"
         );
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(TransferField::To).plain_text(),
             "CC1 — Card One",
@@ -1459,7 +1820,7 @@ mod tests {
         let mut seen = Vec::new();
         for _ in 0..all_accounts().len() {
             seen.push(form.display(TransferField::From).plain_text());
-            form.next_choice();
+            form.choice(Step::NEXT);
         }
         assert_eq!(
             seen,
@@ -1485,7 +1846,7 @@ mod tests {
         let mut seen = Vec::new();
         for _ in 0..all_accounts().len() {
             seen.push(form.display(TransferField::To).plain_text());
-            form.next_choice();
+            form.choice(Step::NEXT);
         }
         assert!(
             seen.contains(&"CC1 — Card One".to_string()),
@@ -1515,12 +1876,12 @@ mod tests {
         while form.focus != TransferField::From {
             form.next_field();
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(TransferField::From).plain_text(),
             "SAV — Rainy Day"
         );
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(TransferField::From).plain_text(),
             "CHK — Everyday"
@@ -1538,7 +1899,7 @@ mod tests {
         while form.focus != TransferField::To {
             form.next_field();
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(TransferField::Description).plain_text(),
             "CC2 Payment"
@@ -1553,7 +1914,7 @@ mod tests {
         while form.focus != TransferField::To {
             form.next_field();
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(TransferField::Description).plain_text(),
             "CC2 Payment!",
@@ -1567,7 +1928,7 @@ mod tests {
         while form.focus != TransferField::From {
             form.next_field();
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         typed_transfer(&mut form, TransferField::Amount, "450.85");
 
         let paid = form.commit().unwrap();
@@ -1697,8 +2058,8 @@ mod tests {
         let mut form = ValueForm::new("Target", "26");
         form.next_field();
         form.previous_field();
-        form.next_choice();
-        form.previous_choice();
+        form.choice(Step::NEXT);
+        form.choice(Step::PREVIOUS);
         assert_eq!(form.value(), "26");
     }
 
@@ -1714,17 +2075,17 @@ mod tests {
     #[test]
     fn a_date_value_form_steps_its_field_by_a_day() {
         let mut form = ValueForm::date("Birth Date", "1990-03-04");
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(form.value(), "1990-03-05");
-        form.previous_choice();
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
+        form.choice(Step::PREVIOUS);
         assert_eq!(form.value(), "1990-03-03");
     }
 
     #[test]
     fn a_value_form_that_is_not_a_date_form_still_ignores_the_arrows() {
         let mut form = ValueForm::new("Target", "2026-08-15");
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.value(),
             "2026-08-15",
@@ -1759,17 +2120,17 @@ mod tests {
     #[test]
     fn the_arrows_step_a_transaction_date_by_a_day() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-16");
-        form.previous_choice();
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
+        form.choice(Step::PREVIOUS);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-14");
     }
 
     #[test]
     fn stepping_a_date_crosses_a_month_boundary() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 31), None).unwrap();
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-09-01");
     }
 
@@ -1787,7 +2148,7 @@ mod tests {
         for c in "2026-08".chars() {
             form.type_char(c);
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08");
     }
 
@@ -1796,7 +2157,7 @@ mod tests {
     #[test]
     fn stepping_the_date_leaves_the_account_selector_alone() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
-        form.next_choice();
+        form.choice(Step::NEXT);
         typed(&mut form, TxnField::Description, "Coffee");
         typed(&mut form, TxnField::Amount, "10");
         assert_eq!(form.commit().unwrap().account_id, AccountId(1));
@@ -1808,16 +2169,16 @@ mod tests {
         while form.focus != TxnField::Account {
             form.next_field();
         }
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-15");
     }
 
     #[test]
     fn the_arrows_step_a_transfer_date_by_a_day() {
         let mut form = TransferForm::transfer(all_accounts(), day(2026, 8, 31)).unwrap();
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(form.display(TransferField::Date).plain_text(), "2026-09-01");
-        form.previous_choice();
+        form.choice(Step::PREVIOUS);
         assert_eq!(form.display(TransferField::Date).plain_text(), "2026-08-31");
     }
 
@@ -1827,7 +2188,7 @@ mod tests {
     #[test]
     fn stepping_a_transfer_date_moves_neither_account() {
         let mut form = TransferForm::payment(all_accounts(), day(2026, 9, 8)).unwrap();
-        form.next_choice();
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(TransferField::From).plain_text(),
             "CHK — Everyday"
