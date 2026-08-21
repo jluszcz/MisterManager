@@ -108,7 +108,8 @@ impl AllocationForm {
     pub fn unallocated_line(&self) -> String {
         format!(
             "{} unallocated {} · /N takes 1/N",
-            self.container_name, self.unallocated
+            self.container_name,
+            crate::demo::figure(self.unallocated)
         )
     }
 
@@ -122,7 +123,7 @@ impl AllocationForm {
     pub fn display(&self, field: AllocField) -> Label {
         Label::plain(match field {
             AllocField::Date => self.date.display(self.focus == AllocField::Date),
-            AllocField::Amount => self.amount.value().to_string(),
+            AllocField::Amount => crate::demo::typed(self.amount.value()),
             AllocField::Note => self.note.value().to_string(),
         })
     }
@@ -312,7 +313,7 @@ impl GoalForm {
     pub fn display(&self, field: GoalField) -> Label {
         Label::plain(match field {
             GoalField::Name => self.name.value().to_string(),
-            GoalField::Target => self.target.value().to_string(),
+            GoalField::Target => crate::demo::typed(self.target.value()),
             GoalField::Date => self.date.display(self.focus == GoalField::Date),
             GoalField::Interest => if self.eligible { "yes" } else { "no" }.to_string(),
         })
@@ -443,7 +444,8 @@ impl CloseForm {
     pub fn title(&self) -> String {
         format!(
             "Close out {} ({}) — ←/→ destination · Enter save · Esc cancel",
-            self.goal_name, self.balance
+            self.goal_name,
+            crate::demo::figure(self.balance)
         )
     }
 
@@ -513,7 +515,7 @@ use ratatui::text::Line as TextLine;
 pub fn render_allocation(frame: &mut Frame, form: &AllocationForm) {
     let share = form
         .resolved_share()
-        .map(|cents| format!("= {}", cents.to_whole_dollars()))
+        .map(|cents| format!("= {}", crate::demo::whole_figure(cents)))
         .unwrap_or_default();
     let mut lines: Vec<TextLine> = AllocField::ORDER
         .iter()
@@ -681,6 +683,49 @@ mod tests {
         );
         typed(&mut form, AllocField::Amount, "/2");
         assert_eq!(form.commit().unwrap().cents, Cents::from_dollars(1300));
+    }
+
+    /// Three figures reach this modal -- the amount typed into the field, the
+    /// share a `/N` resolves to, and the container's remainder underneath --
+    /// and a demo blocks all three. The typed one is blocked because the form
+    /// opens prefilled on an edit: a field showing what is already there
+    /// publishes it to whoever is watching.
+    #[test]
+    fn a_demo_blocks_the_amount_the_share_and_the_remainder() {
+        use crate::tui::MIN_WIDTH;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        crate::demo::install(true);
+        let mut form = AllocationForm::new(
+            GoalId(7),
+            "Lego",
+            "Rainy Day",
+            Cents(260_017),
+            day(2026, 8, 16),
+        );
+        typed(&mut form, AllocField::Amount, "/12");
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_allocation(frame, &form);
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+
+        assert!(!text.contains("216"), "the resolved share survived: {text}");
+        assert!(!text.contains("2,600"), "the remainder survived: {text}");
+        assert!(!text.contains("/12"), "the typed amount survived: {text}");
+        assert!(text.contains("██████"), "nothing was blocked: {text}");
+        assert!(text.contains("Lego"), "the goal name must stay: {text}");
+        assert!(text.contains("2026-08-16"), "the date must stay: {text}");
     }
 
     /// A divisor is not a figure, so the form resolves it on screen rather
@@ -1007,6 +1052,23 @@ mod tests {
         );
         assert!(form.title().contains("Couch"), "{}", form.title());
         assert!(form.title().contains("600.00"), "{}", form.title());
+    }
+
+    /// The balance is the whole point of the title -- it is what is about to
+    /// move -- so it is exactly the figure a demo has to block.
+    #[test]
+    fn a_demo_blocks_the_balance_a_close_out_is_about_to_move() {
+        crate::demo::install(true);
+        let form = CloseForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(60_000),
+            siblings(),
+            day(2026, 8, 16),
+        );
+        assert!(!form.title().contains("600.00"), "{}", form.title());
+        assert!(form.title().contains("██████"), "{}", form.title());
+        assert!(form.title().contains("Couch"), "{}", form.title());
     }
 
     /// Every date field in the app steps a day at a time under `←`/`→`, and

@@ -6,6 +6,7 @@ A terminal application for tracking money, replacing a per-year spreadsheet.
 
 ```bash
 mm            # launch the application
+mm --demo     # the same, with every dollar figure blocked out
 ```
 
 Screens are `1` Overview, `2` Cash, `3` Credit, `4` Savings, `5` Planning,
@@ -190,6 +191,28 @@ out of that one is the same as it ever was: delete the file and re-import.
 Every figure comes back out of the workbook; what does not — the recurring
 transactions, and the naming, banding and ordering of the accounts — is quick
 to re-enter.
+
+## Demo mode
+
+```bash
+mm --demo
+```
+
+Draws the application exactly as an ordinary run does, with every absolute
+dollar figure replaced by a run of blocks — for a screenshot, or for showing
+the app to someone across a table. The same run of blocks whatever the figure:
+the number of digits is itself a figure, so a mask that kept the shape of
+`1,234.56` would hide the balance and publish its order of magnitude.
+
+Percentages, dates, counts, and the names of accounts and goals are left alone
+— a percentage is the shape of a plan rather than a sum, and a demonstration
+with the Planning splits and the fund allocation blocked out would have nothing
+left to show. Negatives keep their sign and their red.
+
+Only the drawing changes. What is typed into a form still parses, so the app
+can be driven rather than only watched, and the figures behind the mask are the
+real ones: a form opened on a row commits what was already there. `mm import`
+and `mm backup` take no such flag, because neither prints a figure.
 
 ## Backups
 

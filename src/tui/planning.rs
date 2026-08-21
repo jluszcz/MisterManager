@@ -115,6 +115,30 @@ impl Target {
             Target::Bill(id) => bill::set_amount(db, id, parse_amount(raw)?),
         }
     }
+
+    /// Whether this constant is an amount of money.
+    ///
+    /// The other half of [`Target::write`]'s match, and written out beside it
+    /// for that reason: a target is money exactly when its `write` arm parses
+    /// with [`parse_amount`]. What reads it is the edit modal, which has one
+    /// field and no idea what is in it -- a percentage and a count of pay
+    /// periods go through the same form, and a demo must block the target
+    /// without blocking those.
+    pub fn is_money(self) -> bool {
+        match self {
+            Target::Target
+            | Target::Buffer
+            | Target::BillPaymentCap
+            | Target::MomAndDadAnnual
+            | Target::GoalsFloor
+            | Target::Bill(_) => true,
+            Target::PeriodsPerYear
+            | Target::BillPaymentPct
+            | Target::FutureHousingPct
+            | Target::RetirementPct
+            | Target::InvestmentPct => false,
+        }
+    }
 }
 
 /// What `e` acts on, for the rows it acts on at all.
@@ -240,7 +264,7 @@ impl Row {
     fn figure(label: &str, value: Cents) -> Row {
         Row {
             label: label.to_string(),
-            value: value.to_whole_dollars(),
+            value: crate::demo::whole_figure(value),
             tone: if value < Cents::ZERO {
                 Tone::Negative
             } else {
@@ -288,7 +312,7 @@ impl Row {
 
     fn bill(bill: &Bill, biweekly: Cents) -> Row {
         Row {
-            extra: biweekly.to_whole_dollars(),
+            extra: crate::demo::whole_figure(biweekly),
             editable: Some(Editable::Constant(Target::Bill(bill.id))),
             edit: bill.cents.to_string(),
             ..Row::figure(&format!("  {}", bill.label), bill.cents)
@@ -520,7 +544,7 @@ fn build(view: &View) -> Result<Vec<Row>> {
     // uses.
     let housing_monthly: Cents = view.housing.iter().map(|b| b.cents).sum();
     rows.push(Row {
-        extra: p.housing_biweekly.to_whole_dollars(),
+        extra: crate::demo::whole_figure(p.housing_biweekly),
         ..Row::figure("  Mortgage + HOA", housing_monthly)
     });
     for b in &view.housing {
@@ -720,13 +744,16 @@ impl Planning {
     /// imported pin is dateless and must render rather than fail.
     pub fn pin_line(&self) -> Option<String> {
         let pinned = self.pinned?;
-        let mut line = format!("pinned {pinned}");
+        let mut line = format!("pinned {}", crate::demo::figure(pinned));
         if let Some(at) = self.pinned_at {
             line.push_str(&format!(" on {at}"));
         }
         let drift = self.excess_actual - pinned;
         if drift != Cents::ZERO {
-            line.push_str(&format!(" · excess has since moved {drift}"));
+            line.push_str(&format!(
+                " · excess has since moved {}",
+                crate::demo::figure(drift)
+            ));
         }
         Some(line)
     }
@@ -1045,7 +1072,10 @@ pub fn render_transfers(frame: &mut Frame, confirm: &TransferConfirm) {
                 transfer::Row::Transfer { name, cents, .. } => (name.clone(), *cents),
                 transfer::Row::Withdrawal { line, cents } => (line.label().to_string(), *cents),
             };
-            TextLine::from(format!("{label:<40}{:>20}", cents.to_whole_dollars()))
+            TextLine::from(format!(
+                "{label:<40}{:>20}",
+                crate::demo::whole_figure(cents)
+            ))
         })
         .collect();
     // One field, so focus never leaves it: the resolution `display` would
@@ -2283,6 +2313,24 @@ mod tests {
         );
     }
 
+    /// The pin line is two figures in prose rather than a column, and both
+    /// of them are money. The date it was pinned on is not.
+    #[test]
+    fn a_demo_blocks_the_pin_and_the_drift_it_has_moved_by() {
+        crate::demo::install(true);
+        let mut planning = Planning::new();
+        planning
+            .set_view(view(
+                Some(Cents::from_dollars(17_500)),
+                Some(day(2026, 8, 14)),
+            ))
+            .unwrap();
+        assert_eq!(
+            planning.pin_line().unwrap(),
+            "pinned ██████ on 2026-08-14 · excess has since moved ██████"
+        );
+    }
+
     /// Import transcribes `Planning!D3` and has no date to transcribe with it,
     /// so an imported pin is dateless and must render rather than fail.
     #[test]
@@ -2551,6 +2599,95 @@ mod tests {
         let text = drawn_confirm(&confirm);
         assert!(text.contains("2026-08-"), "{text}");
         assert!(confirm.commit().is_err());
+    }
+
+    /// A target is money exactly when its `write` arm parses an amount. The
+    /// two matches are written out separately, so nothing but this holds them
+    /// together -- and getting it wrong either publishes a figure in a demo
+    /// or blocks a percentage that was never private.
+    #[test]
+    fn a_money_target_is_the_one_whose_write_parses_an_amount() {
+        for target in [
+            Target::Target,
+            Target::Buffer,
+            Target::BillPaymentCap,
+            Target::MomAndDadAnnual,
+            Target::GoalsFloor,
+            Target::Bill(BillId(1)),
+        ] {
+            assert!(target.is_money(), "{target:?} writes an amount");
+        }
+        for target in [
+            Target::PeriodsPerYear,
+            Target::BillPaymentPct,
+            Target::FutureHousingPct,
+            Target::RetirementPct,
+            Target::InvestmentPct,
+        ] {
+            assert!(!target.is_money(), "{target:?} writes no amount");
+        }
+    }
+
+    /// The waterfall is a column of absolute figures, and every one of them
+    /// is blocked. The percentages that produced them are not: a split is a
+    /// rule rather than a sum, and reading `22%` beside a blocked figure is
+    /// exactly what makes the screen worth demonstrating.
+    #[test]
+    fn a_demo_blocks_the_waterfall_and_keeps_its_percentages() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        crate::demo::install(true);
+        let mut planning = Planning::new();
+        planning.set_view(view(None, None)).unwrap();
+
+        let height = planning.rows().len() as u16 + 5;
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &planning);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let drawn: String = (0..height)
+            .map(|y| {
+                (0..MIN_WIDTH)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!drawn.contains("32,500"), "the checking balance survived");
+        assert!(!drawn.contains("1,200"), "a bill survived");
+        assert!(drawn.contains("██████"), "nothing was blocked: {drawn}");
+        assert!(drawn.contains("%"), "the percentages must stay: {drawn}");
+        assert!(drawn.contains("Bills"), "the labels must stay: {drawn}");
+    }
+
+    /// The modal that confirms a payday is the last thing shown before real
+    /// money moves, and it is as much a part of the demo as the screen behind
+    /// it.
+    #[test]
+    fn a_demo_blocks_the_confirm_modal_and_keeps_its_date() {
+        crate::demo::install(true);
+        let rows = vec![transfer::Row::Transfer {
+            to: crate::db::AccountId(1),
+            name: "Brokerage".to_string(),
+            color: None,
+            cents: Cents(123_456),
+            lines: Vec::new(),
+        }];
+        let text = drawn_confirm(&TransferConfirm::new(
+            rows,
+            day(2026, 8, 24),
+            day(2026, 8, 24),
+        ));
+
+        assert!(!text.contains("1,234"), "the transfer survived: {text}");
+        assert!(text.contains("██████"), "nothing was blocked: {text}");
+        assert!(text.contains("Brokerage"), "the destination must stay");
+        assert!(text.contains("2026-08-24"), "the date must stay: {text}");
     }
 
     fn drawn_confirm(confirm: &TransferConfirm) -> String {

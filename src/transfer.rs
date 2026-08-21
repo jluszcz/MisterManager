@@ -441,7 +441,7 @@ pub fn diagnose(db: &Db, lines: &Lines) -> Result<Vec<String>> {
         }
     }
 
-    let plug = Line::Goals.amount(lines);
+    let plug = crate::demo::figure(Line::Goals.amount(lines));
     if let Some(w) = wiring.iter().find(|w| w.line == Line::Goals) {
         match &w.landing {
             Landing::Ambiguous { containers } => {
@@ -655,8 +655,9 @@ pub fn plan(db: &Db, lines: &Lines) -> Result<Vec<Row>> {
                 Some(to) => merge_transfer(&mut transfers, db, to, line, cents)?,
                 None => {
                     plug_error = Some(anyhow!(
-                        "the Goals plug is {cents} but no unallocated goal exists to \
-                         spread it over"
+                        "the Goals plug is {} but no unallocated goal exists to \
+                         spread it over",
+                        crate::demo::figure(cents)
                     ));
                 }
             },
@@ -1152,6 +1153,24 @@ mod tests {
         assert!(text.contains("Rainy Day"), "{text}");
         assert!(text.contains("Brokerage"), "{text}");
         assert!(text.contains("Mom & Dad"), "{text}");
+    }
+
+    /// The panel this text fills is drawn by the Planning screen, so the
+    /// figure in it is on screen exactly as a column is -- and this module
+    /// sits below `tui`, which is why `demo` sits at the crate root.
+    #[test]
+    fn a_demo_blocks_the_plug_the_diagnosis_quotes() {
+        crate::demo::install(true);
+        let (db, _, _) = configured();
+        setting::clear(&db, key_of(Line::MomAndDad)).unwrap();
+
+        let text = diagnose(&db, &lines()).unwrap().join("\n");
+        assert!(!text.contains("4,832"), "the plug survived: {text}");
+        assert!(text.contains("██████"), "nothing was blocked: {text}");
+        assert!(
+            text.contains("Rainy Day"),
+            "the containers must stay: {text}"
+        );
     }
 
     /// Nothing is wrong, so there is nothing to explain -- and an empty

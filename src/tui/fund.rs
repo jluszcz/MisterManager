@@ -247,7 +247,7 @@ impl FundForm {
         Label::plain(match field {
             FundField::Name => self.name.value().to_string(),
             FundField::Share => self.share.value().to_string(),
-            FundField::Actual => self.actual.value().to_string(),
+            FundField::Actual => crate::demo::typed(self.actual.value()),
             FundField::Kind => match self.target_kind() {
                 Target::AgeOver30 => "tracks age".to_string(),
                 Target::RemainderShare(_) => "share of the rest".to_string(),
@@ -651,6 +651,24 @@ mod tests {
         assert_eq!(form.display(FundField::Name).plain_text(), "International");
         assert_eq!(form.display(FundField::Share).plain_text(), "40.00");
         assert_eq!(form.display(FundField::Actual).plain_text(), "60,000.00");
+    }
+
+    /// The value is money and the share is not: a fund's allocation is the
+    /// shape of the portfolio rather than a sum, and blocking it would hide
+    /// the one thing this screen is worth demonstrating.
+    #[test]
+    fn a_demo_blocks_a_funds_value_and_keeps_its_share() {
+        crate::demo::install(true);
+        let form = FundForm::edit(&crate::db::fund::Fund {
+            id: FundId(2),
+            name: "International".to_string(),
+            ord: 1,
+            target: Target::RemainderShare(BasisPoints(4_000)),
+            actual: Cents::from_dollars(60_000),
+        });
+        assert_eq!(form.display(FundField::Actual).plain_text(), "██████");
+        assert_eq!(form.display(FundField::Share).plain_text(), "40.00");
+        assert_eq!(form.display(FundField::Name).plain_text(), "International");
     }
 
     /// Five columns at `MIN_WIDTH`, all read for one test.

@@ -180,6 +180,32 @@ derive it from `MIN_WIDTH` rather than write the offset out.
 
 ## Invariants worth knowing before editing a screen
 
+- **No screen formats a `Cents` itself.** Every figure a screen draws goes through `tui::amount`,
+  `whole_amount`, `money_span` or `money_text` — or, where it lands in prose rather than a cell,
+  through `demo::figure`/`whole_figure` directly. Two reasons, and the second is why the rule is
+  absolute: "negative reads red" is one decision rather than one per screen, and `mm --demo` blocks
+  every absolute figure out of the app at those same four functions. A `format!("{cents}")` written
+  at a call site is outside both — it draws an uncolored figure, and it publishes a real balance to
+  whoever the app is being demonstrated to. `crate::demo` is where the mask lives and what it looks
+  like; it sits at the crate root rather than here because `transfer::diagnose` writes the plug's
+  figure into the prose this screen draws.
+  - **A `Field` holding an amount keeps the real text and is masked on the way out.** The buffer is
+    what commits, so `demo::typed` is applied where the field becomes a `Label` — in each form's
+    `display(field)` — and never to what `Field::given` was handed. That is what lets a demo be
+    driven rather than only watched: what is typed still parses.
+  - **A one-field `ValueForm` does not know what it is collecting, so its caller says.**
+    `ValueForm::money` is the amount and `ValueForm::new` the plain figure, because the Planning
+    screen edits a pay-period count and a split percentage through the same modal it edits a target
+    through. `planning::Target::is_money` is what picks between them, and it is the other half of
+    `Target::write`'s match: a target is money exactly when its arm parses with `parse_amount`.
+  - **Percentages, dates, counts and names are never masked.** A percentage is a shape rather than a
+    sum — it is what makes the Funds and Planning screens worth demonstrating at all — and a goal's
+    name is already the owner's own word for it. The mask is six blocks wide, plus a sign where the
+    figure has one, which is exactly the narrowest money column any screen lays out (`$/Pay`, at 7):
+    a demo moves no column and truncates nothing.
+  - **The net is one test per screen plus `a_demo_leaves_no_figure_on_any_screen`**, which walks all
+    nine screens with the mask on and asserts none of the fixture's own figures reach the buffer. A
+    new screen that formats its own `Cents` fails there rather than on a shared terminal.
 - **Every editable Planning constant is a `Target` variant**, which owns both its `Key<T>` and how
   its text parses — the same construction as `gate::Gate`. Never write a Planning key at a call
   site. A row's `Editable` says which of the two kinds of edit `e` opens on it — a constant into a

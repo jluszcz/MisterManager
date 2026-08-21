@@ -114,6 +114,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/config.rs` | The TOML config file. `serde` and `toml` are named here, and both again in `src/backup/state.rs`, whose `State` derives `Serialize` as well as `Deserialize`. |
 | `src/plan_line.rs` | Every Planning line: its label, the amount it moves, and the setting key that says where it lands. |
 | `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `pro_rata`, the Planning waterfall, `fund` (the target/actual/delta derivation), `schedule` (when a recurring thing happens). No database. |
+| `src/demo.rs` | `mm --demo`: the mask every absolute figure is drawn through, and the once-per-run flag that turns it on. Named by `tui` and by `transfer`, the two layers that put a figure in front of a human. |
 | `src/db/` | Schema and queries — one module per aggregate. |
 | `src/db/migration.rs` | The frozen v1 baseline, the chain of arms above it, and the runner that applies whichever of them a database is missing. |
 | `src/db/date.rs` | The stored date format, in one place: `iso` writes it, `parse`/`parse_opt` read it back for a `from_row`. |
@@ -361,6 +362,16 @@ matches, since nothing but a test ties them together.
   own come back out of the workbook for `g` to adopt. Losing the paycheck flag would revert
   Paycheck-Eve to today and move the Planning waterfall's excess, so keeping it is the point
   rather than a side effect.
+- **`mm --demo` blocks the figures and nothing else.** Every absolute dollar amount the app draws
+  is replaced by a fixed run of blocks — the same run whatever the figure, because the number of
+  digits is itself a figure. Percentages, dates, counts, account and goal names are untouched: a
+  percentage is a shape rather than a sum, and the point of the flag is to show the application
+  working. It is display-only and installed once, before the first frame, so nothing it touches can
+  reach a write: what is typed into a form still parses, every buffer keeps its real text, and the
+  status line that reports a write reports a masked figure over a real row. `mm import` and
+  `mm backup` do not take the flag, because neither prints a figure. The rules for reaching the
+  mask — and the one place a caller has to say whether its figure is money — are in
+  `src/tui/CLAUDE.md`.
 - **Sign conventions differ per ledger.** Cash rows are signed naturally (positive is inflow); credit
   rows are signed as debt (positive is a charge). Balances are always `SUM(cents) WHERE date <= X`,
   with future-dated rows pre-entered — that is what makes projection and to-date the same query.

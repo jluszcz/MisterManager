@@ -298,9 +298,12 @@ impl Worksheet {
             BatchKind::Adhoc => "Allocate",
             BatchKind::Import => "Import",
         };
-        Label::plain(format!("{kind} — post {} to ", self.amount))
-            .account(self.container.clone())
-            .text(" · Tab field · Enter commit · Esc cancel")
+        Label::plain(format!(
+            "{kind} — post {} to ",
+            crate::demo::figure(self.amount)
+        ))
+        .account(self.container.clone())
+        .text(" · Tab field · Enter commit · Esc cancel")
     }
 
     /// Zero lines are dropped: a goal the user chose not to fund must not get
@@ -309,7 +312,7 @@ impl Worksheet {
         ensure!(
             self.remaining() >= Cents::ZERO,
             "over-allocated by {}",
-            -self.remaining()
+            crate::demo::figure(-self.remaining())
         );
         let shares: Vec<(GoalId, Cents)> = self
             .lines
@@ -557,7 +560,7 @@ pub fn render(frame: &mut Frame, sheet: &Worksheet) -> usize {
         Paragraph::new(vec![
             TextLine::from(format!(
                 "      Amount  {}{}",
-                sheet.amount(),
+                crate::demo::figure(sheet.amount()),
                 caret(sheet.focus() == Focus::Amount)
             )),
             TextLine::from(format!(
@@ -611,7 +614,7 @@ pub fn render(frame: &mut Frame, sheet: &Worksheet) -> usize {
     } else {
         format!(
             "remaining {}  ·  {} selected  ·  Space · * · - · z · /N · s · w",
-            sheet.remaining(),
+            crate::demo::figure(sheet.remaining()),
             sheet.selected_count()
         )
     };
@@ -1485,6 +1488,45 @@ mod tests {
 
     fn is_reversed(buffer: &ratatui::buffer::Buffer, y: u16) -> bool {
         (0..buffer.area.width).any(|x| buffer[(x, y)].modifier.contains(Modifier::REVERSED))
+    }
+
+    /// The refusal quotes how far over the lines went, and a status line is
+    /// on screen as surely as a column is.
+    #[test]
+    fn a_demo_blocks_the_figure_an_over_allocation_refuses_with() {
+        crate::demo::install(true);
+        let mut sheet = sheet();
+        sheet.set_amount(Cents(1_000));
+        let err = sheet.commit().unwrap_err().to_string();
+        assert!(!err.contains("2,247"), "the overage survived: {err}");
+        assert!(err.contains("██████"), "nothing was blocked: {err}");
+    }
+
+    /// Four figures reach this modal: the pot in the header, the amount on
+    /// every line, what is left in the footer, and the pot again in the
+    /// title. A demo blocks all four -- a worksheet is the screen a payday is
+    /// actually posted from, so it is the one most likely to be on screen
+    /// while someone is watching.
+    #[test]
+    fn a_demo_blocks_the_pot_the_lines_and_what_is_left_of_it() {
+        crate::demo::install(true);
+        let mut sheet = sheet();
+        sheet.set_amount(Cents(123_456));
+        let buffer = drawn(&sheet);
+        let text: String = (0..buffer.area.height)
+            .map(|y| row_text(&buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!text.contains("1,234"), "the pot survived: {text}");
+        assert!(!text.contains("2,544"), "a line survived: {text}");
+        assert!(text.contains("██████"), "nothing was blocked: {text}");
+        assert!(text.contains("Bill Payments"), "the goal names must stay");
+        assert!(
+            !sheet.title().plain_text().contains("1,234"),
+            "the title survived: {:?}",
+            sheet.title().plain_text()
+        );
     }
 
     /// The footer is where the operators are named without opening the panel,

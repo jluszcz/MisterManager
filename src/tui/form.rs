@@ -499,7 +499,7 @@ impl TxnForm {
     pub fn display(&self, field: TxnField) -> Label {
         match field {
             TxnField::Date => Label::from(self.date.display(self.focus == TxnField::Date)),
-            TxnField::Amount => Label::from(self.amount.value()),
+            TxnField::Amount => Label::from(crate::demo::typed(self.amount.value())),
             TxnField::Description => Label::from(self.description.value()),
             TxnField::Account => match self.accounts.get(self.account) {
                 Some(a) => Label::default().account(Account::labelled(a)),
@@ -617,6 +617,15 @@ enum Entry {
     /// can see. Nothing here takes suggestions, but the distinction is the
     /// one `Field` exists to make.
     Figure(Field),
+    /// A figure in dollars, which a demo blocks out.
+    ///
+    /// A third reading rather than a flag beside `Figure`, for the reason
+    /// this is an enum at all: which reading the caller opened the form on is
+    /// one fact, and a flag would be a second place to say it. The two are
+    /// not interchangeable -- the Planning screen edits a pay-period count
+    /// and a split percentage through this same modal, and neither of those
+    /// is money.
+    Money(Field),
     /// A date, which `←`/`→` step like every other date in the app.
     Date(DateField),
 }
@@ -624,7 +633,7 @@ enum Entry {
 impl Entry {
     fn value(&self) -> &str {
         match self {
-            Entry::Figure(field) => field.value(),
+            Entry::Figure(field) | Entry::Money(field) => field.value(),
             Entry::Date(date) => date.value(),
         }
     }
@@ -644,6 +653,16 @@ impl ValueForm {
     /// `iso_only`: every reading of the `M/D` shorthand is present or future,
     /// and a birth date is decades past, so a shorthand here could only ever
     /// be a wrong year that nothing refuses.
+    /// The same form over an amount -- a Planning constant, a bill, a fund's
+    /// value, a reconciliation target. What separates it from [`ValueForm::new`]
+    /// is only that a demo blocks what it shows.
+    pub fn money(label: impl Into<Label>, prefill: &str) -> ValueForm {
+        ValueForm {
+            label: label.into(),
+            entry: Entry::Money(Field::given(prefill)),
+        }
+    }
+
     pub fn date(label: impl Into<Label>, prefill: &str) -> ValueForm {
         ValueForm {
             label: label.into(),
@@ -657,6 +676,16 @@ impl ValueForm {
 
     pub fn value(&self) -> &str {
         self.entry.value()
+    }
+
+    /// What the field shows, which is [`ValueForm::value`] itself unless this
+    /// form is collecting money in a demo. The buffer is untouched either
+    /// way: what is committed is what was typed.
+    pub fn display(&self) -> String {
+        match &self.entry {
+            Entry::Money(field) => crate::demo::typed(field.value()),
+            other => other.value().to_string(),
+        }
     }
 
     /// The label, wherever it was built -- with an account segment, on the
@@ -685,14 +714,14 @@ impl FormFields for ValueForm {
 
     fn type_char(&mut self, c: char) {
         match &mut self.entry {
-            Entry::Figure(field) => field.push(c),
+            Entry::Figure(field) | Entry::Money(field) => field.push(c),
             Entry::Date(date) => date.push(c),
         }
     }
 
     fn backspace(&mut self) {
         match &mut self.entry {
-            Entry::Figure(field) => field.backspace(),
+            Entry::Figure(field) | Entry::Money(field) => field.backspace(),
             Entry::Date(date) => date.backspace(),
         }
     }
@@ -863,7 +892,7 @@ impl TransferForm {
             TransferField::Date => {
                 Label::from(self.date.display(self.focus == TransferField::Date))
             }
-            TransferField::Amount => Label::from(self.amount.value()),
+            TransferField::Amount => Label::from(crate::demo::typed(self.amount.value())),
             TransferField::Description => Label::from(self.description.value()),
             TransferField::From => account(&self.from_accounts, self.from),
             TransferField::To => account(&self.to_accounts, self.to),
@@ -888,7 +917,11 @@ impl TransferForm {
         let cents = parse_amount(self.amount.value())?;
         // `insert_transfer` applies the sign per the destination's kind, so a
         // negative magnitude writes both legs the wrong way round.
-        ensure!(cents > Cents::ZERO, "amount must be positive, got {cents}");
+        ensure!(
+            cents > Cents::ZERO,
+            "amount must be positive, got {}",
+            crate::demo::figure(cents)
+        );
         let description = self.description.value().trim().to_string();
         ensure!(!description.is_empty(), "description must not be empty");
         Ok(Transfer {
@@ -1081,7 +1114,7 @@ pub(super) fn render_fields(
 pub fn render_value(frame: &mut Frame, form: &ValueForm) {
     let lines = vec![field_line_labeled(
         form.label(),
-        Label::from(form.value()),
+        Label::from(form.display()),
         true,
     )];
     render_fields(frame, form.title(), lines);
@@ -1162,7 +1195,9 @@ pub(super) fn render_popup(frame: &mut Frame, form_area: Rect, popup: &Autocompl
             };
             TextLine::from(format!(
                 "{marker} {}   {}   ×{}",
-                s.description, s.cents, s.uses
+                s.description,
+                crate::demo::figure(s.cents),
+                s.uses
             ))
         })
         .collect();
@@ -1960,6 +1995,105 @@ mod tests {
             form.type_char(c);
         }
         assert_eq!(form.value(), "9000");
+    }
+
+    /// The autocomplete list is a window onto rows already written: each
+    /// suggestion carries the amount it would fill in, which is a real figure
+    /// off a real transaction.
+    #[test]
+    fn a_demo_blocks_the_amounts_the_autocomplete_list_offers() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        crate::demo::install(true);
+        let mut popup = Autocomplete::default();
+        popup.set(vec![suggestion("Whole Foods", AccountId(1), 12_345)]);
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = Rect {
+                    x: 0,
+                    y: 0,
+                    width: 60,
+                    height: 3,
+                };
+                render_popup(frame, area, &popup);
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+
+        assert!(!text.contains("123.45"), "the amount survived: {text}");
+        assert!(text.contains("██████"), "nothing was blocked: {text}");
+        assert!(text.contains("Whole Foods"), "the description must stay");
+    }
+
+    /// A form opens prefilled on an edit, so the field is where the row's own
+    /// amount would otherwise be published to whoever is watching. What is in
+    /// the buffer is untouched -- the form still commits the real figure --
+    /// and the description and date beside it are not money.
+    #[test]
+    fn a_demo_blocks_the_amount_a_transaction_form_shows_without_touching_it() {
+        crate::demo::install(true);
+        let txn = Txn {
+            id: TxnId(1),
+            date: day(2026, 8, 15),
+            cents: Cents(123_456),
+            account_id: AccountId(1),
+            description: "Groceries".to_string(),
+            recurring_txn_id: None::<RecurringTxnId>,
+            edited: false,
+        };
+        let form = TxnForm::edit(accounts(), day(2026, 8, 15), &txn).unwrap();
+
+        assert_eq!(form.display(TxnField::Amount).plain_text(), "██████");
+        assert_eq!(
+            form.display(TxnField::Description).plain_text(),
+            "Groceries"
+        );
+        assert_eq!(form.commit().unwrap().cents, Cents(123_456));
+    }
+
+    #[test]
+    fn a_demo_blocks_the_amount_a_transfer_form_shows() {
+        crate::demo::install(true);
+        let mut form = TransferForm::transfer(all_accounts(), day(2026, 8, 31)).unwrap();
+        typed_transfer(&mut form, TransferField::Amount, "3,291.00");
+        assert_eq!(form.display(TransferField::Amount).plain_text(), "██████");
+    }
+
+    /// The refusal quotes the amount back, and a status line is on screen as
+    /// surely as a column is.
+    #[test]
+    fn a_demo_blocks_the_figure_a_refused_amount_quotes() {
+        crate::demo::install(true);
+        let mut form = TransferForm::transfer(all_accounts(), day(2026, 8, 31)).unwrap();
+        while form.focus != TransferField::To {
+            form.next_field();
+        }
+        form.choice(Step::NEXT);
+        typed_transfer(&mut form, TransferField::Amount, "-500");
+        let err = form.commit().unwrap_err().to_string();
+        assert!(!err.contains("500"), "the amount survived: {err}");
+        assert!(err.contains("██████"), "nothing was blocked: {err}");
+    }
+
+    /// A one-field form does not know what it is collecting -- its caller
+    /// does -- so money and a plain figure are two constructors. The Planning
+    /// screen edits a paycheck period and a split percentage through the same
+    /// modal it edits a target through, and neither of those is money.
+    #[test]
+    fn a_demo_blocks_a_money_value_form_and_leaves_a_plain_figure_alone() {
+        crate::demo::install(true);
+        assert_eq!(ValueForm::money("Target", "13,500.00").display(), "██████");
+        assert_eq!(ValueForm::new("Paycheck Period", "14").display(), "14");
+        assert_eq!(ValueForm::money("Target", "13,500.00").value(), "13,500.00");
     }
 
     /// A `ValueForm` with no account in its label reads exactly as it always
