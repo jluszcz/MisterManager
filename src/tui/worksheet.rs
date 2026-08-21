@@ -481,16 +481,22 @@ impl Search for Worksheet {
         &mut self.search
     }
 
-    /// The name filter matches a substring anywhere in the name, the same rule
-    /// `savings::refilter` uses for the same `/` key on the Savings screen:
-    /// typing `insur` finds `Car Insurance`.
+    /// A line answers to its name and to the amount it currently holds — the
+    /// same rule `savings::refilter` applies to the same `/` key, through the
+    /// same [`Matcher`]: typing `insur` finds `Car Insurance` and typing `693`
+    /// finds the line sitting at `$693.00`.
+    ///
+    /// The amount is read off the line rather than off its prefill, because
+    /// this is the one searchable column the screen also types into.
+    ///
+    /// [`Matcher`]: super::search::Matcher
     fn refilter(&mut self) {
-        let needle = self.search().to_lowercase();
+        let matcher = self.matcher();
         self.visible = self
             .lines
             .iter()
             .enumerate()
-            .filter(|(_, l)| needle.is_empty() || l.name.to_lowercase().contains(&needle))
+            .filter(|(_, l)| matcher.matches(&l.name, &[l.amount]))
             .map(|(i, _)| i)
             .collect();
         self.cursor.clamp(self.visible.len());
@@ -1074,6 +1080,46 @@ mod tests {
             vec![Cents::ZERO, Cents(69_300), Cents::ZERO]
         );
         assert_eq!(sheet.selected_count(), 1);
+    }
+
+    /// The line's own figure, typed without the separators the column draws.
+    #[test]
+    fn search_matches_a_lines_amount() {
+        let mut sheet = sheet();
+        sheet.begin_search();
+        for c in "693".chars() {
+            sheet.push_search(c);
+        }
+        let names: Vec<&str> = sheet.lines().iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["Housing"]);
+    }
+
+    /// The amount a line answers to is the one it holds now, not the one it
+    /// was prefilled with: this column is typed into, and a filter quoting a
+    /// figure the screen has stopped showing is a filter over stale rows.
+    #[test]
+    fn search_matches_the_amount_a_line_currently_holds() {
+        let mut sheet = sheet();
+        sheet.next_focus();
+        sheet.next_focus();
+        assert_eq!(sheet.focus(), Focus::Lines);
+        sheet.select_next();
+        typed(&mut sheet, "800");
+        assert_eq!(sheet.lines()[1].amount, Cents(80_000));
+
+        sheet.begin_search();
+        for c in "800".chars() {
+            sheet.push_search(c);
+        }
+        let names: Vec<&str> = sheet.lines().iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["Housing"]);
+
+        sheet.clear_search();
+        sheet.begin_search();
+        for c in "693".chars() {
+            sheet.push_search(c);
+        }
+        assert!(sheet.lines().is_empty());
     }
 
     /// The same rule every other operator obeys: a line the filter hides is

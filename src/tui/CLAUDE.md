@@ -115,7 +115,8 @@ which `style` re-exports: every mention is then visibly routed through the modul
 choice, and the plumbing stays visibly plumbing. `help` is where the screen footers are joined from — one `Topic` per context,
 so a footer cannot drift from the panel that explains it; modal border titles are still written
 where they are drawn. `cursor` answers the scroll keys for every list at once, and `search` is the
-`/` box the ledgers, Savings, the worksheet and the destination chooser share. What every screen
+`/` box the ledgers, Savings, the worksheet and the destination chooser share -- the box, its keys,
+and `Matcher`, which is what a needle *means* on all four. What every screen
 shares lives in `mod.rs`, not in whichever screen needed it first.
 
 `modal` is not a screen but the layer over one: the `Modal` enum, which of its variants carry form
@@ -634,9 +635,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     the key is one way out of either. A screen showing a `Tab` filter and a `[`/`]` filter side by
     side in one title asks the owner to work out *which* of the two is hiding the goal they are
     looking for before they can widen it, and `Esc` clearing only one of them is exactly the
-    "one action wearing two letters" the key vocabulary exists to avoid. The search box is not
-    swept up in it: `/` has its own `Esc`, the one `search::search_key` answers on every screen
-    that has a box, and a screen-level `Esc` reaching into it would make Savings the odd one out.
+    "one action wearing two letters" the key vocabulary exists to avoid. A **kept** search goes
+    first rather than with them: while the box is open `Esc` is the box's, the one
+    `search::search_key` answers on every screen that has one, and once `Enter` has left the box
+    the needle is still narrowing the list — `search::escape_kept_filter` clears it before these
+    two. That is the same order on all four `/` screens, so Savings is not the odd one out either
+    way.
   - **A goal with no date belongs to no month**, so any month filter drops it and All is the only
     place it appears. That is what the filter is *for*, not an edge case.
   - **The cycle is the span, not the set of months that have rows.** Recurring Goals steps all
@@ -697,11 +701,42 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   implements `search::Search` by handing over its `SearchBox`; the methods over it and the keys
   `search::search_key` answers are written once, so `Esc` abandons a filter and `Enter` keeps it
   identically everywhere. Every mutation calls the screen's `refilter` hook, which is what stops a
-  screen from filtering in one place and forgetting to in another. The Ledger is
-  the shape that hook exists for: it filters in **SQL** — the needle rides `Ledger::filter` into
-  the query — so its hook is empty and `App::search_key` re-queries once the key is consumed.
-  The worksheet is the one screen that overrides anything: `/` is two keys there, so opening the
-  box also spends the pending slash that `/N` would have used.
+  screen from filtering in one place and forgetting to in another — it is a **required** method,
+  so a screen that narrowed nothing could not compile.
+  The worksheet is the one screen that overrides anything else: `/` is two keys there, so opening
+  the box also spends the pending slash that `/N` would have used.
+- **`Esc` clears a kept filter before it means anything else**, through `search::escape_kept_filter`
+  in each of the four screens' own `Esc` arms. `Enter` leaves the box and keeps the needle, so
+  without this the only way back to the whole list is to open the box again and close it the other
+  way -- the one route nothing on screen suggests. It is the vocabulary's "innermost thing" read
+  literally: the needle first, then the screen's own filter (a ledger's window, Savings' container
+  and month together) or, on a modal, the modal itself. A kept filter is therefore two `Esc` presses away from discarding a
+  worksheet rather than one. The needle belongs to one screen where a ledger window belongs to
+  both, so clearing Cash's filter leaves Credit's alone — `sync_month` is only on the other half of
+  the branch.
+- **A needle matches a row's text *and* the figures the row is about**, and what that means is
+  `search::Matcher` rather than four `contains` calls. It folds the needle once, treats an empty
+  one as "match everything", and compares against `search::searchable_amount` — the figure as
+  `Cents` prints it with the thousands separators taken back out, so `1234` finds `$1,234.56` and
+  the sign survives for `-50` to find a withdrawal. What a screen decides is which figures it
+  hands over:
+  - Savings offers **Current and Goal**. `%` and `$/Pay` are derived from those two and are
+    deliberately withheld — a needle reaching a readout narrows through a column nobody was
+    searching — and the goal date has `[`/`]` already.
+  - The worksheet offers the amount the line **currently holds**, not its prefill: that column is
+    typed into, and a filter quoting a figure the screen has stopped showing is a filter over
+    stale rows.
+  - A ledger offers the amount **as stored**, so Credit's debt-positive figures match the column
+    above them.
+  - The destination chooser offers none. What is being chosen is a goal by identity, and the
+    amount that will land on it is the waterfall's rather than the goal's.
+- **Every `/` screen filters in memory, the Ledger included.** Its rows come out of SQL, but
+  `txn::Filter` carries no needle: the window and the account filter bound the fetch before
+  anything is typed, so the rows in hand are the only rows a needle could ever reach. Narrowing
+  them in `Ledger::refilter` is what lets the rule be `Matcher`'s once instead of restated as a
+  `LIKE` clause with nothing holding the two statements together — and a keystroke costs no query.
+  This is sound only while the window bounds the fetch; a ledger that ever showed *all* rows would
+  want the needle back in the query.
 - **The scroll keys are documented nowhere, on purpose.** `↑`/`↓`,
   `PgUp`/`PgDn` and `Home`/`End` reach every `cursor::Scroll` implementor
   through one `cursor::scroll_key` call, so they mean the same thing on every

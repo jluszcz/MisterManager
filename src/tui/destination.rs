@@ -175,17 +175,16 @@ impl Search for Chooser {
     /// It has no name to match on, and a filter that hid it would make
     /// clearing a key reachable only by clearing the filter first -- for the
     /// one choice that is always available whatever the goals are called.
+    ///
+    /// The rows offer no figures: what is being chosen is a goal by identity,
+    /// and the amount that will land on it is the waterfall's, not the goal's.
     fn refilter(&mut self) {
-        let needle = self.search().to_lowercase();
+        let matcher = self.matcher();
         self.visible = self
             .choices
             .iter()
             .enumerate()
-            .filter(|(_, c)| {
-                matches!(c, Choice::Unset)
-                    || needle.is_empty()
-                    || c.name().to_lowercase().contains(&needle)
-            })
+            .filter(|(_, c)| matches!(c, Choice::Unset) || matcher.matches(c.name(), &[]))
             .map(|(i, _)| i)
             .collect();
         self.cursor.clamp(self.visible.len());

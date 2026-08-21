@@ -1531,7 +1531,6 @@ mod tests {
             account_id: None,
             from: day(2026, 1, 1),
             to: day(2026, 12, 31),
-            search: None,
         };
         let descriptions: Vec<String> = txn::list(&db, &filter)
             .unwrap()

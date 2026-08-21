@@ -123,6 +123,9 @@ pub struct Ledger {
     window: Window,
     search: SearchBox,
     rows: Vec<Txn>,
+    /// Indices into `rows` that survive the search. Parallel to what is
+    /// drawn, the same way every other `/` screen carries one.
+    visible: Vec<usize>,
     /// The balance of what the account filter names, as of today — the same
     /// figure the Overview's To-Date column carries. Not derived from `rows`:
     /// see [`Ledger::set_total`].
@@ -153,6 +156,7 @@ impl Ledger {
             window: Window::containing(today),
             search: SearchBox::new(),
             rows: Vec::new(),
+            visible: Vec::new(),
             total: Cents::ZERO,
             targets: HashMap::new(),
             cursor: Cursor::new(),
@@ -254,28 +258,27 @@ impl Ledger {
         self.kind
     }
 
+    /// Which slice of `txn` this screen is showing. The needle is **not** in
+    /// it — see the [`Search`] impl below.
     pub fn filter(&self) -> Filter {
         Filter {
             kind: self.kind,
             account_id: self.selected_account(),
             from: self.window.start(),
             to: self.window.end(),
-            search: if self.search().is_empty() {
-                None
-            } else {
-                Some(self.search().to_string())
-            },
         }
     }
 
-    /// Take the rows the filter matched, keeping the cursor inside them.
+    /// Take the rows the query matched, keeping the cursor inside whatever
+    /// the search then leaves of them.
     pub fn set_rows(&mut self, rows: Vec<Txn>) {
         self.rows = rows;
-        self.cursor.clamp(self.rows.len());
+        self.refilter();
     }
 
-    pub fn rows(&self) -> &[Txn] {
-        &self.rows
+    /// The rows the search left, not every row fetched.
+    pub fn rows(&self) -> Vec<&Txn> {
+        self.visible.iter().map(|i| &self.rows[*i]).collect()
     }
 
     /// Take the balance of whatever the `Tab` filter names, as of today.
@@ -326,7 +329,9 @@ impl Ledger {
     }
 
     pub fn selected(&self) -> Option<&Txn> {
-        self.rows.get(self.cursor.index())
+        self.visible
+            .get(self.cursor.index())
+            .map(|i| &self.rows[*i])
     }
 
     /// Put the cursor on the last row dated on or before `today` — the rows
@@ -338,8 +343,12 @@ impl Ledger {
     /// on every edit and delete. `App` calls this only when the window or the
     /// account filter changed the row set out from under it.
     pub fn select_at_or_before(&mut self, today: NaiveDate) {
-        self.cursor
-            .select(self.rows.iter().rposition(|t| t.date <= today).unwrap_or(0));
+        self.cursor.select(
+            self.rows()
+                .iter()
+                .rposition(|t| t.date <= today)
+                .unwrap_or(0),
+        );
     }
 
     pub fn account_name(&self, id: AccountId) -> &str {
@@ -370,9 +379,19 @@ impl Ledger {
     }
 }
 
-/// The rows come from SQL — [`Ledger::filter`] carries the needle into the
-/// query — so there is nothing in memory to re-filter. `App` re-queries after
-/// the key is consumed.
+/// The needle stays out of the query on purpose.
+///
+/// [`Ledger::filter`] already bounds the fetch by the window and the account,
+/// and the needle used to be a third term `AND`-ed onto the same `SELECT` —
+/// so the rows in hand were always the only rows a needle could reach.
+/// Narrowing them here instead means the search rule is [`Matcher`]'s once,
+/// shared with the three screens that never had a query to put it in, rather
+/// than restated in SQL where nothing holds the two statements together.
+///
+/// This is only sound while the window bounds the fetch. A ledger that ever
+/// showed *all* rows would want the needle back in the query.
+///
+/// [`Matcher`]: super::search::Matcher
 impl Search for Ledger {
     fn search_box(&self) -> &SearchBox {
         &self.search
@@ -380,6 +399,22 @@ impl Search for Ledger {
 
     fn search_box_mut(&mut self) -> &mut SearchBox {
         &mut self.search
+    }
+
+    /// A row answers to its description and to the amount it is drawn with —
+    /// **as stored**, so the Credit ledger's debt-positive figures match the
+    /// column above them and a needle carrying a `-` finds what the screen
+    /// shows with one.
+    fn refilter(&mut self) {
+        let matcher = self.matcher();
+        self.visible = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| matcher.matches(&t.description, &[t.cents]))
+            .map(|(i, _)| i)
+            .collect();
+        self.cursor.clamp(self.visible.len());
     }
 }
 
@@ -393,7 +428,7 @@ impl Scroll for Ledger {
     }
 
     fn row_count(&self) -> usize {
-        self.rows.len()
+        self.visible.len()
     }
 }
 
@@ -581,6 +616,115 @@ mod tests {
     /// A ledger under its `All` filter.
     fn unfiltered_ledger() -> Ledger {
         ledger(day(2026, 8, 15))
+    }
+
+    /// A row with a description and an amount worth searching for.
+    fn described(n: i64, description: &str, cents: i64) -> Txn {
+        Txn {
+            description: description.to_string(),
+            cents: Cents(cents),
+            ..dated_row(n, day(2026, 8, 1))
+        }
+    }
+
+    /// Three rows whose descriptions and figures are each distinctive enough
+    /// to be searched for one at a time.
+    fn searchable_ledger() -> Ledger {
+        let mut ledger = unfiltered_ledger();
+        ledger.set_rows(vec![
+            described(1, "Coffee", 450),
+            described(2, "Groceries", -4_200),
+            described(3, "Rent", 150_000),
+        ]);
+        ledger
+    }
+
+    fn descriptions(ledger: &Ledger) -> Vec<&str> {
+        ledger
+            .rows()
+            .iter()
+            .map(|t| t.description.as_str())
+            .collect()
+    }
+
+    fn search_for(ledger: &mut Ledger, needle: &str) {
+        ledger.begin_search();
+        for c in needle.chars() {
+            ledger.push_search(c);
+        }
+    }
+
+    /// The rows the query already returned are the rows a needle can reach:
+    /// the window bounds the fetch, so nothing outside them was ever a
+    /// candidate. Narrowing them in memory needs no second query.
+    #[test]
+    fn search_narrows_the_rows_already_fetched_without_a_re_query() {
+        let mut ledger = searchable_ledger();
+        search_for(&mut ledger, "cof");
+        assert_eq!(descriptions(&ledger), ["Coffee"]);
+
+        ledger.clear_search();
+        assert_eq!(descriptions(&ledger), ["Coffee", "Groceries", "Rent"]);
+    }
+
+    /// A substring, not a prefix: `Foods` finds `Whole Foods` too.
+    #[test]
+    fn search_matches_a_description_anywhere_in_the_string() {
+        let mut ledger = unfiltered_ledger();
+        ledger.set_rows(vec![
+            described(1, "Whole Foods", 100),
+            described(2, "Foods R Us", 100),
+            described(3, "Mortgage", 100),
+        ]);
+        search_for(&mut ledger, "Foods");
+        assert_eq!(descriptions(&ledger), ["Whole Foods", "Foods R Us"]);
+    }
+
+    #[test]
+    fn search_matches_a_rows_amount() {
+        let mut ledger = searchable_ledger();
+        search_for(&mut ledger, "1500");
+        assert_eq!(descriptions(&ledger), ["Rent"]);
+    }
+
+    /// Amounts render as stored, so the sign is part of what is on screen and
+    /// part of what a needle sees.
+    #[test]
+    fn search_matches_the_sign_an_amount_is_drawn_with() {
+        let mut ledger = searchable_ledger();
+        search_for(&mut ledger, "-42");
+        assert_eq!(descriptions(&ledger), ["Groceries"]);
+
+        ledger.clear_search();
+        search_for(&mut ledger, "-45");
+        assert!(descriptions(&ledger).is_empty(), "$4.50 is not negative");
+    }
+
+    /// `%` and `_` are `LIKE` wildcards, and were escaped for the query the
+    /// needle used to ride into. A substring match has no such syntax, so a
+    /// description containing one is found by typing it.
+    #[test]
+    fn a_wildcard_character_in_a_description_is_matched_literally() {
+        let mut ledger = unfiltered_ledger();
+        ledger.set_rows(vec![
+            described(1, "5% APY bonus", 450),
+            described(2, "5 APY bonus", 450),
+        ]);
+        search_for(&mut ledger, "5%");
+        assert_eq!(descriptions(&ledger), ["5% APY bonus"]);
+    }
+
+    /// The same rule the other three screens obey: an operator may not reach
+    /// a row the filter is hiding.
+    #[test]
+    fn a_shrinking_search_moves_the_selection_into_bounds() {
+        let mut ledger = searchable_ledger();
+        ledger.select_last();
+        assert_eq!(ledger.selected().unwrap().description, "Rent");
+
+        search_for(&mut ledger, "cof");
+        assert_eq!(ledger.selected_index(), 0);
+        assert_eq!(ledger.selected().unwrap().description, "Coffee");
     }
 
     /// The **column** a substring starts at in a rendered row.
@@ -786,36 +930,41 @@ mod tests {
     }
 
     #[test]
-    fn the_filter_carries_the_kind_window_and_search() {
-        let mut ledger = Ledger::new(Kind::Credit, Vec::new(), None, day(2026, 8, 15));
-        ledger.begin_search();
-        for c in "Foods".chars() {
-            ledger.push_search(c);
-        }
-        ledger.backspace_search();
-
+    fn the_filter_carries_the_kind_and_the_window() {
+        let ledger = Ledger::new(Kind::Credit, Vec::new(), None, day(2026, 8, 15));
         let filter = ledger.filter();
         assert_eq!(filter.kind, Kind::Credit);
         assert_eq!(filter.from, day(2026, 8, 1));
         assert_eq!(filter.to, day(2026, 8, 31));
-        assert_eq!(filter.search.as_deref(), Some("Food"));
     }
 
+    /// The needle narrows the rows in hand and asks for no different ones, so
+    /// the query is the same query with the box open, typed into, and closed
+    /// again. Nothing re-runs it on a keystroke.
     #[test]
-    fn an_empty_search_box_filters_nothing() {
+    fn typing_a_needle_does_not_change_the_query() {
         let mut ledger = ledger(day(2026, 8, 15));
+        let before = ledger.filter();
+
         ledger.begin_search();
-        assert_eq!(ledger.filter().search, None);
-        ledger.push_search('x');
-        ledger.backspace_search();
-        assert_eq!(ledger.filter().search, None);
+        for c in "Foods".chars() {
+            ledger.push_search(c);
+        }
+        let during = ledger.filter();
+
+        assert_eq!(
+            (during.kind, during.from, during.to),
+            (before.kind, before.from, before.to)
+        );
+        assert_eq!(during.account_id, before.account_id);
     }
 
-    /// Typing into the search box shrinks the list under the cursor. A
-    /// selection left past the end would make `e` and `d` operate on nothing
-    /// — or, worse, on whatever later lands at that index.
+    /// A re-query -- a stepped window or a cycled account filter -- can hand
+    /// back fewer rows than the cursor was sitting in. A selection left past
+    /// the end would make `e` and `d` operate on nothing, or, worse, on
+    /// whatever later lands at that index.
     #[test]
-    fn a_shrinking_filter_moves_the_selection_into_bounds() {
+    fn a_shrinking_row_set_moves_the_selection_into_bounds() {
         let mut ledger = ledger(day(2026, 8, 15));
         ledger.set_rows((1..=5).map(row).collect());
         for _ in 0..4 {

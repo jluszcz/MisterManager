@@ -286,12 +286,17 @@ impl App {
         if self.modal.is_some() {
             return self.modal_key(key);
         }
+        // Both boxes narrow a list already in memory, so a keystroke is the
+        // screen's own `refilter` and nothing else -- no re-query, and no
+        // handler of their own to hold the difference that used to be here.
         match self.screen {
             Screen::Cash | Screen::Credit if self.ledger().is_searching() => {
-                return self.search_key(key);
+                search::search_key(self.ledger_mut(), key.code);
+                return Ok(());
             }
             Screen::Savings if self.savings.is_searching() => {
-                return self.savings_search_key(key);
+                search::search_key(&mut self.savings, key.code);
+                return Ok(());
             }
             _ => {}
         }
@@ -338,7 +343,11 @@ impl App {
             // reconciliation, so there is nothing to re-query.
             KeyCode::Char('[') => self.savings.previous_month(),
             KeyCode::Char(']') => self.savings.next_month(),
-            KeyCode::Esc => self.savings.clear_filters(),
+            KeyCode::Esc => {
+                if !search::escape_kept_filter(&mut self.savings) {
+                    self.savings.clear_filters();
+                }
+            }
             KeyCode::Char('/') => self.savings.begin_search(),
             KeyCode::Char('a') => self.open_allocate()?,
             KeyCode::Char('A') => self.open_payday()?,
@@ -350,14 +359,6 @@ impl App {
             KeyCode::Char('U') => self.open_undo()?,
             _ => {}
         }
-        Ok(())
-    }
-
-    /// Incremental, and entirely in memory: there are 86 goals and all of them
-    /// are already loaded for the reconciliation line, so the screen's own
-    /// `refilter` is the whole of the work.
-    fn savings_search_key(&mut self, key: KeyEvent) -> Result<()> {
-        search::search_key(&mut self.savings, key.code);
         Ok(())
     }
 
@@ -604,7 +605,11 @@ impl App {
             return Ok(());
         }
         match key.code {
-            KeyCode::Esc => self.close_modal(),
+            KeyCode::Esc => {
+                if !search::escape_kept_filter(chooser) {
+                    self.close_modal();
+                }
+            }
             KeyCode::Char('/') => chooser.begin_search(),
             _ => {}
         }
@@ -1078,11 +1083,15 @@ impl App {
             }
             // The ledgers have no All to clear to: the window bounds the
             // query itself, so "no filter" would be every transaction ever.
-            // Clearing it means the window the screen opens on.
+            // Clearing it means the window the screen opens on -- but only
+            // once a kept needle is gone, and only on this ledger: the window
+            // is shared with the other one and the needle is not.
             KeyCode::Esc => {
-                let opening = Window::containing(self.today);
-                self.ledger_mut().set_window(opening);
-                self.sync_month()?;
+                if !search::escape_kept_filter(self.ledger_mut()) {
+                    let opening = Window::containing(self.today);
+                    self.ledger_mut().set_window(opening);
+                    self.sync_month()?;
+                }
             }
             KeyCode::Tab => {
                 self.ledger_mut().next_account();
@@ -1149,18 +1158,6 @@ impl App {
             None => format!("{name} target cleared"),
         };
         self.close_modal();
-        Ok(())
-    }
-
-    /// Incremental: every keystroke re-runs the query.
-    ///
-    /// The ledger filters in SQL, so its `refilter` hook does nothing and the
-    /// re-query happens here instead — the needle reaches the rows through
-    /// `Ledger::filter`.
-    fn search_key(&mut self, key: KeyEvent) -> Result<()> {
-        if search::search_key(self.ledger_mut(), key.code) {
-            return self.reload();
-        }
         Ok(())
     }
 
@@ -1841,6 +1838,9 @@ impl App {
         }
         match key.code {
             KeyCode::Esc => {
+                if search::escape_kept_filter(sheet) {
+                    return Ok(());
+                }
                 self.close_modal();
                 self.status = "cancelled".to_string();
                 return self.open_next_worksheet();
@@ -3336,9 +3336,8 @@ mod tests {
         press(&mut app, KeyCode::Enter);
 
         assert!(app.modal.is_none());
-        let written = app
-            .cash
-            .rows()
+        let rows = app.cash.rows();
+        let written = rows
             .iter()
             .find(|t| t.description == "Zebra")
             .expect("the new row must be on screen without another keystroke");
@@ -5802,7 +5801,6 @@ mod tests {
                 account_id: None,
                 from: day(2000, 1, 1),
                 to: day(2100, 1, 1),
-                search: None,
             },
         )
         .unwrap()
@@ -6086,6 +6084,127 @@ mod tests {
 
         assert_eq!(app.savings.search(), "");
         assert!(app.savings.selected_month().is_some());
+    }
+
+    /// `Enter` leaves the box and keeps the filter, so `Esc` outside the box
+    /// is what clears it -- and the needle goes before the container and the
+    /// month, which `clear_filters` then takes together.
+    #[test]
+    fn esc_outside_the_savings_box_clears_a_kept_search_before_the_other_filters() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "vac");
+        press(&mut app, KeyCode::Enter);
+        assert!(!app.savings.is_searching(), "Enter left the box");
+        assert_eq!(app.savings.search(), "vac");
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.savings.search(), "");
+        assert!(
+            app.savings.selected_container().is_some(),
+            "the container is the next thing out, not this one"
+        );
+        assert!(
+            app.savings.selected_month().is_some(),
+            "and so is the month"
+        );
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.savings.selected_container(), None);
+        assert_eq!(app.savings.selected_month(), None);
+        assert_eq!(app.savings.rows().len(), 2);
+    }
+
+    /// The same order on a ledger, where the outer filter is the window.
+    #[test]
+    fn esc_outside_a_ledger_box_clears_a_kept_search_before_the_window() {
+        let mut app = app_spanning_three_months();
+        let august = app.cash.window();
+
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char(']'));
+        let september = app.cash.window();
+        assert_ne!(september, august);
+
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "sept");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.cash.rows().len(), 1);
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.cash.search(), "");
+        assert_eq!(
+            app.cash.window(),
+            september,
+            "the window is the next thing out"
+        );
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.cash.window(), august);
+    }
+
+    /// The needle is one ledger's; the window is both. Clearing a kept filter
+    /// on Cash must not reach across to Credit the way `Esc` on the window
+    /// deliberately does.
+    #[test]
+    fn clearing_a_kept_filter_on_one_ledger_leaves_the_other_alone() {
+        let mut app = app_spanning_three_months();
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "card");
+        press(&mut app, KeyCode::Enter);
+
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "aug");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Esc);
+
+        assert_eq!(app.cash.search(), "");
+        assert_eq!(app.credit.search(), "card");
+    }
+
+    /// On a modal the outer thing is the modal itself, so a kept filter has to
+    /// be cleared before `Esc` may throw the worksheet away.
+    #[test]
+    fn esc_with_a_kept_filter_clears_it_rather_than_cancelling_the_worksheet() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('A'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "couch");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(worksheet(&app).lines().len(), 1);
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(worksheet(&app).search(), "");
+        assert_eq!(worksheet(&app).lines().len(), 2, "the sheet is still open");
+
+        press(&mut app, KeyCode::Esc);
+        assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn esc_with_a_kept_filter_clears_it_rather_than_closing_the_destination_list() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        cursor_to(&mut app, Line::Bills);
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "zzz");
+        press(&mut app, KeyCode::Enter);
+
+        press(&mut app, KeyCode::Esc);
+        let Some(Modal::Destination(chooser)) = &app.modal else {
+            panic!("the list closed");
+        };
+        assert_eq!(chooser.search(), "");
+
+        press(&mut app, KeyCode::Esc);
+        assert!(app.modal.is_none());
     }
 
     #[test]
@@ -6594,9 +6713,9 @@ mod tests {
     /// Written by reading the `match` arms of `worksheet_key`, `picker_key`,
     /// `destination_key`, `form_key` -- with `popup_key`, which it delegates to --
     /// `modal_key`'s confirm arms and its `Modal::PlanTransfers` arm, and the
-    /// three search handlers, `search_key`, `savings_search_key` and the branch
-    /// `destination_key` opens with. Three families of arm are deliberately not
-    /// listed:
+    /// three `search::search_key` calls: the two branches `dispatch` opens with
+    /// and the one `destination_key` does. Three families of arm are
+    /// deliberately not listed:
     ///
     /// - the six scroll keys, which `cursor::scroll_key` answers uniformly on
     ///   every list and no table names;

@@ -25,14 +25,17 @@ step both so the two always compare the same weeks, and `Esc` returns them to
 the month around today. Each title ends with the balance of whatever `Tab`
 narrows the screen to — `Cash · Aug 2026 · All · Today $42,000.00` — which is
 the same to-date figure the Overview quotes, so neither the month on show nor a
-`/` search moves it. Narrowed to one account, `r` takes the balance a statement
+`/` search moves it. A search matches a row's description or its amount, typed
+without the separators the column draws — `1234` finds `$1,234.56` — and
+`Enter` keeps it while `Esc` gives the whole list back. Narrowed to one account, `r` takes the balance a statement
 says that account holds, and the title carries it with the difference after it —
 `… · Today $1,160.00 · Target $1,200.00 · Δ -$40.00`, green above the target,
 red below it, a dash when they match — so a typo or a missed row shows up while
 the rows are still being entered. Nothing is written: quitting forgets every
 target. Savings lists every open
 goal with the container it belongs to:
-`Tab` filters by container, `[` and `]` filter by goal date, `/` searches, `a`
+`Tab` filters by container, `[` and `]` filter by goal date, `/` searches names,
+balances and targets, `a`
 allocates against the selected goal, `e` edits it, and `c` ends it — returning
 its value to unallocated, or moving it to another goal in the same container.
 `f` marks a goal, drawing its row as a band so it stands out among the rest;
