@@ -1173,6 +1173,17 @@ impl App {
             .checked_add_signed(chrono::Duration::days(days))
             .context("the ad-hoc date ran off the end of the calendar")?;
         self.reload_overview()?;
+        // The drift is what the press did, so it is a message rather than a
+        // property of the screen: it takes `STATUS_TTL` from `on_key` like
+        // every other one and gives the Overview's keys back. A scrub is
+        // meant to be left standing while the columns are read, and a footer
+        // that reported it for that whole time would cost the keys for as
+        // long as the question is open. What outlives the message is the `*`
+        // on the column header, which is drawn from the scrub itself.
+        self.status = match self.scrubbed_days() {
+            0 => "back to Paycheck-Eve".to_string(),
+            drift => format!("scrubbed {drift:+}d"),
+        };
         // The Overview is not the only screen quoting a balance at this date:
         // Planning's `Excess (Actual)` is the checking balance there, and the
         // payday `t` writes is computed from it.
@@ -1538,9 +1549,8 @@ impl App {
     ///
     /// Joined from `help::Topic` rather than written here, so a key cannot
     /// appear in the footer with one name and in the Help panel with another.
-    /// Three cases stay hand-written because they are not key lists: a scrubbed
-    /// Overview reads its own drift, and both search boxes echo what has been
-    /// typed.
+    /// Two cases stay hand-written because they are not key lists: both search
+    /// boxes echo what has been typed.
     ///
     /// A `match` over the screen, guarded the way [`App::topic`] is, so a ninth
     /// screen is a compile error here rather than a footer that silently reads
@@ -1550,10 +1560,7 @@ impl App {
             return self.status.clone();
         }
         match self.screen {
-            Screen::Overview => match self.scrubbed_days() {
-                0 => Topic::Overview.footer(),
-                drift => format!("scrubbed {drift:+}d"),
-            },
+            Screen::Overview => Topic::Overview.footer(),
             Screen::Cash | Screen::Credit if self.ledger().is_searching() => {
                 format!(
                     "/{}  · Enter to keep · Esc to clear",
@@ -3017,6 +3024,40 @@ mod tests {
 
         assert_eq!(app.scrubbed_days(), 2, "Enter must not reset the scrub");
         assert_eq!(app.status, "");
+    }
+
+    /// Scrubbing back onto the baseline is still a press that did something,
+    /// and `scrubbed +0d` is a drift that is not one. Saying where the date
+    /// landed is what an arrow that undoes a scrub has to report.
+    #[test]
+    fn scrubbing_back_onto_the_baseline_says_where_the_date_landed() {
+        let mut app = app();
+
+        shift_press(&mut app, KeyCode::Right);
+        shift_press(&mut app, KeyCode::Left);
+
+        assert_eq!(app.scrubbed_days(), 0);
+        assert_eq!(app.status, "back to Paycheck-Eve");
+    }
+
+    /// The drift reports the press that moved the date; it is not a property
+    /// of the screen. So it borrows the footer the way every other message
+    /// does and hands the Overview's keys back on its own -- a scrub left
+    /// standing must not cost the keys for as long as it stands. What says
+    /// the view is still off the baseline is the `*` on the column header,
+    /// which is drawn from the scrub itself rather than from the message.
+    #[test]
+    fn the_scrub_drift_gives_the_footer_back_once_it_has_outlived_its_ttl() {
+        let mut app = app();
+        let keys = Topic::Overview.footer();
+
+        shift_press(&mut app, KeyCode::Right);
+        assert_eq!(app.footer(), "scrubbed +7d");
+
+        app.expire_status_at(Instant::now() + STATUS_TTL);
+
+        assert_eq!(app.footer(), keys);
+        assert_eq!(app.scrubbed_days(), 7, "the message faded, not the scrub");
     }
 
     /// The derived date is the baseline the marker and the counter compare
