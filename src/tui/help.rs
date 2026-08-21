@@ -185,8 +185,8 @@ const LEDGER: [Entry; 11] = [
 const SAVINGS: [Entry; 13] = [
     Entry {
         key: "Tab",
-        label: Label::Own("container"),
-        detail: "Cycle the container filter: All, then one entry per account that holds goals.",
+        label: Label::Own("account"),
+        detail: "Cycle the container filter: All, then one entry per account that holds goals. The footer word is the ledgers' -- one filter over the same accounts should not be called two things by two screens -- and the goals themselves are what make that account a container.",
     },
     Entry {
         key: "BackTab",
@@ -210,37 +210,37 @@ const SAVINGS: [Entry; 13] = [
     },
     Entry {
         key: "a",
-        label: Label::Own("allocate"),
+        label: Label::Shared("allocate"),
         detail: "Allocate cash to the selected goal. One row, written as its own batch.",
     },
     Entry {
         key: "A",
-        label: Label::Own("payday"),
+        label: Label::Shared("allocate"),
         detail: "Open a payday worksheet for the container, prefilled from per-paycheck. One commit is one batch, so a fumbled payday is one undo rather than dozens of deletions. Payday means running it once per container.",
     },
     Entry {
         key: "i",
-        label: Label::Own("interest"),
+        label: Label::Shared("allocate"),
         detail: "Open an interest worksheet. Brokerage prefills pro rata; Rainy Day rescales its previous Interest batch, falling back to pro rata when there is none.",
     },
     Entry {
         key: "n",
-        label: Label::Own("new"),
+        label: Label::Shared("goal"),
         detail: "Create a goal from scratch -- a name, a target and a date -- in the container Tab names. Not a, which is taken here by the allocation this screen is mostly used for. Goals created from recurring goal entries are s on screen 7, over on the table those entries live in.",
     },
     Entry {
-        key: "c",
-        label: Label::Own("close"),
-        detail: "End the selected goal: return its value to unallocated, or move it to another goal in the same container. Crossing containers is refused, since no cash moved between the accounts.",
-    },
-    Entry {
         key: "e",
-        label: Label::Own("edit"),
+        label: Label::Shared("goal"),
         detail: "Edit the selected goal's name, target and date.",
     },
     Entry {
+        key: "c",
+        label: Label::Shared("goal"),
+        detail: "End the selected goal: return its value to unallocated, or move it to another goal in the same container. Crossing containers is refused, since no cash moved between the accounts.",
+    },
+    Entry {
         key: "f",
-        label: Label::Own("favorite"),
+        label: Label::Own("fave"),
         detail: "Mark the selected goal, or take the mark back. A marked goal's row is drawn as a band so it stands out among the rest, and that is the whole of what it does: it does not sort the goal up and it does not survive a filter the goal itself would not. Its own letter because nothing else in the app marks a row for the owner's own attention -- and the mark is stored on the goal, so mm import --replace loses it along with the goals it belongs to.",
     },
     Entry {
@@ -1054,6 +1054,24 @@ mod tests {
         }
     }
 
+    /// A footer wider than the terminal is truncated from the right, so the
+    /// keys it loses are the ones at the end -- `q quit` first, which is the
+    /// one every screen shows. This measures every screen at once, where
+    /// `app`'s two width tests measure the footers `App::footer` composes at
+    /// runtime; the lever when a screen runs out of room is `Label::Shared`,
+    /// which puts several keys under one word.
+    #[test]
+    fn every_screen_footer_fits_the_minimum_width() {
+        for topic in SCREENS {
+            let footer = topic.footer();
+            let width = footer.chars().count();
+            assert!(
+                width <= MIN_WIDTH as usize,
+                "{topic:?} footer is {width} wide: {footer}"
+            );
+        }
+    }
+
     /// Only a modal or a search box may join no footer. A screen topic with no
     /// labelled entries would render an empty footer line.
     #[test]
@@ -1091,7 +1109,7 @@ mod tests {
         );
         assert_eq!(
             Topic::Savings.footer(),
-            "Tab container · [ ] month · Esc all · / search · a allocate · A payday · i interest · n new · c close · e edit · f favorite · U undo · q quit"
+            "Tab account · [ ] month · Esc all · / search · a/A/i allocate · n/e/c goal · f fave · U undo · q quit"
         );
         assert_eq!(
             Topic::Planning.footer(),

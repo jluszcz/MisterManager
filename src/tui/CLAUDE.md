@@ -58,6 +58,18 @@ app-wide keys are footer chrome rather than table entries — every screen has t
 for. The scroll keys are absent from both, for the same reason and one better:
 `cursor::scroll_key` answers them identically on every list in the app.
 
+**A footer must fit `MIN_WIDTH`, and the budget is what decides how a key is labelled.** ratatui
+truncates a `Paragraph` from the right, so an over-wide footer drops the keys at its end — `q quit`
+first, the one item every screen carries — with nothing on screen to say a word went missing.
+`help::tests::every_screen_footer_fits_the_minimum_width` measures every screen topic; `app`'s two
+own width tests measure the footers `App::footer` composes at runtime, which a `Topic` alone does not
+see. When a screen runs out of room the lever is `Label::Shared` rather than a shorter word or a
+dropped key: several keys join under one word naming what they act *on* — `E/a/d bill` on Planning,
+`a/A/i allocate` and `n/e/c goal` on Savings — so every key is still advertised and the verbs it
+cost are a keystroke away in the panel, which has room for them. Savings spends its budget hardest,
+and it is also the one screen besides the ledgers whose chrome omits `1-9 screens`; both are `Topic::chrome`
+decisions rather than anything a screen says for itself.
+
 A status message — a write's result, a parse error, a "nothing selected" — borrows the footer rather
 than owning it, and gives it back on its own after `app::STATUS_TTL`. A key press still clears it
 sooner, since `on_key` clears before it dispatches; the timeout is for the owner who reads the

@@ -6271,7 +6271,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '4'),
-            "Tab container · [ ] month · Esc all · / search · a allocate · A payday · i interest · n new · c close · e edit · f favorite · U undo · q quit"
+            "Tab account · [ ] month · Esc all · / search · a/A/i allocate · n/e/c goal · f fave · U undo · q quit"
         );
         assert_eq!(
             footer_of(&mut app, '5'),
