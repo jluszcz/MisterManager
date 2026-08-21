@@ -473,6 +473,11 @@ matches, since nothing but a test ties them together.
   resource, so two repositories declaring one would revert each other on every apply. The rule
   tiers to `INTELLIGENT_TIERING` after a day and expires at 365 — not `STANDARD_IA`, which S3
   refuses to transition into inside 30 days of an object's creation.
+- **The scheduled check is the default database's, and `--db` opts out of it.** It runs after every
+  arm but `backup` itself, and the state file it stamps records *when* an upload last happened
+  rather than *what* was uploaded — so a scratch database backed up on the schedule would take the
+  real one's turn as well as leaving an object nothing distinguishes from a real backup. An
+  explicit `mm backup` is exempt, because being pointed somewhere is what it was asked for.
 - **The due check reads the real clock, not `--today`.** `--today` simulates a financial date, and
   whether a file reached S3 is a fact about wall time — `mm --today 2027-01-01` must not fire an
   upload. `run_if_due` therefore takes `now` as `Utc::now()` from the CLI rather than the `today`

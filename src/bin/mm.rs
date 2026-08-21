@@ -37,7 +37,9 @@ enum Command {
         #[arg(long)]
         force: bool,
         /// Print when the last backup ran and when the next is due, then exit.
-        #[arg(long)]
+        /// Refuses `--force`: this arm prints and exits without uploading, so
+        /// accepting the flag would be accepting an instruction it drops.
+        #[arg(long, conflicts_with = "force")]
         status: bool,
     },
 }
@@ -51,6 +53,9 @@ fn default_db() -> Result<PathBuf> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Whether the schedule applies is a question about *which* database this
+    // is, so it is asked before the option is collapsed into a path.
+    let is_default_db = cli.db.is_none();
     let path = match cli.db {
         Some(p) => p,
         None => default_db()?,
@@ -103,7 +108,14 @@ fn main() -> Result<()> {
 
     // Both of the other arms fall through to here. An `mm import` gets the
     // same scheduled check the TUI does, for free.
-    if !is_explicit_backup {
+    //
+    // Only ever the default database, though. `--db` names a copy -- the
+    // importer's own documented dry-run points it at a scratch file -- and one
+    // of those reaching S3 would land under a key indistinguishable from a real
+    // backup *and* stamp the one state file, suppressing the real database's
+    // next upload for a whole interval. An explicit `mm backup` still uploads
+    // whatever it was pointed at, because it was asked to.
+    if !is_explicit_backup && is_default_db {
         scheduled_backup(&path, &cfg, &state_path);
     }
     Ok(())

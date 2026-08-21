@@ -170,6 +170,11 @@ to re-enter.
 check runs last, after the TUI has already torn its screen down, so a slow network holds up only
 the shell prompt returning, and a failure prints to stderr rather than making the run fail.
 
+The schedule belongs to the default database. A run given `--db` skips the check entirely: the one
+state file records when a backup last ran, not which file it ran on, so uploading a scratch copy
+would both leave a key indistinguishable from a real backup and hold the real database's next
+upload off for a whole interval. `mm backup` still uploads whatever it is pointed at.
+
 Backups are off until a config file switches them on:
 
 ```toml
