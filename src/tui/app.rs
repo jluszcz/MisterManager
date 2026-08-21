@@ -3326,6 +3326,50 @@ mod tests {
         assert!(drawn.contains("2026-08-12"), "the date must stay:\n{drawn}");
     }
 
+    /// The same net one layer in: every key that opens a form or a worksheet
+    /// over a row that carries a figure, with the mask on and none of the
+    /// fixture's figures reaching the buffer.
+    ///
+    /// The screen sweep above cannot see any of this -- it only ever draws
+    /// screens `1`-`9` -- which is exactly how `BillField::Amount` came to be
+    /// the one amount field this feature missed. A form prefills from the row
+    /// it opens on, so a form is where a real figure is most likely to reach
+    /// the screen, not least.
+    #[test]
+    fn a_demo_leaves_no_figure_on_any_form_a_row_opens() {
+        crate::demo::install(true);
+        for (screen, key) in [
+            ('2', 'a'),
+            ('2', 'e'),
+            ('2', 'r'),
+            ('2', 't'),
+            ('4', 'e'),
+            ('4', 'a'),
+            ('4', 'A'),
+            ('4', 'n'),
+            ('5', 'e'),
+            ('5', 'E'),
+            ('5', 'a'),
+            ('7', 'a'),
+            ('8', 'a'),
+            ('9', 'e'),
+        ] {
+            let mut app = planning_app();
+            press(&mut app, KeyCode::Char(screen));
+            if screen == '5' {
+                select_first_bill(&mut app);
+            }
+            press(&mut app, KeyCode::Char(key));
+            let drawn = drawn(&mut app);
+            for figure in ["1,200", "300.00", "1,000", "50,000", "5,000"] {
+                assert!(
+                    !drawn.contains(figure),
+                    "{figure} survived {key} on screen {screen}:\n{drawn}"
+                );
+            }
+        }
+    }
+
     /// A status line is on screen as surely as a column is, and this one
     /// quotes the figure that was just typed back at the owner.
     #[test]
@@ -4667,6 +4711,28 @@ mod tests {
             }
             _ => panic!("no bill form is open"),
         }
+    }
+
+    /// `E` prefills the bill's own figure, so the form is where that figure
+    /// would otherwise be published to whoever is watching -- the same rule
+    /// every other amount field follows.
+    #[test]
+    fn a_demo_blocks_the_amount_capital_e_opens_a_bill_on() {
+        use crate::tui::planning::BillField;
+        crate::demo::install(true);
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        let bill = select_first_bill(&mut app);
+
+        press(&mut app, KeyCode::Char('E'));
+
+        let Some(Modal::Bill(form)) = &app.modal else {
+            panic!("no bill form is open");
+        };
+        assert_eq!(form.display(BillField::Amount).plain_text(), "██████");
+        assert_eq!(form.display(BillField::Label).plain_text(), bill.label);
+        // The buffer is untouched, so Enter still rewrites the real figure.
+        assert_eq!(form.commit().unwrap().cents, bill.cents);
     }
 
     /// `E` is the whole row, so committing it must rewrite the bill it opened

@@ -203,9 +203,13 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     name is already the owner's own word for it. The mask is six blocks wide, plus a sign where the
     figure has one, which is exactly the narrowest money column any screen lays out (`$/Pay`, at 7):
     a demo moves no column and truncates nothing.
-  - **The net is one test per screen plus `a_demo_leaves_no_figure_on_any_screen`**, which walks all
-    nine screens with the mask on and asserts none of the fixture's own figures reach the buffer. A
-    new screen that formats its own `Cents` fails there rather than on a shared terminal.
+  - **The net is one test per screen and two sweeps.** `a_demo_leaves_no_figure_on_any_screen` walks
+    all nine screens with the mask on and asserts none of the fixture's own figures reach the
+    buffer; `a_demo_leaves_no_figure_on_any_form_a_row_opens` presses every key that opens a form or
+    a worksheet over a row carrying a figure and asserts the same of the modal. The second is not
+    redundant: a screen sweep draws only screens, and a form prefills from the row it opens on, so a
+    form is where a real figure is *most* likely to reach the screen. `BillField::Amount` was the one
+    amount field this feature first missed, and only the form sweep sees it.
 - **Every editable Planning constant is a `Target` variant**, which owns both its `Key<T>` and how
   its text parses — the same construction as `gate::Gate`. Never write a Planning key at a call
   site. A row's `Editable` says which of the two kinds of edit `e` opens on it — a constant into a

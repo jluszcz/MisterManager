@@ -940,7 +940,7 @@ impl BillForm {
     pub fn display(&self, field: BillField) -> Label {
         Label::plain(match field {
             BillField::Label => self.label.value().to_string(),
-            BillField::Amount => self.amount.value().to_string(),
+            BillField::Amount => crate::demo::typed(self.amount.value()),
             BillField::Category => self.category().as_str().to_string(),
         })
     }
