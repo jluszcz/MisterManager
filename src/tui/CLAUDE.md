@@ -63,12 +63,20 @@ truncates a `Paragraph` from the right, so an over-wide footer drops the keys at
 first, the one item every screen carries — with nothing on screen to say a word went missing.
 `help::tests::every_screen_footer_fits_the_minimum_width` measures every screen topic; `app`'s two
 own width tests measure the footers `App::footer` composes at runtime, which a `Topic` alone does not
-see. When a screen runs out of room the lever is `Label::Shared` rather than a shorter word or a
-dropped key: several keys join under one word naming what they act *on* — `E/a/d bill` on Planning,
-`a/A/i allocate` and `n/e/c goal` on Savings — so every key is still advertised and the verbs it
-cost are a keystroke away in the panel, which has room for them. Savings spends its budget hardest,
-and it is also the one screen besides the ledgers whose chrome omits `1-9 screens`; both are `Topic::chrome`
-decisions rather than anything a screen says for itself.
+see. The first lever when a screen runs out of room is `Label::Shared`: several keys join under one
+word naming what they act *on* — `E/a/d bill` on Planning, `a/A/i allocate` and `n/e/c goal` on
+Savings — which buys back a whole item's separator per key absorbed, and the verbs it costs are a
+keystroke away in the panel, which has room for them. A shorter word is the smaller adjustment
+beside it — `f fave`, and `Tab account` where a neighbouring screen already had the shorter word for
+the same thing. What neither of them does is drop a key: a key nothing advertises is a key nobody
+presses, so `Label::Hidden` stays for the entries a footer word would only say twice, `BackTab`
+being the one.
+
+Regrouped, Savings is no longer the screen closest to the edge: **the ledgers' footer is**, by some
+margin, so the next key that needs a group is likelier to be Cash or Credit's than this screen's.
+Those two and Savings are also the only screens whose chrome omits `1-9 screens`, which is
+`Topic::chrome`'s decision rather than anything a screen says for itself — and it is spent, so a
+footer that overflows again has the grouping to fall back on and nothing else.
 
 A status message — a write's result, a parse error, a "nothing selected" — borrows the footer rather
 than owning it, and gives it back on its own after `app::STATUS_TTL`. A key press still clears it
