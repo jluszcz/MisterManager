@@ -5,10 +5,10 @@
 //! and the search on top of these rows; the report groups the same rows by
 //! container.
 
+use crate::account_label::Account;
 use crate::db::account;
 use crate::db::goal::{self, GoalWithBalance};
 use crate::db::{AccountId, Db, GoalId};
-use crate::label::Account;
 use crate::money::Cents;
 use crate::rate::Percent;
 use anyhow::Result;

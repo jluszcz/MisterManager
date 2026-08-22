@@ -368,7 +368,7 @@ read a backup, delete one, or list the prefix.
 | `src/plan.rs` | Runs the Planning waterfall against imported settings. |
 | `src/fund.rs` | Feeds the fund table and the birth date to the fund-allocation derivation. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, and regeneration. |
-| `src/config.rs` | The TOML config file — the `[backup]` section, unset means backups are off. |
+| `src/config.rs` | The TOML config file — the `[backup]` and `[report]` sections, unset means the feature is off. |
 | `src/backup/` | The schedule, the snapshot, and the S3 upload. `aws-config`, `aws-sdk-s3` and `tokio` are named only in `src/backup/s3.rs`. |
 | `src/tui/` | The terminal UI: screens, forms, key handling. |
 | `src/tui/fund.rs` | The Funds screen and its form. |

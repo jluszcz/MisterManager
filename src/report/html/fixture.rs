@@ -34,8 +34,8 @@ pub(super) fn accounts() -> Vec<Account> {
     }]
 }
 
-fn labelled() -> crate::label::Account {
-    crate::label::Account::named(&accounts(), AccountId(1))
+fn labelled() -> crate::account_label::Account {
+    crate::account_label::Account::named(&accounts(), AccountId(1))
 }
 
 fn balances(c: i64) -> Balances {
@@ -184,7 +184,10 @@ pub(super) fn snapshot(rows: Vec<crate::savings::Row>, net: i64) -> Snapshot {
         bands: vec![Band {
             group,
             lines: vec![Line {
-                account: Some(crate::label::Account::named(&accounts, AccountId(1))),
+                account: Some(crate::account_label::Account::named(
+                    &accounts,
+                    AccountId(1),
+                )),
                 label: String::new(),
                 balances: balances(cents),
             }],

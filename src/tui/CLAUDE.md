@@ -469,10 +469,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   is also what `—` on the selector writes back.
 - **An account cannot reach a screen without its color, and that is a property of the types
   rather than a rule to remember.** An account's text is reachable only through
-  `label::Account::render_with`, which hands the resolved color with it; `tui::label::account_cell`
-  and `label_line` are this directory's only sinks, and `report::html` is the other one in the
-  crate. One layer down, `db::account::AccountName` and `AccountCode` have no `Display`, so an
-  account cannot become a `String` on the way to a `format!` either.
+  `account_label::Account::render_with`, which hands the resolved color with it;
+  `tui::account_label::account_cell` and `label_line` are this directory's only sinks, and
+  `report::html` is the other one in the crate. One layer down, `db::account::AccountName` and
+  `AccountCode` have no `Display`, so an account cannot become a `String` on the way to a
+  `format!` either.
   - **`Account::named`, `Account::coded` and `Account::labelled` are one per caller.** The
     ledgers' rows, Savings, Overview and Accounts show a name; Recurring Transactions and the
     ledger *title* show a code, the one because its other columns pin the row down already and
@@ -508,7 +509,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
       status line — but the Allocation modal's is a real display, kept out of `Account` because
       converting `AllocationForm` is outside this guarantee's scope.
     - **`transfer::Container`'s `String` name, and `planning::Tint`.** The Planning screen tints
-      an account through that mechanism (below) rather than through `label::Account`: `plan` and
+      an account through that mechanism (below) rather than through `account_label::Account`: `plan` and
       `wiring` already have the account row in hand, and `Account` would only look it up again
       for the same color.
     - **The Accounts screen's `Code` column**, built in `app.rs` and drawn by `accounts.rs` as a
@@ -524,10 +525,10 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     entry by entry. A source scan rather than a type, because the property is "nobody reached for
     the escape hatch", which no signature can state — and it is purely textual, so a reflow that
     hid an escape behind a local variable would pass it just the same. **It reads three roots, not
-    just this directory**: `src/label.rs`, which owns `Account` and whose constructors are the one
-    sanctioned place the text is read; `src/tui/`; and `src/report/`, the second sink, which would
-    otherwise be free to flatten an account into a `format!`. Entries are keyed by the path below
-    `src/`, since `tui/ledger.rs` and `report/html/ledger.rs` are two different files and a
+    just this directory**: `src/account_label.rs`, which owns `Account` and whose constructors are
+    the one sanctioned place the text is read; `src/tui/`; and `src/report/`, the second sink,
+    which would otherwise be free to flatten an account into a `format!`. Entries are keyed by the
+    path below `src/`, since `tui/ledger.rs` and `report/html/ledger.rs` are two different files and a
     sanctioned line in one must not excuse the same text in the other. The same test's second
     clause pins `Label::plain_text`, the escape for a `Label` rather than an `AccountName`: it
     flattens whatever accounts a label carries and is meant for wording assertions, never a draw.

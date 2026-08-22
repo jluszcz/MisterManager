@@ -4,12 +4,12 @@
 
 pub mod html;
 
+use crate::account_label::Account;
 use crate::calc;
 use crate::calc::planning::PlanSettings;
 use crate::db::account::Kind;
 use crate::db::{Db, account, bill, goal, txn};
 use crate::fund;
-use crate::label::Account;
 use crate::money::Cents;
 use crate::overview::Overview;
 use crate::plan;

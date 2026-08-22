@@ -1,3 +1,4 @@
+pub mod account_label;
 pub mod backup;
 pub mod calc;
 pub mod config;
@@ -7,7 +8,6 @@ pub mod description;
 pub mod fund;
 pub mod gate;
 pub mod import;
-pub mod label;
 pub mod money;
 pub mod overview;
 pub mod palette;

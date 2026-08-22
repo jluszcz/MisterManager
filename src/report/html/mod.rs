@@ -73,7 +73,7 @@ fn optional_money(cents: Option<Cents>) -> String {
 /// An account, in its own color. The report's half of the rule that an
 /// account never reaches a glyph without its color -- `tui::label` has the
 /// other half.
-fn account(account: &crate::label::Account) -> String {
+fn account(account: &crate::account_label::Account) -> String {
     account.render_with(|text, color| {
         format!(
             "<span style=\"color:{}\">{}</span>",

@@ -10,6 +10,7 @@
 //! holding no ratatui state and unit-tested directly. The render functions
 //! only draw.
 
+mod account_label;
 pub mod accounts;
 pub mod app;
 pub mod autocomplete;
@@ -19,7 +20,6 @@ pub mod form;
 pub mod fund;
 pub mod goal_form;
 mod help;
-mod label;
 pub mod ledger;
 mod modal;
 pub mod month;
@@ -33,12 +33,12 @@ mod search;
 pub mod style;
 pub mod worksheet;
 
+use crate::account_label::{Account, Label};
 use crate::db::Db;
-use crate::label::{Account, Label};
+use account_label::{account_cell, label_line};
 use anyhow::{Result, ensure};
 use app::App;
 use chrono::NaiveDate;
-use label::{account_cell, label_line};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use ratatui::style::Style;

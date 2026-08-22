@@ -107,7 +107,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 
 | Path | Responsibility |
 |---|---|
-| `src/label.rs` | `Account` and `Label` — an account on its way to a display, in any medium. `render_with` is the only reader of its text, and hands the resolved color alongside. |
+| `src/account_label.rs` | `Account` and `Label` — an account on its way to a display, in any medium. `render_with` is the only reader of its text, and hands the resolved color alongside. |
 | `src/money.rs` | `Cents(i64)` — the only money type. No floats anywhere in the crate. |
 | `src/palette.rs` | What a color *is*, in numbers: the eight account colors and the negative color as `(u8, u8, u8)`. `tui::style` wraps them for a terminal; `report` spells them as `#rrggbb`. |
 | `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. `BasisPoints` prints itself as a percentage with two decimals, on the type rather than beside a screen, so the Funds screen and the report cannot render one share two ways. |
@@ -134,7 +134,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and Funds in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/backup/` | The schedule, the snapshot, and the upload. `aws_config`, `aws_sdk_s3` and `tokio` are named only in `s3.rs`. |
-| `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `mod.rs` rather than in whichever screen needed it first. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
+| `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `mod.rs` rather than in whichever screen needed it first. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
 | `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `import`, `report` and `backup` are the three subcommands. |
 
 **`rusqlite` is named only inside `src/db/`.** `Db` holds a private `Connection` and deliberately does
@@ -242,7 +242,7 @@ matches, since nothing but a test ties them together.
   like is `tui::style::palette`'s to say and nothing else's, which is what keeps colour decided in
   one module.
   Which screens honour that is not left to each screen: an account reaches a glyph through
-  `label::Account`, which colors what it draws, everywhere but the residual list in
+  `account_label::Account`, which colors what it draws, everywhere but the residual list in
   `src/tui/CLAUDE.md`'s account-color section, and `AccountName`/`AccountCode` have no `Display`,
   so an account cannot be flattened into a `String` on the way.
 - **Three things about the owner's accounts are in no cell of the workbook, and all three are

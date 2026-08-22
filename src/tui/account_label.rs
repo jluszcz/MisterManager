@@ -1,11 +1,11 @@
 //! An account on its way to a terminal.
 //!
-//! [`crate::label::Account`] carries an account's text and its color together
+//! [`crate::account_label::Account`] carries an account's text and its color together
 //! and will not hand over one without the other. This module is where that
 //! pair becomes ratatui: [`account_cell`] for a table cell and [`label_line`]
 //! for a title, and nothing else in `tui` may draw an account.
 
-use crate::label::{Account, Label, Segment};
+use crate::account_label::{Account, Label, Segment};
 use ratatui::text::Line as TextLine;
 use ratatui::widgets::Cell;
 
@@ -162,15 +162,15 @@ mod tests {
     #[test]
     fn nothing_that_draws_an_account_reads_its_name_as_bare_text() {
         let sanctioned = [
-            // `crate::label`'s own constructors. They are the one place the
+            // `crate::account_label`'s own constructors. They are the one place the
             // text is meant to be read: every `Account` in the crate is built
             // here, and each of these reads is immediately paired with a
             // color. A bare read anywhere else in that file is still a leak,
             // which is why the file is scanned rather than skipped.
-            ("label.rs", "|a| a.name.as_str().to_string()"),
-            ("label.rs", "|a| a.code.as_str().to_string()"),
-            ("label.rs", "let code = account.code.as_str();"),
-            ("label.rs", "let name = account.name.as_str();"),
+            ("account_label.rs", "|a| a.name.as_str().to_string()"),
+            ("account_label.rs", "|a| a.code.as_str().to_string()"),
+            ("account_label.rs", "let code = account.code.as_str();"),
+            ("account_label.rs", "let name = account.name.as_str();"),
             // Seeds the Accounts form's editable Name field -- the owner then
             // owns the text.
             ("tui/accounts.rs", "Field::given(account.name.as_str()"),
@@ -279,10 +279,10 @@ mod tests {
     /// Every file the scan reads, as (path below `src/`, the file's production
     /// code).
     ///
-    /// Three roots, because the guarantee has three parts: `src/label.rs`,
-    /// which owns [`crate::label::Account`] and is the one place its text is
-    /// meant to be read; `src/tui/`, the terminal sink; and `src/report/`, the
-    /// html one. A scan of the screens alone would have gone on passing while
+    /// Three roots, because the guarantee has three parts:
+    /// `src/account_label.rs`, which owns [`crate::account_label::Account`]
+    /// and is the one place its text is meant to be read; `src/tui/`, the
+    /// terminal sink; and `src/report/`, the html one. A scan of the screens alone would have gone on passing while
     /// a `format!("{}", a.name.as_str())` in `report::html` flattened an
     /// account's color away -- the exact bug this exists to make unwritable.
     ///
@@ -307,7 +307,11 @@ mod tests {
     fn sink_sources() -> Vec<(String, String)> {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut out = Vec::new();
-        let mut pending = vec![src.join("label.rs"), src.join("tui"), src.join("report")];
+        let mut pending = vec![
+            src.join("account_label.rs"),
+            src.join("tui"),
+            src.join("report"),
+        ];
         while let Some(path) = pending.pop() {
             if path.is_dir() {
                 for entry in std::fs::read_dir(&path).expect("a readable dir") {

@@ -56,7 +56,7 @@ impl Sum for Balances {
 pub struct Line {
     /// The account this row is, or `None` for a subtotal, which names a band
     /// rather than an account and takes no tint.
-    pub account: Option<crate::label::Account>,
+    pub account: Option<crate::account_label::Account>,
     /// What a subtotal row is labelled. Empty when `account` is set.
     pub label: String,
     pub balances: Balances,
@@ -134,7 +134,7 @@ impl Overview {
                         month_end: held(&month_end),
                     };
                     Line {
-                        account: Some(crate::label::Account::named(&accounts, account.id)),
+                        account: Some(crate::account_label::Account::named(&accounts, account.id)),
                         label: String::new(),
                         // Credit is stored as debt, and this screen is the
                         // only one that negates it -- which is what makes Net

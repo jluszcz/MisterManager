@@ -141,12 +141,7 @@ fn main() -> Result<()> {
             };
             // Asked for outright, so a failure is an error exit rather than a
             // line on stderr, exactly as an explicit `mm backup` is.
-            let written = report::write(&db, &dir, today)?;
-            println!(
-                "wrote {} to {}",
-                backup::human_bytes(written.bytes),
-                written.path.display()
-            );
+            print_written(&report::write(&db, &dir, today)?);
         }
         Some(Command::Backup { force, status }) => {
             if status {
@@ -194,13 +189,19 @@ fn scheduled_backup(db_path: &Path, cfg: &config::Config, state_path: &Path) {
 /// folder was unmounted, and the next quit writes it again.
 fn write_report(db: &db::Db, cfg: &config::Config, today: NaiveDate, demo: bool) {
     match report::write_if_enabled(db, cfg, today, demo) {
-        Ok(report::Outcome::Written(written)) => {
-            println!("wrote report to {}", written.path.display());
-        }
+        Ok(report::Outcome::Written(written)) => print_written(&written),
         // Silent: nothing happened, and this runs after every single quit.
         Ok(_) => {}
         Err(e) => eprintln!("report failed: {e:#}"),
     }
+}
+
+fn print_written(written: &report::Written) {
+    println!(
+        "wrote {} to {}",
+        backup::human_bytes(written.bytes),
+        written.path.display()
+    );
 }
 
 fn print_backup(outcome: &backup::Outcome) {
