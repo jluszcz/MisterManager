@@ -1326,13 +1326,14 @@ mod tests {
             id: crate::db::GoalId(1),
             name: name.to_string(),
             container_account_id: crate::db::AccountId(container),
-            goal_cents: Cents::from_dollars(1_000),
+            base_cents: Cents::from_dollars(1_000),
             goal_date: None,
             recurring_goal_id: None,
             interest_eligible: true,
             closed: false,
             sort: 0,
             favorite: false,
+            taxed: false,
         }
     }
 

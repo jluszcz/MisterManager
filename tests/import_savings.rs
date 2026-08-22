@@ -5,6 +5,7 @@ use mistermanager::db::goal;
 use mistermanager::db::recurring_goal::{self, Cadence};
 use mistermanager::db::setting::{self, key};
 use mistermanager::gate::Gate;
+use mistermanager::goal as goal_engine;
 use mistermanager::money::Cents;
 use mistermanager::plan_line::Line;
 use mistermanager::savings_block::Block;
@@ -156,7 +157,7 @@ fn every_goal_matches_its_row() {
             g.goal.name
         );
         assert_eq!(
-            g.goal.goal_cents,
+            g.goal.base_cents,
             sheet_cents(&sheet, row, 2),
             "{} target",
             g.goal.name
@@ -186,8 +187,15 @@ fn per_paycheck_reproduces_the_sheets_column_f() {
     let today = workbook_today(&mut sheets);
     let period_days = setting::get(&db, key::PAY_PERIOD_DAYS).unwrap().unwrap();
     let sheet = import::sheet(&mut sheets, "Savings").unwrap();
-    let goals =
-        in_sheet_order(goal::list_with_balances(&db, container(&db, Block::Goals)).unwrap());
+    // Through the policy module rather than `db::goal`, so the figure fed to
+    // `per_paycheck` is the derived target every screen actually shows --
+    // `base_cents` alone would still pass today, since every imported goal is
+    // untaxed and the two coincide, but it would no longer be pinned to what
+    // the screen displays.
+    let mut goals = goal_engine::list_with_balances(&db, container(&db, Block::Goals)).unwrap();
+    // Same order `in_sheet_order` puts `db::goal::GoalWithBalance` rows in --
+    // see its comment -- `Funding` carries the same `goal.sort`/`goal.id` pair.
+    goals.sort_by_key(|g| (g.goal.sort, g.goal.id));
 
     // A few names repeat; see the comment in `every_goal_matches_its_row`
     // for why an occurrence counter is needed to disambiguate them.
@@ -203,7 +211,7 @@ fn per_paycheck_reproduces_the_sheets_column_f() {
         };
         let computed = mistermanager::calc::per_paycheck(
             g.current,
-            g.goal.goal_cents,
+            g.target,
             g.goal.goal_date,
             today,
             period_days,

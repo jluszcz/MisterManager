@@ -273,7 +273,7 @@ mod tests {
             )
             .unwrap();
         db.conn.execute(
-            "INSERT INTO goal (id, name, container_account_id, goal_cents) VALUES (1, 'G', 1, 100)",
+            "INSERT INTO goal (id, name, container_account_id, base_cents) VALUES (1, 'G', 1, 100)",
             [],
         )
         .unwrap();
@@ -357,11 +357,12 @@ mod tests {
             &goal::NewGoal {
                 name: "Vacation".to_string(),
                 container_account_id: savings,
-                goal_cents: crate::money::Cents::from_dollars(1_000),
+                base_cents: crate::money::Cents::from_dollars(1_000),
                 goal_date: None,
                 recurring_goal_id: None,
                 interest_eligible: true,
                 sort: 0,
+                taxed: false,
             },
         )
         .unwrap();
@@ -467,11 +468,12 @@ mod tests {
             &goal::NewGoal {
                 name: "Vacation".to_string(),
                 container_account_id: savings,
-                goal_cents: crate::money::Cents::from_dollars(1_000),
+                base_cents: crate::money::Cents::from_dollars(1_000),
                 goal_date: None,
                 recurring_goal_id: Some(recurring_goal_id),
                 interest_eligible: true,
                 sort: 0,
+                taxed: false,
             },
         )
         .unwrap();

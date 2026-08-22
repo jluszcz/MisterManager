@@ -7,13 +7,14 @@
 
 use super::form::{
     Caret, DateField, Field, Focused, FormFields, Step, field_line, field_line_noted, is_share,
-    next_in, parse_share, parse_whole_amount, render_fields, step_index,
+    next_in, parse_share, parse_whole_amount, render_fields, step_index, tax_note,
 };
 use super::{Account, Label};
 use crate::db::goal::GoalEdit;
 use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
-use anyhow::{Result, ensure};
+use crate::rate::BasisPoints;
+use anyhow::{Context, Result, ensure};
 use chrono::{Datelike, Months, NaiveDate};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -182,14 +183,16 @@ pub enum GoalField {
     Name,
     Target,
     Date,
+    Taxed,
     Interest,
 }
 
 impl GoalField {
-    pub const ORDER: [GoalField; 4] = [
+    pub const ORDER: [GoalField; 5] = [
         GoalField::Name,
         GoalField::Target,
         GoalField::Date,
+        GoalField::Taxed,
         GoalField::Interest,
     ];
 
@@ -198,10 +201,13 @@ impl GoalField {
             GoalField::Name => "Name",
             GoalField::Target => "Target",
             GoalField::Date => "Goal Date",
+            GoalField::Taxed => "Taxed",
             GoalField::Interest => "Interest",
         }
     }
 }
+
+use crate::goal::NO_TAX_RATE;
 
 /// What committing a `GoalForm` does. `Subject` without the name the border
 /// needs, which is the whole of what a caller has to decide between.
@@ -233,8 +239,12 @@ enum Subject {
 /// screen's All filter nothing else on screen says which one `n` defaulted to,
 /// the way `Picker` and `Worksheet` always name theirs.
 ///
-/// Eligibility is a `bool` rather than a `Field`: it is a selector, so a
-/// keystroke cannot leave it saying something that is neither yes nor no.
+/// The two flags are `bool`s rather than `Field`s: they are selectors, so a
+/// keystroke cannot leave one saying something that is neither yes nor no.
+///
+/// `Taxed` is a field of the goal, stored and derived from rather than spent
+/// at commit: the Target field holds the **base**, and what the goal is
+/// actually funded to is [`GoalForm::tax_note`], beside it.
 #[derive(Debug)]
 pub struct GoalForm {
     subject: Subject,
@@ -242,7 +252,13 @@ pub struct GoalForm {
     name: Field,
     target: Field,
     date: DateField,
+    taxed: bool,
     eligible: bool,
+    /// The sales tax rate `Taxed` applies, as it stood when the form
+    /// opened. `None` is a database no `Constants` sheet has been imported
+    /// into: the form still opens, since an untaxed goal needs no rate, and
+    /// only the commit that actually wants one refuses.
+    rate: Option<BasisPoints>,
 }
 
 impl GoalForm {
@@ -261,7 +277,7 @@ impl GoalForm {
     }
 
     /// A blank form, for a goal that does not exist yet.
-    pub fn add(container: Account, today: NaiveDate) -> GoalForm {
+    pub fn add(container: Account, rate: Option<BasisPoints>, today: NaiveDate) -> GoalForm {
         GoalForm {
             subject: Subject::New { container },
             focus: GoalField::Name,
@@ -271,27 +287,39 @@ impl GoalForm {
                 Some(date) => DateField::on(today, date),
                 None => DateField::blank(today),
             },
+            taxed: false,
             // A goal typed from scratch takes interest, like every goal the
             // sheet ever had.
             eligible: true,
+            rate,
         }
     }
 
+    // Every parameter is a distinct field of an existing goal, prefilling a
+    // form that opens on one -- there is no group of them a caller would
+    // otherwise pass as a struct.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         goal_id: GoalId,
         name: &str,
-        target: Cents,
+        base: Cents,
         date: Option<NaiveDate>,
         interest_eligible: bool,
+        taxed: bool,
+        rate: Option<BasisPoints>,
         today: NaiveDate,
     ) -> GoalForm {
         GoalForm {
             subject: Subject::Existing(goal_id),
             focus: GoalField::Name,
             name: Field::given(name),
-            target: Field::given(target.to_string()),
+            // The base, which is what the table holds. What it comes to is
+            // beside it, in `tax_note`.
+            target: Field::given(base.to_string()),
             date: DateField::given(today, date),
+            taxed,
             eligible: interest_eligible,
+            rate,
         }
     }
 
@@ -319,19 +347,41 @@ impl GoalForm {
             GoalField::Name => self.name.value().to_string(),
             GoalField::Target => crate::demo::typed(self.target.value()),
             GoalField::Date => self.date.display(self.focus == GoalField::Date),
+            GoalField::Taxed => if self.taxed { "yes" } else { "no" }.to_string(),
             GoalField::Interest => if self.eligible { "yes" } else { "no" }.to_string(),
         })
+    }
+
+    /// The note beside the Target: what the base in the field comes to once
+    /// the tax lambda has had it -- the figure every reader will derive.
+    ///
+    /// Empty whenever there is nothing to say -- the flag is off, the field is
+    /// not a whole figure yet, or no rate is on record -- rather than a guess
+    /// at one of the three. The commit does not go through this path: a bad
+    /// target and a missing rate are errors it has to report by name, and
+    /// this cannot tell the caller which of the two it hit.
+    pub fn tax_note(&self) -> String {
+        tax_note(self.taxed, self.target.value(), self.rate)
     }
 
     pub fn commit(&self) -> Result<GoalEdit> {
         let name = self.name.value().trim().to_string();
         ensure!(!name.is_empty(), "name must not be empty");
+        let base_cents = parse_whole_amount(self.target.value())?;
+        // Refused even though nothing here needs the rate any more: letting it
+        // through would write precisely the row the read side calls corrupt,
+        // and this is the one place that can ask for the rate before there is
+        // a goal to be broken by its absence.
+        if self.taxed {
+            self.rate.context(NO_TAX_RATE)?;
+        }
         Ok(GoalEdit {
             name,
-            goal_cents: parse_whole_amount(self.target.value())?,
+            base_cents,
             // An empty date field is an undated goal -- rows 6-26 of the sheet.
             goal_date: self.date.parse_opt()?,
             interest_eligible: self.eligible,
+            taxed: self.taxed,
         })
     }
 }
@@ -345,11 +395,15 @@ impl FormFields for GoalForm {
         self.focus = next_in(&GoalField::ORDER, self.focus, -1);
     }
 
-    // Eligibility is the only selector here, and it has two values, so both
-    // directions are the same flip. An undated goal has no date to step,
-    // which is what keeps an arrow press from dating one.
+    // Both selectors here hold two values, so both directions are the same
+    // flip. An undated goal has no date to step, which is what keeps an arrow
+    // press from dating one.
     fn cycle(&mut self, _step: Step) {
-        self.eligible = !self.eligible;
+        match self.focus {
+            GoalField::Taxed => self.taxed = !self.taxed,
+            GoalField::Interest => self.eligible = !self.eligible,
+            GoalField::Name | GoalField::Target | GoalField::Date => {}
+        }
     }
 
     fn focused(&mut self) -> Focused<'_> {
@@ -357,7 +411,7 @@ impl FormFields for GoalForm {
             GoalField::Name => Focused::Text(&mut self.name),
             GoalField::Target => Focused::Text(&mut self.target),
             GoalField::Date => Focused::Date(&mut self.date),
-            GoalField::Interest => Focused::Selector,
+            GoalField::Taxed | GoalField::Interest => Focused::Selector,
         }
     }
 
@@ -366,7 +420,7 @@ impl FormFields for GoalForm {
             GoalField::Name => Caret::in_field(&self.name),
             GoalField::Target => Caret::in_field(&self.target),
             GoalField::Date => Caret::in_field(self.date.text()),
-            GoalField::Interest => Caret::End,
+            GoalField::Taxed | GoalField::Interest => Caret::End,
         }
     }
 }
@@ -533,13 +587,23 @@ pub fn render_allocation(frame: &mut Frame, form: &AllocationForm) {
 
 /// Draws the goal modal: `e`'s form, and `n`'s.
 pub fn render_goal(frame: &mut Frame, form: &GoalForm) {
+    let note = form.tax_note();
     let lines: Vec<TextLine> = GoalField::ORDER
         .iter()
         .map(|f| {
-            field_line(
+            // The Target field holds the base rather than what the goal is
+            // funded to, so the note says what it comes to beside the figure
+            // it is derived from rather than beside itself.
+            let note = if *f == GoalField::Target {
+                note.as_str()
+            } else {
+                ""
+            };
+            field_line_noted(
                 f.label(),
                 form.display(*f),
                 (form.focus == *f).then(|| form.caret()),
+                note,
             )
         })
         .collect();
@@ -823,6 +887,21 @@ mod tests {
         assert!(line.contains("/N"), "{line}");
     }
 
+    /// A goal form over a database that knows the sales tax rate, which is
+    /// what every question about the `Taxed` selector needs.
+    fn taxable(name: &str, base: Cents) -> GoalForm {
+        GoalForm::new(
+            GoalId(7),
+            name,
+            base,
+            None,
+            true,
+            false,
+            Some(BasisPoints(625)),
+            today(),
+        )
+    }
+
     fn typed_goal(form: &mut GoalForm, field: GoalField, text: &str) {
         while form.focus != field {
             form.next_field();
@@ -840,6 +919,8 @@ mod tests {
             Cents(100_000),
             Some(day(2026, 12, 1)),
             true,
+            false,
+            None,
             today(),
         );
         assert_eq!(form.display(GoalField::Name).plain_text(), "Couch");
@@ -849,7 +930,7 @@ mod tests {
         typed_goal(&mut form, GoalField::Name, " Mk II");
         let edit = form.commit().unwrap();
         assert_eq!(edit.name, "Couch Mk II");
-        assert_eq!(edit.goal_cents, Cents(100_000));
+        assert_eq!(edit.base_cents, Cents(100_000));
         assert_eq!(edit.goal_date, Some(day(2026, 12, 1)));
     }
 
@@ -859,7 +940,16 @@ mod tests {
     /// the first time the form is opened.
     #[test]
     fn a_goal_target_with_cents_in_it_is_refused() {
-        let mut form = GoalForm::new(GoalId(7), "Couch", Cents(100_050), None, true, today());
+        let mut form = GoalForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(100_050),
+            None,
+            true,
+            false,
+            None,
+            today(),
+        );
         assert_eq!(form.display(GoalField::Target).plain_text(), "1,000.50");
         let err = form.commit().unwrap_err().to_string();
         assert!(err.contains("1,000.50"), "{err}");
@@ -873,7 +963,7 @@ mod tests {
         for c in "1000".chars() {
             form.edit(char_key(c));
         }
-        assert_eq!(form.commit().unwrap().goal_cents, Cents(100_000));
+        assert_eq!(form.commit().unwrap().base_cents, Cents(100_000));
     }
 
     /// Rows 6-26 of the sheet have no goal date, so clearing the field has to
@@ -886,6 +976,8 @@ mod tests {
             Cents(100_000),
             Some(day(2026, 12, 1)),
             true,
+            false,
+            None,
             today(),
         );
         while form.focus != GoalField::Date {
@@ -905,6 +997,8 @@ mod tests {
             Cents(1_500_000),
             None,
             true,
+            false,
+            None,
             today(),
         );
         assert_eq!(form.display(GoalField::Date).plain_text(), "");
@@ -921,6 +1015,8 @@ mod tests {
             Cents(100_000),
             None,
             false,
+            false,
+            None,
             today(),
         );
         assert_eq!(form.display(GoalField::Interest).plain_text(), "no");
@@ -944,6 +1040,8 @@ mod tests {
             Cents(100_000),
             None,
             false,
+            false,
+            None,
             today(),
         );
         assert!(!form.commit().unwrap().interest_eligible);
@@ -953,7 +1051,7 @@ mod tests {
     /// ever had.
     #[test]
     fn a_goal_typed_from_scratch_opens_interest_eligible() {
-        let mut form = GoalForm::add(Account::named(&accounts(), AccountId(1)), today());
+        let mut form = GoalForm::add(Account::named(&accounts(), AccountId(1)), None, today());
         typed_goal(&mut form, GoalField::Name, "Couch");
         typed_goal(&mut form, GoalField::Target, "1000");
         assert_eq!(form.display(GoalField::Interest).plain_text(), "yes");
@@ -966,14 +1064,22 @@ mod tests {
     /// nudges with the arrows rather than types out.
     #[test]
     fn a_new_goal_opens_on_the_first_of_the_next_month() {
-        let form = GoalForm::add(Account::named(&accounts(), AccountId(1)), day(2026, 8, 21));
+        let form = GoalForm::add(
+            Account::named(&accounts(), AccountId(1)),
+            None,
+            day(2026, 8, 21),
+        );
         assert_eq!(form.display(GoalField::Date).plain_text(), "2026-09-01");
     }
 
     /// December's next month is next January, not month thirteen.
     #[test]
     fn a_new_goal_opened_in_december_lands_in_the_new_year() {
-        let form = GoalForm::add(Account::named(&accounts(), AccountId(1)), day(2026, 12, 31));
+        let form = GoalForm::add(
+            Account::named(&accounts(), AccountId(1)),
+            None,
+            day(2026, 12, 31),
+        );
         assert_eq!(form.display(GoalField::Date).plain_text(), "2027-01-01");
     }
 
@@ -981,7 +1087,7 @@ mod tests {
     /// of the sheet, and clearing the field is still how one is made.
     #[test]
     fn clearing_a_new_goals_date_still_makes_an_undated_goal() {
-        let mut form = GoalForm::add(Account::named(&accounts(), AccountId(1)), today());
+        let mut form = GoalForm::add(Account::named(&accounts(), AccountId(1)), None, today());
         typed_goal(&mut form, GoalField::Name, "Couch");
         typed_goal(&mut form, GoalField::Target, "1000");
         while form.focus != GoalField::Date {
@@ -1000,7 +1106,7 @@ mod tests {
     /// defaulted to.
     #[test]
     fn the_new_goal_title_names_its_container_as_an_account() {
-        let form = GoalForm::add(Account::named(&accounts(), AccountId(2)), today());
+        let form = GoalForm::add(Account::named(&accounts(), AccountId(2)), None, today());
         let title = form.title();
         assert!(
             title.plain_text().contains("New goal in Nest Egg"),
@@ -1015,7 +1121,16 @@ mod tests {
     /// not land in it -- nor anywhere else.
     #[test]
     fn typing_on_the_interest_field_changes_nothing() {
-        let mut form = GoalForm::new(GoalId(7), "Couch", Cents(100_000), None, true, today());
+        let mut form = GoalForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(100_000),
+            None,
+            true,
+            false,
+            None,
+            today(),
+        );
         typed_goal(&mut form, GoalField::Interest, "no");
 
         assert_eq!(form.display(GoalField::Interest).plain_text(), "yes");
@@ -1024,7 +1139,16 @@ mod tests {
 
     #[test]
     fn a_goal_with_an_empty_name_is_refused() {
-        let mut form = GoalForm::new(GoalId(7), "Couch", Cents(100_000), None, true, today());
+        let mut form = GoalForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(100_000),
+            None,
+            true,
+            false,
+            None,
+            today(),
+        );
         while form.focus != GoalField::Name {
             form.next_field();
         }
@@ -1033,6 +1157,159 @@ mod tests {
         }
         let err = form.commit().unwrap_err();
         assert!(err.to_string().contains("name"), "{err}");
+    }
+
+    /// The flag is stored and the figure is not rewritten: what the table
+    /// holds is the base, and every reader derives the target from it. A
+    /// commit that taxed the figure here would tax it again on the next edit.
+    #[test]
+    fn a_taxed_goal_commits_its_base_and_the_flag() {
+        let mut form = taxable("Couch", Cents(100_000));
+        while form.focus != GoalField::Taxed {
+            form.next_field();
+        }
+        form.choice(Step::NEXT);
+
+        assert_eq!(form.display(GoalField::Taxed).plain_text(), "yes");
+        let edit = form.commit().unwrap();
+        assert_eq!(edit.base_cents, Cents(100_000));
+        assert!(edit.taxed);
+    }
+
+    /// The flag is a field of the goal now, so the form opens on whatever the
+    /// goal holds. Opening a taxed goal with the selector at `no` would make
+    /// every edit of it silently untax it.
+    #[test]
+    fn a_form_opened_on_a_taxed_goal_opens_with_the_selector_on() {
+        let form = GoalForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(100_000),
+            None,
+            true,
+            true,
+            Some(BasisPoints(625)),
+            today(),
+        );
+
+        assert_eq!(form.display(GoalField::Taxed).plain_text(), "yes");
+        assert_eq!(
+            form.display(GoalField::Target).plain_text(),
+            "1,000.00",
+            "the field holds the base"
+        );
+        assert_eq!(form.tax_note(), "(1,065 w/ tax)");
+        let edit = form.commit().unwrap();
+        assert_eq!(edit.base_cents, Cents(100_000));
+        assert!(edit.taxed, "the flag round-trips");
+    }
+
+    /// A rate on record is not the same as tax being asked for: the flag is
+    /// what decides, and it opens off.
+    #[test]
+    fn a_goal_opens_untaxed_and_commits_the_target_untouched() {
+        let form = taxable("Couch", Cents(100_000));
+        assert_eq!(form.display(GoalField::Taxed).plain_text(), "no");
+        assert_eq!(form.commit().unwrap().base_cents, Cents(100_000));
+    }
+
+    /// The Target field goes on holding the base, so what the goal is funded
+    /// to has to be said somewhere. The note is that somewhere.
+    #[test]
+    fn the_note_beside_the_target_says_what_it_comes_to_with_tax() {
+        let mut form = taxable("Couch", Cents(100_000));
+        assert_eq!(form.tax_note(), "", "nothing to say while the flag is off");
+
+        while form.focus != GoalField::Taxed {
+            form.next_field();
+        }
+        form.choice(Step::NEXT);
+
+        assert_eq!(form.tax_note(), "(1,065 w/ tax)");
+        assert_eq!(
+            form.display(GoalField::Target).plain_text(),
+            "1,000.00",
+            "the field itself still holds the base"
+        );
+    }
+
+    /// A half-typed target is not a figure yet, and a note that guessed at
+    /// one would flicker through amounts the owner never asked about.
+    #[test]
+    fn the_note_stays_empty_until_the_target_is_a_whole_figure() {
+        let mut form = taxable("Couch", Cents(100_000));
+        while form.focus != GoalField::Target {
+            form.next_field();
+        }
+        for _ in 0.."1,000.00".len() {
+            form.edit(backspace_key());
+        }
+        typed_goal(&mut form, GoalField::Taxed, "");
+        form.choice(Step::NEXT);
+
+        assert_eq!(form.tax_note(), "");
+    }
+
+    /// No rate on record is a database nobody has imported `Constants` into.
+    /// The form still opens -- an untaxed goal needs no rate -- and only asks
+    /// when the answer is actually wanted.
+    #[test]
+    fn a_taxed_goal_with_no_rate_on_record_is_refused_rather_than_saved_untaxed() {
+        let mut form = GoalForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(100_000),
+            None,
+            true,
+            false,
+            None,
+            today(),
+        );
+        while form.focus != GoalField::Taxed {
+            form.next_field();
+        }
+        form.choice(Step::NEXT);
+
+        assert_eq!(form.tax_note(), "");
+        let err = form.commit().unwrap_err().to_string();
+        assert!(err.contains("tax rate"), "{err}");
+    }
+
+    /// The second selector on the form, and it cycles like the first.
+    #[test]
+    fn the_choice_keys_flip_the_tax_selector_both_ways() {
+        let mut form = taxable("Couch", Cents(100_000));
+        while form.focus != GoalField::Taxed {
+            form.next_field();
+        }
+        form.choice(Step::NEXT);
+        assert_eq!(form.display(GoalField::Taxed).plain_text(), "yes");
+        form.choice(Step::PREVIOUS);
+        assert_eq!(form.display(GoalField::Taxed).plain_text(), "no");
+    }
+
+    /// A selector, so a keystroke meant for a text field must not land in it
+    /// -- nor anywhere else.
+    #[test]
+    fn typing_on_the_tax_field_changes_nothing() {
+        let mut form = taxable("Couch", Cents(100_000));
+        typed_goal(&mut form, GoalField::Taxed, "yes");
+
+        assert_eq!(form.display(GoalField::Taxed).plain_text(), "no");
+        assert_eq!(form.display(GoalField::Name).plain_text(), "Couch");
+        assert_eq!(form.commit().unwrap().base_cents, Cents(100_000));
+    }
+
+    /// A goal typed from scratch is untaxed too, like every other flag on the
+    /// form: nothing has told it otherwise yet.
+    #[test]
+    fn a_goal_typed_from_scratch_opens_untaxed() {
+        let form = GoalForm::add(
+            Account::named(&accounts(), AccountId(1)),
+            Some(BasisPoints(625)),
+            today(),
+        );
+        assert_eq!(form.display(GoalField::Taxed).plain_text(), "no");
     }
 
     fn siblings() -> Vec<(GoalId, String)> {
@@ -1156,6 +1433,8 @@ mod tests {
             Cents(100_000),
             Some(day(2026, 12, 31)),
             true,
+            false,
+            None,
             today(),
         );
         form.choice(Step::NEXT);
@@ -1182,6 +1461,8 @@ mod tests {
             Cents(1_500_000),
             None,
             true,
+            false,
+            None,
             today(),
         );
         while form.focus != GoalField::Date {

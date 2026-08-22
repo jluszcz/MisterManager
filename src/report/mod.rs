@@ -12,8 +12,9 @@ use crate::account_label::Account;
 use crate::calc;
 use crate::calc::planning::PlanSettings;
 use crate::db::account::Kind;
-use crate::db::{Db, account, bill, goal, txn};
+use crate::db::{Db, account, bill, txn};
 use crate::fund;
+use crate::goal as goal_engine;
 use crate::money::Cents;
 use crate::overview::Overview;
 use crate::plan;
@@ -241,7 +242,16 @@ impl Snapshot {
         let accounts = account::list(db)?;
         let period_days =
             crate::db::setting::get_or(db, crate::db::setting::key::PAY_PERIOD_DAYS, 14)?;
-        let all = savings::rows(goal::all_with_balances(db)?, &accounts, today, period_days)?;
+        // The tolerant reader, for the reason the plan section below catches
+        // `transfer::plan`'s error rather than propagating it: a page cannot
+        // decline to draw itself, and a report is the copy read on a phone
+        // with nothing to fix the database from.
+        let all = savings::rows(
+            goal_engine::all_with_balances_tolerant(db)?,
+            &accounts,
+            today,
+            period_days,
+        )?;
 
         let containers = savings::containers_with_excess(db)?
             .into_iter()

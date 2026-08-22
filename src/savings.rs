@@ -7,8 +7,9 @@
 
 use crate::account_label::Account;
 use crate::db::account;
-use crate::db::goal::{self, GoalWithBalance};
+use crate::db::goal;
 use crate::db::{AccountId, Db, GoalId};
+use crate::goal::Funding;
 use crate::money::Cents;
 use crate::rate::Percent;
 use anyhow::Result;
@@ -24,7 +25,13 @@ pub struct Row {
     pub container: Account,
     pub name: String,
     pub current: Cents,
+    /// The target, which is what the `Goal` column shows.
     pub goal: Cents,
+    /// What the table holds. Equal to `goal` unless the goal is taxed, and
+    /// carried so `e` can prefill the form from the row rather than
+    /// re-querying -- the reason `interest_eligible` is here too.
+    pub base: Cents,
+    pub taxed: bool,
     pub percent: Option<Percent>,
     pub goal_date: Option<NaiveDate>,
     /// Past its goal date and still short. What the screen offers there is a
@@ -43,8 +50,8 @@ pub struct Row {
 
 /// `current / goal`, as a whole percent rounded to nearest.
 ///
-/// `None` for a non-positive target: `goal_cents` is user-editable and reaches
-/// a divisor, which is the case `div_ceil` exists to refuse. The screen shows
+/// `None` for a non-positive target: the base is user-editable and reaches a
+/// divisor, which is the case `div_ceil` exists to refuse. The screen shows
 /// `--` there rather than dividing.
 ///
 /// `i128` because `current * 100` overflows an `i64` only above ~$922
@@ -94,14 +101,13 @@ pub fn is_reconciled(excess: Cents) -> bool {
 /// `None` for an undated goal -- there is no runway to divide -- and for one
 /// already at its target. Both mean "nothing this paycheck", which a prefill
 /// reads as zero and a column leaves blank.
-pub fn paycheck_ask(
-    goal: &GoalWithBalance,
-    today: NaiveDate,
-    period_days: i64,
-) -> Result<Option<Cents>> {
+///
+/// The target, not the base: a goal due next paycheck asks for all it lacks,
+/// and what a taxed one lacks includes the tax.
+pub fn paycheck_ask(goal: &Funding, today: NaiveDate, period_days: i64) -> Result<Option<Cents>> {
     crate::calc::per_paycheck(
         goal.current,
-        goal.goal.goal_cents,
+        goal.target,
         goal.goal.goal_date,
         today,
         period_days,
@@ -114,8 +120,11 @@ pub fn paycheck_ask(
 /// derived per goal, but a caller that wanted them one at a time would be a
 /// caller filtering before deriving, and then two screens would disagree
 /// about what a filtered-out goal's `$/Pay` was.
+///
+/// Every column that asks "how far along is this goal" reads `target`, so a
+/// taxed goal is measured against what the item costs at the register.
 pub fn rows(
-    goals: Vec<GoalWithBalance>,
+    goals: Vec<Funding>,
     accounts: &[account::Account],
     today: NaiveDate,
     period_days: i64,
@@ -126,11 +135,13 @@ pub fn rows(
         rows.push(Row {
             goal_id: g.goal.id,
             container: Account::named(accounts, g.goal.container_account_id),
-            percent: percent_complete(g.current, g.goal.goal_cents),
-            expired: g.goal.goal_date.is_some_and(|d| d < today) && g.current < g.goal.goal_cents,
+            percent: percent_complete(g.current, g.target),
+            expired: g.goal.goal_date.is_some_and(|d| d < today) && g.current < g.target,
             name: g.goal.name,
             current: g.current,
-            goal: g.goal.goal_cents,
+            goal: g.target,
+            base: g.goal.base_cents,
+            taxed: g.goal.taxed,
             goal_date: g.goal.goal_date,
             per_paycheck,
             interest_eligible: g.goal.interest_eligible,
@@ -200,34 +211,45 @@ mod tests {
         current: i64,
         target: i64,
         date: Option<NaiveDate>,
-    ) -> GoalWithBalance {
-        GoalWithBalance {
+    ) -> Funding {
+        Funding {
             goal: Goal {
                 id: GoalId(id),
                 name: name.to_string(),
                 container_account_id: AccountId(container),
-                goal_cents: Cents(target),
+                base_cents: Cents(target),
                 goal_date: date,
                 recurring_goal_id: None,
                 interest_eligible: true,
                 closed: false,
                 sort: id,
                 favorite: false,
+                taxed: false,
             },
             current: Cents(current),
+            target: Cents(target),
         }
     }
 
     /// The same goal, marked. A helper rather than an eighth parameter on
     /// `goal`: every other fixture here is about a goal that is not
     /// favorited, and a `false` on each of them would say nothing.
-    fn favorited(mut g: GoalWithBalance) -> GoalWithBalance {
+    fn favorited(mut g: Funding) -> Funding {
         g.goal.favorite = true;
         g
     }
 
+    /// The same goal with the base and the target pulled apart, which is the
+    /// only thing a taxed goal is: every derived column must read the second.
+    fn taxed(mut g: Funding, base: i64, target: i64) -> Funding {
+        g.goal.base_cents = Cents(base);
+        g.goal.taxed = true;
+        g.target = Cents(target);
+        g
+    }
+
     /// The four rows of the design's screen mock, at its own today.
-    fn goals() -> Vec<GoalWithBalance> {
+    fn goals() -> Vec<Funding> {
         vec![
             goal(1, 1, "Bill Payments", 1_300_000, 1_500_000, None),
             goal(2, 1, "Apple Watch", 48_500, 50_000, Some(day(2026, 9, 1))),
@@ -236,8 +258,8 @@ mod tests {
         ]
     }
 
-    /// `goal_cents` is user-editable and reaches a divisor. A zero target
-    /// renders `--` rather than dividing.
+    /// The target -- derived from a user-editable base -- reaches a divisor.
+    /// A zero target renders `--` rather than dividing.
     #[test]
     fn a_goal_with_a_zero_target_has_no_percent_rather_than_dividing() {
         assert_eq!(percent_complete(Cents(500), Cents::ZERO), None);
@@ -324,6 +346,71 @@ mod tests {
         assert_eq!(expired, vec![true, false, false, false]);
     }
 
+    /// A goal funded to its base is 94% of the way to what the item costs, not
+    /// 100% of the way to its sticker price. The screen's percentage is a
+    /// target question.
+    #[test]
+    fn a_taxed_goals_percentage_is_measured_against_its_taxed_target() {
+        let rows = rows(
+            vec![taxed(
+                goal(1, 1, "Couch", 100_000, 100_000, None),
+                100_000,
+                106_500,
+            )],
+            &accounts(),
+            today(),
+            14,
+        )
+        .unwrap();
+
+        assert_eq!(rows[0].goal, Cents(106_500), "the column shows the target");
+        assert_eq!(rows[0].base, Cents(100_000), "the base is carried for `e`");
+        assert!(rows[0].taxed);
+        assert_eq!(rows[0].percent, Some(Percent(94)));
+    }
+
+    /// Past its date and still short of the *taxed* figure is overdue. Reading
+    /// the base would clear the mark on a goal that cannot yet buy the thing.
+    #[test]
+    fn a_taxed_goal_funded_to_its_base_is_still_expired_past_its_date() {
+        let rows = rows(
+            vec![taxed(
+                goal(1, 1, "Couch", 100_000, 100_000, Some(day(2026, 1, 1))),
+                100_000,
+                106_500,
+            )],
+            &accounts(),
+            today(),
+            14,
+        )
+        .unwrap();
+
+        assert!(rows[0].expired);
+    }
+
+    /// `$/Pay` is the third target question on this screen, and the payday
+    /// worksheet prefills with the same figure through the same function. A
+    /// goal dated one pay period out asks for the whole of what it lacks, and
+    /// what a taxed one lacks includes the tax.
+    #[test]
+    fn a_taxed_goals_paycheck_ask_is_measured_against_its_taxed_target() {
+        let rows = rows(
+            vec![taxed(
+                // today() is 2026-08-12 and the period is 14 days, so this is
+                // exactly one paycheck away: one period to divide by.
+                goal(1, 1, "Couch", 100_000, 100_000, Some(day(2026, 8, 26))),
+                100_000,
+                106_500,
+            )],
+            &accounts(),
+            today(),
+            14,
+        )
+        .unwrap();
+
+        assert_eq!(rows[0].per_paycheck, Some(Cents(6_500)));
+    }
+
     #[test]
     fn each_row_names_its_own_goals_container() {
         let rows = rows(goals(), &accounts(), today(), 14).unwrap();
@@ -374,7 +461,8 @@ mod tests {
                 &goal::NewGoal {
                     name: name.to_string(),
                     container_account_id: container,
-                    goal_cents: Cents::from_dollars(1_000),
+                    base_cents: Cents::from_dollars(1_000),
+                    taxed: false,
                     goal_date: None,
                     recurring_goal_id: None,
                     interest_eligible: false,

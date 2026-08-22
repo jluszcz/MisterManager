@@ -2,8 +2,8 @@ use super::cursor::{Cursor, Scroll};
 use super::month::{MonthCycle, YearMonth};
 use super::search::{Search, SearchBox};
 use crate::db::account::Account;
-use crate::db::goal::GoalWithBalance;
 use crate::db::{AccountId, GoalId};
+use crate::goal::Funding;
 use crate::money::Cents;
 use crate::rate::Percent;
 use crate::savings::{Row, is_reconciled};
@@ -54,7 +54,10 @@ impl Savings {
 
     /// Take every open goal, in `goal::all_with_balances` order, and build the
     /// derived columns once.
-    pub fn set_goals(&mut self, goals: Vec<GoalWithBalance>) -> Result<()> {
+    ///
+    /// Every column that asks "how far along is this goal" reads `target`, so
+    /// a taxed goal is measured against what the item costs at the register.
+    pub fn set_goals(&mut self, goals: Vec<Funding>) -> Result<()> {
         self.all = crate::savings::rows(goals, &self.accounts, self.today, self.period_days)?;
         self.rebuild_months();
         self.refilter();
@@ -402,6 +405,7 @@ mod tests {
     use crate::db::GoalId;
     use crate::db::account::{Group, Kind};
     use crate::db::goal::Goal;
+    use crate::goal::Funding;
     use crate::tui::MIN_WIDTH;
     use crate::tui::form::backspace_key;
 
@@ -445,21 +449,23 @@ mod tests {
         current: i64,
         target: i64,
         date: Option<NaiveDate>,
-    ) -> GoalWithBalance {
-        GoalWithBalance {
+    ) -> Funding {
+        Funding {
             goal: Goal {
                 id: GoalId(id),
                 name: name.to_string(),
                 container_account_id: AccountId(container),
-                goal_cents: Cents(target),
+                base_cents: Cents(target),
                 goal_date: date,
                 recurring_goal_id: None,
                 interest_eligible: true,
                 closed: false,
                 sort: id,
                 favorite: false,
+                taxed: false,
             },
             current: Cents(current),
+            target: Cents(target),
         }
     }
 
@@ -1005,7 +1011,7 @@ mod tests {
     /// The same goal, marked. A helper rather than an eighth parameter on
     /// `goal`: every other test in this file is about a goal that is not
     /// favorited, and a `false` on each of them would say nothing.
-    fn favorited(mut g: GoalWithBalance) -> GoalWithBalance {
+    fn favorited(mut g: Funding) -> Funding {
         g.goal.favorite = true;
         g
     }
