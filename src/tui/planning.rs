@@ -5,8 +5,11 @@
 
 use super::Label;
 use super::cursor::{Cursor, Scroll};
-use super::form::{DateField, Field, FormFields, Step, next_in, parse_amount, step_index};
+use super::form::{
+    Caret, DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index,
+};
 use super::style::Tone;
+use super::text::Edit;
 use crate::calc;
 use crate::calc::planning::{Plan, PlanSettings};
 use crate::db::account::AccountColor;
@@ -20,6 +23,7 @@ use crate::rate::Percent;
 use crate::transfer::{self, Container, Landing, Wiring};
 use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
+use ratatui::crossterm::event::KeyEvent;
 
 /// One editable constant on the screen.
 ///
@@ -959,27 +963,23 @@ impl FormFields for BillForm {
         self.focus = next_in(&BillField::ORDER, self.focus, -1);
     }
 
-    /// A no-op unless the selector is focused: `←`/`→` on a text field must
-    /// not silently move a bill between subtotals.
-    fn choice(&mut self, step: Step) {
-        if self.focus == BillField::Category {
-            self.category = step_index(self.category, bill::Category::ALL.len(), step.direction());
+    fn cycle(&mut self, step: Step) {
+        self.category = step_index(self.category, bill::Category::ALL.len(), step.direction());
+    }
+
+    fn focused(&mut self) -> Focused<'_> {
+        match self.focus {
+            BillField::Label => Focused::Text(&mut self.label),
+            BillField::Amount => Focused::Text(&mut self.amount),
+            BillField::Category => Focused::Selector,
         }
     }
 
-    fn type_char(&mut self, c: char) {
+    fn caret(&self) -> Caret {
         match self.focus {
-            BillField::Label => self.label.push(c),
-            BillField::Amount => self.amount.push(c),
-            BillField::Category => {}
-        }
-    }
-
-    fn backspace(&mut self) {
-        match self.focus {
-            BillField::Label => self.label.backspace(),
-            BillField::Amount => self.amount.backspace(),
-            BillField::Category => {}
+            BillField::Label => Caret::in_field(&self.label),
+            BillField::Amount => Caret::in_field(&self.amount),
+            BillField::Category => Caret::End,
         }
     }
 }
@@ -1024,6 +1024,15 @@ impl TransferConfirm {
         self.date.backspace();
     }
 
+    /// Answer an editing key over the date, the same as any other field.
+    pub(super) fn edit(&mut self, key: KeyEvent) -> Edit {
+        self.date.edit(key)
+    }
+
+    pub(super) fn caret(&self) -> Caret {
+        Caret::in_field(self.date.text())
+    }
+
     /// Step the date by `step`, as `←`/`→` do on every date field in the
     /// app, and `Shift` with them a week at a time.
     pub fn step_date(&mut self, step: Step) {
@@ -1048,7 +1057,13 @@ use ratatui::widgets::{Block, Clear, Paragraph, Row as TableRow, Table, Wrap};
 pub fn render_bill(frame: &mut Frame, form: &BillForm) {
     let lines: Vec<TextLine> = BillField::ORDER
         .iter()
-        .map(|f| field_line(f.label(), form.display(*f), form.focus == *f))
+        .map(|f| {
+            field_line(
+                f.label(),
+                form.display(*f),
+                (form.focus == *f).then(|| form.caret()),
+            )
+        })
         .collect();
     render_fields(frame, form.title(), lines);
 }
@@ -1077,7 +1092,7 @@ pub fn render_transfers(frame: &mut Frame, confirm: &TransferConfirm) {
     lines.push(field_line_noted(
         "Date",
         Label::from(confirm.date_value().to_string()),
-        true,
+        Some(confirm.caret()),
         &confirm.resolved_date().unwrap_or_default(),
     ));
     lines.push(TextLine::from("Enter write · Esc cancel"));
@@ -1194,6 +1209,7 @@ mod tests {
     use crate::db;
     use crate::db::bill::Category;
     use crate::tui::MIN_WIDTH;
+    use crate::tui::form::char_key;
     // `setting`, `key`, and `Line` already come in through `super::*`.
 
     /// The value column carries figures, counts and gate verdicts alike, so
@@ -2475,11 +2491,11 @@ mod tests {
         assert_eq!(form.category(), Category::Housing);
 
         for c in "Plumber".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         for c in "$82.00".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         form.choice(Step::NEXT);
@@ -2506,7 +2522,7 @@ mod tests {
         let mut form = BillForm::add();
         form.next_field();
         for c in "82".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         let err = form.commit().unwrap_err();
         assert!(err.to_string().contains("label"), "{err}");
@@ -2516,11 +2532,11 @@ mod tests {
     fn a_bill_with_an_unparseable_amount_is_refused_with_the_text_that_failed() {
         let mut form = BillForm::add();
         for c in "Plumber".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         for c in "eighty".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         let err = form.commit().unwrap_err();
         assert!(err.to_string().contains("eighty"), "{err}");

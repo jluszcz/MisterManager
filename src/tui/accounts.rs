@@ -15,7 +15,7 @@
 
 use super::Label;
 use super::cursor::{Cursor, Scroll};
-use super::form::{Field, FormFields, Step, next_in, step_index};
+use super::form::{Caret, Field, Focused, FormFields, Step, next_in, step_index};
 use crate::db::AccountId;
 use crate::db::account::{Account, AccountColor, Group, InterestPolicy, Kind};
 use crate::savings_block::Block as SavingsBlock;
@@ -334,32 +334,32 @@ impl FormFields for AccountForm {
         self.focus = next_in(&self.fields(), self.focus, -1);
     }
 
-    fn choice(&mut self, step: Step) {
+    fn cycle(&mut self, step: Step) {
         self.step_choice(step.direction());
     }
 
-    fn type_char(&mut self, c: char) {
+    // Selectors take no keystroke of their own, the same as the goal form's
+    // Interest field: a choice spelled out one letter at a time can sit at
+    // something that means nothing in between.
+    fn focused(&mut self) -> Focused<'_> {
         match self.focus {
-            AccountField::Name => self.name.push(c),
-            // Selectors ignore typing, the same as the goal form's Interest
-            // field: a choice spelled out one letter at a time can sit at
-            // something that means nothing in between.
+            AccountField::Name => Focused::Text(&mut self.name),
             AccountField::Color
             | AccountField::Band
             | AccountField::Order
             | AccountField::Interest
-            | AccountField::Savings => {}
+            | AccountField::Savings => Focused::Selector,
         }
     }
 
-    fn backspace(&mut self) {
+    fn caret(&self) -> Caret {
         match self.focus {
-            AccountField::Name => self.name.backspace(),
+            AccountField::Name => Caret::in_field(&self.name),
             AccountField::Color
             | AccountField::Band
             | AccountField::Order
             | AccountField::Interest
-            | AccountField::Savings => {}
+            | AccountField::Savings => Caret::End,
         }
     }
 }
@@ -415,7 +415,7 @@ pub fn render_form(frame: &mut Frame, form: &AccountForm) {
                     focused,
                     super::style::account_color(form.account_id, form.color_choice()),
                 ),
-                _ => field_line(f.label(), value, focused),
+                _ => field_line(f.label(), value, focused.then(|| form.caret())),
             }
         })
         .collect();
@@ -491,6 +491,7 @@ pub fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> usize {
 mod tests {
     use super::*;
     use crate::tui::MIN_WIDTH;
+    use crate::tui::form::{backspace_key, char_key};
 
     fn row(id: i64, code: &str, name: &str, kind: Kind, group: Group) -> Row {
         let accounts = [Account {
@@ -716,7 +717,7 @@ mod tests {
             None,
         );
         for _ in 0.."Everyday".len() {
-            form.backspace();
+            form.edit(backspace_key());
         }
         assert!(form.commit().is_err());
     }
@@ -730,11 +731,11 @@ mod tests {
             3,
             None,
         );
-        form.type_char('!');
+        form.edit(char_key('!'));
         assert_eq!(form.commit().unwrap().name, "Everyday!");
 
         form.focus = AccountField::Band;
-        form.type_char('X');
+        form.edit(char_key('X'));
         assert_eq!(form.commit().unwrap().name, "Everyday!");
     }
 

@@ -126,6 +126,16 @@ point rather than a cage, and an entry that already has an open goal is left
 unticked and sinks with the rest — `Space` still adds it, since a second open
 goal against one entry is legitimate.
 
+Every box that takes text — a form field, a `/` search, the worksheet's date —
+edits the same way, with the readline keys: `Ctrl`+`A` and `Ctrl`+`E` jump to
+the ends of the line, `Ctrl`+`B` and `Ctrl`+`F` move a character, `Ctrl`+`W`
+deletes the word before the caret, `Ctrl`+`U` and `Ctrl`+`K` delete back to the
+start or on to the end, and `Ctrl`+`D` takes the character the caret is on, as
+`Delete` does. `←`/`→` move the caret too, in a field that holds text rather
+than a date or a choice. `Ctrl` means editing text and nothing else anywhere in
+the app; `Alt` is unused, since macOS sends `Option` as `Meta` only where the
+terminal has been told to.
+
 Every date the app asks for is typed as `YYYY-MM-DD` or as `M/D`, which takes
 the next year that month comes round — typed in August, `9/10` is this
 September and `3/4` is next March. The year turns on the month alone, so `8/1`

@@ -5,12 +5,14 @@
 //! parts with decisions in them, and they are unit-tested directly.
 
 use super::Account;
+use super::text::{self, Edit, TextBuffer};
 use crate::db::account::{self, Kind};
 use crate::db::txn::{NewTxn, Suggestion, Txn};
 use crate::db::{AccountId, TxnId};
 use crate::money::Cents;
 use anyhow::{Context, Result, anyhow, ensure};
 use chrono::{Datelike, NaiveDate, TimeDelta};
+use ratatui::crossterm::event::KeyEvent;
 
 /// One text input: its buffer, and whether the user has typed into it.
 ///
@@ -19,7 +21,7 @@ use chrono::{Datelike, NaiveDate, TimeDelta};
 /// the rest alone.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Field {
-    value: String,
+    text: TextBuffer,
     touched: bool,
 }
 
@@ -27,7 +29,7 @@ impl Field {
     /// A prefilled, untouched field — a suggestion may still overwrite it.
     pub(super) fn prefilled(value: impl Into<String>) -> Field {
         Field {
-            value: value.into(),
+            text: TextBuffer::from(value),
             touched: false,
         }
     }
@@ -37,22 +39,41 @@ impl Field {
     /// real figure the user can see and did not ask to change.
     pub(super) fn given(value: impl Into<String>) -> Field {
         Field {
-            value: value.into(),
+            text: TextBuffer::from(value),
             touched: true,
         }
     }
 
     pub(super) fn value(&self) -> &str {
-        &self.value
+        self.text.value()
+    }
+
+    /// Answer an editing key, and report what it did.
+    ///
+    /// **A change counts as typing and a motion does not**: an amount cleared
+    /// with `Ctrl`+`U` is the user's own empty field, while a caret moved
+    /// across a prefill leaves it a prefill a suggestion may still overwrite.
+    pub(super) fn edit(&mut self, key: KeyEvent) -> Edit {
+        let edit = text::edit_key(&mut self.text, key);
+        if edit == Edit::Changed {
+            self.touched = true;
+        }
+        edit
+    }
+
+    /// Move the caret one character. What `←`/`→` mean in a text field, where
+    /// a date field reads them as a day and a selector as a choice.
+    pub(super) fn step_caret(&mut self, step: Step) {
+        self.text.step(step.direction());
     }
 
     pub(super) fn push(&mut self, c: char) {
-        self.value.push(c);
+        self.text.insert(c);
         self.touched = true;
     }
 
     pub(super) fn backspace(&mut self) {
-        self.value.pop();
+        self.text.backspace();
         self.touched = true;
     }
 
@@ -63,14 +84,14 @@ impl Field {
     /// form living beside its own screen has the same suggestion rules to
     /// obey, and without these two it can only approximate them.
     pub(super) fn fill(&mut self, value: impl Into<String>) {
-        self.value = value.into();
+        self.text.set(value);
     }
 
     /// Replace the contents so that they count as the user's own -- the same
     /// as having typed them. The counterpart of [`Field::fill`], and what an
     /// arrow-stepped date is written back with.
     pub(super) fn retype(&mut self, value: impl Into<String>) {
-        self.value = value.into();
+        self.text.set(value);
         self.touched = true;
     }
 
@@ -169,6 +190,17 @@ impl DateField {
         self.field.backspace();
     }
 
+    /// Answer an editing key over the text, exactly as a plain field does.
+    /// What the arrows mean is where the two part company: a date steps.
+    pub(super) fn edit(&mut self, key: KeyEvent) -> Edit {
+        self.field.edit(key)
+    }
+
+    /// The buffer under the date, for the draw that has to place its caret.
+    pub(super) fn text(&self) -> &Field {
+        &self.field
+    }
+
     /// Step the date by `days`, rewriting it as the date it now means. What
     /// `←`/`→` do on every date field in the app, and `Shift` with them a
     /// week at a time.
@@ -257,6 +289,86 @@ impl Step {
     pub fn direction(self) -> isize {
         self.0.signum() as isize
     }
+}
+
+/// Where a focused field draws its caret.
+///
+/// [`Caret::In`] is the answer for a field with a buffer behind it and
+/// [`Caret::End`] for a selector, which has none: its text is the choice
+/// itself, and the caret goes past it exactly as it always has.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Caret {
+    End,
+    /// `at` characters into `text`, which is what the buffer held when the
+    /// draw asked.
+    In {
+        at: usize,
+        text: String,
+    },
+}
+
+impl Caret {
+    pub(super) fn in_field(field: &Field) -> Caret {
+        Caret::in_buffer(&field.text)
+    }
+
+    /// The same, for a box that is a buffer and nothing else -- a
+    /// [`SearchBox`], which has no "touched" to carry.
+    ///
+    /// [`SearchBox`]: super::search::SearchBox
+    pub(super) fn in_buffer(text: &TextBuffer) -> Caret {
+        Caret::In {
+            at: text.caret(),
+            text: text.value().to_string(),
+        }
+    }
+
+    /// Where to draw the caret in the line `drawn`.
+    ///
+    /// The offset is honoured only when the text on screen **is** the buffer.
+    /// A figure `--demo` has blocked is a fixed run of blocks whatever was
+    /// typed, and a caret sitting inside that run would count the digits back
+    /// out -- the mask is six characters wide, so `123.45` is a figure it
+    /// would otherwise count exactly. A selector is not a buffer at all. Both
+    /// draw at the end, which is where every caret in the app was drawn
+    /// before there was one to place.
+    fn offset(&self, drawn: &str) -> usize {
+        match self {
+            Caret::In { at, text } if text == drawn => *at,
+            _ => drawn.chars().count(),
+        }
+    }
+}
+
+/// The field a form's caret is in, as the key handler has to see it.
+///
+/// The three arms are the three readings of `←`/`→`, which is why the
+/// distinction is drawn here rather than left to each form: a text field
+/// moves the caret, a date steps a day, and a selector cycles.
+pub(super) enum Focused<'a> {
+    Text(&'a mut Field),
+    Date(&'a mut DateField),
+    /// A choice, which no keystroke types into.
+    Selector,
+}
+
+/// The key a typed character arrives on, and the key that rubs one out.
+///
+/// For the tests that drive a form directly rather than through
+/// `App::on_key`: a form has no `type_char` of its own any more, since every
+/// key a field answers -- the character, the `Ctrl` editing keys, `Backspace`
+/// -- goes through one dispatcher, and a test that stepped around it would be
+/// exercising a route the keyboard does not have.
+#[cfg(test)]
+pub(super) fn char_key(c: char) -> KeyEvent {
+    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+}
+
+#[cfg(test)]
+pub(super) fn backspace_key() -> KeyEvent {
+    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+    KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)
 }
 
 /// Step `focus` around `order` by `step`, wrapping. Every form's tab order is
@@ -421,18 +533,48 @@ impl TxnField {
 /// The two autocomplete methods are defaulted off: only the transaction and
 /// transfer forms have a description field, and a form without one must never
 /// open the suggestion popup.
-pub trait FormFields {
+pub(super) trait FormFields {
     fn next_field(&mut self);
     fn previous_field(&mut self);
-    /// Move whatever has focus by `step`: a date by that many days, a
-    /// selector by that many choices in that direction.
-    ///
-    /// One method rather than a next and a previous, because the field under
-    /// the caret is what decides either way and two methods only ever meant
-    /// two matches to keep in step.
-    fn choice(&mut self, step: Step);
-    fn type_char(&mut self, c: char);
-    fn backspace(&mut self);
+
+    /// The field under the caret. One method, because what a keystroke means
+    /// depends on which of the three kinds has the focus and a form that
+    /// answered that question twice would answer it differently twice.
+    fn focused(&mut self) -> Focused<'_>;
+
+    /// The same field, for the draw, which has no `&mut` to ask with.
+    fn caret(&self) -> Caret;
+
+    /// Cycle the focused selector by `step`. Only reached when [`Focused::Selector`]
+    /// has the caret, so a form with no selector in it leaves this alone --
+    /// and a date's step is not here at all, since one rule for every date
+    /// field in the app is the point.
+    fn cycle(&mut self, _step: Step) {}
+
+    /// Answer an editing key, and say what it did. A selector types nothing.
+    fn edit(&mut self, key: KeyEvent) -> Edit {
+        match self.focused() {
+            Focused::Text(field) => field.edit(key),
+            Focused::Date(date) => date.edit(key),
+            Focused::Selector => Edit::Ignored,
+        }
+    }
+
+    /// `←`/`→`, and `Shift` with them: the field under the caret decides.
+    fn choice(&mut self, step: Step) {
+        match self.focused() {
+            Focused::Text(field) => {
+                field.step_caret(step);
+                return;
+            }
+            Focused::Date(date) => {
+                date.step(step.days());
+                return;
+            }
+            Focused::Selector => {}
+        }
+        self.cycle(step);
+    }
 
     /// The text to autocomplete against, when the description field has
     /// focus. `None` closes the popup.
@@ -571,36 +713,27 @@ impl FormFields for TxnForm {
         self.focus = next_in(&TxnField::ORDER, self.focus, -1);
     }
 
-    /// Cycle the selector or step the date, whichever is focused. A no-op on
-    /// the other two: `←`/`→` on the description must not silently change the
-    /// account.
-    fn choice(&mut self, step: Step) {
+    fn focused(&mut self) -> Focused<'_> {
         match self.focus {
-            TxnField::Date => self.date.step(step.days()),
-            TxnField::Account => {
-                self.account = step_index(self.account, self.accounts.len(), step.direction());
-                self.account_touched = true;
-            }
-            TxnField::Amount | TxnField::Description => {}
+            TxnField::Date => Focused::Date(&mut self.date),
+            TxnField::Amount => Focused::Text(&mut self.amount),
+            TxnField::Description => Focused::Text(&mut self.description),
+            TxnField::Account => Focused::Selector,
         }
     }
 
-    fn type_char(&mut self, c: char) {
+    fn caret(&self) -> Caret {
         match self.focus {
-            TxnField::Date => self.date.push(c),
-            TxnField::Amount => self.amount.push(c),
-            TxnField::Description => self.description.push(c),
-            TxnField::Account => {}
+            TxnField::Date => Caret::in_field(self.date.text()),
+            TxnField::Amount => Caret::in_field(&self.amount),
+            TxnField::Description => Caret::in_field(&self.description),
+            TxnField::Account => Caret::End,
         }
     }
 
-    fn backspace(&mut self) {
-        match self.focus {
-            TxnField::Date => self.date.backspace(),
-            TxnField::Amount => self.amount.backspace(),
-            TxnField::Description => self.description.backspace(),
-            TxnField::Account => {}
-        }
+    fn cycle(&mut self, step: Step) {
+        self.account = step_index(self.account, self.accounts.len(), step.direction());
+        self.account_touched = true;
     }
 
     fn suggestion_prefix(&self) -> Option<&str> {
@@ -739,24 +872,19 @@ impl FormFields for ValueForm {
     fn next_field(&mut self) {}
     fn previous_field(&mut self) {}
 
-    // Nothing to cycle either, unless the field is a date, which steps.
-    fn choice(&mut self, step: Step) {
-        if let Entry::Date(date) = &mut self.entry {
-            date.step(step.days());
+    // Nothing to cycle either: the one field is a buffer, and a date among
+    // them steps on the arrows like every other date in the app.
+    fn focused(&mut self) -> Focused<'_> {
+        match &mut self.entry {
+            Entry::Figure(field) | Entry::Money(field) => Focused::Text(field),
+            Entry::Date(date) => Focused::Date(date),
         }
     }
 
-    fn type_char(&mut self, c: char) {
-        match &mut self.entry {
-            Entry::Figure(field) | Entry::Money(field) => field.push(c),
-            Entry::Date(date) => date.push(c),
-        }
-    }
-
-    fn backspace(&mut self) {
-        match &mut self.entry {
-            Entry::Figure(field) | Entry::Money(field) => field.backspace(),
-            Entry::Date(date) => date.backspace(),
+    fn caret(&self) -> Caret {
+        match &self.entry {
+            Entry::Figure(field) | Entry::Money(field) => Caret::in_field(field),
+            Entry::Date(date) => Caret::in_field(date.text()),
         }
     }
 }
@@ -983,9 +1111,26 @@ impl FormFields for TransferForm {
         self.focus = next_in(&TransferField::ORDER, self.focus, -1);
     }
 
-    fn choice(&mut self, step: Step) {
+    fn focused(&mut self) -> Focused<'_> {
         match self.focus {
-            TransferField::Date => self.date.step(step.days()),
+            TransferField::Date => Focused::Date(&mut self.date),
+            TransferField::Amount => Focused::Text(&mut self.amount),
+            TransferField::Description => Focused::Text(&mut self.description),
+            TransferField::From | TransferField::To => Focused::Selector,
+        }
+    }
+
+    fn caret(&self) -> Caret {
+        match self.focus {
+            TransferField::Date => Caret::in_field(self.date.text()),
+            TransferField::Amount => Caret::in_field(&self.amount),
+            TransferField::Description => Caret::in_field(&self.description),
+            TransferField::From | TransferField::To => Caret::End,
+        }
+    }
+
+    fn cycle(&mut self, step: Step) {
+        match self.focus {
             TransferField::From => {
                 self.from = step_index(self.from, self.from_accounts.len(), step.direction())
             }
@@ -993,25 +1138,7 @@ impl FormFields for TransferForm {
                 self.to = step_index(self.to, self.to_accounts.len(), step.direction());
                 self.refresh_payment_description();
             }
-            TransferField::Amount | TransferField::Description => {}
-        }
-    }
-
-    fn type_char(&mut self, c: char) {
-        match self.focus {
-            TransferField::Date => self.date.push(c),
-            TransferField::Amount => self.amount.push(c),
-            TransferField::Description => self.description.push(c),
-            TransferField::From | TransferField::To => {}
-        }
-    }
-
-    fn backspace(&mut self) {
-        match self.focus {
-            TransferField::Date => self.date.backspace(),
-            TransferField::Amount => self.amount.backspace(),
-            TransferField::Description => self.description.backspace(),
-            TransferField::From | TransferField::To => {}
+            TransferField::Date | TransferField::Amount | TransferField::Description => {}
         }
     }
 
@@ -1035,7 +1162,7 @@ use super::style::Color;
 use super::{Label, label_line};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
@@ -1057,22 +1184,22 @@ pub(super) fn centered(area: Rect, width: u16, height: u16) -> Rect {
 }
 
 /// One labelled input line; the focused one carries a caret.
-pub(super) fn field_line(label: &str, value: Label, focused: bool) -> TextLine<'static> {
-    field_line_noted(label, value, focused, "")
+pub(super) fn field_line(label: &str, value: Label, caret: Option<Caret>) -> TextLine<'static> {
+    field_line_noted(label, value, caret, "")
 }
 
-/// The same, with a note past the caret -- what the field comes to, where its
+/// The same, with a note past the value -- what the field comes to, where its
 /// text is an expression rather than the figure itself. An empty note draws
 /// nothing, trailing space included.
 pub(super) fn field_line_noted(
     label: &str,
     value: Label,
-    focused: bool,
+    caret: Option<Caret>,
     note: &str,
 ) -> TextLine<'static> {
     let mut spans = vec![Span::raw(format!("{label:>12}  "))];
-    spans.extend(label_line(&value).spans);
-    spans.push(Span::raw(trailer(focused, note)));
+    spans.extend(value_spans(&value, caret));
+    spans.push(Span::raw(trailer(note)));
     TextLine::from(spans)
 }
 
@@ -1090,11 +1217,15 @@ pub(super) fn field_line_tinted(
     focused: bool,
     color: Color,
 ) -> TextLine<'static> {
-    TextLine::from(vec![
+    let mut spans = vec![
         Span::raw(format!("{label:>12}  ")),
         Span::styled(value, Style::default().fg(color)),
-        Span::raw(trailer(focused, "")),
-    ])
+    ];
+    if focused {
+        spans.push(Span::styled(PAST_THE_END, caret_style()));
+    }
+    spans.push(Span::raw(trailer("")));
+    TextLine::from(spans)
 }
 
 /// The same as [`field_line_noted`], but the label is itself a [`Label`]
@@ -1109,23 +1240,98 @@ pub(super) fn field_line_tinted(
 /// trimmed copy of it: a label carrying surrounding space would otherwise be
 /// padded for one width and drawn at another, and the two would disagree for
 /// whoever wrote that label rather than for whoever wrote this.
-pub(super) fn field_line_labeled(label: &Label, value: Label, focused: bool) -> TextLine<'static> {
+pub(super) fn field_line_labeled(
+    label: &Label,
+    value: Label,
+    caret: Option<Caret>,
+) -> TextLine<'static> {
     let width = label.plain_text().chars().count();
     let mut spans = vec![Span::raw(" ".repeat(12usize.saturating_sub(width)))];
     spans.extend(label_line(label).spans);
     spans.push(Span::raw("  "));
-    spans.extend(label_line(&value).spans);
-    spans.push(Span::raw(trailer(focused, "")));
+    spans.extend(value_spans(&value, caret));
+    spans.push(Span::raw(trailer("")));
     TextLine::from(spans)
 }
 
-/// The caret and the note that follow every field's value.
-fn trailer(focused: bool, note: &str) -> String {
-    let caret = if focused { "▌" } else { "" };
+/// How the caret is drawn: reverse video over the character it is on, which
+/// is the block a terminal's own cursor paints.
+///
+/// A block *over* a character rather than a bar *between* two of them. A bar
+/// costs a column, so every value shifted right of the caret as the caret
+/// moved through it, and a field read as though it had a space typed into it.
+pub(super) fn caret_style() -> Style {
+    Style::default().add_modifier(Modifier::REVERSED)
+}
+
+/// The character the caret sits on at the end of a line. There is nothing
+/// typed there to block out, and this is the one place the caret costs a
+/// column -- as a terminal's own cursor does, sitting past the last
+/// character.
+const PAST_THE_END: &str = " ";
+
+/// The value, with the caret drawn onto it at its own offset.
+///
+/// The value arrives as a [`Label`] because an account is colored wherever it
+/// is drawn, so the caret has to be laid over one character of one span
+/// without flattening the rest -- and reverse video keeps that span's color,
+/// swapping it into the background. `None` is a field that does not have the
+/// caret and draws none at all.
+pub(super) fn value_spans(value: &Label, caret: Option<Caret>) -> Vec<Span<'static>> {
+    let spans = label_line(value).spans;
+    let Some(caret) = caret else {
+        return spans;
+    };
+    let at = caret.offset(&value.plain_text());
+
+    let mut out = Vec::with_capacity(spans.len() + 3);
+    let mut seen = 0;
+    let mut placed = false;
+    for span in spans {
+        let len = span.content.chars().count();
+        if !placed && at < seen + len {
+            let (before, on, after) = split_around(&span.content, at - seen);
+            if !before.is_empty() {
+                out.push(Span::styled(before.to_string(), span.style));
+            }
+            out.push(Span::styled(
+                on.to_string(),
+                span.style.patch(caret_style()),
+            ));
+            if !after.is_empty() {
+                out.push(Span::styled(after.to_string(), span.style));
+            }
+            placed = true;
+        } else {
+            out.push(span);
+        }
+        seen += len;
+    }
+    if !placed {
+        out.push(Span::styled(PAST_THE_END, caret_style()));
+    }
+    out
+}
+
+/// `text` split into what precedes the character `at`, that character, and
+/// what follows it. Counted in characters, so a multi-byte one is not sliced
+/// through the middle.
+fn split_around(text: &str, at: usize) -> (&str, &str, &str) {
+    let byte = |n: usize| {
+        text.char_indices()
+            .nth(n)
+            .map_or(text.len(), |(index, _)| index)
+    };
+    let (from, to) = (byte(at), byte(at + 1));
+    (&text[..from], &text[from..to], &text[to..])
+}
+
+/// The note that follows a field's value, where it has one.
+fn trailer(note: &str) -> String {
     if note.is_empty() {
-        caret.to_string()
+        String::new()
     } else {
-        format!("{caret}  {note}")
+        format!("  {note}")
     }
 }
 
@@ -1155,7 +1361,7 @@ pub fn render_value(frame: &mut Frame, form: &ValueForm) {
     let lines = vec![field_line_labeled(
         form.label(),
         Label::from(form.display()),
-        true,
+        Some(form.caret()),
     )];
     render_fields(frame, form.title(), lines);
 }
@@ -1170,7 +1376,13 @@ pub fn render_txn(frame: &mut Frame, form: &TxnForm, popup: &Autocomplete) -> us
     };
     let lines: Vec<TextLine> = TxnField::ORDER
         .iter()
-        .map(|f| field_line(f.label(), form.display(*f), form.focus == *f))
+        .map(|f| {
+            field_line(
+                f.label(),
+                form.display(*f),
+                (form.focus == *f).then(|| form.caret()),
+            )
+        })
         .collect();
     let area = render_fields(frame, title, lines);
     render_popup(frame, area, popup)
@@ -1181,7 +1393,13 @@ pub fn render_txn(frame: &mut Frame, form: &TxnForm, popup: &Autocomplete) -> us
 pub fn render_transfer(frame: &mut Frame, form: &TransferForm, popup: &Autocomplete) -> usize {
     let lines: Vec<TextLine> = TransferField::ORDER
         .iter()
-        .map(|f| field_line(f.label(), form.display(*f), form.focus == *f))
+        .map(|f| {
+            field_line(
+                f.label(),
+                form.display(*f),
+                (form.focus == *f).then(|| form.caret()),
+            )
+        })
         .collect();
     let area = render_fields(
         frame,
@@ -1255,6 +1473,56 @@ mod tests {
     use super::*;
     use crate::db::account::Group;
     use crate::db::{AccountId, RecurringTxnId};
+    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::style::Modifier;
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    /// Where a field's caret sits, asked for the way a draw asks.
+    fn caret_at(field: &Field) -> usize {
+        match Caret::in_field(field) {
+            Caret::In { at, .. } => at,
+            Caret::End => panic!("a field's caret is always in its own text"),
+        }
+    }
+
+    /// Deleting is typing as far as a suggestion is concerned: an amount
+    /// cleared with `Ctrl`+`U` is the user's own empty field, not a prefill
+    /// still waiting to be overwritten.
+    #[test]
+    fn an_editing_key_counts_as_touching_a_field() {
+        let mut field = Field::prefilled("40.00");
+        assert!(!field.is_touched());
+        field.edit(ctrl('u'));
+        assert_eq!(field.value(), "");
+        assert!(field.is_touched());
+    }
+
+    /// Moving the caret is not typing, so a prefill a suggestion may still
+    /// overwrite survives being looked at.
+    #[test]
+    fn moving_the_caret_does_not_count_as_touching_a_field() {
+        let mut field = Field::prefilled("40.00");
+        field.edit(ctrl('a'));
+        assert_eq!(caret_at(&field), 0);
+        assert!(!field.is_touched());
+    }
+
+    /// The caret is where the next keystroke lands, so a field a suggestion
+    /// has just refilled must not leave it out in the old value's length.
+    #[test]
+    fn filling_a_field_puts_the_caret_at_the_end_of_what_filled_it() {
+        let mut field = Field::given("weekly grocery run");
+        field.edit(ctrl('a'));
+        field.fill("rent");
+        assert_eq!(caret_at(&field), 4);
+
+        field.edit(ctrl('a'));
+        field.retype("water");
+        assert_eq!(caret_at(&field), 5);
+    }
 
     /// The three worked readings of the shorthand, from one August. A month
     /// still ahead is this year's; a month already behind is next year's.
@@ -1604,7 +1872,7 @@ mod tests {
     fn typed(form: &mut TxnForm, field: TxnField, text: &str) {
         focused(form, field);
         for c in text.chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
     }
 
@@ -1613,7 +1881,7 @@ mod tests {
             form.next_field();
         }
         for c in text.chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
     }
 
@@ -1674,10 +1942,10 @@ mod tests {
         typed(&mut form, TxnField::Description, "Coffee");
         focused(&mut form, TxnField::Date);
         for _ in 0..10 {
-            form.backspace();
+            form.edit(backspace_key());
         }
         for c in "08/15/2026".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
 
         let err = form.commit().unwrap_err();
@@ -1992,7 +2260,7 @@ mod tests {
         // moves the focus without changing the field
         typed_transfer(&mut form, TransferField::Description, "");
         for _ in 0.."Transfer".len() {
-            form.backspace();
+            form.edit(backspace_key());
         }
 
         let err = form.commit().unwrap_err();
@@ -2102,10 +2370,10 @@ mod tests {
         assert_eq!(form.value(), "13,500.00");
 
         for _ in 0..9 {
-            form.backspace();
+            form.edit(backspace_key());
         }
         for c in "9000".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         assert_eq!(form.value(), "9000");
     }
@@ -2301,6 +2569,137 @@ mod tests {
         assert_eq!(buffer[(at, y)].fg, expected, "{line:?}");
     }
 
+    fn joined(line: &TextLine) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    /// Which characters a line draws in reverse video -- the caret, and
+    /// nothing else in the app draws a field that way.
+    fn reversed(line: &TextLine) -> String {
+        line.spans
+            .iter()
+            .filter(|s| s.style.add_modifier.contains(Modifier::REVERSED))
+            .map(|s| s.content.as_ref())
+            .collect()
+    }
+
+    /// The caret is a block over the character it is on, not a glyph between
+    /// two of them: a bar inserted at the caret costs a column, so the value
+    /// shifted right of the caret every time the caret moved through it.
+    #[test]
+    fn a_focused_field_draws_its_caret_on_the_character_it_is_on() {
+        let mut field = Field::given("rent");
+        field.edit(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        field.edit(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+
+        let line = field_line(
+            "Description",
+            Label::from("rent"),
+            Some(Caret::in_field(&field)),
+        );
+        assert!(joined(&line).ends_with("rent"), "{}", joined(&line));
+        assert_eq!(reversed(&line), "n");
+    }
+
+    /// The caret lands on a character rather than a byte. A span sliced
+    /// through the middle of a multi-byte one panics the draw.
+    #[test]
+    fn a_caret_on_a_multi_byte_character_blocks_the_whole_character() {
+        let mut field = Field::given("café");
+        field.edit(ctrl('b'));
+
+        let line = field_line(
+            "Description",
+            Label::from("café"),
+            Some(Caret::in_field(&field)),
+        );
+        assert!(joined(&line).ends_with("café"), "{}", joined(&line));
+        assert_eq!(reversed(&line), "é");
+    }
+
+    /// At the end of the line there is no character to block out, so the
+    /// caret sits on the space past the last one -- the only place it costs a
+    /// column, and where a terminal's own cursor sits too.
+    #[test]
+    fn a_caret_at_the_end_of_a_line_blocks_the_space_past_it() {
+        let field = Field::given("rent");
+        let line = field_line(
+            "Description",
+            Label::from("rent"),
+            Some(Caret::in_field(&field)),
+        );
+
+        assert!(joined(&line).ends_with("rent "), "{}", joined(&line));
+        assert_eq!(reversed(&line), " ");
+    }
+
+    #[test]
+    fn an_unfocused_field_draws_no_caret() {
+        let line = field_line("Description", Label::from("rent"), None);
+        assert!(joined(&line).ends_with("rent"));
+        assert_eq!(reversed(&line), "");
+    }
+
+    /// A selector is a choice rather than a buffer, so its caret goes past
+    /// the choice, where every caret in the app was drawn before there was
+    /// one to place.
+    #[test]
+    fn a_selector_draws_its_caret_past_the_choice() {
+        let line = field_line("Account", Label::from("CHK"), Some(Caret::End));
+        assert!(joined(&line).ends_with("CHK "), "{}", joined(&line));
+        assert_eq!(reversed(&line), " ");
+    }
+
+    /// The one figure the mask and the buffer are the same length for.
+    /// A caret drawn inside the blocks would count the digits back out.
+    #[test]
+    fn a_caret_in_a_blocked_figure_goes_to_the_end_of_the_mask() {
+        crate::demo::install(true);
+        let mut form = ValueForm::money("Amount", "123.45");
+        form.edit(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+
+        let line = field_line("Amount", Label::from(form.display()), Some(form.caret()));
+        assert!(joined(&line).ends_with("██████ "), "{}", joined(&line));
+        assert_eq!(reversed(&line), " ");
+    }
+
+    /// The whole frame, once: `field_line` places a caret it is handed, and
+    /// this is what pairs the caret with the field that actually has the
+    /// focus. A form that handed over the wrong field's caret would draw one
+    /// in the right place on the wrong line.
+    #[test]
+    fn a_form_draws_its_caret_on_the_focused_field_and_nowhere_else() {
+        use crate::tui::MIN_WIDTH;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
+        form.focus = TxnField::Description;
+        for c in "rent".chars() {
+            form.edit(char_key(c));
+        }
+        form.edit(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        form.edit(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_txn(frame, &form, &Autocomplete::default());
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let drawn: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+        let under_caret: String = buffer
+            .content
+            .iter()
+            .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
+            .map(|cell| cell.symbol())
+            .collect();
+
+        assert!(drawn.contains("Description  rent"), "{drawn}");
+        assert_eq!(under_caret, "n", "{drawn}");
+    }
+
     /// `field_line_labeled` replaced a `format!("{label:>12}  ")` with a
     /// pad span measured off `Label::plain_text()`. For a label with no
     /// account the two must draw the identical characters, whether the label
@@ -2313,9 +2712,9 @@ mod tests {
             line.spans.iter().map(|s| s.content.as_ref()).collect()
         }
         for label in ["Target", "A Very Long Label Indeed"] {
-            for focused in [false, true] {
-                let plain = field_line(label, Label::from("26"), focused);
-                let labeled = field_line_labeled(&Label::from(label), Label::from("26"), focused);
+            for caret in [None, Some(Caret::End)] {
+                let plain = field_line(label, Label::from("26"), caret.clone());
+                let labeled = field_line_labeled(&Label::from(label), Label::from("26"), caret);
                 assert_eq!(joined(&plain), joined(&labeled), "{label:?}");
             }
         }
@@ -2453,7 +2852,7 @@ mod tests {
 
         focused(&mut form, TxnField::Date);
         for _ in 0.."2026-12-20".len() {
-            form.backspace();
+            form.edit(backspace_key());
         }
         typed(&mut form, TxnField::Date, "9/10");
         typed(&mut form, TxnField::Description, "Kite");
@@ -2516,10 +2915,10 @@ mod tests {
         let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         focused(&mut form, TxnField::Date);
         for _ in 0..10 {
-            form.backspace();
+            form.edit(backspace_key());
         }
         for c in "2026-08".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.choice(Step::NEXT);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08");
@@ -2587,7 +2986,7 @@ mod tests {
 
         for count in [1usize, 3, 6] {
             let lines: Vec<TextLine> = (0..count)
-                .map(|i| field_line("Label", Label::from(i.to_string()), false))
+                .map(|i| field_line("Label", Label::from(i.to_string()), None))
                 .collect();
             let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
             let mut drawn = Rect::default();

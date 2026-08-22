@@ -6,7 +6,9 @@
 
 use super::Label;
 use super::cursor::{Cursor, Scroll};
-use super::form::{DateField, Field, FormFields, Step, next_in, parse_amount, step_index};
+use super::form::{
+    Caret, DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index,
+};
 use crate::db::RecurringTxnId;
 use crate::db::account::Account;
 use crate::db::recurring_txn::{Cadence, NewRecurringTxn, RecurringTxn};
@@ -281,10 +283,7 @@ impl FormFields for RecurringTxnForm {
         self.focus = next_in(&RecurringTxnField::ORDER, self.focus, -1);
     }
 
-    /// Cycle a selector or step a date, whichever is focused. Both dates
-    /// step; an empty horizon has none, and stepping one out of nothing would
-    /// give a rule that does not end an end date nobody typed.
-    fn choice(&mut self, step: Step) {
+    fn cycle(&mut self, step: Step) {
         match self.focus {
             RecurringTxnField::Account => {
                 self.account = step_index(self.account, self.accounts.len(), step.direction());
@@ -293,29 +292,33 @@ impl FormFields for RecurringTxnForm {
             RecurringTxnField::Cadence => {
                 self.cadence = step_index(self.cadence, Cadence::ALL.len(), step.direction())
             }
-            RecurringTxnField::Anchor => self.anchor.step(step.days()),
-            RecurringTxnField::Horizon => self.horizon.step(step.days()),
-            RecurringTxnField::Description | RecurringTxnField::Amount => {}
+            RecurringTxnField::Description
+            | RecurringTxnField::Amount
+            | RecurringTxnField::Anchor
+            | RecurringTxnField::Horizon => {}
         }
     }
 
-    fn type_char(&mut self, c: char) {
+    /// Both dates step on `←`/`→`; an empty horizon has none, and stepping
+    /// one out of nothing would give a rule that does not end an end date
+    /// nobody typed.
+    fn focused(&mut self) -> Focused<'_> {
         match self.focus {
-            RecurringTxnField::Description => self.description.push(c),
-            RecurringTxnField::Amount => self.amount.push(c),
-            RecurringTxnField::Anchor => self.anchor.push(c),
-            RecurringTxnField::Horizon => self.horizon.push(c),
-            RecurringTxnField::Account | RecurringTxnField::Cadence => {}
+            RecurringTxnField::Description => Focused::Text(&mut self.description),
+            RecurringTxnField::Amount => Focused::Text(&mut self.amount),
+            RecurringTxnField::Anchor => Focused::Date(&mut self.anchor),
+            RecurringTxnField::Horizon => Focused::Date(&mut self.horizon),
+            RecurringTxnField::Account | RecurringTxnField::Cadence => Focused::Selector,
         }
     }
 
-    fn backspace(&mut self) {
+    fn caret(&self) -> Caret {
         match self.focus {
-            RecurringTxnField::Description => self.description.backspace(),
-            RecurringTxnField::Amount => self.amount.backspace(),
-            RecurringTxnField::Anchor => self.anchor.backspace(),
-            RecurringTxnField::Horizon => self.horizon.backspace(),
-            RecurringTxnField::Account | RecurringTxnField::Cadence => {}
+            RecurringTxnField::Description => Caret::in_field(&self.description),
+            RecurringTxnField::Amount => Caret::in_field(&self.amount),
+            RecurringTxnField::Anchor => Caret::in_field(self.anchor.text()),
+            RecurringTxnField::Horizon => Caret::in_field(self.horizon.text()),
+            RecurringTxnField::Account | RecurringTxnField::Cadence => Caret::End,
         }
     }
 
@@ -355,7 +358,13 @@ use ratatui::widgets::{Block, Cell, Row as TableRow, Table};
 pub fn render_form(frame: &mut Frame, form: &RecurringTxnForm, popup: &Autocomplete) -> usize {
     let lines: Vec<TextLine> = RecurringTxnField::ORDER
         .iter()
-        .map(|f| field_line(f.label(), form.display(*f), form.focus == *f))
+        .map(|f| {
+            field_line(
+                f.label(),
+                form.display(*f),
+                (form.focus == *f).then(|| form.caret()),
+            )
+        })
         .collect();
     let area = render_fields(frame, form.title(), lines);
     render_popup(frame, area, popup)
@@ -430,6 +439,7 @@ mod tests {
     use crate::db::AccountId;
     use crate::db::account::{Group, Kind};
     use crate::tui::MIN_WIDTH;
+    use crate::tui::form::{backspace_key, char_key};
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
@@ -618,11 +628,11 @@ mod tests {
         );
 
         for c in "Mortgage".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         for c in "-1,200.00".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         form.choice(Step::NEXT);
@@ -630,14 +640,14 @@ mod tests {
         form.choice(Step::NEXT);
         form.next_field();
         for _ in 0..10 {
-            form.backspace();
+            form.edit(backspace_key());
         }
         for c in "2026-09-01".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         for c in "2026-12-01".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
 
         let new = form.commit().unwrap();
@@ -655,11 +665,11 @@ mod tests {
     fn an_empty_horizon_is_a_rule_that_does_not_end() {
         let mut form = RecurringTxnForm::add(accounts(), day(2026, 8, 16)).unwrap();
         for c in "Salary".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         for c in "5000.00".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         assert_eq!(form.commit().unwrap().horizon, None);
     }
@@ -729,7 +739,7 @@ mod tests {
         let mut form = RecurringTxnForm::add(accounts(), day(2026, 8, 16)).unwrap();
         form.next_field();
         for c in "100".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         let err = form.commit().unwrap_err();
         assert!(err.to_string().contains("description"), "{err}");
@@ -739,17 +749,17 @@ mod tests {
     fn a_horizon_that_is_not_a_date_is_refused_with_the_text_that_failed() {
         let mut form = RecurringTxnForm::add(accounts(), day(2026, 8, 16)).unwrap();
         for c in "Mortgage".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         for c in "100".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         while form.focus != RecurringTxnField::Horizon {
             form.next_field();
         }
         for c in "12/01/2026".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         let err = form.commit().unwrap_err();
         assert!(err.to_string().contains("12/01/2026"), "{err}");
@@ -761,7 +771,7 @@ mod tests {
     fn a_rule_with_no_amount_is_refused() {
         let mut form = RecurringTxnForm::add(accounts(), day(2026, 8, 16)).unwrap();
         for c in "Mortgage".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         assert!(form.commit().is_err());
     }
@@ -797,7 +807,7 @@ mod tests {
             form.next_field();
         }
         for c in text.chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
     }
 
@@ -831,8 +841,8 @@ mod tests {
     fn accepting_a_suggestion_leaves_an_amount_typed_and_then_cleared_alone() {
         let mut form = RecurringTxnForm::add(accounts(), day(2026, 8, 16)).unwrap();
         typed(&mut form, RecurringTxnField::Amount, "22");
-        form.backspace();
-        form.backspace();
+        form.edit(backspace_key());
+        form.edit(backspace_key());
         assert_eq!(form.display(RecurringTxnField::Amount).plain_text(), "");
         typed(&mut form, RecurringTxnField::Description, "Mort");
 

@@ -26,8 +26,9 @@ whoever presses the key.
 | `P` | unpin a plan on Planning, mark the paycheck on Recurring Txns — likewise |
 | `r` | reconcile the ledgers' filtered account against a statement |
 | `[` / `]` | step the month, whatever a month filters here |
-| `←` / `→` | step a date a day at a time, or cycle the focused selector — see the invariant below |
+| `←` / `→` | move the caret in a text field, step a date a day at a time, or cycle the focused selector — see the invariant below |
 | `Shift`+`←` / `Shift`+`→` | the same nudge, a week at a time on a date; one choice on a selector |
+| `Ctrl`+a letter | edit the text under the caret, in every box in the app — see the invariant below |
 | `Esc` | back out of the innermost thing: a form, a search box, a filter, the panel |
 | `Tab` | cycle the screen's filter, or move to the next field in a form |
 | `BackTab` | the same cycle or field order backwards — `Shift`+`Tab` steps back wherever `Tab` steps forward |
@@ -144,9 +145,10 @@ about what red means. The helpers that carry one of those decisions to a cell �
 which `style` re-exports: every mention is then visibly routed through the module that owns the
 choice, and the plumbing stays visibly plumbing. `help` is where the screen footers are joined from — one `Topic` per context,
 so a footer cannot drift from the panel that explains it; modal border titles are still written
-where they are drawn. `cursor` answers the scroll keys for every list at once, and `search` is the
-`/` box the ledgers, Savings, the worksheet and the destination chooser share -- the box, its keys,
-and `Matcher`, which is what a needle *means* on all four. What every screen
+where they are drawn. `cursor` answers the scroll keys for every list at once, `text` is the line
+of text under the caret and the keys that edit one — every box in the app is one — and `search` is
+the `/` box the ledgers, Savings, the worksheet and the destination chooser share: the box, its
+keys, and `Matcher`, which is what a needle *means* on all four. What every screen
 shares lives in `mod.rs`, not in whichever screen needed it first.
 
 `modal` is not a screen but the layer over one: the `Modal` enum, which of its variants carry form
@@ -258,9 +260,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   The Overview scrub, the worksheet's date, both dates on a recurring transaction, and the date
   every form and confirm dialog opens on all answer the same keys the same way — the reflex is
   "nudge the date", not "nudge the date on the screens that happen to have wired it". On a form the
-  arrows arrive through `FormFields::choice`, which is also what cycles a selector, so each form's
-  handler is a match on its focus: the field under the caret decides, and an arrow pressed on the
-  date must never move the account beside it. Four rules hold the meaning together:
+  arrows arrive through `FormFields::choice`, which reads **the field under the caret** and is the
+  one place all three readings are written: a text field moves the caret a character, a date steps
+  a day, a selector cycles. A form says which of the three it has focused, once, in
+  `FormFields::focused` — an arrow pressed on the date must never move the account beside it, and
+  a form that answered "which kind of field is this?" in two places would answer it differently in
+  two places. Four rules hold the date's meaning together:
   - **A field that does not parse as a date is left exactly as typed.** The arrows nudge a date that
     is already there; they do not conjure one. That is what keeps them off a half-typed date, and
     off the two empty fields that mean something in their own right — an undated goal, and a
@@ -280,6 +285,67 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     A selector steps **one** choice under `Shift` rather than none: it has no week to move, and a
     modified arrow the terminal delivers and the app drops is a dead key with nothing on screen to
     say why.
+- **Every text box in the app is a `text::TextBuffer`, and the caret is the buffer's.** A form's
+  `form::Field` is that buffer plus "has the user touched this"; a `search::SearchBox` is the same
+  buffer plus "is the box open". Both answer one dispatcher, `text::edit_key`, which is to text
+  what `cursor::scroll_key` is to a list: `Ctrl`+`W` deletes a word in a form field, in a `/` box
+  and on the worksheet's date because it is written once rather than in each of them.
+  - **`Ctrl` means editing text and nothing else, anywhere in the app.** `Ctrl`+`A`/`E` to the ends
+    of the line, `Ctrl`+`B`/`F` a character, `Ctrl`+`W` the word before the caret, `Ctrl`+`U`/`K`
+    back to the start or on to the end, `Ctrl`+`D` (and `Delete`) the character under it. A `Ctrl`
+    combination nobody has bound is **dropped rather than typed**: as a bare `KeyCode::Char` it
+    would otherwise arrive in the buffer as its own letter, which is what `Ctrl`+`C` used to do.
+    That rule is also why the worksheet's operators — `s`, `w`, `z` — are guarded against it: a
+    hand reaching for "delete the last word" must not spread the pot.
+  - **A modified character stops at `App::dispatch` wherever there is no caret to edit**, which is
+    the same rule read from the other end: `text::is_bare` says whether a press is the character it
+    appears to be, and `help::Topic::takes_editing_keys` says whether this context has a buffer for
+    it. Where it does not — a screen, a confirm dialog, the picker, the destination chooser with
+    its box shut — the combination is dropped before any handler sees it. Without that the drop
+    inside `edit_key` covers only the boxes, and every screen goes on reading the bare letter: on
+    Savings `Ctrl`+`F` is the `f` that writes `goal.favorite`, and `Ctrl`+`D` raises a delete. It is
+    the confirm dialogs' second exception to "any key but `y` cancels", beside `?`: a modifier the
+    app does not bind is not a keystroke it received.
+  - **`Alt` is deliberately unbound, and unbound means dropped.** macOS sends `Option` as `Meta`
+    only where the terminal has been told to, so `Alt`+`B` is a word-motion that silently does
+    nothing on the machine this app is used from. `Ctrl`+`B`/`F` are the motions instead. `Shift`
+    is the one modifier a typed character may carry, since it is how a capital arrives at all.
+  - **`text::edit_key` says what it did, and the box acts on that.** `Changed` is what re-asks for a
+    form's suggestions and re-narrows a search box's list; `Moved` is a motion, or a kill with
+    nothing left to kill, and must do neither — a caret dragged back across a needle leaves every
+    row where it was. `Ignored` is a key that was never ours, and the caller decides what it means.
+  - **The arrows are not in `edit_key`,** because in a form they belong to the date and the
+    selector as well. The caller that knows a text field has the focus is the one that may read
+    them as the caret, which is `FormFields::choice` in a form and `search_key` in a box that has
+    neither a date nor a selector to share them with.
+- **The caret is reverse video over the character it is on, and it is `form::value_spans` that
+  puts it there.** A block *over* a character rather than a bar *between* two of them: a bar costs
+  a column, so the value shifted right of the caret every time the caret moved through it and the
+  field read as though a space had been typed into it. `value_spans` splits the one span the caret
+  falls in and patches `form::caret_style()` onto that character, keeping the span's own style
+  underneath — so an account keeps its colour with the caret in the middle of it, swapped into the
+  background. Every box goes through it: a form's field, both search footers, the destination
+  title, and the worksheet's date.
+  - **At the end of a line the caret sits on the space past it,** which is the one place it costs a
+    column, and where a terminal's own cursor sits too. A **selector** draws it there always: its
+    text is the choice rather than a buffer, and so does the worksheet's **amount**, a figure
+    digits are pushed onto and rubbed off the end of.
+  - **The offset is honoured only where the text on screen *is* the text in the buffer.**
+    `form::Caret` carries both, and where they differ the caret goes to the end. That is what keeps
+    it out of a **figure `--demo` has blocked**, where a caret among the blocks would count the
+    digits back out. Comparing the text rather than its length is what makes it airtight — the mask
+    is six characters, so `123.45` is a figure a length check would place the caret inside of.
+  - **A search box draws its caret only while it is open.** `SearchBox::caret` is `None` once
+    `Enter` has left the filter narrowing the list, because a kept filter takes no keystrokes. The
+    ledger title is the one echo that never carries a caret even so: the box itself is in the
+    footer there, and two carets on one screen would leave it ambiguous which is taking the typing.
+    The destination chooser has no footer, so its title *is* the box and does carry one — which is
+    why `Chooser::title` returns a `Line` where every other title is a `String` or a `Label`.
+    `App::footer` returns one for the same reason. Being the only place the box can be drawn is
+    also why that title shows it **as soon as it opens**, empty: `/` on a title that waited for the
+    first character would leave the screen unchanged, and the `Esc` closing the box after it would
+    look like a second key that does nothing.
+
 - **A form with autocomplete puts its description ahead of its amount.** Accepting a suggestion
   fills the amount, so an amount sitting *before* the description meant tabbing through a field the
   suggestion was about to write anyway — and tabbing off the description now lands on the figure
@@ -339,14 +405,16 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     prefill it would land a year out in silence. So `TxnForm::add` takes an already-built
     `DateField` rather than a day to open on — two adjacent `NaiveDate` parameters would be one
     transposition away from exactly that.
-- **`Shift` is the only modifier the app reads, and it always means the same thing: the same nudge,
-  a bigger step.** It is on the key that already means "move this", rather than a second letter for
+- **The app reads two modifiers, and each means one thing.** `Shift` is always the same nudge with
+  a bigger step. It is on the key that already means "move this", rather than a second letter for
   one action, and it reaches every date rather than only the Overview's — a horizon several paydays
   out is the plausible question on the scrub, and a bill three weeks off is the same question on a
   form. A week is the step that reaches the middle of the fortnightly paycheck cycle in one press
-  and the cycle after in two. **Shift and not Ctrl**: macOS claims `Ctrl`+arrow for its own spaces,
-  and a key the terminal never receives is a key that does nothing with nothing on screen to say
-  why.
+  and the cycle after in two. **Shift and not Ctrl on the arrows**: macOS claims `Ctrl`+arrow for
+  its own spaces, and a key the terminal never receives is a key that does nothing with nothing on
+  screen to say why.
+  `Ctrl` always means **editing the text under the caret**, and never anything else — see the
+  editing-keys invariant below. Nothing reads `Alt`.
 - **A date is typed as `YYYY-MM-DD` or as the `M/D` shorthand, and the year turns on the month
   alone.** `M/D` takes the next year that month occurs in: typed in August, `9/10` is this
   September and `3/4` is next March. It is deliberately **not** "the next time that date comes
@@ -973,7 +1041,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
 - **`?` opens Help; `F1` does too, and is the only way in where `?` is a
   character.** `help::Topic::takes_typed_chars` is that list: the form topics
   and the search boxes. The worksheet is deliberately not one of them —
-  everywhere but its date focus drops all but digits. The panel is drawn
+  everywhere but its date focus drops all but digits, which is also why its
+  table qualifies the shared `EDITING` entry rather than taking it whole:
+  the panel may not advertise eight keys that do nothing on the focus the
+  worksheet opens on. (`takes_editing_keys` is the wider list beside it, and
+  every topic in this one is in that one.) The panel is drawn
   last in `App::render` and its handler runs first in `App::dispatch`, so it
   sits above a modal and swallows every key it does not use; `q` must not quit
   out from under it. Running before the modal check is also what gives the

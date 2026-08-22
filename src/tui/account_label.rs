@@ -247,6 +247,13 @@ mod tests {
             // screen, and is taken of exactly the text that is drawn so the
             // measurement and the draw cannot disagree.
             ("tui/form.rs", "label.plain_text().chars().count()"),
+            // Where the caret goes is decided against the text the value
+            // draws as, and this flattened copy is only ever compared and
+            // counted. The spans themselves come from `label_line`, and the
+            // caret is laid over one character of one of them with that
+            // span's own style kept underneath, so an account keeps its color
+            // with the caret sitting in the middle of it.
+            ("tui/form.rs", "caret.offset(&value.plain_text())"),
         ];
 
         let mut leaked: Vec<String> = Vec::new();
