@@ -131,7 +131,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/fund.rs` | Reads the `fund` table and the birth date out of `db`, feeds `calc::fund`. The one place `db::fund::Target` becomes `calc::fund::Rule`. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
-| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and Funds in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. |
+| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and Funds in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/backup/` | The schedule, the snapshot, and the upload. `aws_config`, `aws_sdk_s3` and `tokio` are named only in `s3.rs`. |
 | `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `mod.rs` rather than in whichever screen needed it first. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
@@ -589,6 +589,20 @@ matches, since nothing but a test ties them together.
   quit path in the same directory, and is removed again on any failure — a
   rename that cannot happen would otherwise leave the partial page in the synced
   folder under a name nothing ever looks for again.
+- **The page is minified on the way to the disk, not on the way out of `html`.**
+  The whole file crosses a sync folder and is read on a phone offline — every
+  row of both ledgers, not a window on them — so its size is worth spending a
+  dependency on; but `html::page` is what every test in
+  `src/report/html/` asserts exact markup against, and a module whose output no
+  longer matched what it was checked for would be testing the minifier instead.
+  So `report::minify` sits in `write`, the one seam both writers already pass
+  through, and `Written::bytes` reports what actually landed. `minify_css` is on
+  because the page's whole layout is one inline `<style>`; `minify_js` is off
+  because the page carries no script by rule. What comes out is aggressive —
+  a lowercased doctype, unquoted attributes, no `<head>`, no closing tag that
+  HTML5 makes optional — and since every control on the page is a radio and a
+  `:checked ~` selector, `minification_leaves_every_tab_and_its_switch_intact`
+  is what stands between that and a page which renders and then does nothing.
 
 ## Testing conventions
 

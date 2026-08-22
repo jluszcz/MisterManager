@@ -1,6 +1,10 @@
 //! The standing HTML report: what the screens show, as one page a phone can
 //! open -- the Overview, both ledgers, Savings, Planning and Funds, each a tab
 //! of it.
+//!
+//! `html` writes the page readably and `write` minifies it on the way to the
+//! disk, so what a test asserts against and what a phone downloads are the
+//! same page in two forms.
 
 pub mod html;
 
@@ -18,6 +22,7 @@ use crate::savings;
 use crate::transfer;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local, NaiveDate};
+use minify_html::Cfg;
 use std::path::{Path, PathBuf};
 
 /// One container's goals and its unallocated remainder.
@@ -281,6 +286,25 @@ fn temp_name() -> String {
     format!(".{FILE_NAME}.{}.tmp", std::process::id())
 }
 
+/// The page as it goes to the disk, rather than as `html::page` writes it.
+///
+/// The whole file travels to a phone through a sync folder and is read there
+/// offline, so the bytes are worth shrinking; `html::page` stays readable
+/// because that is what its own tests assert against, and this is the one
+/// place between it and the disk that both writers pass through.
+///
+/// `minify_css` because the page's entire layout is one inline `<style>`.
+/// Not `minify_js`: the page carries no script by rule -- that is what
+/// `the_page_makes_no_external_request_and_carries_no_script` holds up -- so
+/// a JS minifier here would only ever run over nothing.
+fn minify(page: &str) -> Vec<u8> {
+    let cfg = Cfg {
+        minify_css: true,
+        ..Cfg::new()
+    };
+    minify_html::minify(page.as_bytes(), &cfg)
+}
+
 /// A page that reached the disk: where it landed, and how big it is.
 #[derive(Debug)]
 pub struct Written {
@@ -299,7 +323,7 @@ pub enum Outcome {
 
 /// The two steps that can fail with a temporary file on the disk, so the one
 /// caller has a single error path to clean up after.
-fn write_then_rename(temp: &Path, path: &Path, page: &str) -> Result<()> {
+fn write_then_rename(temp: &Path, path: &Path, page: &[u8]) -> Result<()> {
     std::fs::write(temp, page).with_context(|| format!("writing {}", temp.display()))?;
     std::fs::rename(temp, path).with_context(|| format!("renaming onto {}", path.display()))
 }
@@ -312,7 +336,7 @@ fn write_then_rename(temp: &Path, path: &Path, page: &str) -> Result<()> {
 /// having a second, sloppier implementation the day a second caller appears.
 pub fn write(db: &Db, dir: &Path, today: NaiveDate) -> Result<Written> {
     let snapshot = Snapshot::load(db, today, Local::now())?;
-    let page = html::page(&snapshot);
+    let page = minify(&html::page(&snapshot));
 
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     // The temp file sits in the same directory so the rename stays atomic
@@ -388,6 +412,14 @@ mod tests {
 
     fn today() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 8, 21).unwrap()
+    }
+
+    /// What reaches the disk is minified, and the minifier lowercases the
+    /// doctype -- so the case `html::page` spells it in says nothing about
+    /// the file, and a test that asserted on it would be reading the source
+    /// rather than the page.
+    fn is_the_page(text: &str) -> bool {
+        text.to_ascii_lowercase().starts_with("<!doctype html>")
     }
 
     /// The grouping leans on `txn::list` returning rows in date order, so a
@@ -484,10 +516,7 @@ mod tests {
         write_if_enabled(&seeded(), &configured(&dir), today(), false).unwrap();
 
         let page = std::fs::read_to_string(dir.join(FILE_NAME)).unwrap();
-        assert!(
-            page.starts_with("<!DOCTYPE html>"),
-            "the stale page survived"
-        );
+        assert!(is_the_page(&page), "the stale page survived");
         let leftovers: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
@@ -517,6 +546,68 @@ mod tests {
         assert!(leftovers.is_empty(), "left behind {leftovers:?}");
     }
 
+    /// A `Cfg` that quietly did nothing would leave the page exactly as
+    /// `html::page` wrote it, and nothing else on the way to the disk would
+    /// notice.
+    #[test]
+    fn the_page_reaches_the_disk_smaller_than_it_was_written() {
+        let dir = scratch("minified");
+        let db = seeded();
+        let source = html::page(&Snapshot::load(&db, today(), Local::now()).unwrap());
+
+        let written = write(&db, &dir, today()).unwrap();
+
+        let page = std::fs::read_to_string(&written.path).unwrap();
+        assert!(
+            page.len() < source.len(),
+            "the page was not minified: {} bytes in, {} out",
+            source.len(),
+            page.len()
+        );
+        assert_eq!(
+            written.bytes,
+            page.len() as u64,
+            "the reported size is not the size that landed"
+        );
+    }
+
+    /// Every control on the page is a radio and a sibling selector, so a
+    /// minifier that dropped an `id`, unquoted one the CSS matches on, or
+    /// reordered an input past the panel it shows would leave a page that
+    /// renders and then does nothing -- and no other test would see it,
+    /// because `html`'s own tests run before any of this.
+    #[test]
+    fn minification_leaves_every_tab_and_its_switch_intact() {
+        let dir = scratch("switches");
+        let written = write(&seeded(), &dir, today()).unwrap();
+        let page = std::fs::read_to_string(&written.path).unwrap();
+
+        assert!(is_the_page(&page), "the doctype did not survive");
+        // Both halves of a control are matched by something only the element
+        // carries, because the CSS names each of them too: `Cash` and
+        // `Credit` are Overview band labels as well as tab labels, and
+        // `{id}-panel` is a substring of the very selector below. So the
+        // label is matched paired with its `for`, and the panel by its
+        // `id=`, which no selector spells. Quotes come off ahead of the
+        // match rather than into it, so which attributes the minifier
+        // unquotes stays its business.
+        let unquoted = page.replace('"', "");
+        for (id, name) in html::TABS {
+            assert!(
+                unquoted.contains(&format!("for={id}>{name}</label>")),
+                "no {id} tab label"
+            );
+            assert!(
+                unquoted.contains(&format!("id={id}-panel")),
+                "no {id} panel"
+            );
+            assert!(
+                page.contains(&format!("#{id}:checked~#{id}-panel")),
+                "nothing switches the {id} panel on"
+            );
+        }
+    }
+
     #[test]
     fn a_written_report_reports_the_path_it_landed_at() {
         let dir = scratch("path");
@@ -538,10 +629,8 @@ mod tests {
         let dir = scratch("explicit");
         let written = write(&seeded(), &dir, today()).unwrap();
         assert_eq!(written.path, dir.join(FILE_NAME));
-        assert!(
-            std::fs::read_to_string(&written.path)
-                .unwrap()
-                .starts_with("<!DOCTYPE html>")
-        );
+        assert!(is_the_page(
+            &std::fs::read_to_string(&written.path).unwrap()
+        ));
     }
 }
