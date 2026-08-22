@@ -29,6 +29,12 @@ fn row_classes(row: &Row) -> String {
 const HEADER: [&str; 6] = ["Goal", "Current", "Goal", "%", "Goal Date", "$/Pay"];
 
 /// One container: its goals, and the Unallocated remainder below them.
+///
+/// The widest table on the page -- six columns, and a phone -- so the goal
+/// name is the column that gives way (`w`) while the date and the three
+/// figures hold their line. `Unallocated` is ours rather than the owner's and
+/// takes no `w`: it is a word the column is sized to fit, not one it may break
+/// to make room for something else.
 fn section(container: &Container) -> String {
     let header: String = HEADER
         .iter()
@@ -52,7 +58,7 @@ fn section(container: &Container) -> String {
             .map(|d| escape(&d.to_string()))
             .unwrap_or_default();
         rows.push_str(&format!(
-            "<tr{}><td>{}</td>{}{}<td class=\"n\">{percent}</td><td>{goal_date}</td>{}</tr>",
+            "<tr{}><td class=\"w\">{}</td>{}{}<td class=\"n\">{percent}</td><td class=\"d\">{goal_date}</td>{}</tr>",
             row_classes(r),
             escape(&r.name),
             money(r.current.to_whole_dollars(), r.current),
@@ -68,7 +74,7 @@ fn section(container: &Container) -> String {
     // Six cells, matching every goal row above: the excess is a money figure
     // and Current is where a reader looks for "how much is sitting here".
     rows.push_str(&format!(
-        "<tr><td>Unallocated</td>{}<td class=\"n\"></td><td class=\"n\"></td><td></td><td class=\"n\"></td></tr>",
+        "<tr><td>Unallocated</td>{}<td class=\"n\"></td><td class=\"n\"></td><td class=\"d\"></td><td class=\"n\"></td></tr>",
         money(format!("{} {marker}", container.excess), container.excess)
     ));
     format!(

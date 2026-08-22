@@ -158,15 +158,41 @@ fn tab_rules() -> String {
 /// The radios are moved off the page rather than `display:none`d, which would
 /// take them out of the focus order and leave the tabs reachable by pointer
 /// alone.
+///
+/// Three classes say what a column may do with the width it is given, and
+/// between them they are what fits Savings' six columns on a phone. `n` and
+/// `d` -- a figure and a date -- never wrap: both offer a break at a comma or
+/// a hyphen, and a table narrow enough takes it, so `2026-08-` over `22` reads
+/// as two dates rather than one and `-1,` over `000.00` as neither. Refusing
+/// to wrap sets a floor under those columns, so `w` names the one that gives
+/// way instead: the owner's own free text, a ledger description or a goal
+/// name. It is the longest text on the page, and the only text still legible
+/// broken mid-word -- every other column keeps its longest word whole, which
+/// is what stops `Brokerage` becoming `Broker`/`age` beside it.
+///
+/// Those floors are why the panel scrolls. An account name is the owner's
+/// too and takes no `w`, so a long enough one puts the table past the phone
+/// whatever the description gives up; `overflow-x` on the panel is what that
+/// then moves, rather than the page under every tab. It sits on the panel and
+/// not on a wrapper around each table because the month filter reaches its
+/// rows as `#month:checked~table.ledger`, and a `<div>` between the two would
+/// leave the dropdown showing nothing.
+///
+/// The table face is smaller than the page's and the cells are padded by a
+/// quarter of it. That is Savings' bill too: six columns, one of them a date
+/// and three of them money, on the 361px a 393px phone leaves inside the
+/// body's padding.
 const STYLE: &str = "\
     :root{color-scheme:light dark}\
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\
     margin:0 auto;max-width:32rem;padding:1rem;background:#ffffff;color:#1a1a1a}\
     h3{margin:1.2rem 0 0.4rem}\
     p.stamp{color:#666666;margin:0 0 0.6rem;font-size:0.85rem}\
-    table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:0.9rem}\
-    td,th{padding:0.25rem 0.4rem;border-bottom:1px solid #dddddd;text-align:left}\
-    td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}\
+    table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:0.82rem}\
+    td,th{padding:0.25rem 0.25rem;border-bottom:1px solid #dddddd;text-align:left}\
+    td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}\
+    td.d,th.d{white-space:nowrap}\
+    td.w{overflow-wrap:anywhere}\
     tr.fav{background:#fff6d8}\
     tr.expired td:first-child::after{content:' !'}\
     tr.head td{padding-top:0.9rem;font-weight:600}\
@@ -178,7 +204,7 @@ const STYLE: &str = "\
     nav{display:flex;flex-wrap:wrap;border-bottom:1px solid #dddddd;margin-bottom:0.8rem}\
     nav label{padding:0.5rem 0.7rem;margin-bottom:-1px;cursor:pointer;font-weight:600;\
     color:#666666;border-bottom:2px solid transparent}\
-    section.panel{display:none}\
+    section.panel{display:none;overflow-x:auto}\
     tbody+tbody tr:first-child td{padding-top:0.9rem}\
     details.picker{margin:0 0 0.8rem}\
     details.picker summary{display:inline-block;cursor:pointer;padding:0.35rem 0.7rem;\
@@ -244,7 +270,7 @@ pub fn page(snapshot: &Snapshot) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::fixture::{panel, row_column_counts, snapshot, tables};
+    use super::fixture::{cells, panel, row_column_counts, snapshot, tables};
     use super::*;
 
     /// A phone opening this out of a sync folder may be offline, and a page
@@ -287,6 +313,57 @@ mod tests {
                 "nothing switches the {id} panel on"
             );
         }
+    }
+
+    /// A hyphen is a break opportunity, so a column narrow enough draws
+    /// `2026-08-` over `22` -- which reads as two dates rather than one, and
+    /// is what a phone did to all three of the Overview's column headers. Every
+    /// date on the page therefore sits in a cell that refuses to wrap: `n`
+    /// where the date is a money column's header, `d` where it is data.
+    #[test]
+    fn no_date_reaches_the_page_in_a_cell_that_may_wrap() {
+        /// `2026-08-21`, and nothing else on the page is shaped like it.
+        fn is_a_date(text: &str) -> bool {
+            let b = text.as_bytes();
+            b.len() == 10
+                && b[4] == b'-'
+                && b[7] == b'-'
+                && [0, 1, 2, 3, 5, 6, 8, 9]
+                    .iter()
+                    .all(|&i| b[i].is_ascii_digit())
+        }
+
+        let page = page(&snapshot(
+            vec![fixture::row("Rainy Day", 500, 1_000)],
+            1_000,
+        ));
+        let dates: Vec<_> = cells(&page)
+            .into_iter()
+            .filter(|(_, t)| is_a_date(t))
+            .collect();
+        assert!(
+            dates.len() >= 5,
+            "the fixture stopped carrying dates, so this test checks nothing"
+        );
+        for (attrs, text) in dates {
+            assert!(
+                attrs.contains("class=\"d\"") || attrs.contains("class=\"n\""),
+                "{text} sits in a cell that may wrap: <td{attrs}>"
+            );
+        }
+    }
+
+    /// `<thead>` starts with `<th` as well, and reading it as a cell returns
+    /// an entry running from `<tr>` to the first `</th>` -- swallowing the
+    /// first header cell of every table, which is exactly the cell the check
+    /// above would then never see.
+    #[test]
+    fn a_thead_is_not_taken_for_a_header_cell() {
+        let html = "<thead><tr><th class=\"d\">2026-08-21</th><th>Date</th></tr></thead>";
+        assert_eq!(
+            cells(html),
+            vec![(" class=\"d\"", "2026-08-21"), ("", "Date")]
+        );
     }
 
     /// The page's job on a phone is to be honest about its own age, and the

@@ -610,6 +610,24 @@ matches, since nothing but a test ties them together.
   first would be dated at all. The sections keep their separation as `<tbody>`
   groups. The dates go bare, no `To-Date`/`Paycheck-Eve`/`Month-End` above
   them, which is what `tui::overview::column_headers` does for the same reason.
+- **A cell says what it may do with its width, and a table never widens past the
+  phone.** Three classes carry it: `n` is a figure and `d` a date, and neither
+  wraps — a comma and a hyphen are both break opportunities, and a column narrow
+  enough takes them, which is what once drew `2026-08-` over `22` across all
+  three of the Overview's headers. Refusing to wrap puts a floor under those
+  columns, so `w` names the one that gives way instead: the owner's own free
+  text, a ledger description or a goal name, the longest text on the page and
+  the only text still legible broken mid-word. Every other column keeps its
+  longest word whole, which is what stops an account name from being shredded to
+  make room — and `overflow-x` on the panel is what catches what those floors
+  leave: an account name is the owner's text as well, so a long enough one puts
+  its table past the phone whatever the description gives up, and the panel is
+  then what scrolls rather than the page under every tab. It sits on the panel
+  and not on a wrapper around each table because the month filter reaches its
+  rows as `#month:checked~table.ledger`, and a `<div>` between those two would
+  leave the dropdown showing nothing. The table face and its
+  padding are set by the widest tab rather than by the prettiest: Savings is six
+  columns, one dated and three of them money, inside the 361px a phone leaves.
 - **The report is renamed onto its name, never written to it.** A sync client
   watching the directory will upload a half-written page, and a phone would then
   show a report that ends mid-table with no sign that it had. The temporary file

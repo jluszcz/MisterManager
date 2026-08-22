@@ -243,6 +243,48 @@ pub(super) fn tables(html: &str) -> Vec<&str> {
     out
 }
 
+/// The next `<td`/`<th` that opens a cell, rather than merely starting with
+/// those three bytes.
+///
+/// `<thead>` does too, and taking it for a cell swallows the first header
+/// cell of every table: the entry runs from `<tr>` to the first `</th>`, so
+/// the real cell inside it is never returned and never checked. A cell's tag
+/// name ends at the byte after it.
+fn next_cell(html: &str) -> Option<usize> {
+    let mut from = 0;
+    loop {
+        let start = from
+            + match (html[from..].find("<td"), html[from..].find("<th")) {
+                (Some(d), Some(h)) => d.min(h),
+                (Some(d), None) => d,
+                (None, Some(h)) => h,
+                (None, None) => return None,
+            };
+        match html.as_bytes().get(start + 3) {
+            Some(&b) if b == b'>' || b.is_ascii_whitespace() => return Some(start),
+            _ => from = start + 3,
+        }
+    }
+}
+
+/// Every `<td>` and `<th>` in some html, as its opening tag's attributes and
+/// the text between the tags. The attributes are what a test checks a cell's
+/// class against; the text is what the cell holds, tags and all.
+pub(super) fn cells(html: &str) -> Vec<(&str, &str)> {
+    let mut out = Vec::new();
+    let mut rest = html;
+    while let Some(start) = next_cell(rest) {
+        let (tag, after) = rest[start..].split_at(3);
+        let open = after.find('>').expect("an unclosed cell");
+        let body = &after[open + 1..];
+        let close = format!("</{}>", &tag[1..]);
+        let end = body.find(&close).expect("a cell with no closing tag");
+        out.push((&after[..open], &body[..end]));
+        rest = &body[end..];
+    }
+    out
+}
+
 /// The column count of every `<tr>...</tr>` in one table, `<td>` and `<th>`
 /// counted together so a header row is checked against the body rows below
 /// it, and a `colspan` counted as the columns it actually spans.
