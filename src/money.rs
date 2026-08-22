@@ -134,7 +134,10 @@ impl FromStr for Cents {
             1 => frac.parse::<i64>().map_err(|_| err())? * 10,
             _ => frac.parse().map_err(|_| err())?,
         };
-        let value = whole * 100 + frac;
+        let value = whole
+            .checked_mul(100)
+            .and_then(|v| v.checked_add(frac))
+            .ok_or_else(err)?;
         Ok(Cents(if negative { -value } else { value }))
     }
 }
@@ -160,6 +163,20 @@ mod tests {
         assert_eq!("140".parse::<Cents>().unwrap(), Cents(14000));
         assert_eq!("2.4".parse::<Cents>().unwrap(), Cents(240));
         assert_eq!(".5".parse::<Cents>().unwrap(), Cents(50));
+    }
+
+    /// The multiply is on a figure a human typed, so a long enough run of
+    /// digits reaches it: unchecked, release builds wrap to a negative and
+    /// hand it to whichever write the field feeds.
+    #[test]
+    fn rejects_a_figure_too_large_for_cents_rather_than_wrapping() {
+        assert!("92233720368547759".parse::<Cents>().is_err());
+        assert!("92233720368547758.99".parse::<Cents>().is_err());
+        assert!("-92233720368547759".parse::<Cents>().is_err());
+        assert_eq!(
+            "92233720368547758.07".parse::<Cents>().unwrap(),
+            Cents(i64::MAX)
+        );
     }
 
     #[test]
