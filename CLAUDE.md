@@ -383,6 +383,17 @@ matches, since nothing but a test ties them together.
   the **same container**) — and it closes the goal itself, in one transaction. The next round of a
   recurring goal is created from the `recurring_goal` table. Crossing containers is refused: no cash moved between
   the accounts, so allowing it would break both reconciliations at once.
+- **A container's goals are two blocks, and `goal.sort` orders only the first.** Undated goals lead,
+  in `sort` order; dated goals follow, soonest first. The halves are arranged by different things — a
+  deadline decides a goal's place for it, a goal without one is placed by hand — so `goal::list` and
+  `goal::all_with_balances` say it once as an `ORDER BY` and every screen reading them agrees.
+  Among dated goals `sort` survives only as a tiebreak between two falling on the same day, which is
+  what stops an arrangement made in the undated block from reordering a deadline; a dated goal keeps
+  whatever `sort` it carries, and that is what it falls back on if the date is ever cleared.
+  `goal::reorder` is the block's one writer and takes a *position* rather than a raw `sort`, for the
+  reason `account::reorder` does — it renumbers the whole undated block, so "put it third" has a
+  result that does not depend on rows the caller never saw. It refuses a dated goal rather than
+  renumbering around it.
 - **`goal.favorite` is the owner's, and it is the one owner-set field the import can take away.**
   `f` on Savings toggles it and `goal::set_favorite` is the column's one writer — not a field on
   `GoalEdit`, for the reason `recurring_txn::set_paycheck` is not one on `update`: the goal form

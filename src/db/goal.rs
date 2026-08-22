@@ -154,6 +154,51 @@ pub fn next_sort(db: &Db, container: AccountId) -> Result<i64> {
     Ok(next)
 }
 
+/// Moves an undated goal to `position` among its container's undated goals,
+/// and renumbers `sort` over all of them so the column stays `0..n-1`.
+///
+/// A position rather than a raw `sort`, for the reason `account::reorder`
+/// takes one: `sort` is read through an `ORDER BY` that breaks ties by id, so
+/// "put it third" has a result the caller can predict and "set sort to 2" has
+/// one that depends on rows the caller never saw.
+///
+/// Only the undated block, because only the undated block is ordered by hand.
+/// A dated goal takes its place from its date and keeps whatever `sort` it
+/// was carrying, which is what it falls back on if the date is ever cleared.
+/// Asking to place one is refused rather than ignored: a caller that has
+/// misread what the manual order is for should hear so, not watch a move
+/// quietly not happen.
+///
+/// A position past the end lands last rather than erroring, as a drag past
+/// the bottom of a list does.
+pub fn reorder(db: &Db, id: GoalId, position: usize) -> Result<()> {
+    db.transaction(|db| {
+        let goal = get(db, id)?.with_context(|| format!("no goal with id {id}"))?;
+        ensure!(
+            goal.goal_date.is_none(),
+            "{} has a goal date, so its place comes from that date rather than by hand",
+            goal.name
+        );
+        let mut undated: Vec<Goal> = list(db, goal.container_account_id)?
+            .into_iter()
+            .filter(|g| g.goal_date.is_none())
+            .collect();
+        let from = undated
+            .iter()
+            .position(|g| g.id == id)
+            .context("the goal was just read as open and undated, so its container lists it")?;
+        let moved = undated.remove(from);
+        undated.insert(position.min(undated.len()), moved);
+        for (sort, goal) in undated.iter().enumerate() {
+            db.conn.execute(
+                "UPDATE goal SET sort = ?2 WHERE id = ?1",
+                params![goal.id, sort as i64],
+            )?;
+        }
+        Ok(())
+    })
+}
+
 /// Create several goals at once, all or nothing -- the annual reseed creates
 /// dozens of them at once, and a partial one would leave the list
 /// half-populated with nothing to say which half.
@@ -213,10 +258,21 @@ pub fn get(db: &Db, id: GoalId) -> Result<Option<Goal>> {
     Ok(found)
 }
 
+/// One container's open goals, in the order every screen shows them:
+/// undated first as one block ordered by hand, then the dated ones soonest
+/// first.
+///
+/// Two blocks rather than one order, because the two halves are arranged by
+/// different things. A goal with a deadline has its place decided for it, and
+/// the nearest deadline heads that block. A goal with none is the owner's to
+/// arrange, which is what `sort` records and `reorder` writes;
+/// among dated goals `sort` is only a tiebreak between two falling on the
+/// same day, so an arrangement made in the undated block cannot reach in and
+/// reorder a deadline.
 pub fn list(db: &Db, container_account_id: AccountId) -> Result<Vec<Goal>> {
     let mut stmt = db.conn.prepare(select_goal!(
         "WHERE container_account_id = ?1 AND closed = 0
-          ORDER BY sort, id"
+          ORDER BY goal_date IS NULL DESC, goal_date, sort, id"
     ))?;
     let rows = stmt.query_map(params![container_account_id], from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -267,7 +323,7 @@ pub fn list_with_balances(
 ) -> Result<Vec<GoalWithBalance>> {
     let mut stmt = db.conn.prepare(select_goal!(with_balance
         "WHERE g.container_account_id = ?1 AND g.closed = 0
-          ORDER BY g.sort, g.id"
+          ORDER BY g.goal_date IS NULL DESC, g.goal_date, g.sort, g.id"
     ))?;
     let rows = stmt.query_map(params![container_account_id], |row| {
         Ok(GoalWithBalance {
@@ -285,11 +341,15 @@ pub fn list_with_balances(
 /// is the order `account::list` and `containers` both use, and the screen's
 /// `Tab` filter cycles the same sequence.
 ///
+/// The account leg leads, so a container's goals stay together; below it is
+/// [`list`]'s own order, undated block then dated, and for the same reasons.
+///
 pub fn all_with_balances(db: &Db) -> Result<Vec<GoalWithBalance>> {
     let mut stmt = db.conn.prepare(select_goal!(with_balance
         "JOIN account acct ON acct.id = g.container_account_id
           WHERE g.closed = 0
-          ORDER BY acct.kind, acct.sort, acct.code, g.sort, g.id"
+          ORDER BY acct.kind, acct.sort, acct.code,
+                   g.goal_date IS NULL DESC, g.goal_date, g.sort, g.id"
     ))?;
     let rows = stmt.query_map([], |row| {
         Ok(GoalWithBalance {
@@ -871,6 +931,188 @@ mod tests {
         assert_eq!(goals.len(), 2);
         assert_eq!(goals[0].name, "First");
         assert_eq!(goals[1].name, "Second");
+    }
+
+    /// Undated goals come first as one block, ordered by hand; dated goals
+    /// follow, soonest first. A goal with no date is one the owner has not put
+    /// a deadline on, so it is theirs to arrange, and a deadline is what
+    /// decides every other row's place.
+    #[test]
+    fn undated_goals_sort_before_dated_ones() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+
+        let mut dated = new_goal("Dated", savings, 100);
+        dated.goal_date = Some(day(2027, 3, 1));
+        dated.sort = 0;
+        insert(&db, &dated).unwrap();
+        let mut undated = new_goal("Undated", savings, 100);
+        undated.sort = 9;
+        insert(&db, &undated).unwrap();
+
+        let names: Vec<String> = list(&db, savings)
+            .unwrap()
+            .into_iter()
+            .map(|g| g.name)
+            .collect();
+        assert_eq!(names, vec!["Undated", "Dated"]);
+    }
+
+    /// Soonest first: the goal due next heads the dated block, which is the
+    /// order they come due in. `sort` is only a tiebreak between two goals
+    /// falling on the same day, so the arrangement the owner set among the
+    /// undated ones cannot reach in here and reorder a deadline.
+    #[test]
+    fn dated_goals_sort_soonest_first_whatever_their_manual_order() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+
+        for (name, date, sort) in [
+            ("Soonest", day(2026, 9, 1), 0),
+            ("Furthest", day(2030, 1, 1), 5),
+            ("Middle", day(2028, 6, 1), 2),
+        ] {
+            let mut goal = new_goal(name, savings, 100);
+            goal.goal_date = Some(date);
+            goal.sort = sort;
+            insert(&db, &goal).unwrap();
+        }
+
+        let names: Vec<String> = list(&db, savings)
+            .unwrap()
+            .into_iter()
+            .map(|g| g.name)
+            .collect();
+        assert_eq!(names, vec!["Soonest", "Middle", "Furthest"]);
+    }
+
+    /// The same order, through the query the Savings screen actually reads.
+    #[test]
+    fn all_with_balances_puts_each_containers_undated_goals_first() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1).unwrap();
+
+        for (name, container, date) in [
+            ("Rainy Dated", savings, Some(day(2027, 1, 1))),
+            ("Rainy Undated", savings, None),
+            ("Brokerage Dated", brokerage, Some(day(2027, 1, 1))),
+            ("Brokerage Undated", brokerage, None),
+        ] {
+            let mut goal = new_goal(name, container, 100);
+            goal.goal_date = date;
+            insert(&db, &goal).unwrap();
+        }
+
+        let goals = all_with_balances(&db).unwrap();
+        let names: Vec<&str> = goals.iter().map(|g| g.goal.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "Rainy Undated",
+                "Rainy Dated",
+                "Brokerage Undated",
+                "Brokerage Dated"
+            ],
+            "the account leg still leads, so a container's goals stay together"
+        );
+    }
+
+    /// `reorder` takes a position and renumbers the container's undated
+    /// block, so what the screen shows is what is stored -- the same bargain
+    /// `account::reorder` makes with a kind.
+    #[test]
+    fn reorder_moves_an_undated_goal_and_renumbers_the_block() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let mut ids = Vec::new();
+        for (name, sort) in [("First", 0), ("Second", 1), ("Third", 2)] {
+            let mut goal = new_goal(name, savings, 100);
+            goal.sort = sort;
+            ids.push(insert(&db, &goal).unwrap());
+        }
+
+        reorder(&db, ids[2], 0).unwrap();
+
+        let goals = list(&db, savings).unwrap();
+        let names: Vec<&str> = goals.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, vec!["Third", "First", "Second"]);
+        let sorts: Vec<i64> = goals.iter().map(|g| g.sort).collect();
+        assert_eq!(sorts, vec![0, 1, 2], "renumbered 0..n-1");
+    }
+
+    /// A dated goal takes its place from its date, so it is not in the block
+    /// being renumbered and its `sort` must come through untouched -- it is
+    /// what the goal falls back on if the date is later cleared.
+    #[test]
+    fn reorder_leaves_the_containers_dated_goals_alone() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let mut dated = new_goal("Dated", savings, 100);
+        dated.goal_date = Some(day(2027, 1, 1));
+        dated.sort = 7;
+        let dated_id = insert(&db, &dated).unwrap();
+        let mut ids = Vec::new();
+        for (name, sort) in [("First", 0), ("Second", 1)] {
+            let mut goal = new_goal(name, savings, 100);
+            goal.sort = sort;
+            ids.push(insert(&db, &goal).unwrap());
+        }
+
+        reorder(&db, ids[1], 0).unwrap();
+
+        assert_eq!(get(&db, dated_id).unwrap().unwrap().sort, 7);
+    }
+
+    /// Refused rather than renumbering around it: a caller asking to place a
+    /// dated goal by hand has misread what the manual order is for, and
+    /// silently doing nothing would look like the move landed.
+    #[test]
+    fn reordering_a_dated_goal_is_an_error() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let mut dated = new_goal("Dated", savings, 100);
+        dated.goal_date = Some(day(2027, 1, 1));
+        let dated_id = insert(&db, &dated).unwrap();
+
+        assert!(reorder(&db, dated_id, 0).is_err());
+    }
+
+    #[test]
+    fn reorder_past_the_end_lands_last() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let mut ids = Vec::new();
+        for name in ["First", "Second", "Third"] {
+            ids.push(insert(&db, &new_goal(name, savings, 100)).unwrap());
+        }
+
+        reorder(&db, ids[0], 99).unwrap();
+
+        let names: Vec<String> = list(&db, savings)
+            .unwrap()
+            .into_iter()
+            .map(|g| g.name)
+            .collect();
+        assert_eq!(names, vec!["Second", "Third", "First"]);
+    }
+
+    #[test]
+    fn reorder_leaves_another_container_alone() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1).unwrap();
+        let mut ids = Vec::new();
+        for name in ["First", "Second"] {
+            ids.push(insert(&db, &new_goal(name, savings, 100)).unwrap());
+        }
+        let mut other = new_goal("Elsewhere", brokerage, 100);
+        other.sort = 4;
+        let other_id = insert(&db, &other).unwrap();
+
+        reorder(&db, ids[1], 0).unwrap();
+
+        assert_eq!(get(&db, other_id).unwrap().unwrap().sort, 4);
     }
 
     /// `container_excess` still counts a closed goal's allocations, but

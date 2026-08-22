@@ -90,26 +90,27 @@ pub const WARNING: Color = Color::Rgb(230, 160, 30);
 
 /// The band behind a favorited row on the Savings screen.
 ///
-/// A dark slate, and the darkest thing the app draws: every other color here
+/// A pale slate, and the lightest thing the app draws. Every other color here
 /// is a mid-tone chosen to read against a terminal's own background, and they
-/// all have to stay legible drawn *on* this. That is the ceiling on how light
-/// it may go, and [`NEGATIVE`] is what sets it -- the band clears the red by
-/// nine points of luma and nothing else here comes close, so lifting this
-/// further is a decision about that red before it is one about anything else.
+/// all have to stay legible drawn *on* this -- which means the band cannot sit
+/// among them. It has to be at one end of the range or the other, and the
+/// light end is the end with room: from here the ramp's halfway yellow, the
+/// lightest thing ever drawn on the band, is 45 points of luma below. A dark
+/// band clears its own tightest neighbour, [`NEGATIVE`], by eight.
 ///
 /// Cool rather than a flat grey, which reads as dirt beside the saturated
-/// colors around it -- but a *cast* and not a hue: its channels spread 16
+/// colors around it -- but a *cast* and not a hue: its channels spread 12
 /// where the least saturated entry in [`palette`] spreads 70, so no account
 /// is drawn on a band of its own shade.
-pub const FAVORITE_BG: Color = Color::Rgb(64, 70, 80);
+pub const FAVORITE_BG: Color = Color::Rgb(214, 218, 226);
 
 /// The text on that band, for every cell that sets no color of its own.
 ///
 /// The band has to bring its own foreground: the terminal's default text is
 /// dark on a light theme and light on a dark one, so a background alone would
-/// be readable on exactly one of the two. Off-white rather than pure white,
-/// which reads as a highlight of its own beside the mid-tones around it.
-pub const FAVORITE_FG: Color = Color::Rgb(226, 228, 232);
+/// be readable on exactly one of the two. Near-black rather than black, which
+/// reads as a hole punched in the row beside the mid-tones around it.
+pub const FAVORITE_FG: Color = Color::Rgb(32, 38, 48);
 
 /// The style a favorited row is drawn in, as one value.
 ///
@@ -214,6 +215,15 @@ pub fn percent_color(percent: Percent) -> Color {
 mod tests {
     use super::*;
 
+    /// Perceived brightness, on the usual 299/587/114 weighting and left
+    /// unscaled -- every use of it here is a comparison between two of these.
+    fn luma(c: Color) -> u32 {
+        match c {
+            Color::Rgb(r, g, b) => u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114,
+            other => panic!("{other:?} is not an Rgb color"),
+        }
+    }
+
     /// The band is a background, so it has to bring its own foreground: the
     /// terminal's default text color is dark on a light theme and light on a
     /// dark one, and either one alone would be unreadable against a fixed
@@ -226,24 +236,21 @@ mod tests {
     }
 
     /// Every color a cell may set is a mid-tone drawn *on* the band, so the
-    /// band itself must be the darkest thing on the row -- and neutral, or
-    /// an account whose shade is near it would be the one account the band
-    /// hides.
+    /// band has to sit at one end of the range rather than among them -- and
+    /// it sits at the light end, which is the end with room. It must also be
+    /// neutral, or an account whose shade is near it would be the one account
+    /// the band hides.
     #[test]
-    fn the_favorite_band_is_darker_than_every_color_drawn_on_it() {
-        let luma = |c: Color| match c {
-            Color::Rgb(r, g, b) => u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114,
-            other => panic!("{other:?} is not an Rgb color"),
-        };
+    fn the_favorite_band_is_lighter_than_every_color_drawn_on_it() {
         let band = luma(FAVORITE_BG);
         for color in AccountColor::ALL {
-            assert!(luma(palette(color)) > band, "{color:?}");
+            assert!(luma(palette(color)) < band, "{color:?}");
         }
         for on_band in [NEGATIVE, POSITIVE, WARNING, FAVORITE_FG] {
-            assert!(luma(on_band) > band, "{on_band:?}");
+            assert!(luma(on_band) < band, "{on_band:?}");
         }
         for percent in [Percent::ZERO, Percent(50), Percent::ONE_HUNDRED] {
-            assert!(luma(percent_color(percent)) > band, "{percent:?}");
+            assert!(luma(percent_color(percent)) < band, "{percent:?}");
         }
     }
 
@@ -270,25 +277,26 @@ mod tests {
         );
     }
 
-    /// Which color the band is about to collide with if it is ever lifted
-    /// again. `NEGATIVE` is the darkest thing drawn on it, so it is the one
-    /// that runs out of contrast first -- and naming it here means a future
-    /// tweak reads the constraint rather than rediscovering it.
+    /// Which color the band is about to collide with if it is ever softened.
+    /// The ramp's halfway yellow is the lightest thing drawn on the band, so
+    /// it is the one that runs out of contrast first -- and naming it here
+    /// means a future tweak reads the constraint rather than rediscovering
+    /// it.
     #[test]
-    fn the_negative_red_is_the_darkest_thing_the_band_has_to_clear() {
-        let luma = |c: Color| match c {
-            Color::Rgb(r, g, b) => u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114,
-            other => panic!("{other:?} is not an Rgb color"),
-        };
+    fn the_halfway_yellow_is_the_lightest_thing_the_band_has_to_clear() {
+        let halfway = percent_color(Percent(50));
         let on_band = AccountColor::ALL
             .iter()
             .map(|c| palette(*c))
-            .chain([POSITIVE, WARNING, FAVORITE_FG])
-            .chain([Percent::ZERO, Percent(50), Percent::ONE_HUNDRED].map(percent_color));
+            .chain([NEGATIVE, POSITIVE, WARNING, FAVORITE_FG])
+            .chain([Percent::ZERO, Percent::ONE_HUNDRED].map(percent_color));
         for color in on_band {
-            assert!(luma(color) > luma(NEGATIVE), "{color:?} is darker than red");
+            assert!(
+                luma(color) < luma(halfway),
+                "{color:?} is lighter than the halfway yellow"
+            );
         }
-        assert!(luma(NEGATIVE) > luma(FAVORITE_BG));
+        assert!(luma(halfway) < luma(FAVORITE_BG));
     }
 
     #[test]

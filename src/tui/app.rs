@@ -82,6 +82,29 @@ impl Screen {
     }
 }
 
+/// Which way `K` and `J` move a goal in its container's manual order.
+///
+/// A direction rather than a signed delta because the two ends are not
+/// symmetric arithmetic: the top of the block and the bottom are each a place
+/// there is nothing beyond, and `applied` returning `None` there is what lets
+/// the caller stop before it writes rather than after it clamps.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Move {
+    Up,
+    Down,
+}
+
+impl Move {
+    /// The position `from` moves to among `len` goals, or `None` when the
+    /// move would leave the block.
+    fn applied(self, from: usize, len: usize) -> Option<usize> {
+        match self {
+            Move::Up => from.checked_sub(1),
+            Move::Down => (from + 1 < len).then_some(from + 1),
+        }
+    }
+}
+
 /// Which step an arrow press stands for: `week` while `Shift` is held, `day`
 /// otherwise.
 ///
@@ -366,6 +389,8 @@ impl App {
             KeyCode::Char('e') => self.open_goal_edit()?,
             KeyCode::Char('c') => self.open_close_out()?,
             KeyCode::Char('n') => self.open_new_goal()?,
+            KeyCode::Char('K') => self.move_goal(Move::Up)?,
+            KeyCode::Char('J') => self.move_goal(Move::Down)?,
             KeyCode::Char('f') => self.toggle_favorite()?,
             KeyCode::Char('U') => self.open_undo()?,
             _ => {}
@@ -1819,6 +1844,59 @@ impl App {
         self.reload()
     }
 
+    /// Move the selected undated goal one place in its container's manual
+    /// order, and put the cursor back on it.
+    ///
+    /// Two refusals rather than two silences. A dated goal takes its place
+    /// from its date, so there is no manual order for it to move in; and a
+    /// kept search hides part of the block being reordered, so a move would
+    /// be one place in a list the owner cannot see. Either one says so,
+    /// because a key that sometimes quietly does nothing is a key nobody
+    /// trusts.
+    ///
+    /// The position is computed against the container's undated goals rather
+    /// than against the rows on screen: `goal::reorder` renumbers that block,
+    /// and the two must be counting the same list. `reload_savings` then
+    /// redraws from the table, and the cursor is put back **by id** -- the
+    /// rows moved under it, so an index would leave the selection on whatever
+    /// took the vacated place and the next press would move that goal
+    /// instead.
+    fn move_goal(&mut self, direction: Move) -> Result<()> {
+        let Some(row) = self.savings.selected() else {
+            return self.nothing_selected();
+        };
+        let (id, container, name, dated) = (
+            row.goal_id,
+            row.container.id(),
+            row.name.clone(),
+            row.goal_date.is_some(),
+        );
+        if !self.savings.search().is_empty() {
+            self.status = "Clear the search before reordering goals".to_string();
+            return Ok(());
+        }
+        if dated {
+            self.status = format!("{name} has a goal date, so its place comes from that date");
+            return Ok(());
+        }
+        let undated: Vec<GoalId> = goal::list(&self.db, container)?
+            .into_iter()
+            .filter(|g| g.goal_date.is_none())
+            .map(|g| g.id)
+            .collect();
+        let from = undated
+            .iter()
+            .position(|g| *g == id)
+            .context("the selected goal is open and undated, so its container lists it")?;
+        let Some(to) = direction.applied(from, undated.len()) else {
+            return Ok(());
+        };
+        goal::reorder(&self.db, id, to)?;
+        self.reload_savings()?;
+        self.savings.select_goal(id);
+        Ok(())
+    }
+
     /// Mark or unmark the selected goal, and redraw the screen from the
     /// database.
     ///
@@ -2177,9 +2255,12 @@ impl App {
                     .context("no sales tax rate is configured; import Constants first")?,
             ),
         };
-        // The new goals land at the end of the container's list in the order
-        // the picker showed them -- which is the ticked group first, since
-        // that is the order the picker sorted itself into.
+        // Every goal created here is dated, so each takes its place in the
+        // container's dated block by deadline rather than landing at the end.
+        // `sort` still runs in the order the picker showed them -- the ticked
+        // group first, since that is the order the picker sorted itself into --
+        // but among dated goals it decides only which of two falling on the
+        // same day comes first.
         let first_sort = goal::next_sort(&self.db, container)?;
         let mut new_goals = Vec::with_capacity(chosen.len());
         for (offset, entry) in chosen.iter().enumerate() {
@@ -2721,6 +2802,152 @@ mod tests {
         for c in text.chars() {
             press(app, KeyCode::Char(c));
         }
+    }
+
+    /// One container holding three undated goals and one dated, for the
+    /// manual order `K` and `J` move things around in.
+    fn app_with_undated_goals() -> App {
+        let db = db::open_in_memory().unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        account::set_group(&db, checking, Group::Checking).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
+        for (i, (name, date)) in [
+            ("Couch", None),
+            ("Bike", None),
+            ("Camera", None),
+            ("Vacation 2027", Some(day(2027, 1, 1))),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            goal::insert(
+                &db,
+                &goal::NewGoal {
+                    name: name.to_string(),
+                    container_account_id: savings,
+                    goal_cents: Cents(100_000),
+                    goal_date: date,
+                    recurring_goal_id: None,
+                    interest_eligible: true,
+                    sort: i as i64,
+                },
+            )
+            .unwrap();
+        }
+        let mut app = App::new(db, today()).unwrap();
+        press(&mut app, KeyCode::Char('4'));
+        app
+    }
+
+    /// The whole point of the manual order: the owner arranges the goals no
+    /// deadline arranges for them.
+    #[test]
+    fn k_moves_the_selected_undated_goal_up() {
+        let mut app = app_with_undated_goals();
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.savings.selected().unwrap().name, "Camera");
+
+        press(&mut app, KeyCode::Char('K'));
+
+        assert_eq!(
+            savings_names(&app),
+            vec!["Couch", "Camera", "Bike", "Vacation 2027"]
+        );
+    }
+
+    /// The rows move under the cursor, so the cursor has to be put back on
+    /// the goal by id -- an index kept across the move would leave the
+    /// selection on whichever goal took the vacated place, and a second press
+    /// would move that one instead.
+    #[test]
+    fn the_cursor_follows_the_goal_it_moved() {
+        let mut app = app_with_undated_goals();
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+
+        press(&mut app, KeyCode::Char('K'));
+        assert_eq!(app.savings.selected().unwrap().name, "Camera");
+        press(&mut app, KeyCode::Char('K'));
+
+        assert_eq!(
+            savings_names(&app),
+            vec!["Camera", "Couch", "Bike", "Vacation 2027"],
+            "already first, so the second press had nowhere to go"
+        );
+        assert_eq!(app.savings.selected().unwrap().name, "Camera");
+    }
+
+    #[test]
+    fn j_moves_the_selected_undated_goal_down() {
+        let mut app = app_with_undated_goals();
+        assert_eq!(app.savings.selected().unwrap().name, "Couch");
+
+        press(&mut app, KeyCode::Char('J'));
+
+        assert_eq!(
+            savings_names(&app),
+            vec!["Bike", "Couch", "Camera", "Vacation 2027"]
+        );
+        assert_eq!(app.savings.selected().unwrap().name, "Couch");
+    }
+
+    #[test]
+    fn moving_the_last_undated_goal_down_changes_nothing() {
+        let mut app = app_with_undated_goals();
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+
+        press(&mut app, KeyCode::Char('J'));
+
+        assert_eq!(
+            savings_names(&app),
+            vec!["Couch", "Bike", "Camera", "Vacation 2027"],
+            "the dated block below is not somewhere an undated goal can move into"
+        );
+    }
+
+    /// A dated goal's place comes from its date, so the key says so rather
+    /// than doing nothing and leaving the owner to wonder which it was.
+    #[test]
+    fn moving_a_dated_goal_is_refused_with_a_message() {
+        let mut app = app_with_undated_goals();
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.savings.selected().unwrap().name, "Vacation 2027");
+
+        press(&mut app, KeyCode::Char('K'));
+
+        assert_eq!(
+            savings_names(&app),
+            vec!["Couch", "Bike", "Camera", "Vacation 2027"]
+        );
+        assert!(
+            app.status.contains("goal date"),
+            "said nothing about why: {}",
+            app.status
+        );
+    }
+
+    /// A kept search hides part of the block being reordered, so a move
+    /// would be one place in a list the owner cannot see. Refused rather
+    /// than guessed at.
+    #[test]
+    fn moving_while_a_kept_search_narrows_the_list_is_refused() {
+        let mut app = app_with_undated_goals();
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "e");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(savings_names(&app), vec!["Bike", "Camera"]);
+        press(&mut app, KeyCode::Down);
+
+        press(&mut app, KeyCode::Char('K'));
+
+        assert_eq!(savings_names(&app), vec!["Bike", "Camera"]);
+        assert!(
+            app.status.contains("search"),
+            "said nothing about the search: {}",
+            app.status
+        );
     }
 
     fn savings_favorites(app: &App) -> Vec<bool> {
@@ -3862,7 +4089,8 @@ mod tests {
 
         assert_eq!(app.screen, Screen::Savings);
         let names: Vec<&str> = app.savings.rows().iter().map(|r| r.name.as_str()).collect();
-        assert_eq!(names, ["Vacation 2027", "Couch"]);
+        // Undated first: Couch has no date, Vacation 2027 does.
+        assert_eq!(names, ["Couch", "Vacation 2027"]);
     }
 
     /// The reconciliation line is the Savings screen's alone.
@@ -3895,6 +4123,9 @@ mod tests {
     fn a_on_the_savings_screen_writes_an_allocation_against_the_selected_goal() {
         let mut app = app();
         press(&mut app, KeyCode::Char('4'));
+        // Down once: the undated Couch heads the list, and this is the goal
+        // whose balance the figures below are about.
+        press(&mut app, KeyCode::Down);
         assert_eq!(app.savings.selected().unwrap().name, "Vacation 2027");
         let before = app.savings.excess()[0].1;
 
@@ -3904,7 +4135,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
 
         assert!(app.modal.is_none());
-        assert_eq!(app.savings.rows()[0].current, Cents(1_045_400));
+        assert_eq!(app.savings.rows()[1].current, Cents(1_045_400));
         assert_eq!(app.savings.excess()[0].1, before - Cents(45_400));
     }
 
@@ -4005,6 +4236,9 @@ mod tests {
     fn e_on_the_savings_screen_rewrites_the_goal_and_its_derived_columns() {
         let mut app = app();
         press(&mut app, KeyCode::Char('4'));
+        // Down once: Vacation 2027 is the funded goal, so a rewritten target
+        // moves a percentage rather than leaving it where it was.
+        press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Char('e'));
         press(&mut app, KeyCode::Tab);
         for _ in 0..12 {
@@ -4014,7 +4248,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
 
         assert!(app.modal.is_none());
-        let row = &app.savings.rows()[0];
+        let row = &app.savings.rows()[1];
         assert_eq!(row.goal, Cents(2_000_000));
         assert_eq!(row.percent, Some(Percent(50)));
     }
@@ -4025,6 +4259,7 @@ mod tests {
     fn c_then_enter_abandons_the_selected_goal() {
         let mut app = app();
         press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
         let before = app.savings.excess()[0].1;
 
         press(&mut app, KeyCode::Char('c'));
@@ -4042,6 +4277,7 @@ mod tests {
     fn c_into_another_goal_moves_the_balance_and_leaves_the_remainder_alone() {
         let mut app = app();
         press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
         let before = app.savings.excess()[0].1;
 
         press(&mut app, KeyCode::Char('c'));
@@ -4073,10 +4309,13 @@ mod tests {
 
         let sheet = worksheet(&app);
         let names: Vec<&str> = sheet.lines().iter().map(|l| l.name.as_str()).collect();
-        assert_eq!(names, ["Vacation 2027", "Couch"]);
-        // Vacation 2027 needs 4,986.00 over 10 paychecks; Couch is undated.
-        assert_eq!(sheet.lines()[0].amount, Cents(50_000));
-        assert_eq!(sheet.lines()[1].amount, Cents::ZERO);
+        // The worksheet lists the container in screen order, so the undated
+        // Couch leads it.
+        assert_eq!(names, ["Couch", "Vacation 2027"]);
+        // Couch is undated and asks nothing; Vacation 2027 needs 4,986.00
+        // over 10 paychecks.
+        assert_eq!(sheet.lines()[0].amount, Cents::ZERO);
+        assert_eq!(sheet.lines()[1].amount, Cents(50_000));
         assert_eq!(sheet.remaining(), Cents::ZERO);
     }
 
@@ -4086,12 +4325,13 @@ mod tests {
     fn committing_a_worksheet_writes_one_batch_and_reloads_the_screen() {
         let mut app = app();
         press(&mut app, KeyCode::Char('4'));
-        let before = app.savings.rows()[0].current;
+        // Row 1 is Vacation 2027, the only goal the prefill asks anything of.
+        let before = app.savings.rows()[1].current;
         press(&mut app, KeyCode::Char('A'));
         press(&mut app, KeyCode::Enter);
 
         assert!(app.modal.is_none());
-        assert_eq!(app.savings.rows()[0].current, before + Cents(50_000));
+        assert_eq!(app.savings.rows()[1].current, before + Cents(50_000));
         let batch = goal::most_recent_batch(&app.db).unwrap().unwrap();
         assert_eq!(batch.kind, goal::BatchKind::Paycheck);
         assert_eq!(goal::batch_shares(&app.db, batch.id).unwrap().len(), 1);
@@ -4520,16 +4760,17 @@ mod tests {
     fn capital_u_then_y_undoes_the_last_batch() {
         let mut app = app();
         press(&mut app, KeyCode::Char('4'));
-        let before = app.savings.rows()[0].current;
+        // Row 1 is Vacation 2027, the only goal the prefill moves.
+        let before = app.savings.rows()[1].current;
         press(&mut app, KeyCode::Char('A'));
         press(&mut app, KeyCode::Enter);
-        assert_ne!(app.savings.rows()[0].current, before);
+        assert_ne!(app.savings.rows()[1].current, before);
 
         press(&mut app, KeyCode::Char('U'));
         press(&mut app, KeyCode::Char('y'));
 
         assert!(app.modal.is_none());
-        assert_eq!(app.savings.rows()[0].current, before);
+        assert_eq!(app.savings.rows()[1].current, before);
         assert!(goal::most_recent_batch(&app.db).unwrap().is_none());
     }
 
@@ -6959,7 +7200,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '4'),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c goal · f fave · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c/K/J goal · f fave · U undo"
         );
         assert_eq!(
             footer_of(&mut app, '5'),
@@ -7212,7 +7453,8 @@ mod tests {
             (
                 Topic::Savings,
                 &[
-                    "Tab", "BackTab", "[ ]", "Esc", "/", "a", "A", "i", "e", "c", "n", "f", "U",
+                    "Tab", "BackTab", "[ ]", "Esc", "/", "a", "A", "i", "e", "c", "n", "K", "J",
+                    "f", "U",
                 ],
             ),
             (
