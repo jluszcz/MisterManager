@@ -678,16 +678,19 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     the terminal's default text on a fixed band — readable under one theme and invisible under the
     other — so `style::favorite()` is the pair, and it is a `Style` rather than two constants
     precisely so no screen can take half of it.
-  - **How light the band may go is decided by `NEGATIVE`, and that is the whole of the ceiling.**
-    Every color that lands *on* the band — the account palette, the funding ramp, a negative
-    figure — is a mid-tone chosen to read against a *terminal's* background rather than against
-    this one, so the band has to stay under all of them, and the red at luma 77 is the lowest of
-    them. At 68 the band clears it by nine points and nothing else is near. A genuinely mid-tone
-    band, around luma 95, is what the eye asks for and what the ramp's unfunded red cannot
-    survive: it would land within four points of it and erase the `%` column on exactly the goals
-    that column exists for. Lifting the band again means deciding about that red first.
+  - **The band sits at an end of the range, and the light end is the end with room.** Every color
+    that lands *on* it — the account palette, the funding ramp, a negative figure — is a mid-tone
+    chosen to read against a *terminal's* background rather than against this one, so a band among
+    them is a band that hides one. That leaves two places to put it, and they are not equally
+    good. Below everything, the tightest neighbour is `NEGATIVE` at luma 77 and the band clears it
+    by eight; above everything, the tightest is the ramp's halfway yellow at 172 and the band at
+    218 clears it by forty-five. So the band is pale and its foreground near-black, and what a
+    future softening has to argue with is that yellow rather than the red. The temptation both
+    ends resist is the same: a genuinely mid-tone band, around luma 95 or 140, is what the eye
+    asks for and what the `%` column cannot survive — it would erase the ramp on exactly the goals
+    that column exists for.
   - **A cast, not a hue.** A flat grey reads as dirt beside the saturated colors around it, so the
-    band is cool — but its channels spread 16 where the flattest entry in `palette` spreads 70, and
+    band is cool — but its channels spread 12 where the flattest entry in `palette` spreads 70, and
     the test measures against the palette rather than a number, so what counts as desaturated is
     said by the colors the band could hide rather than by whoever last edited it. Both this and
     the ceiling above are pinned in `style`'s tests, and both bite: a hued band and a mid-tone one
