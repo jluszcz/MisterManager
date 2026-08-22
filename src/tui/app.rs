@@ -3272,21 +3272,39 @@ mod tests {
     /// with none of the fixture's own figures anywhere in the buffer. A new
     /// screen, or a new `format!` that formats a `Cents` itself instead of
     /// asking `tui::demo`, fails here rather than on a shared terminal.
+    ///
+    /// The fixture is the one with rows on every list, because an absence
+    /// check over an empty table passes for free: `app()` has no funds, no
+    /// recurring goals and no recurring transactions, which left three of the
+    /// nine screens drawing nothing to catch. Asserting that a mask *appears*
+    /// is what holds that shut from here on. Accounts is the one screen
+    /// exempt -- it draws a name, a band and a position, and no figure at all.
     #[test]
     fn a_demo_leaves_no_figure_on_any_screen() {
         crate::demo::install(true);
-        let mut app = app();
+        let mut app = app_with_two_rows_on_every_list();
         for screen in "123456789".chars() {
             press(&mut app, KeyCode::Char(screen));
             let drawn = drawn(&mut app);
-            for figure in ["1,000", "1,200", "14.99", "25.99", "15,000", "10,000"] {
+            for figure in DEMO_FIXTURE_FIGURES {
                 assert!(
                     !drawn.contains(figure),
                     "{figure} survived on screen {screen}:\n{drawn}"
                 );
             }
+            assert!(
+                screen == '9' || drawn.contains("██████"),
+                "screen {screen} drew no masked figure, so the check above passed for free:\n{drawn}"
+            );
         }
     }
+
+    /// Every figure `app_with_two_rows_on_every_list` puts in the database, as
+    /// the screens would print it unmasked. One list rather than one per
+    /// sweep, so a row added to that fixture is covered by both.
+    const DEMO_FIXTURE_FIGURES: [&str; 10] = [
+        "1,000", "1,200", "14.99", "25.99", "15,000", "10,000", "100.00", "128", "30,000", "90,000",
+    ];
 
     /// A write reports what it wrote on the status line, which sits in the
     /// footer of whatever screen is open.
@@ -3335,6 +3353,11 @@ mod tests {
     /// the one amount field this feature missed. A form prefills from the row
     /// it opens on, so a form is where a real figure is most likely to reach
     /// the screen, not least.
+    ///
+    /// Every pair asserts a modal actually opened first. A key that finds
+    /// nothing to open on leaves the screen as it was and passes an absence
+    /// check without ever drawing a form -- which is what `('2', 'r')` did,
+    /// silently, until it was given the account filter `r` needs.
     #[test]
     fn a_demo_leaves_no_figure_on_any_form_a_row_opens() {
         crate::demo::install(true);
@@ -3350,18 +3373,43 @@ mod tests {
             ('5', 'e'),
             ('5', 'E'),
             ('5', 'a'),
+            ('6', 'e'),
+            ('6', 'E'),
             ('7', 'a'),
             ('8', 'a'),
             ('9', 'e'),
         ] {
-            let mut app = planning_app();
+            // Screen 6 draws off the `fund` table, which `planning_app` has no
+            // rows in; every other screen here has one on the fixture that
+            // carries the bills screen 5 needs.
+            let mut app = match screen {
+                '6' => app_with_two_rows_on_every_list(),
+                _ => planning_app(),
+            };
             press(&mut app, KeyCode::Char(screen));
-            if screen == '5' {
-                select_first_bill(&mut app);
+            match (screen, key) {
+                ('5', _) => {
+                    select_first_bill(&mut app);
+                }
+                // `r` reconciles the one account a ledger is narrowed to, and
+                // a ledger opens on `All`.
+                ('2', 'r') => press(&mut app, KeyCode::Tab),
+                _ => {}
             }
             press(&mut app, KeyCode::Char(key));
+
+            assert!(
+                app.modal.is_some(),
+                "{key} opened nothing on screen {screen}, so the check below \
+                 would pass without a form ever being drawn: {}",
+                app.status
+            );
             let drawn = drawn(&mut app);
-            for figure in ["1,200", "300.00", "1,000", "50,000", "5,000"] {
+            let figures: &[&str] = match screen {
+                '6' => &DEMO_FIXTURE_FIGURES,
+                _ => &["1,200", "300.00", "1,000", "50,000", "5,000"],
+            };
+            for figure in figures {
                 assert!(
                     !drawn.contains(figure),
                     "{figure} survived {key} on screen {screen}:\n{drawn}"

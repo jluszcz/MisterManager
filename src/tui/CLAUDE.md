@@ -193,6 +193,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     what commits, so `demo::typed` is applied where the field becomes a `Label` — in each form's
     `display(field)` — and never to what `Field::given` was handed. That is what lets a demo be
     driven rather than only watched: what is typed still parses.
+  - **A refusal that quotes a field back is a second way out, and `parse_whole_amount`'s is the one
+    that had to be masked.** It fires only on text that *already parsed* as money — cents in a
+    whole-dollar field — so what it names is a real figure every time, and a form's amount field is
+    prefilled from the row it opened on. `parse_amount`'s own error is safe unmasked for the
+    opposite reason: it fires only on text no reading of which is a figure.
   - **A one-field `ValueForm` does not know what it is collecting, so its caller says.**
     `ValueForm::money` is the amount and `ValueForm::new` the plain figure, because the Planning
     screen edits a pay-period count and a split percentage through the same modal it edits a target
@@ -208,13 +213,28 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     name is already the owner's own word for it. The mask is six blocks wide, plus a sign where the
     figure has one, which is exactly the narrowest money column any screen lays out (`$/Pay`, at 7):
     a demo moves no column and truncates nothing.
-  - **The net is one test per screen and two sweeps.** `a_demo_leaves_no_figure_on_any_screen` walks
-    all nine screens with the mask on and asserts none of the fixture's own figures reach the
-    buffer; `a_demo_leaves_no_figure_on_any_form_a_row_opens` presses every key that opens a form or
-    a worksheet over a row carrying a figure and asserts the same of the modal. The second is not
-    redundant: a screen sweep draws only screens, and a form prefills from the row it opens on, so a
-    form is where a real figure is *most* likely to reach the screen. `BillField::Amount` was the one
-    amount field this feature first missed, and only the form sweep sees it.
+    - **The allocation form's amount field is the one field whose text may be either**, so it is the
+      one `display(field)` that asks before masking. `/12` is a count and stays; a typed figure goes
+      through `demo::typed`. `form::is_share` is the question, beside the `parse_share` that answers
+      it for real, so the two cannot come to disagree about what a divisor looks like. Masking it
+      too would leave that field with no feedback at all — what it divides is on the line below and
+      blocked, and `resolved_share` puts the answer beside it blocked — so `/12` and `/2` would read
+      the same right up to Enter.
+  - **The net is one test per screen and two sweeps, and both sweeps assert something *arrived*.**
+    `a_demo_leaves_no_figure_on_any_screen` walks all nine screens with the mask on and asserts none
+    of the fixture's own figures reach the buffer; `a_demo_leaves_no_figure_on_any_form_a_row_opens`
+    presses every key that opens a form or a worksheet over a row carrying a figure and asserts the
+    same of the modal. The second is not redundant: a screen sweep draws only screens, and a form
+    prefills from the row it opens on, so a form is where a real figure is *most* likely to reach
+    the screen. `BillField::Amount` was the one amount field this feature first missed, and only the
+    form sweep sees it.
+    - **An absence check over an empty table passes for free**, which is the failure mode both
+      sweeps are built against. The screen sweep runs on `app_with_two_rows_on_every_list` rather
+      than `app` — which has no funds, no recurring goals and no recurring transactions — and
+      asserts the mask *appears* on every screen but Accounts, the one screen that draws no figure.
+      The form sweep asserts `modal.is_some()` before it looks at the buffer, because a key that
+      finds nothing to open on leaves the screen as it was: `('2', 'r')` needs the account filter
+      `r` reconciles against, and screen 6 needs a fixture with a `fund` row under the cursor.
 - **Every editable Planning constant is a `Target` variant**, which owns both its `Key<T>` and how
   its text parses — the same construction as `gate::Gate`. Never write a Planning key at a call
   site. A row's `Editable` says which of the two kinds of edit `e` opens on it — a constant into a

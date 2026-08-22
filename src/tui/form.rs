@@ -329,14 +329,30 @@ pub(super) fn parse_amount(raw: &str) -> Result<Cents> {
 /// Refused rather than floored: `1800.5` typed for `1800.50` is a typo, and
 /// quietly booking $1,800 for it hides the slip in a figure that looks
 /// deliberate. The forms surface the error on the status line.
+///
+/// What it quotes back is masked, because this is the one refusal in the crate
+/// whose subject is *guaranteed* to be a real figure: it fires only on text
+/// that already parsed as money, and a form's amount field is prefilled from
+/// the row it opened on. [`parse_amount`]'s own error cannot leak the same way
+/// -- it fires only on text no reading of which is a figure.
 pub(super) fn parse_whole_amount(raw: &str) -> Result<Cents> {
     let cents = parse_amount(raw)?;
     ensure!(
         cents.0 % 100 == 0,
         "amount must be a whole number of dollars: {:?}",
-        raw.trim()
+        crate::demo::typed(raw.trim())
     );
     Ok(cents)
+}
+
+/// Whether an amount field is holding a `/N` fraction rather than a figure.
+///
+/// Beside [`parse_share`], which is what decides it: the allocation form asks
+/// twice over -- once to resolve the fraction for the line under the field,
+/// and once to keep the mask off a divisor -- and a second spelling of the
+/// same prefix test is how those two would come to disagree.
+pub(super) fn is_share(raw: &str) -> bool {
+    raw.trim().starts_with('/')
 }
 
 /// A whole amount, or a fraction of `pot` written `/N`.
@@ -647,12 +663,6 @@ impl ValueForm {
         }
     }
 
-    /// The same form over a date -- the Funds screen's birth-date prompt.
-    /// `←`/`→` step it, as they do on every other date field.
-    ///
-    /// `iso_only`: every reading of the `M/D` shorthand is present or future,
-    /// and a birth date is decades past, so a shorthand here could only ever
-    /// be a wrong year that nothing refuses.
     /// The same form over an amount -- a Planning constant, a bill, a fund's
     /// value, a reconciliation target. What separates it from [`ValueForm::new`]
     /// is only that a demo blocks what it shows.
@@ -663,6 +673,12 @@ impl ValueForm {
         }
     }
 
+    /// The same form over a date -- the Funds screen's birth-date prompt.
+    /// `←`/`→` step it, as they do on every other date field.
+    ///
+    /// `iso_only`: every reading of the `M/D` shorthand is present or future,
+    /// and a birth date is decades past, so a shorthand here could only ever
+    /// be a wrong year that nothing refuses.
     pub fn date(label: impl Into<Label>, prefill: &str) -> ValueForm {
         ValueForm {
             label: label.into(),
@@ -2082,6 +2098,27 @@ mod tests {
         let err = form.commit().unwrap_err().to_string();
         assert!(!err.contains("500"), "the amount survived: {err}");
         assert!(err.contains("██████"), "nothing was blocked: {err}");
+    }
+
+    /// The sibling refusal, and the sharper one: this error fires only on
+    /// text that *already parsed* as money, so what it quotes back is a real
+    /// figure every time. `e` on a fund row prefills the stored cents, which
+    /// is exactly the input that trips it.
+    #[test]
+    fn a_demo_blocks_the_figure_a_refused_whole_amount_quotes() {
+        crate::demo::install(true);
+        let err = parse_whole_amount("60,000.23").unwrap_err().to_string();
+        assert!(!err.contains("60,000"), "the amount survived: {err}");
+        assert!(err.contains("██████"), "nothing was blocked: {err}");
+    }
+
+    /// The same refusal outside a demo still names what was typed rather than
+    /// what it parsed to: `1800.5` for `1800.50` is a typo, and the typo is
+    /// what makes the message worth reading.
+    #[test]
+    fn an_ordinary_run_quotes_the_amount_it_refused_as_typed() {
+        let err = parse_whole_amount(" 1800.5 ").unwrap_err().to_string();
+        assert!(err.contains("1800.5"), "{err}");
     }
 
     /// A one-field form does not know what it is collecting -- its caller
