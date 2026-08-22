@@ -133,13 +133,17 @@ fortnight a three-keystroke job. A field shows what was typed while the caret
 is in it and the date it means once focus leaves. `←`/`→` nudge a date a day
 wherever there is one, `Shift` with them a week, and a date field stays
 typeable either way. A form editing a row opens on that row's own date; one
-entering something new opens on today, bar four. A new goal's opens on the
-first of the next month, since a goal date is a deadline. `t`'s confirmation
-opens two business days out, dated for when the transfers land rather than for
-when the plan was read — weekends skipped, holidays not, which is part of why
-that date is editable. A recurring transaction's horizon and the Funds
-birth-date prompt open blank, because blank means something in both — a rule
-that does not end, and a date not on record.
+entering something new opens on today, bar a handful. The three that write a
+ledger row — `a`, `t` and `p` — open on the date the last row added this
+session was written for, since entering a statement is a run of rows landing on
+the same few days; today, until a row is added, and restarting returns them
+there. A new goal's opens on the first of the next month, since a goal date is
+a deadline. `t`'s confirmation opens two business days out, dated for when the
+transfers land rather than for when the plan was read — weekends skipped,
+holidays not, which is part of why that date is editable. A recurring
+transaction's horizon and the Funds birth-date prompt open blank, because
+blank means something in both — a rule that does not end, and a date not on
+record.
 
 Each goal is dated for the year ahead: a year past the next occurrence of the
 entry's month, so a September entry created in August 2026 is dated September

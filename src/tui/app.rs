@@ -2,7 +2,7 @@ use super::accounts::{self as accounts_screen, AccountForm, Accounts};
 use super::autocomplete::Autocomplete;
 use super::cursor::{self, Scroll};
 use super::destination;
-use super::form::{self, Step, TransferForm, TxnForm, ValueForm};
+use super::form::{self, DateField, Step, TransferForm, TxnForm, ValueForm};
 use super::fund::{self as fund_screen, FundForm, Funds};
 use super::goal_form::{AllocationForm, CloseForm, GoalForm, GoalTarget};
 use super::help::{self, Help, Topic};
@@ -157,6 +157,16 @@ pub struct App {
     /// there is nothing that commits it -- moving the baseline means editing
     /// the paycheck recurring transaction.
     adhoc: NaiveDate,
+    /// The date the last row *added* this session was written for, which is
+    /// what the next `a`, `t` or `p` opens on. **View state**, like `adhoc`:
+    /// restarting is what returns the form to today.
+    ///
+    /// `None` is "nothing added yet" rather than a date, so today stays the
+    /// answer for the first row of a session without a second rule saying so.
+    /// One field for both ledgers and all three keys: it records the day
+    /// being entered for, which a statement, the card rows on it, and the
+    /// payment settling them all share.
+    entry_date: Option<NaiveDate>,
     screen: Screen,
     overview: Overview,
     cash: Ledger,
@@ -222,6 +232,7 @@ impl App {
             today,
             dates,
             adhoc: dates.adhoc,
+            entry_date: None,
             screen: Screen::Overview,
             popup: Autocomplete::default(),
             modal: None,
@@ -1653,11 +1664,16 @@ impl App {
     }
 
     /// Opens on the account the ledger is filtered to, or on the first when
-    /// the filter is All.
+    /// the filter is All, and on [`App::entry_date`] -- today, until a row
+    /// has been added this session.
     fn open_add(&mut self) -> Result<()> {
         let accounts = account::list_by_kind(&self.db, self.kind())?;
         let preselected = self.ledger().selected_account();
-        self.modal = Some(Modal::Txn(TxnForm::add(accounts, self.today, preselected)?));
+        self.modal = Some(Modal::Txn(TxnForm::add(
+            accounts,
+            self.entry_field(),
+            preselected,
+        )?));
         Ok(())
     }
 
@@ -1670,20 +1686,33 @@ impl App {
         Ok(())
     }
 
+    /// Opens on [`App::entry_date`], the same day `a` does: a transfer or a
+    /// card payment read off a statement belongs to the sitting the rows
+    /// around it belong to.
     fn open_transfer(&mut self) -> Result<()> {
         let accounts = account::list(&self.db)?;
         self.modal = Some(Modal::Transfer(TransferForm::transfer(
-            accounts, self.today,
+            accounts,
+            self.entry_field(),
         )?));
         Ok(())
     }
 
+    /// Opens on [`App::entry_date`], for the reason [`App::open_transfer`]
+    /// gives.
     fn open_payment(&mut self) -> Result<()> {
         let accounts = account::list(&self.db)?;
         self.modal = Some(Modal::Transfer(TransferForm::payment(
-            accounts, self.today,
+            accounts,
+            self.entry_field(),
         )?));
         Ok(())
+    }
+
+    /// The date field every form that writes a ledger row opens with: the day
+    /// the last such row was written for, and today until there is one.
+    fn entry_field(&self) -> DateField {
+        DateField::on(self.today, self.entry_date.unwrap_or(self.today))
     }
 
     fn open_delete(&mut self) {
@@ -2518,13 +2547,25 @@ impl App {
             }
             None => {
                 txn::insert(&self.db, &new)?;
+                // Only an add. An edit is a correction to a row already
+                // written rather than a statement about the day being worked
+                // on, and fixing something months back must not drag the next
+                // new row there with it.
+                self.entry_date = Some(new.date);
                 "added"
             }
         };
+        // The date is named whatever it is. The form no longer opens on the
+        // date field, so a row can be written without a keystroke ever
+        // visiting it, and the confirmation is the only place the day it
+        // landed on appears -- unconditionally, because a line that spoke up
+        // only when the date was surprising is a line the eye learns to skip
+        // on the rounds it says nothing.
         self.status = format!(
-            "{verb} {} {}",
+            "{verb} {} {} on {}",
             new.description,
-            crate::demo::figure(new.cents)
+            crate::demo::figure(new.cents),
+            new.date
         );
         self.close_modal();
         self.reload()
@@ -2545,7 +2586,16 @@ impl App {
             &moved.description,
             &moved.description,
         )?;
-        self.status = format!("{} {}", moved.description, crate::demo::figure(moved.cents));
+        // Both legs are new rows, so this is a statement about the day being
+        // entered for in the way an `e` is not, and it names its date for the
+        // reason `commit_txn_form` does.
+        self.entry_date = Some(moved.date);
+        self.status = format!(
+            "{} {} on {}",
+            moved.description,
+            crate::demo::figure(moved.cents),
+            moved.date
+        );
         self.close_modal();
         self.reload()
     }
@@ -2659,7 +2709,7 @@ mod tests {
     use crate::plan_line::Line;
     use crate::rate::{BasisPoints, Percent};
     use crate::tui::MIN_WIDTH;
-    use crate::tui::form::TxnField;
+    use crate::tui::form::{TransferField, TxnField};
     use crate::tui::goal_form;
     use crate::tui::worksheet::Worksheet;
 
@@ -3023,6 +3073,12 @@ mod tests {
     }
 
     /// Tab from the field the form opens on to `field`.
+    ///
+    /// The likely failure is not a closed form but an open autocomplete
+    /// popup: it answers `Tab` before the form does, so a description
+    /// matching a row already written leaves the focus where it was through
+    /// every press. Say which, and on which field, rather than blaming a
+    /// form that is sitting right there.
     fn focus(app: &mut App, field: TxnField) {
         for _ in 0..TxnField::ORDER.len() {
             match &app.modal {
@@ -3030,7 +3086,16 @@ mod tests {
                 _ => press(app, KeyCode::Tab),
             }
         }
-        panic!("no transaction form is open");
+        let state = match &app.modal {
+            Some(Modal::Txn(form)) => format!("the focus stuck on {}", form.focus.label()),
+            Some(_) => "another modal is open".to_string(),
+            None => "no transaction form is open".to_string(),
+        };
+        panic!(
+            "{} never took focus: {state}, with {} suggestions showing",
+            field.label(),
+            app.popup.visible()
+        );
     }
 
     fn form(app: &App) -> &TxnForm {
@@ -3038,6 +3103,130 @@ mod tests {
             Some(Modal::Txn(form)) => form,
             _ => panic!("no transaction form is open"),
         }
+    }
+
+    /// Add a row through the keyboard, stepping the date `days` from wherever
+    /// the form opens. The description must match nothing already written, or
+    /// `Tab` and `Enter` would be answering the autocomplete popup instead of
+    /// the form.
+    fn add_row(app: &mut App, days: usize, description: &str) {
+        press(app, KeyCode::Char('a'));
+        focus(app, TxnField::Date);
+        for _ in 0..days {
+            press(app, KeyCode::Right);
+        }
+        focus(app, TxnField::Description);
+        type_str(app, description);
+        focus(app, TxnField::Amount);
+        type_str(app, "10");
+        press(app, KeyCode::Enter);
+        assert!(app.modal.is_none(), "the form stayed open: {}", app.status);
+    }
+
+    fn form_date(app: &App) -> String {
+        form(app).display(TxnField::Date).plain_text()
+    }
+
+    fn transfer_date(app: &App) -> String {
+        match &app.modal {
+            Some(Modal::Transfer(form)) => form.display(TransferField::Date).plain_text(),
+            _ => panic!("no transfer form is open"),
+        }
+    }
+
+    /// The first row of a session has nothing behind it to take a date from,
+    /// so the form opens where every other date field in the app does.
+    #[test]
+    fn the_first_add_of_a_session_opens_on_today() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('a'));
+
+        assert_eq!(form_date(&app), "2026-08-15");
+    }
+
+    /// Entering a statement is a run of rows landing on the same few days, so
+    /// the day the last one was written for is a better opening guess than
+    /// today -- and the owner who has moved off today said so by moving.
+    #[test]
+    fn an_add_opens_on_the_date_the_last_row_was_added_with() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        add_row(&mut app, 5, "Kite");
+
+        press(&mut app, KeyCode::Char('a'));
+        assert_eq!(form_date(&app), "2026-08-20");
+    }
+
+    /// The date is the day being entered for rather than a property of either
+    /// ledger, so it survives the walk from one to the other: a statement and
+    /// the card rows on it are the same sitting.
+    #[test]
+    fn the_date_carries_from_one_ledger_to_the_other() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        add_row(&mut app, 5, "Kite");
+
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('a'));
+        assert_eq!(form_date(&app), "2026-08-20");
+    }
+
+    /// `t` and `p` write ledger rows in the same sitting `a` does -- the
+    /// card payment at the bottom of the statement whose rows were just
+    /// entered -- so they open where `a` does rather than back on today.
+    #[test]
+    fn a_transfer_and_a_payment_open_on_the_date_the_last_row_was_added_with() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        add_row(&mut app, 5, "Kite");
+
+        press(&mut app, KeyCode::Char('t'));
+        assert_eq!(transfer_date(&app), "2026-08-20");
+        press(&mut app, KeyCode::Esc);
+
+        press(&mut app, KeyCode::Char('p'));
+        assert_eq!(transfer_date(&app), "2026-08-20");
+    }
+
+    /// Both legs are new rows, so a transfer is a statement about the day
+    /// being entered for in the way an edit is not.
+    #[test]
+    fn committing_a_payment_moves_the_date_the_next_add_opens_on() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('p'));
+        for _ in 0..5 {
+            press(&mut app, KeyCode::Right);
+        }
+        for _ in 0..4 {
+            press(&mut app, KeyCode::Tab);
+        }
+        type_str(&mut app, "10");
+        press(&mut app, KeyCode::Enter);
+        assert!(app.modal.is_none(), "the form stayed open: {}", app.status);
+
+        press(&mut app, KeyCode::Char('a'));
+        assert_eq!(form_date(&app), "2026-08-20");
+    }
+
+    /// An edit is a correction to a row already written, not a statement
+    /// about where the hand is working. Fixing the date on something months
+    /// back must not drag the next new row there with it.
+    #[test]
+    fn editing_a_row_leaves_the_date_the_next_add_opens_on_alone() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        add_row(&mut app, 5, "Kite");
+
+        press(&mut app, KeyCode::Char('e'));
+        focus(&mut app, TxnField::Date);
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.modal.is_none(), "the edit stayed open: {}", app.status);
+
+        press(&mut app, KeyCode::Char('a'));
+        assert_eq!(form_date(&app), "2026-08-20");
     }
 
     fn descriptions(ledger: &Ledger) -> Vec<&str> {
@@ -3804,7 +3993,7 @@ mod tests {
             .expect("the new row must be on screen without another keystroke");
         assert_eq!(written.cents, Cents(4_250));
         assert_eq!(written.date, today());
-        assert_eq!(app.status, "added Zebra 42.50");
+        assert_eq!(app.status, "added Zebra 42.50 on 2026-08-15");
     }
 
     /// `a` on a ledger filtered to one card must not open on a different one:
@@ -7771,7 +7960,7 @@ mod tests {
         let mut app = app();
         press(&mut app, KeyCode::Char('2'));
         press(&mut app, KeyCode::Char('a'));
-        assert_eq!(form(&app).focus, TxnField::Date, "a form opens on its date");
+        focus(&mut app, TxnField::Date);
 
         press(&mut app, KeyCode::Right);
         assert_eq!(
@@ -7850,6 +8039,7 @@ mod tests {
         let mut app = app();
         press(&mut app, KeyCode::Char('2'));
         press(&mut app, KeyCode::Char('a'));
+        focus(&mut app, TxnField::Date);
 
         shift_press(&mut app, KeyCode::Right);
         assert_eq!(
