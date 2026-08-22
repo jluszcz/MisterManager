@@ -6,59 +6,9 @@ use crate::db::goal::GoalWithBalance;
 use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
 use crate::rate::Percent;
+use crate::savings::{Row, is_reconciled};
 use anyhow::Result;
 use chrono::NaiveDate;
-
-/// One goal as the screen shows it. Every derived column is computed once,
-/// when the goals are set, so filtering and paging cannot be a source of
-/// arithmetic.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Row {
-    pub goal_id: GoalId,
-    /// The container this goal sits in, as the Account column shows it. One
-    /// value rather than an id, a name and a color kept in step by hand.
-    pub container: super::Account,
-    pub name: String,
-    pub current: Cents,
-    pub goal: Cents,
-    pub percent: Option<Percent>,
-    pub goal_date: Option<NaiveDate>,
-    /// Past its goal date and still short. What the screen offers there is a
-    /// close-out, not a roll forward.
-    pub expired: bool,
-    pub per_paycheck: Option<Cents>,
-    /// Whether an interest posting weights this goal. Carried so `e` can
-    /// prefill the form from the row it already has.
-    pub interest_eligible: bool,
-    /// The owner's mark, drawn as a band behind the whole row. It changes
-    /// nothing else: the row keeps its place under every filter and every
-    /// sort, because standing out and coming first are different requests
-    /// and only the first one was made.
-    pub favorite: bool,
-}
-
-/// `current / goal`, as a whole percent rounded to nearest.
-///
-/// `None` for a non-positive target: `goal_cents` is user-editable and reaches
-/// a divisor, which is the case `div_ceil` exists to refuse. The screen shows
-/// `--` there rather than dividing.
-///
-/// `i128` because `current * 100` overflows an `i64` only above ~$922
-/// trillion, but the doubling below halves even that headroom for no
-/// benefit.
-///
-/// Uses `div_euclid`, not `/`, on the halfway-adjusted ratio: `goal` is
-/// always positive here, so Euclidean division is floor division, which is
-/// what "round to nearest" needs. Rust's `/` truncates toward zero instead,
-/// which would round an overspent goal's negative `current` the wrong way.
-pub fn percent_complete(current: Cents, goal: Cents) -> Option<Percent> {
-    if goal <= Cents::ZERO {
-        return None;
-    }
-    let goal = goal.0 as i128;
-    let scaled = current.0 as i128 * 100;
-    Some(Percent((scaled * 2 + goal).div_euclid(goal * 2) as i64))
-}
 
 /// The Savings screen's view state: one flat list of every open goal, which
 /// container it is filtered to, and where the cursor sits.
@@ -105,25 +55,7 @@ impl Savings {
     /// Take every open goal, in `goal::all_with_balances` order, and build the
     /// derived columns once.
     pub fn set_goals(&mut self, goals: Vec<GoalWithBalance>) -> Result<()> {
-        let mut rows = Vec::with_capacity(goals.len());
-        for g in goals {
-            let per_paycheck = super::paycheck_ask(&g, self.today, self.period_days)?;
-            rows.push(Row {
-                goal_id: g.goal.id,
-                container: super::Account::named(&self.accounts, g.goal.container_account_id),
-                percent: percent_complete(g.current, g.goal.goal_cents),
-                expired: g.goal.goal_date.is_some_and(|d| d < self.today)
-                    && g.current < g.goal.goal_cents,
-                name: g.goal.name,
-                current: g.current,
-                goal: g.goal.goal_cents,
-                goal_date: g.goal.goal_date,
-                per_paycheck,
-                interest_eligible: g.goal.interest_eligible,
-                favorite: g.goal.favorite,
-            });
-        }
-        self.all = rows;
+        self.all = crate::savings::rows(goals, &self.accounts, self.today, self.period_days)?;
         self.rebuild_months();
         self.refilter();
         Ok(())
@@ -447,11 +379,7 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
         .excess()
         .iter()
         .map(|(id, excess)| {
-            let marker = if super::is_reconciled(*excess) {
-                "✓"
-            } else {
-                "!"
-            };
+            let marker = if is_reconciled(*excess) { "✓" } else { "!" };
             format!(
                 "{} {} {marker}",
                 savings.account_name(*id),
@@ -471,6 +399,7 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::GoalId;
     use crate::db::account::{Group, Kind};
     use crate::db::goal::Goal;
     use crate::tui::MIN_WIDTH;
@@ -757,89 +686,6 @@ mod tests {
         );
     }
 
-    /// 87%, 97%, 0%, 106% -- rounded to the nearest whole percent, not
-    /// truncated, or 13,000/15,000 would read 86%.
-    #[test]
-    fn the_percent_column_rounds_to_the_nearest_whole_percent() {
-        let savings = savings();
-        let percents: Vec<Option<Percent>> = savings.rows().iter().map(|r| r.percent).collect();
-        assert_eq!(
-            percents,
-            vec![
-                Some(Percent(87)),
-                Some(Percent(97)),
-                Some(Percent::ZERO),
-                Some(Percent(106))
-            ]
-        );
-    }
-
-    /// `goal_cents` is user-editable and reaches a divisor. A zero target
-    /// renders `--` rather than dividing.
-    #[test]
-    fn a_goal_with_a_zero_target_has_no_percent_rather_than_dividing() {
-        assert_eq!(percent_complete(Cents(500), Cents::ZERO), None);
-        assert_eq!(percent_complete(Cents(500), Cents(-100)), None);
-        assert_eq!(
-            percent_complete(Cents::ZERO, Cents(100)),
-            Some(Percent::ZERO)
-        );
-    }
-
-    /// An overspent goal has a negative `current`. Truncating division would
-    /// round -14.9% to -14; the nearest whole percent is -15.
-    #[test]
-    fn an_overspent_goal_rounds_its_negative_percent_to_the_nearest_whole_percent() {
-        assert_eq!(
-            percent_complete(Cents(-149), Cents(1000)),
-            Some(Percent(-15))
-        );
-    }
-
-    /// Column F of the sheet goes blank for undated and already-met goals.
-    #[test]
-    fn per_paycheck_is_blank_for_undated_and_met_goals() {
-        let savings = savings();
-        let rows = savings.rows();
-        assert_eq!(rows[0].per_paycheck, None, "Bill Payments is undated");
-        assert_eq!(rows[1].per_paycheck, Some(Cents(800)), "Apple Watch");
-        assert_eq!(rows[2].per_paycheck, Some(Cents(7_500)), "Dropbox");
-        assert_eq!(rows[3].per_paycheck, None, "Emergency Savings is undated");
-    }
-
-    #[test]
-    fn a_met_goal_with_a_future_date_has_no_per_paycheck_figure() {
-        let mut savings = Savings::new(accounts(), today(), 14);
-        savings
-            .set_goals(vec![goal(
-                1,
-                1,
-                "Couch",
-                100_000,
-                100_000,
-                Some(day(2026, 12, 1)),
-            )])
-            .unwrap();
-        assert_eq!(savings.rows()[0].per_paycheck, None);
-    }
-
-    /// A goal past its date and still short is the parent design's "flags
-    /// expired goals". A goal past its date that is funded is simply done.
-    #[test]
-    fn only_a_past_dated_goal_that_is_still_short_is_marked_expired() {
-        let mut savings = Savings::new(accounts(), today(), 14);
-        savings
-            .set_goals(vec![
-                goal(1, 1, "Late", 5_000, 10_000, Some(day(2026, 7, 1))),
-                goal(2, 1, "Met", 10_000, 10_000, Some(day(2026, 7, 1))),
-                goal(3, 1, "Ahead", 0, 10_000, Some(day(2027, 7, 1))),
-                goal(4, 1, "Undated", 0, 10_000, None),
-            ])
-            .unwrap();
-        let expired: Vec<bool> = savings.rows().iter().map(|r| r.expired).collect();
-        assert_eq!(expired, vec![true, false, false, false]);
-    }
-
     #[test]
     fn tab_cycles_all_then_each_container_then_back_to_all() {
         let mut savings = savings();
@@ -983,13 +829,6 @@ mod tests {
         }
         assert!(savings.rows().is_empty());
         assert!(savings.selected().is_none());
-    }
-
-    #[test]
-    fn the_account_column_names_each_goals_container() {
-        let savings = savings();
-        let names: Vec<&str> = savings.rows().iter().map(|r| r.container.text()).collect();
-        assert_eq!(names, ["Rainy Day", "Rainy Day", "Rainy Day", "Brokerage"]);
     }
 
     /// Drawn at `MIN_WIDTH`, the narrowest terminal this screen is laid out
@@ -1168,23 +1007,6 @@ mod tests {
     fn favorited(mut g: GoalWithBalance) -> GoalWithBalance {
         g.goal.favorite = true;
         g
-    }
-
-    /// The flag is carried on the row so `render` and the `f` toggle read the
-    /// same value the database holds, rather than either re-querying.
-    #[test]
-    fn a_favorited_goal_arrives_on_the_row_it_belongs_to() {
-        let mut savings = Savings::new(accounts(), today(), 14);
-        savings.set_containers(vec![AccountId(1)]);
-        savings
-            .set_goals(vec![
-                goal(1, 1, "Plain", 0, 10_000, None),
-                favorited(goal(2, 1, "Marked", 0, 10_000, None)),
-            ])
-            .unwrap();
-
-        let marked: Vec<bool> = savings.rows().iter().map(|r| r.favorite).collect();
-        assert_eq!(marked, vec![false, true]);
     }
 
     /// The mark is a highlight and nothing else: it does not sort a goal up,

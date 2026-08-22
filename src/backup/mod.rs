@@ -342,6 +342,7 @@ mod tests {
                 profile: "a-profile".to_string(),
                 interval_days: 7,
             }),
+            report: None,
         };
 
         let outcome = run_if_due(

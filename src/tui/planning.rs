@@ -605,16 +605,10 @@ fn build(view: &View) -> Result<Vec<Row>> {
         s.investment_pct,
         Some(Target::InvestmentPct),
     ));
-    // Goals is the plug and takes whatever the other three leave, through the
-    // same saturating subtraction `compute` uses. Not editable: four editable
-    // shares could sum to something other than 100 with no way to say which
-    // one is wrong.
-    let goals_pct = Percent::ONE_HUNDRED
-        .saturating_sub(s.future_housing_pct + s.retirement_pct + s.investment_pct);
     rows.push(Row::split(
         &format!("  {}", Line::Goals.label()),
         p.goals,
-        goals_pct,
+        s.goals_pct(),
         None,
     ));
     rows.push(Row::blank());

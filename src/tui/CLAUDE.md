@@ -468,12 +468,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   distinguishable and the field is an override rather than a step the owner has to complete. That
   is also what `—` on the selector writes back.
 - **An account cannot reach a screen without its color, and that is a property of the types
-  rather than a rule to remember.** `label.rs` holds `Account` — an account's id, the text a
-  screen shows for it, and the owner's color — with **no reader for the text outside that file**.
-  Its two exits are `account_cell` and `label_line`, and both color what they draw, so a screen
-  that wants an uncolored account has no way to ask for one. One layer down,
-  `db::account::AccountName` and `AccountCode` have no `Display`, so an account cannot become a
-  `String` on the way to a `format!` either.
+  rather than a rule to remember.** An account's text is reachable only through
+  `label::Account::render_with`, which hands the resolved color with it; `tui::label::account_cell`
+  and `label_line` are this directory's only sinks, and `report::html` is the other one in the
+  crate. One layer down, `db::account::AccountName` and `AccountCode` have no `Display`, so an
+  account cannot become a `String` on the way to a `format!` either.
   - **`Account::named`, `Account::coded` and `Account::labelled` are one per caller.** The
     ledgers' rows, Savings, Overview and Accounts show a name; Recurring Transactions and the
     ledger *title* show a code, the one because its other columns pin the row down already and
@@ -518,13 +517,18 @@ derive it from `MIN_WIDTH` rather than write the offset out.
       account it is and tinting the code as well would say it twice.
   - **`as_str` is the escape for text, and it is pinned.** `AccountName::as_str` serves the uses
     that are not displays — a description prefill, a search filter folding case, a form seeding
-    its editable field — and `nothing_in_the_screens_reads_an_account_name_as_bare_text` lists
+    its editable field — and `nothing_that_draws_an_account_reads_its_name_as_bare_text` lists
     them with a reason each. It also carries the two displays from the list above that reach
     their text the same way — the destination picker's `Offered.container` and the Accounts
     screen's `Code` column — so the sanctioned list is wider than "not a display" and says so
     entry by entry. A source scan rather than a type, because the property is "nobody reached for
     the escape hatch", which no signature can state — and it is purely textual, so a reflow that
-    hid an escape behind a local variable would pass it just the same. The same test's second
+    hid an escape behind a local variable would pass it just the same. **It reads three roots, not
+    just this directory**: `src/label.rs`, which owns `Account` and whose constructors are the one
+    sanctioned place the text is read; `src/tui/`; and `src/report/`, the second sink, which would
+    otherwise be free to flatten an account into a `format!`. Entries are keyed by the path below
+    `src/`, since `tui/ledger.rs` and `report/html/ledger.rs` are two different files and a
+    sanctioned line in one must not excuse the same text in the other. The same test's second
     clause pins `Label::plain_text`, the escape for a `Label` rather than an `AccountName`: it
     flattens whatever accounts a label carries and is meant for wording assertions, never a draw.
 - **Every Planning row that names an account is tinted by it, and the tone outranks the tint.** A
@@ -544,7 +548,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   (`account::Group`) inside sections (`account::Kind`): cash breaks into Checking and Savings,
   credit does not break at all. A single band's subtotal and its section's total are the same
   number under two names, so `Section::breaks_down` suppresses the band row — which is why credit
-  shows one `Credit` line and not two. Band order is `overview::BANDS`, fixed, not the order
+  shows one `Credit` line and not two. Band order is `crate::overview::BANDS`, fixed, not the order
   accounts come back in: an unplaced account sorts last and taking the scan order would let it
   split its own band in two. A subtotal is set apart by weight alone — every label starts in the
   same column, and the subtotals are the only bold rows. Blank rows separate sections, not bands.
@@ -623,17 +627,21 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   title is a chain of filter terms, and the code is the tighter one. Widening a name column is
   still paid for out of another column on the same screen, so the width tests are the guard — see
   *How wide a screen is* above.
-- **A ledger row may have no description, and `tui::description` is what draws one that does not.**
-  A cash withdrawal, or a card charge whose merchant is on the receipt and nowhere worth retyping,
-  is worth having for its amount alone — so `TxnForm::commit` accepts a blank, and a form that
-  refused one would only be worked around by typing a placeholder worse than the blank. It draws as
-  `—`, the same mark every other absence in the app draws: an account with no color, a fund with no
-  percentage, a recurring transaction with no horizon. Three callers, and they are the three places
-  a description is put in front of a human — the ledger's `Description` column, the status line a
-  write reports on, and the label on the delete confirmation. The last two are not cosmetic: a
-  status line reading `added  42.50 on …` has a gap between two spaces where a figure looks to have
-  failed to render, and a delete confirmation is the one irreversible question on the screen, whose
-  label is the whole of what identifies the row being taken away.
+- **A ledger row may have no description, and `description::render` is what draws one that does
+  not.** A cash withdrawal, or a card charge whose merchant is on the receipt and nowhere worth
+  retyping, is worth having for its amount alone — so `TxnForm::commit` accepts a blank, and a form
+  that refused one would only be worked around by typing a placeholder worse than the blank. It
+  draws as `—`, the same mark every other absence in the app draws: an account with no color, a
+  fund with no percentage, a recurring transaction with no horizon. Three callers here, and they
+  are the three places a description is put in front of a human on a screen — the ledger's
+  `Description` column, the status line a write reports on, and the label on the delete
+  confirmation. The last two are not cosmetic: a status line reading `added  42.50 on …` has a gap
+  between two spaces where a figure looks to have failed to render, and a delete confirmation is
+  the one irreversible question on the screen, whose label is the whole of what identifies the row
+  being taken away.
+  - **It is `crate::description`, not a helper in `tui`, because the report draws the same rows.**
+    A screen and a page disagreeing about what a description-less row looks like is what one shared
+    rule prevents — the same split `crate::palette` makes for color.
   - **The `/` filter is deliberately not a caller.** `Matcher` matches the stored text, so typing an
     em dash finds nothing rather than sweeping up every unnamed row — the same split as
     `search::searchable_amount`, which matches the figure rather than what the screen drew.
@@ -674,7 +682,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   figure with its cents, so a goal imported off a fractional cell shows what it really holds and is
   rounded by hand rather than silently moved the first time its form is opened. The cents a goal
   drifts by therefore come only from interest and rounding, and they collect in the container's
-  unallocated remainder — which is the figure the Savings footer reports and `tui::is_reconciled`
+  unallocated remainder — which is the figure the Savings footer reports and `savings::is_reconciled`
   judges. The worksheet is not part of this: its lines are prefilled by `per_paycheck` and
   `pro_rata`, not typed.
 - **The worksheet's cursor and its focus are two marks, not one.** `> ` is where the line cursor
@@ -785,7 +793,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     query returned, and updating the copy instead is how a screen starts disagreeing with the
     table under it. It costs nothing here — every goal is already loaded for the reconciliation
     line — and the cursor keeps its index, because nothing reorders.
-- **A container reconciles when `|excess| < $1.00`**, through `tui::is_reconciled`, called by the
+- **A container reconciles when `|excess| < $1.00`**, through `savings::is_reconciled`, called by the
   Savings screen's `Unallocated` footer — the one place the reconciliation is shown. One container
   has sat a few cents out for months; a warning that is always on is a warning nobody reads.
 - **The goal form's `Interest` field is the one thing on it that is not typed.** It is a selector,

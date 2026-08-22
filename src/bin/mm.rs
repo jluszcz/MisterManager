@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDate, Utc};
 use clap::{Parser, Subcommand};
-use mistermanager::{backup, config, db, import, tui};
+use mistermanager::{backup, config, db, import, report, tui};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -19,7 +19,9 @@ struct Cli {
     /// Block every dollar figure out, for showing the application to someone.
     ///
     /// Not global, unlike the three above: it changes what the screens draw
-    /// and nothing else, and no subcommand prints a figure for it to block.
+    /// and nothing else. `mm report` refuses it rather than ignoring it --
+    /// the mask is the TUI's, installed before its first frame, so it would
+    /// never reach a page written without one.
     #[arg(long)]
     demo: bool,
     #[command(subcommand)]
@@ -36,6 +38,14 @@ enum Command {
         /// transactions or goals fails rather than doubling every row.
         #[arg(long)]
         replace: bool,
+    },
+    /// Write the HTML report without opening the application.
+    Report {
+        /// Directory to write `Money.html` into. Defaults to the config
+        /// file's `[report] dir`, and is what makes the section optional
+        /// for a one-off export.
+        #[arg(long)]
+        dir: Option<PathBuf>,
     },
     /// Back the database up to S3, if the schedule says one is due.
     Backup {
@@ -82,7 +92,10 @@ fn main() -> Result<()> {
     match cli.command {
         // No subcommand launches the application. `--db` and `--today` are
         // global, so the TUI honors them exactly as the importer does.
-        None => tui::run(db, today, cli.demo)?,
+        None => {
+            let db = tui::run(db, today, cli.demo)?;
+            write_report(&db, &cfg, today, cli.demo);
+        }
         Some(Command::Import { workbook, replace }) => {
             match import::import_all(&db, &workbook, today, replace)? {
                 // The Savings sheet names its two blocks by position and
@@ -99,6 +112,41 @@ fn main() -> Result<()> {
                 }
                 import::Report::Full(report) => print_full(&report),
             }
+        }
+        Some(Command::Report { dir }) => {
+            // The mask lives in the TUI and nothing here installs it, so the
+            // flag would silently write the real figures it exists to block.
+            if cli.demo {
+                anyhow::bail!(
+                    "--demo cannot be honoured here: no subcommand installs the mask, so \
+                     the page would carry the figures the flag exists to block. Drop the \
+                     flag, or quit the app with --demo, which writes no report at all"
+                );
+            }
+            // Never the config's "off": an unset `[report]` section means the
+            // owner does not want a page written behind every quit, which is
+            // a different question from the one `mm report` asks.
+            let dir = match dir {
+                Some(dir) => dir,
+                None => cfg
+                    .report
+                    .as_ref()
+                    .with_context(|| {
+                        format!(
+                            "no --dir given, and no [report] section naming one in {}",
+                            config_path.display()
+                        )
+                    })?
+                    .dir()?,
+            };
+            // Asked for outright, so a failure is an error exit rather than a
+            // line on stderr, exactly as an explicit `mm backup` is.
+            let written = report::write(&db, &dir, today)?;
+            println!(
+                "wrote {} to {}",
+                backup::human_bytes(written.bytes),
+                written.path.display()
+            );
         }
         Some(Command::Backup { force, status }) => {
             if status {
@@ -138,6 +186,20 @@ fn scheduled_backup(db_path: &Path, cfg: &config::Config, state_path: &Path) {
         // Silent: nothing happened, and this runs after every single quit.
         Ok(_) => {}
         Err(e) => eprintln!("backup failed: {e:#}"),
+    }
+}
+
+/// Never fatal, for the reason a scheduled backup is not: someone who has
+/// already quit should not be told the application broke because a synced
+/// folder was unmounted, and the next quit writes it again.
+fn write_report(db: &db::Db, cfg: &config::Config, today: NaiveDate, demo: bool) {
+    match report::write_if_enabled(db, cfg, today, demo) {
+        Ok(report::Outcome::Written(written)) => {
+            println!("wrote report to {}", written.path.display());
+        }
+        // Silent: nothing happened, and this runs after every single quit.
+        Ok(_) => {}
+        Err(e) => eprintln!("report failed: {e:#}"),
     }
 }
 

@@ -26,6 +26,26 @@ pub struct PlanSettings {
     pub investment_pct: Percent,
 }
 
+impl PlanSettings {
+    /// Goals is the plug of the four-way split: whatever the other three
+    /// leave.
+    ///
+    /// On the settings rather than beside a screen, because the waterfall
+    /// spends it and both sinks label the Goals row with it -- three copies of
+    /// one subtraction is three chances to disagree about what the split even
+    /// is. Not editable for the same reason it is derived: four editable
+    /// shares could sum to something other than 100 with no way to say which
+    /// one is wrong.
+    ///
+    /// `saturating_sub` rather than a plain subtraction: the three shares are
+    /// user-editable and can be configured to more than 100 between them,
+    /// which would otherwise allocate a negative share to Goals.
+    pub fn goals_pct(&self) -> Percent {
+        Percent::ONE_HUNDRED
+            .saturating_sub(self.future_housing_pct + self.retirement_pct + self.investment_pct)
+    }
+}
+
 /// Everything the waterfall reads from the ledger.
 #[derive(Debug, Clone)]
 pub struct PlanInputs {
@@ -170,13 +190,7 @@ pub fn compute(settings: &PlanSettings, inputs: &PlanInputs) -> Result<Plan> {
         let fh = settings.future_housing_pct.of(remainder);
         let rt = settings.retirement_pct.of(remainder);
         let inv = settings.investment_pct.of(remainder);
-        // `saturating_sub` rather than a plain subtraction: the three shares
-        // are user-editable and can be configured to more than 100 between
-        // them, which would otherwise allocate a negative share to Goals.
-        let goals_pct = Percent::ONE_HUNDRED.saturating_sub(
-            settings.future_housing_pct + settings.retirement_pct + settings.investment_pct,
-        );
-        (goals_pct.of(remainder), fh, rt, inv)
+        (settings.goals_pct().of(remainder), fh, rt, inv)
     };
 
     let need_emergency = inputs.remaining_emergency > Cents::ZERO;

@@ -1,6 +1,6 @@
 use chrono::NaiveDate;
 use mistermanager::money::Cents;
-use mistermanager::tui::overview::Overview;
+use mistermanager::overview::Overview;
 use mistermanager::{db, import, projection};
 use std::path::Path;
 
