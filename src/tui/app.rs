@@ -1722,7 +1722,7 @@ impl App {
                 let label = format!(
                     "{}  {}  {}",
                     row.date,
-                    row.description,
+                    super::description(&row.description),
                     crate::demo::figure(row.cents)
                 );
                 self.modal = Some(Modal::Confirm {
@@ -2563,7 +2563,7 @@ impl App {
         // on the rounds it says nothing.
         self.status = format!(
             "{verb} {} {} on {}",
-            new.description,
+            super::description(&new.description),
             crate::demo::figure(new.cents),
             new.date
         );
@@ -3994,6 +3994,57 @@ mod tests {
         assert_eq!(written.cents, Cents(4_250));
         assert_eq!(written.date, today());
         assert_eq!(app.status, "added Zebra 42.50 on 2026-08-15");
+    }
+
+    /// The status line is the only confirmation a write gets, and a blank
+    /// description would leave `added  42.50 on ...` -- a gap between two
+    /// spaces that reads as a figure that failed to render rather than as a
+    /// row the owner chose not to name.
+    #[test]
+    fn a_row_written_with_no_description_is_confirmed_by_its_em_dash() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('a'));
+        focus(&mut app, TxnField::Amount);
+        type_str(&mut app, "42.50");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "the form stayed open: {}", app.status);
+        assert_eq!(app.status, "added — 42.50 on 2026-08-15");
+        assert!(
+            app.cash.rows().iter().any(|t| t.description.is_empty()),
+            "the row itself keeps the empty description it was written with"
+        );
+    }
+
+    /// Deleting is the one irreversible key on the ledger, and the label is
+    /// the whole of what the question offers to identify the row by. An
+    /// unnamed row still has to be identifiable as the row the cursor is on.
+    #[test]
+    fn the_delete_confirmation_names_an_unnamed_row_by_its_em_dash() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('a'));
+        focus(&mut app, TxnField::Amount);
+        type_str(&mut app, "42.50");
+        press(&mut app, KeyCode::Enter);
+
+        for _ in 0..app.cash.rows().len() {
+            if app
+                .cash
+                .selected()
+                .is_some_and(|t| t.description.is_empty())
+            {
+                break;
+            }
+            press(&mut app, KeyCode::Down);
+        }
+        press(&mut app, KeyCode::Char('d'));
+
+        let Some(Modal::Confirm { label, .. }) = &app.modal else {
+            panic!("d must open the confirmation: {:?}", app.status);
+        };
+        assert_eq!(label, "2026-08-15  —  42.50");
     }
 
     /// `a` on a ledger filtered to one card must not open on a different one:

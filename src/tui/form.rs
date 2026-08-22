@@ -544,8 +544,11 @@ impl TxnForm {
             .accounts
             .get(self.account)
             .context("no account is selected")?;
+        // A blank description is a supported state, not a half-entered row:
+        // some rows are worth having for their amount alone. `tui::description`
+        // is what draws it. Still trimmed, so nothing downstream has to ask
+        // whether a description is empty or merely looks it.
         let description = self.description.value().trim().to_string();
-        ensure!(!description.is_empty(), "description must not be empty");
         Ok(NewTxn {
             date: self.date.parse()?,
             cents: parse_amount(self.amount.value())?,
@@ -1681,12 +1684,29 @@ mod tests {
         assert!(err.to_string().contains("08/15/2026"), "{err}");
     }
 
+    /// A cash withdrawal or a card charge whose merchant is on the receipt
+    /// and nowhere worth retyping. The row is worth having for its amount
+    /// alone, and a form that refuses it is a form the owner works around by
+    /// typing a placeholder that is worse than the blank.
     #[test]
-    fn an_empty_description_is_refused() {
+    fn a_ledger_row_may_be_committed_with_no_description() {
         let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         typed(&mut form, TxnField::Amount, "10");
-        let err = form.commit().unwrap_err();
-        assert!(err.to_string().contains("description"), "{err}");
+
+        let new = form.commit().unwrap();
+        assert_eq!(new.description, "");
+        assert_eq!(new.cents, Cents(1_000));
+    }
+
+    /// Whitespace is stored as the blank it is, so nothing downstream has to
+    /// ask whether a description is empty or merely looks it.
+    #[test]
+    fn a_description_of_nothing_but_spaces_is_stored_as_empty() {
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
+        typed(&mut form, TxnField::Amount, "10");
+        typed(&mut form, TxnField::Description, "   ");
+
+        assert_eq!(form.commit().unwrap().description, "");
     }
 
     #[test]
@@ -1953,6 +1973,30 @@ mod tests {
             seen.contains(&"CC1 — Card One".to_string()),
             "a card must remain reachable as a destination: {seen:?}"
         );
+    }
+
+    /// The ledger's own `a` accepts a blank description; a transfer does not.
+    /// Both legs of a transfer are written from one string, and a pair of
+    /// unnamed rows in two different accounts is the one shape the owner
+    /// cannot reconstruct from the ledger later -- so the prefill this form
+    /// arrives with has to be replaced rather than merely cleared.
+    #[test]
+    fn a_transfer_with_its_prefilled_description_cleared_is_refused() {
+        let mut form =
+            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+        typed_transfer(&mut form, TransferField::Amount, "10");
+        while form.focus != TransferField::To {
+            form.next_field();
+        }
+        form.choice(Step::NEXT);
+        // moves the focus without changing the field
+        typed_transfer(&mut form, TransferField::Description, "");
+        for _ in 0.."Transfer".len() {
+            form.backspace();
+        }
+
+        let err = form.commit().unwrap_err();
+        assert!(err.to_string().contains("description"), "{err}");
     }
 
     #[test]
