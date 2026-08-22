@@ -480,11 +480,14 @@ matches, since nothing but a test ties them together.
   marks a scrubbed plan by naming the date in the `Excess (Actual)` extra column, the way the
   Overview marks its column header: this screen has no header to hang it off, and a screen quoting a
   hypothetical balance must say so.
-- **An absent config file means backups are off; an unparseable one is an error.** The first is the
-  same rule an unset `setting` key follows, and is what makes a clean checkout and an unconfigured
-  machine both do nothing. The second is why `deny_unknown_fields` is on: a misspelled key that left
-  `bucket` unset would read as "off", and a backup that silently stops running is the one failure
-  nothing downstream ever notices.
+- **An absent config file means backups are off; an unparseable one is an error; a key nothing
+  reads is ignored.** The first is the same rule an unset `setting` key follows, and is what makes a
+  clean checkout and an unconfigured machine both do nothing. The second is what stops a misspelled
+  key from leaving `bucket` unset and reading as "off", because a backup that silently stops running
+  is the one failure nothing downstream ever notices — and what does that work is `bucket` having
+  **no default**, so the dangerous typo is a missing required field rather than a stray one. That is
+  what makes the third safe: an unknown key is skipped, so a file written for another build still
+  configures every key this one does understand.
 - **`interval_days` is clamped before it reaches `TimeDelta::days`, the same rule as every
   user-editable setting that reaches a divisor.** `backup::interval` caps it at `MAX_INTERVAL_DAYS`
   (3653, ten years) because the value is read straight out of a hand-edited config file and
@@ -521,9 +524,8 @@ matches, since nothing but a test ties them together.
   `mistermanager` appears in `backup::PREFIX` and in `mistermanager.tf`'s policy resource path, and
   nothing ties them together — but the policy is what the IAM user is scoped to, and only an AWS
   apply can change it, so a config knob could only ever be turned into `AccessDenied`. Moving the
-  prefix means editing both, in that order. `Backup` carries no `prefix` field and
-  `deny_unknown_fields` refuses one, so a config file asking for another prefix fails loudly
-  instead of being silently ignored.
+  prefix means editing both, in that order. `Backup` carries no `prefix` field, so a config file
+  asking for another prefix is a line that does nothing.
 
 ## Testing conventions
 

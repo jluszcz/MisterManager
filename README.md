@@ -241,10 +241,15 @@ profile       = "mistermanager"   # default; a profile in ~/.aws/credentials
 interval_days = 7                 # default
 ```
 
+A key the file carries that `mm` does not read — a `[report]` section, a misspelled
+`interval_dayz` — is skipped rather than failing the run, so everything the build does understand
+still takes effect. What that cannot hide is a misspelled `bucket`, because it has no default: the
+one typo that would leave backups silently switched off is still an error.
+
 The key prefix is not a setting. Objects go under `mistermanager/`, which is fixed in
 `backup::PREFIX` because the IAM policy is scoped to that path and only a `terraform apply` can
 widen it — a knob here could only ever be turned into `AccessDenied`. A `prefix` line in the config
-file is refused rather than ignored, so the mismatch cannot happen quietly.
+file is one of those unread keys, and does nothing.
 
 One-time setup: `terraform apply` creates the bucket, the IAM user and its access key, and its
 outputs feed the `mistermanager` profile and the config file directly:
