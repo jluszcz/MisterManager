@@ -36,6 +36,13 @@ fn month_id(kind: Kind, key: &str) -> String {
 /// Oldest first inside the month, which is the ledger screen's order: a
 /// running balance is read downward, and a page that reversed the rows would
 /// be the only place in the application where it is not.
+///
+/// Four columns on a phone, so which of them gives way is decided here rather
+/// than by whichever is widest: the date and the amount hold their line (`d`
+/// and `n`), and the description absorbs what is left (`w`). The account
+/// beside it is the owner's text too and takes no `w`: a name is scanned
+/// rather than read, so it keeps its word whole and the panel scrolls under a
+/// name long enough to need it.
 fn month(kind: Kind, m: &LedgerMonth) -> String {
     let rows: String = m
         .rows
@@ -45,7 +52,7 @@ fn month(kind: Kind, m: &LedgerMonth) -> String {
             // the projection model made visible, not a payment already made.
             let class = if r.future { " class=\"future\"" } else { "" };
             format!(
-                "<tr{class}><td>{}</td><td>{}</td><td>{}</td>{}</tr>",
+                "<tr{class}><td class=\"d\">{}</td><td>{}</td><td class=\"w\">{}</td>{}</tr>",
                 r.date,
                 account(&r.account),
                 escape(description::render(&r.description)),
@@ -165,7 +172,7 @@ mod tests {
         let mut snapshot = snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000);
         snapshot.cash.months[0].rows[0].description = String::new();
         assert!(
-            cash(&snapshot).contains("<td>\u{2014}</td>"),
+            cash(&snapshot).contains("<td class=\"w\">\u{2014}</td>"),
             "an unnamed row left an empty cell"
         );
     }
