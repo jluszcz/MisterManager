@@ -3,6 +3,7 @@ use super::search::{Search, SearchBox};
 use crate::db::AccountId;
 use crate::db::account::{self, Account, Kind};
 use crate::db::txn::{Filter, Txn};
+use crate::description;
 use crate::money::Cents;
 use chrono::{Datelike, Months, NaiveDate};
 use std::collections::HashMap;
@@ -499,7 +500,7 @@ pub fn render(frame: &mut Frame, area: Rect, ledger: &Ledger, today: NaiveDate) 
             Row::new(vec![
                 Cell::from(t.date.to_string()),
                 account_cell(&super::Account::named(ledger.accounts(), t.account_id)),
-                Cell::from(super::description(&t.description).to_string()),
+                Cell::from(description::render(&t.description).to_string()),
                 amount(t.cents),
             ])
             .style(if t.date > today {

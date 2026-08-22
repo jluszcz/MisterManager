@@ -4,10 +4,11 @@ use chrono::NaiveDate;
 use common::{container, imported, sheet_cents, workbook_today};
 use mistermanager::db::setting::{self, key};
 use mistermanager::db::{self, goal};
+use mistermanager::import;
 use mistermanager::money::Cents;
+use mistermanager::savings::{self, Row};
 use mistermanager::savings_block::Block;
-use mistermanager::tui::savings::{Row, Savings};
-use mistermanager::{import, tui};
+use mistermanager::tui::savings::Savings;
 use std::collections::HashMap;
 
 /// The `occurrence`-th (0-indexed) row holding `name` in `column`.
@@ -64,11 +65,8 @@ fn screen(db: &db::Db, today: NaiveDate) -> Savings {
     savings
         .set_goals(goal::all_with_balances(db).unwrap())
         .unwrap();
-    let containers = goal::containers(db).unwrap();
-    let excess = containers
-        .iter()
-        .map(|id| (*id, goal::container_excess(db, *id).unwrap()))
-        .collect();
+    let excess = savings::containers_with_excess(db).unwrap();
+    let containers = excess.iter().map(|(id, _)| *id).collect();
     savings.set_containers(containers);
     savings.set_excess(excess);
     savings
@@ -218,5 +216,5 @@ fn the_savings_screens_reconciliation_agrees_with_the_savings_sheet() {
     assert_eq!(screen.excess().len(), 2);
     // The goal container's few cents of drift are the workbook's steady state
     // and must not be flagged.
-    assert!(tui::is_reconciled(excess(goals)));
+    assert!(savings::is_reconciled(excess(goals)));
 }

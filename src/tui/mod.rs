@@ -10,6 +10,7 @@
 //! holding no ratatui state and unit-tested directly. The render functions
 //! only draw.
 
+mod account_label;
 pub mod accounts;
 pub mod app;
 pub mod autocomplete;
@@ -19,7 +20,6 @@ pub mod form;
 pub mod fund;
 pub mod goal_form;
 mod help;
-mod label;
 pub mod ledger;
 mod modal;
 pub mod month;
@@ -33,12 +33,12 @@ mod search;
 pub mod style;
 pub mod worksheet;
 
+use crate::account_label::{Account, Label};
 use crate::db::Db;
-use crate::db::goal::GoalWithBalance;
+use account_label::{account_cell, label_line};
 use anyhow::{Result, ensure};
 use app::App;
 use chrono::NaiveDate;
-use label::{Account, Label, account_cell, label_line};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use ratatui::style::Style;
@@ -73,50 +73,6 @@ pub const WEEK: i64 = 7;
 
 use crate::money::Cents;
 
-/// How far a container's unallocated remainder may drift before it is worth
-/// flagging. A container can sit at $0.23 for months; a warning that is always
-/// on is a warning nobody reads.
-///
-/// A documented constant rather than a setting: nothing yet suggests it needs
-/// to vary, and a setting would need a fallback, which is a second place for
-/// it to be wrong.
-pub const RECONCILED_WITHIN: Cents = Cents(100);
-
-/// Whether a container's excess is close enough to zero to stop flagging. The
-/// figure still renders either way -- this only decides the marker.
-///
-/// Called by the Savings screen's `Unallocated` footer, which is the one place
-/// the reconciliation is shown.
-pub fn is_reconciled(excess: Cents) -> bool {
-    excess.0.abs() < RECONCILED_WITHIN.0
-}
-
-/// What one goal asks of this paycheck, or `None` when it asks nothing.
-///
-/// The one place a goal is unpacked into [`crate::calc::per_paycheck`]'s four
-/// arguments. Three callers want the same number and would otherwise each
-/// unpack it themselves: the Savings screen's `$/Pay` column, the payday
-/// worksheet `A` prefills, and the one Planning's `t` prefills. A figure the
-/// screen shows and a figure the prefill writes must be the same figure, and
-/// three copies of the unpacking is how they stop being.
-///
-/// `None` for an undated goal -- there is no runway to divide -- and for one
-/// already at its target. Both mean "nothing this paycheck", which a prefill
-/// reads as zero and a column leaves blank.
-pub fn paycheck_ask(
-    goal: &GoalWithBalance,
-    today: NaiveDate,
-    period_days: i64,
-) -> Result<Option<Cents>> {
-    crate::calc::per_paycheck(
-        goal.current,
-        goal.goal.goal_cents,
-        goal.goal.goal_date,
-        today,
-        period_days,
-    )
-}
-
 /// One share of `pot`, floored to a whole dollar.
 ///
 /// The `/N` operator both screens offer: the worksheet divides its posted
@@ -130,26 +86,6 @@ pub fn paycheck_ask(
 pub fn share_of(pot: Cents, n: i64) -> Result<Cents> {
     ensure!(n > 0, "cannot divide by {n}");
     Ok(Cents::from_dollars(pot.dollars() / n))
-}
-
-/// What a transaction's description reads as on screen.
-///
-/// A ledger row may be committed with no description -- a cash withdrawal, a
-/// card charge whose merchant is on the receipt -- so "no description" is a
-/// supported state rather than a row half entered. It draws as an em dash, which
-/// is what every other absence in the app draws as: an account with no color,
-/// a fund with no percentage, a recurring transaction with no horizon.
-///
-/// Display only, and the stored value stays the empty string it was written
-/// as. The three callers are the three places a description is put in front
-/// of a human -- the ledger's Description column, the status line a write
-/// reports on, and the label on the delete confirmation -- and each would
-/// otherwise leave a gap the eye reads as a rendering fault rather than as a
-/// blank the owner chose. What is deliberately *not* a caller is the `/`
-/// filter, which matches the stored text: typing an em dash must not find
-/// every unnamed row.
-pub fn description(raw: &str) -> &str {
-    if raw.trim().is_empty() { "—" } else { raw }
 }
 
 /// A money cell: right-aligned, and colored by [`style::amount_color`].
@@ -372,13 +308,18 @@ fn column_of(line: &str, needle: &str) -> u16 {
     line[..byte].chars().count() as u16
 }
 
-/// Opens the application.
+/// Run the application, and hand the database back when it quits.
+///
+/// Returning it is what lets `main` write the report after the terminal is
+/// restored, beside the scheduled backup that already runs there -- so every
+/// decision about what happens after a quit stays in one place, and `tui`
+/// never learns that `config` exists.
 ///
 /// `demo` blocks every absolute figure the screens draw -- see
 /// [`crate::demo`]. Installed here, before the first frame, because it is a
 /// constant of the run rather than state a screen can reach: nothing after
 /// this point can turn it on or off.
-pub fn run(db: Db, today: NaiveDate, demo: bool) -> Result<()> {
+pub fn run(db: Db, today: NaiveDate, demo: bool) -> Result<Db> {
     crate::demo::install(demo);
     let mut app = App::new(db, today)?;
     // `try_init` enables raw mode, enters the alternate screen, and installs
@@ -387,7 +328,8 @@ pub fn run(db: Db, today: NaiveDate, demo: bool) -> Result<()> {
     let mut terminal = ratatui::try_init()?;
     let result = event_loop(&mut terminal, &mut app);
     ratatui::try_restore()?;
-    result
+    result?;
+    Ok(app.into_db())
 }
 
 fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
@@ -413,25 +355,6 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_description_with_text_in_it_reads_as_itself() {
-        assert_eq!(description("Whole Foods"), "Whole Foods");
-    }
-
-    #[test]
-    fn a_description_that_was_never_typed_reads_as_an_em_dash() {
-        assert_eq!(description(""), "—");
-    }
-
-    /// The form trims before it stores, so a stored description is never
-    /// whitespace -- but a row written before that trim, or by hand in SQL,
-    /// still has to draw as the blank it is rather than as a column of
-    /// spaces.
-    #[test]
-    fn a_description_of_nothing_but_whitespace_reads_as_an_em_dash() {
-        assert_eq!(description("   "), "—");
-    }
 
     /// The cents are dropped rather than carried: the allocation is a whole
     /// dollar figure, and what is left behind stays in the container's
@@ -475,17 +398,6 @@ mod tests {
     fn a_non_positive_divisor_is_refused() {
         assert!(share_of(Cents::from_dollars(100), 0).is_err());
         assert!(share_of(Cents::from_dollars(100), -3).is_err());
-    }
-
-    /// The threshold is exclusive: $0.99 of drift is the workbook's steady
-    /// state, $1.00 is worth looking at.
-    #[test]
-    fn sub_dollar_drift_reconciles_in_either_direction() {
-        assert!(is_reconciled(Cents(99)));
-        assert!(is_reconciled(Cents(-99)));
-        assert!(is_reconciled(Cents::ZERO));
-        assert!(!is_reconciled(Cents(100)));
-        assert!(!is_reconciled(Cents(-100)));
     }
 
     #[test]

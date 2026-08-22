@@ -80,7 +80,7 @@ fn unclaimed(goals: Vec<Goal>, claimed: &[GoalId]) -> Vec<Goal> {
 /// make the plug ambiguous over money it could never have received, which is
 /// exactly what a line switched to a withdrawal leaves behind.
 ///
-/// *How much* each one gets is not decided here: `tui::paycheck_ask` prices
+/// *How much* each one gets is not decided here: `savings::paycheck_ask` prices
 /// them and [`crate::calc::fit`] divides the plug between them. This is only
 /// the set.
 ///
@@ -299,7 +299,7 @@ pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
     let container_of = |id: AccountId| {
         accounts.iter().find(|a| a.id == id).map(|a| Container {
             id: a.id,
-            // A `String`, not a `tui::label::Account`: the Planning screen
+            // A `String`, not a `label::Account`: the Planning screen
             // tints this through `planning::Tint` instead -- see
             // `src/tui/CLAUDE.md`'s account-color section.
             name: a.name.as_str().to_string(),
@@ -611,7 +611,7 @@ fn merge_transfer(
     let account = account::get(db, to)?;
     transfers.push(Row::Transfer {
         to,
-        // A `String`, not a `tui::label::Account`: the Planning screen tints
+        // A `String`, not a `label::Account`: the Planning screen tints
         // this through `planning::Tint` instead -- see `src/tui/CLAUDE.md`'s
         // account-color section.
         name: account.name.as_str().to_string(),
@@ -1025,7 +1025,7 @@ mod tests {
         let account = account::by_code(db, code, Kind::Cash).unwrap().unwrap();
         Container {
             id: account.id,
-            // A `String`, not a `tui::label::Account`: the Planning screen
+            // A `String`, not a `label::Account`: the Planning screen
             // tints this through `planning::Tint` instead -- see
             // `src/tui/CLAUDE.md`'s account-color section.
             name: account.name.as_str().to_string(),

@@ -7,6 +7,7 @@ A terminal application for tracking money, replacing a per-year spreadsheet.
 ```bash
 mm            # launch the application
 mm --demo     # the same, with every dollar figure blocked out
+mm report     # write the HTML report without opening the application
 ```
 
 Screens are `1` Overview, `2` Cash, `3` Credit, `4` Savings, `5` Planning,
@@ -218,7 +219,59 @@ left to show. Negatives keep their sign and their red.
 Only the drawing changes. What is typed into a form still parses, so the app
 can be driven rather than only watched, and the figures behind the mask are the
 real ones: a form opened on a row commits what was already there. `mm import`
-and `mm backup` take no such flag, because neither prints a figure.
+and `mm backup` take no such flag, because neither prints a figure. `mm report`
+refuses it: the mask is installed by the screens, so a report written under the
+flag would carry the real figures it exists to block.
+
+## Report
+
+Off until a config file switches it on:
+
+```toml
+# ~/.config/mistermanager/config.toml
+[report]
+dir = "~/Dropbox/money"   # required
+```
+
+`mm` writes a self-contained HTML page of the screens to `<dir>/Money.html`
+every time it quits — one file, no separate stylesheet or
+script, sized to read on a phone in light or dark. Pointing `dir` at a synced
+folder is what turns "checked the balance on the laptop" into "checked it on
+the phone a minute later."
+
+The write happens after the TUI has already torn its screen down, the same
+timing as the scheduled backup, and a failure prints to stderr rather than
+making the run fail. `mm --demo` never writes a report: the file it would
+overwrite is the one page nothing can regenerate without quitting an ordinary
+session. `mm import` and `mm backup` don't write one either, since neither
+launches the screens the page is drawn from.
+
+The page carries six tabs, in the order the screens are numbered: Overview,
+Cash, Credit, Savings, Planning, Funds. It opens on Overview, and the switch is
+radio buttons and a stylesheet — no script, so it works on a phone with no
+network and nothing to load. Each container's goals sit under its own heading,
+the Planning tab shows the transfers over the waterfall that produced them, and
+the footer says when the page was written.
+
+Cash and Credit carry **every** transaction, not the month or two the screens
+window to, with a dropdown that filters to one month at a time. They open on
+the current month — or on all of them, in the first days of a month with
+nothing entered in it yet. That dropdown is a `<details>` full of radio buttons
+rather than a `<select>`: CSS cannot see which option of a `<select>` is
+chosen, so a real one would render and do nothing.
+
+To write one without opening the application:
+
+```bash
+mm report                    # into the configured dir
+mm report --dir /tmp/export  # or anywhere else, config or no config
+```
+
+`--dir` is what makes the `[report]` section optional: leaving it out says "do
+not write a page behind every quit", which is a different thing from "never
+write me a page". Asked for outright, a failure is an error exit rather than a
+line on stderr — the same way an explicit `mm backup` differs from the
+scheduled one.
 
 ## Backups
 
@@ -241,10 +294,11 @@ profile       = "mistermanager"   # default; a profile in ~/.aws/credentials
 interval_days = 7                 # default
 ```
 
-A key the file carries that `mm` does not read — a `[report]` section, a misspelled
+A key the file carries that `mm` does not read — a `[charts]` section, a misspelled
 `interval_dayz` — is skipped rather than failing the run, so everything the build does understand
-still takes effect. What that cannot hide is a misspelled `bucket`, because it has no default: the
-one typo that would leave backups silently switched off is still an error.
+still takes effect. What that cannot hide is a misspelled `bucket`, or a misspelled `dir` in
+`[report]`, because neither has a default: the one typo that would leave a feature silently
+switched off is still an error.
 
 The key prefix is not a setting. Objects go under `mistermanager/`, which is fixed in
 `backup::PREFIX` because the IAM policy is scoped to that path and only a `terraform apply` can
@@ -315,7 +369,7 @@ read a backup, delete one, or list the prefix.
 | `src/plan.rs` | Runs the Planning waterfall against imported settings. |
 | `src/fund.rs` | Feeds the fund table and the birth date to the fund-allocation derivation. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, and regeneration. |
-| `src/config.rs` | The TOML config file — the `[backup]` section, unset means backups are off. |
+| `src/config.rs` | The TOML config file — the `[backup]` and `[report]` sections, unset means the feature is off. |
 | `src/backup/` | The schedule, the snapshot, and the S3 upload. `aws-config`, `aws-sdk-s3` and `tokio` are named only in `src/backup/s3.rs`. |
 | `src/tui/` | The terminal UI: screens, forms, key handling. |
 | `src/tui/fund.rs` | The Funds screen and its form. |

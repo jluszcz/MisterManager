@@ -5,6 +5,7 @@
 //! plausible, badly wrong number rather than failing.
 
 use crate::money::Cents;
+use std::fmt;
 use std::iter::Sum;
 use std::ops::Add;
 
@@ -64,6 +65,19 @@ impl BasisPoints {
     pub const ZERO: BasisPoints = BasisPoints(0);
     /// One whole unit -- the multiplier `1.0` at this scaling.
     pub const ONE: BasisPoints = BasisPoints(10_000);
+}
+
+/// A percentage with two decimals, no sign: `BasisPoints(3_600)` is `36.00`.
+///
+/// On the type rather than beside a screen, because the Funds screen and the
+/// report both print these and a share the two rendered differently would
+/// read as two different allocations of the same money.
+impl fmt::Display for BasisPoints {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let sign = if self.0 < 0 { "-" } else { "" };
+        let abs = self.0.unsigned_abs();
+        write!(f, "{sign}{}.{:02}", abs / 100, abs % 100)
+    }
 }
 
 #[cfg(test)]

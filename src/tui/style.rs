@@ -38,28 +38,14 @@ const RAMP_HIGH: (u8, u8, u8) = (70, 170, 70);
 /// Where [`RAMP_MID`] sits, and so the width of each leg.
 const RAMP_MIDPOINT: i64 = 50;
 
-/// What each [`AccountColor`] actually looks like.
+/// What one account color looks like on a terminal.
 ///
-/// A total match rather than an array indexed by the enum: the name the
-/// database stores and the shade it draws in are then one fact, and no
-/// reordering can separate them. Which is the whole reason `account.color`
-/// holds a name instead of a palette index.
-///
-/// No red and no green: those two are spoken for by [`NEGATIVE`] and by
-/// [`percent_color`]'s ramp, and an account tinted like a warning is a warning
-/// nobody reads. Mid-tone and saturated so they stay legible against a light
-/// terminal and a dark one both.
-fn palette(color: AccountColor) -> Color {
-    match color {
-        AccountColor::Blue => Color::Rgb(70, 130, 180),
-        AccountColor::Copper => Color::Rgb(205, 133, 63),
-        AccountColor::Violet => Color::Rgb(150, 110, 200),
-        AccountColor::Teal => Color::Rgb(0, 150, 155),
-        AccountColor::Rose => Color::Rgb(200, 100, 150),
-        AccountColor::Olive => Color::Rgb(130, 140, 70),
-        AccountColor::Indigo => Color::Rgb(90, 110, 210),
-        AccountColor::Tan => Color::Rgb(160, 120, 90),
-    }
+/// Public because `label::Account::render_with` resolves the owner's choice
+/// down to a variant before either sink sees it, so the ratatui sink starts
+/// from a resolved [`AccountColor`] rather than from an id and an `Option`.
+pub fn palette(color: AccountColor) -> Color {
+    let (r, g, b) = crate::palette::account(color);
+    Color::Rgb(r, g, b)
 }
 
 /// A negative amount, in every column the app renders one.
@@ -68,7 +54,11 @@ fn palette(color: AccountColor) -> Color {
 /// count, or a gate's verdict -- so it carries a `negative` flag rather than
 /// the `Cents` [`amount_color`] would need. It reads the same constant, so
 /// there is still one decision here about what a negative figure looks like.
-pub const NEGATIVE: Color = Color::Rgb(178, 34, 34);
+pub const NEGATIVE: Color = Color::Rgb(
+    crate::palette::NEGATIVE.0,
+    crate::palette::NEGATIVE.1,
+    crate::palette::NEGATIVE.2,
+);
 
 /// A figure that is *above* what it is being compared with, where being above
 /// it is the good news: the ledger's reconciliation delta, and nothing else so

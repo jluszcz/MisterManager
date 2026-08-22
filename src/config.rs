@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Default, Deserialize, PartialEq)]
 pub struct Config {
     pub backup: Option<Backup>,
+    pub report: Option<Report>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -46,6 +47,35 @@ fn default_profile() -> String {
 
 fn default_interval_days() -> u32 {
     7
+}
+
+/// Where the standing HTML report is written.
+///
+/// An absent section means the feature is off, the rule `[backup]` follows and
+/// the rule an unset `setting` key follows. There is deliberately no `enabled`
+/// key: the section's presence is the switch, and a second way to say "off"
+/// would be a second thing to get wrong.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct Report {
+    /// No default. It names where the owner's finances are written, the same
+    /// kind of fact as [`Backup::bucket`], so it cannot be a literal in a
+    /// public repository.
+    dir: PathBuf,
+}
+
+impl Report {
+    /// The directory, with a leading `~` expanded against `$HOME`.
+    ///
+    /// Only the first component: a `~` anywhere else is an ordinary character
+    /// in an ordinary directory name, and expanding it would rewrite a path
+    /// the owner meant literally.
+    pub fn dir(&self) -> Result<PathBuf> {
+        let Ok(rest) = self.dir.strip_prefix("~") else {
+            return Ok(self.dir.clone());
+        };
+        let home = std::env::var("HOME").context("HOME is not set")?;
+        Ok(PathBuf::from(home).join(rest))
+    }
 }
 
 /// `$XDG_CONFIG_HOME/mistermanager/config.toml`, or `~/.config` when it is
@@ -128,11 +158,13 @@ mod tests {
     }
 
     /// A section a later build might add, or an earlier one has dropped.
+    /// Deliberately not `[report]`, which this build reads: the example has
+    /// to name a section nothing here has a field for.
     #[test]
     fn an_unknown_section_does_not_stop_the_rest_of_the_file_loading() {
         let path = fixture(
             "section",
-            "[report]\nstyle = \"wide\"\n\n[backup]\nbucket = \"a-bucket\"\n",
+            "[charts]\nstyle = \"wide\"\n\n[backup]\nbucket = \"a-bucket\"\n",
         );
         assert_eq!(load(&path).unwrap().backup.unwrap().bucket, "a-bucket");
     }
@@ -178,5 +210,50 @@ mod tests {
             err.contains("mistermanager_config_type"),
             "unhelpful error: {err}"
         );
+    }
+
+    /// `dir` is the only key, so a one-line section is a complete
+    /// configuration -- the shape `[backup]` already has.
+    #[test]
+    fn a_report_section_naming_only_a_dir_is_a_complete_configuration() {
+        let path = fixture("report", "[report]\ndir = \"/tmp/reports\"\n");
+        let report = load(&path).unwrap().report.unwrap();
+        assert_eq!(report.dir().unwrap(), PathBuf::from("/tmp/reports"));
+    }
+
+    /// The same rule the backup section follows, and it holds for the same
+    /// reason: `dir` has no default, so the typo that would leave the report
+    /// silently switched off is a missing required field rather than an
+    /// unknown key.
+    #[test]
+    fn a_misspelled_dir_is_an_error_rather_than_a_silently_disabled_report() {
+        let path = fixture("report_typo", "[report]\ndirectory = \"/tmp/other\"\n");
+        let err = format!("{:#}", load(&path).unwrap_err());
+        assert!(err.contains("dir"), "unhelpful error: {err}");
+    }
+
+    #[test]
+    fn a_config_file_with_no_report_section_leaves_reports_off() {
+        let path = fixture("no_report", "[backup]\nbucket = \"a-bucket\"\n");
+        assert!(load(&path).unwrap().report.is_none());
+    }
+
+    /// TOML does not expand it, and a literal `~` directory in the home
+    /// directory is a directory nothing would ever look in.
+    #[test]
+    fn a_leading_tilde_in_the_report_dir_expands_against_home() {
+        let path = fixture("report_tilde", "[report]\ndir = \"~/reports\"\n");
+        let report = load(&path).unwrap().report.unwrap();
+        let home = PathBuf::from(std::env::var("HOME").unwrap());
+        assert_eq!(report.dir().unwrap(), home.join("reports"));
+    }
+
+    /// Only a *leading* `~` is a home directory. One in the middle of a path
+    /// is an ordinary character in an ordinary directory name.
+    #[test]
+    fn a_tilde_that_is_not_the_first_component_is_left_alone() {
+        let path = fixture("report_mid_tilde", "[report]\ndir = \"/tmp/a~b\"\n");
+        let report = load(&path).unwrap().report.unwrap();
+        assert_eq!(report.dir().unwrap(), PathBuf::from("/tmp/a~b"));
     }
 }

@@ -8,7 +8,7 @@ use super::goal_form::{AllocationForm, CloseForm, GoalForm, GoalTarget};
 use super::help::{self, Help, Topic};
 use super::ledger::{self, Ledger, Window};
 use super::modal::{self, Confirm, Modal};
-use super::overview::{self, Overview};
+use super::overview;
 use super::picker::{self, Picker};
 use super::planning::{self, BillForm, Planning, Target, TransferConfirm};
 use super::recurring_goal::{self as recurring_goal_screen, RecurringGoalForm, RecurringGoals};
@@ -27,8 +27,10 @@ use crate::db::recurring_txn;
 use crate::db::setting::{self, key};
 use crate::db::txn;
 use crate::db::{AccountId, Db, GoalId, RecurringGoalId};
+use crate::description;
 use crate::fund as fund_engine;
 use crate::money::Cents;
+use crate::overview::Overview;
 use crate::plan;
 use crate::plan_line::{Destination, Line};
 use crate::projection::{self, Dates};
@@ -246,6 +248,12 @@ impl App {
         app.cash.select_at_or_before(today);
         app.credit.select_at_or_before(today);
         Ok(app)
+    }
+
+    /// Give the database back at the end of the run. Consuming rather than
+    /// borrowing: the application is over, and a borrow would keep it alive.
+    pub fn into_db(self) -> Db {
+        self.db
     }
 
     pub fn should_quit(&self) -> bool {
@@ -589,7 +597,7 @@ impl App {
                 current: goal::balance(&self.db, g.id)?,
                 goal: g,
             };
-            let ask = super::paycheck_ask(&with_balance, self.today, self.period_days)?;
+            let ask = crate::savings::paycheck_ask(&with_balance, self.today, self.period_days)?;
             out.push((with_balance.goal, ask.unwrap_or(Cents::ZERO)));
         }
         Ok(out)
@@ -1536,11 +1544,8 @@ impl App {
 
     fn reload_savings(&mut self) -> Result<()> {
         self.savings.set_goals(goal::all_with_balances(&self.db)?)?;
-        let containers = goal::containers(&self.db)?;
-        let mut excess = Vec::with_capacity(containers.len());
-        for id in &containers {
-            excess.push((*id, goal::container_excess(&self.db, *id)?));
-        }
+        let excess = crate::savings::containers_with_excess(&self.db)?;
+        let containers = excess.iter().map(|(id, _)| *id).collect();
         self.savings.set_containers(containers);
         self.savings.set_excess(excess);
         Ok(())
@@ -1722,7 +1727,7 @@ impl App {
                 let label = format!(
                     "{}  {}  {}",
                     row.date,
-                    super::description(&row.description),
+                    description::render(&row.description),
                     crate::demo::figure(row.cents)
                 );
                 self.modal = Some(Modal::Confirm {
@@ -2077,7 +2082,7 @@ impl App {
         };
         let mut prefill = Vec::new();
         for g in goal::list_with_balances(&self.db, container)? {
-            let ask = super::paycheck_ask(&g, self.today, self.period_days)?;
+            let ask = crate::savings::paycheck_ask(&g, self.today, self.period_days)?;
             prefill.push((g.goal.id, g.goal.name, ask.unwrap_or(Cents::ZERO)));
         }
         let account = account::get(&self.db, container)?;
@@ -2563,7 +2568,7 @@ impl App {
         // on the rounds it says nothing.
         self.status = format!(
             "{verb} {} {} on {}",
-            super::description(&new.description),
+            description::render(&new.description),
             crate::demo::figure(new.cents),
             new.date
         );

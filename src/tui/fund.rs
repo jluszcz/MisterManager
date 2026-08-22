@@ -121,17 +121,6 @@ impl Scroll for Funds {
     }
 }
 
-/// Basis points as a percentage with two decimals: `BasisPoints(3_600)` is
-/// `36.00`.
-pub fn format_bp(bp: BasisPoints) -> String {
-    let sign = match bp.0 < 0 {
-        true => "-",
-        false => "",
-    };
-    let abs = bp.0.unsigned_abs();
-    format!("{sign}{}.{:02}", abs / 100, abs % 100)
-}
-
 /// A share typed as a percentage, into basis points: `40` and `40.00` are
 /// both `BasisPoints(4_000)`.
 ///
@@ -207,7 +196,7 @@ impl FundForm {
             name: Field::given(fund.name.clone()),
             share: Field::given(match fund.target {
                 Target::AgeOver30 => String::new(),
-                Target::RemainderShare(share) => format_bp(share),
+                Target::RemainderShare(share) => share.to_string(),
             }),
             actual: Field::given(fund.actual.to_string()),
             kind: Target::KINDS
@@ -334,7 +323,7 @@ fn percent(bp: Option<BasisPoints>) -> Cell<'static> {
 /// padding becomes a block of background the full width of the column. See
 /// the tint invariant in `src/tui/CLAUDE.md`.
 fn tinted_percent(bp: Option<BasisPoints>, color: Option<style::Color>) -> Cell<'static> {
-    let text = bp.map_or_else(|| "—".to_string(), format_bp);
+    let text = bp.map_or_else(|| "—".to_string(), |bp| bp.to_string());
     super::tinted(TextLine::from(text).right_aligned(), color)
 }
 
@@ -479,10 +468,10 @@ mod tests {
 
     #[test]
     fn basis_points_print_as_a_percentage_with_two_decimals() {
-        assert_eq!(format_bp(BasisPoints(3_456)), "34.56");
-        assert_eq!(format_bp(BasisPoints(725)), "7.25");
-        assert_eq!(format_bp(BasisPoints::ZERO), "0.00");
-        assert_eq!(format_bp(BasisPoints::ONE), "100.00");
+        assert_eq!(BasisPoints(3_456).to_string(), "34.56");
+        assert_eq!(BasisPoints(725).to_string(), "7.25");
+        assert_eq!(BasisPoints::ZERO.to_string(), "0.00");
+        assert_eq!(BasisPoints::ONE.to_string(), "100.00");
     }
 
     /// The prompt is a question about a missing setting, so it stands exactly

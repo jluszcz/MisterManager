@@ -107,13 +107,16 @@ Layered, and the layering is enforced by module privacy rather than convention:
 
 | Path | Responsibility |
 |---|---|
+| `src/account_label.rs` | `Account` and `Label` — an account on its way to a display, in any medium. `render_with` is the only reader of its text, and hands the resolved color alongside. |
 | `src/money.rs` | `Cents(i64)` — the only money type. No floats anywhere in the crate. |
-| `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. |
+| `src/palette.rs` | What a color *is*, in numbers: the eight account colors and the negative color as `(u8, u8, u8)`. `tui::style` wraps them for a terminal; `report` spells them as `#rrggbb`. |
+| `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. `BasisPoints` prints itself as a percentage with two decimals, on the type rather than beside a screen, so the Funds screen and the report cannot render one share two ways. |
 | `src/gate.rs` | `Gate` — the Planning gates, each owning its setting key and goal-name substring. |
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the setting key naming its container account. |
 | `src/config.rs` | The TOML config file. `serde` and `toml` are named here, and both again in `src/backup/state.rs`, whose `State` derives `Serialize` as well as `Deserialize`. |
 | `src/plan_line.rs` | Every Planning line: its label, the amount it moves, and the setting key that says where it lands. |
 | `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `pro_rata`, the Planning waterfall, `fund` (the target/actual/delta derivation), `schedule` (when a recurring thing happens). No database. |
+| `src/description.rs` | What a transaction's description reads as, in any medium: the stored text, or `—` when there is none. One rule rather than one per sink, the same split `palette` makes for color — `tui`'s ledger, status line and delete confirmation read it, and so does `report::html::ledger`. |
 | `src/demo.rs` | `mm --demo`: the mask every absolute figure is drawn through, and the once-per-run flag that turns it on. Named by `tui` and by `transfer`, the two layers that put a figure in front of a human. |
 | `src/db/` | Schema and queries — one module per aggregate. |
 | `src/db/migration.rs` | The frozen v1 baseline, the chain of arms above it, and the runner that applies whichever of them a database is missing. |
@@ -122,14 +125,17 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/db/fund.rs` | The `fund` table — the asset-allocation block, `Planning!I1:M5`. `Target` is the age rule or a share of what it leaves. |
 | `src/db/recurring_txn.rs` | The `recurring_txn` table — rows whose amount and date are known in advance. CRUD plus the queries regeneration needs. |
 | `src/import/` | Reads `Money.xlsx` via `calamine`. |
+| `src/overview.rs` | Reads balances at the three projection dates out of `db` and bands them into the Overview's sections and Net. Read by the Overview screen and by `report`. |
+| `src/savings.rs` | A goal's derived columns — `%`, `$/Pay`, expired — and what a container has left unallocated. Read by the Savings screen and by `report`. |
 | `src/plan.rs` | Reads settings and balances out of `db`, feeds `calc::planning::compute`. |
 | `src/fund.rs` | Reads the `fund` table and the birth date out of `db`, feeds `calc::fund`. The one place `db::fund::Target` becomes `calc::fund::Rule`. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
+| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and Funds in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/backup/` | The schedule, the snapshot, and the upload. `aws_config`, `aws_sdk_s3` and `tokio` are named only in `s3.rs`. |
-| `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `tui::label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `mod.rs` rather than in whichever screen needed it first. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
-| `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `import` and `backup` are the two subcommands. |
+| `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `mod.rs` rather than in whichever screen needed it first. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
+| `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `import`, `report` and `backup` are the three subcommands. |
 
 **`rusqlite` is named only inside `src/db/`.** `Db` holds a private `Connection` and deliberately does
 not `Deref` to it — handing out a `&Connection` would put every rusqlite method back within reach of
@@ -236,7 +242,7 @@ matches, since nothing but a test ties them together.
   like is `tui::style::palette`'s to say and nothing else's, which is what keeps colour decided in
   one module.
   Which screens honour that is not left to each screen: an account reaches a glyph through
-  `tui::label::Account`, which colors what it draws, everywhere but the residual list in
+  `account_label::Account`, which colors what it draws, everywhere but the residual list in
   `src/tui/CLAUDE.md`'s account-color section, and `AccountName`/`AccountCode` have no `Display`,
   so an account cannot be flattened into a `String` on the way.
 - **Three things about the owner's accounts are in no cell of the workbook, and all three are
@@ -308,7 +314,7 @@ matches, since nothing but a test ties them together.
     dangling key, `wiring` has to report one and draw the screen anyway — so `shares_of` takes an
     already-filtered set rather than reaching for the database itself.
 - **A payday prefills what each goal asks, and leaves the rest unallocated on purpose.** The ask is
-  `tui::paycheck_ask` — `calc::per_paycheck`, and the same figure the Savings screen shows in
+  `savings::paycheck_ask` — `calc::per_paycheck`, and the same figure the Savings screen shows in
   `$/Pay`. `calc::fit` puts the asks against the money there is: under-subscribed, every ask is met
   in full and the difference is **left over**, because that remainder is money the owner places by
   hand rather than money a prefill should find a home for; over-subscribed, `pro_rata` scales every
@@ -318,7 +324,7 @@ matches, since nothing but a test ties them together.
   - **Only the plug is priced this way.** A line that names a goal hands it the waterfall's own
     figure — Bills hands "Bill Payments" the whole of `lines.bills` — and a per-paycheck ask must never
     overwrite an amount computed for that goal specifically.
-  - `tui::paycheck_ask` exists because several callers want that number: the `$/Pay` column, the `A`
+  - `savings::paycheck_ask` exists because several callers want that number: the `$/Pay` column, the `A`
     prefill, and this one. A figure a screen shows and a figure a prefill writes must be the same
     figure, and a copy of the unpacking in each is how they stop being.
 - **An unset destination key and a dangling one mean opposite things, and must never be
@@ -526,6 +532,63 @@ matches, since nothing but a test ties them together.
   apply can change it, so a config knob could only ever be turned into `AccessDenied`. Moving the
   prefix means editing both, in that order. `Backup` carries no `prefix` field, so a config file
   asking for another prefix is a line that does nothing.
+- **The report is written on quit, and never under `--demo`.** That is
+  `write_if_enabled`, the gate; `report::write` underneath it is the disk, and
+  `mm report` calls that one directly. **An unset `[report]` section is an
+  answer to the quit path's question and not to the subcommand's**, which is
+  why `--dir` can stand in for it: "do not write a page behind every quit" is
+  not "never write me a page". Both reach the disk through the one `write`, so
+  the atomic rename has no second implementation to drift from.
+  `write_if_enabled` returns before it queries anything when the flag is set: `demo::install` sets
+  a thread-local flag once, before the first frame, and nothing ever clears it
+  -- `main` regains control on that same thread when `tui::run` returns, so the
+  flag it set is still on there, and a report written under it would be a page
+  of blocks over the one file that cannot be regenerated without quitting an
+  ordinary session. The page also formats
+  `Cents` directly rather than through `demo::figure`, so a caller that forgets
+  the skip writes real figures rather than blocks. Its dates come from
+  `projection::dates`, never from `App::adhoc`: the scrub is a hypothetical the
+  owner left a cursor on, and a report cannot say which day it was quoting.
+  `mm report` refuses `--demo` rather than ignoring it: no subcommand installs
+  the mask, so the flag would quietly write the real figures it exists to
+  block.
+- **Every control on the page is CSS, and that is what the no-script rule
+  buys.** The tabs and the ledgers' month filter are radio buttons the page
+  never shows, plus a `:checked ~` rule per control; the radios are moved
+  off-screen rather than `display:none`d, so they keep their place in the focus
+  order. **A `<select>` cannot do this job**: no selector matches "the option
+  that is chosen", so a real dropdown would render and then do nothing. That is
+  why the month picker is a `<details>` full of labels -- it is the dropdown a
+  page with no script is allowed to have. Every radio sits ahead of everything
+  it addresses, since the sibling combinator only looks forward. A control
+  whose rules are generated -- the months, whose set is a fact about the
+  database -- generates them from the same list that generates its markup.
+- **The Cash and Credit tabs carry every transaction, where the screens carry
+  a window.** `tui::ledger::Window` exists because a terminal shows one screen
+  at a time and `[`/`]` move it; a page is scrolled and filtered instead, and a
+  report that stopped at the current window would be missing exactly what
+  someone opens it to check. The rows are grouped into one `<tbody>` per month
+  and the filter shows one of them -- so the page's size is the whole ledger
+  whatever the dropdown says, which is the cost of the file being readable
+  offline with no query to re-run. It **opens on the month `today` falls in**,
+  and on `All months` when that month has no rows yet: a selection matching no
+  group would draw an empty table and no reason for it, which is what the first
+  of a month would otherwise look like.
+- **The Overview is one table on the page, where it is three on the screen.**
+  The three projection dates are that table's header row, and a header labels
+  only the table it sits in -- split per section, each would size its columns
+  to its own longest figure, so Cash would not line up with Credit and only the
+  first would be dated at all. The sections keep their separation as `<tbody>`
+  groups. The dates go bare, no `To-Date`/`Paycheck-Eve`/`Month-End` above
+  them, which is what `tui::overview::column_headers` does for the same reason.
+- **The report is renamed onto its name, never written to it.** A sync client
+  watching the directory will upload a half-written page, and a phone would then
+  show a report that ends mid-table with no sign that it had. The temporary file
+  sits in the same directory so the rename does not cross a filesystem, carries
+  the pid in its name because an `mm report --dir` run can overlap an open app's
+  quit path in the same directory, and is removed again on any failure — a
+  rename that cannot happen would otherwise leave the partial page in the synced
+  folder under a name nothing ever looks for again.
 
 ## Testing conventions
 
