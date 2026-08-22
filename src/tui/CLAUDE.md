@@ -643,6 +643,32 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   line naming the container and its remainder, at full precision as the Savings footer does, and
   annotates the amount with what a `/N` resolves to. The remainder is snapshotted at open: the
   form writes once and closes, and nothing can move the figure while it is up.
+- **The Savings list is two blocks, and only the first one is the owner's to arrange.** Undated
+  goals lead, in `goal.sort` order; dated goals follow, soonest first. The two halves are arranged by
+  different things — a deadline decides a goal's place for it, and a goal with none is placed by
+  hand — so `goal::list` and `all_with_balances` state it as one `ORDER BY` and every screen reading
+  them gets the same list. Among the dated goals `sort` survives only as a tiebreak between two
+  falling on the same day, which is what keeps an arrangement made in the undated block from
+  reaching in and reordering a deadline.
+  - **`K` and `J` move a goal one place, through `goal::reorder`, which takes a position.** The
+    same bargain `account::reorder` makes with a kind: it renumbers the container's undated block
+    `0..n-1`, so what the screen shows is what is stored, and "put it third" has a result the
+    caller can predict where "set sort to 2" does not. `App::move_goal` computes the position
+    against the container's undated goals rather than against the rows on screen — `reorder`
+    renumbers that block, and the two have to be counting the same list.
+  - **The cursor is put back by id, not by index.** The rows moved under it, so an index would
+    leave the selection on whichever goal took the vacated place and the next press would move
+    that one instead. `Savings::select_goal` is the one caller's reason for existing.
+  - **Two refusals, each with a message.** A dated goal has no manual order to move in, and a kept
+    search hides part of the block being reordered — a move would then be one place in a list the
+    owner cannot see. Both say so rather than doing nothing quietly, because a key that sometimes
+    silently declines is a key nobody trusts. Reaching either end of the block is the third case
+    and is a genuine no-op: `Move::applied` returns `None` there, and the block simply has no
+    further place.
+  - **`K`/`J` join the `goal` run in the footer rather than taking a word.** This footer is one of
+    the two closest to `MIN_WIDTH`, and `K/J move` as its own item does not fit; grouped under the
+    word naming what the keys act on, they cost four characters instead of eleven. It is the lever
+    this document names for exactly this case, and the verbs are a keystroke away in the panel.
 - **A favorited goal is drawn as a band and moved nowhere.** `f` on Savings toggles
   `goal.favorite`, and `render` gives that row `style::favorite()` plus a bold. Standing out and
   coming first are different requests, so `refilter` and the `all_with_balances` order never read

@@ -258,6 +258,18 @@ impl Savings {
         self.visible.get(self.cursor.index()).map(|i| &self.all[*i])
     }
 
+    /// Put the cursor on a goal by id, leaving it where it is if the goal is
+    /// not among the visible rows.
+    ///
+    /// By id and not by index, for the one caller that needs it: `K` and `J`
+    /// reorder the rows under the cursor, so the index it held before the
+    /// move names a different goal after it.
+    pub fn select_goal(&mut self, id: GoalId) {
+        if let Some(index) = self.visible.iter().position(|i| self.all[*i].goal_id == id) {
+            self.cursor.select(index);
+        }
+    }
+
     pub fn title(&self) -> Label {
         let mut title = match self.container {
             None => Label::plain("Savings · All"),

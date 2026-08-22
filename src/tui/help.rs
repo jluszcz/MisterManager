@@ -249,7 +249,7 @@ const LEDGER: [Entry; 11] = [
     },
 ];
 
-const SAVINGS: [Entry; 13] = [
+const SAVINGS: [Entry; 15] = [
     Entry::filter(
         ACCOUNT_FILTER,
         "Cycle the container filter: All, then one entry per account that holds goals. The footer word is the shared one -- a filter over the same accounts should not be called two things by two screens -- and the goals themselves are what make that account a container.",
@@ -300,6 +300,16 @@ const SAVINGS: [Entry; 13] = [
         key: "c",
         label: Label::Shared("goal"),
         detail: "End the selected goal: return its value to unallocated, or move it to another goal in the same container. Crossing containers is refused, since no cash moved between the accounts.",
+    },
+    Entry {
+        key: "K",
+        label: Label::Shared("goal"),
+        detail: "Move the selected goal up one place in its container's manual order. Only the undated goals are ordered by hand -- a dated goal takes its place from its date, and pressing this on one says so. Refused while a search is narrowing the list, since the block being reordered would be half hidden. Grouped under goal rather than given a word of its own: this footer has no room for another item, and what the key acts on is the same thing n, e and c act on.",
+    },
+    Entry {
+        key: "J",
+        label: Label::Shared("goal"),
+        detail: "Move the selected goal down one place, the mirror of K. It stops at the last undated goal: the dated block below is ordered by date, so there is nowhere in it for a goal with no date to land.",
     },
     Entry {
         key: "f",
@@ -1255,7 +1265,7 @@ mod tests {
         );
         assert_eq!(
             Topic::Savings.footer(),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c goal · f fave · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c/K/J goal · f fave · U undo"
         );
         assert_eq!(
             Topic::Planning.footer(),

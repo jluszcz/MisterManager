@@ -39,6 +39,8 @@ goal with the container it belongs to:
 balances and targets, `a`
 allocates against the selected goal, `e` edits it, and `c` ends it — returning
 its value to unallocated, or moving it to another goal in the same container.
+Goals with no date lead the list, in an order you set with `K` and `J`; goals
+with one follow, soonest first, since a deadline decides a goal's place for it.
 `f` marks a goal, drawing its row as a band so it stands out among the rest;
 that is all it does, so a marked goal keeps its place under every filter and
 sort. The mark is stored on the goal, so unlike an account's color it does not
