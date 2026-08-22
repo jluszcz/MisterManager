@@ -97,8 +97,10 @@ fn full_width_row(class: &str, columns: usize, html: String) -> String {
 /// `4` on the keyboard should not find Planning under it here.
 ///
 /// The id doubles as the panel's and as the CSS selector's, so a tab added
-/// here is a tab wired everywhere.
-const TABS: [(&str, &str); 6] = [
+/// here is a tab wired everywhere -- including in `report`'s own check that
+/// the minifier left the switch working, which reads this list rather than
+/// restating it.
+pub(super) const TABS: [(&str, &str); 6] = [
     ("overview", "Overview"),
     ("cash", "Cash"),
     ("credit", "Credit"),

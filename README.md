@@ -260,6 +260,10 @@ nothing entered in it yet. That dropdown is a `<details>` full of radio buttons
 rather than a `<select>`: CSS cannot see which option of a `<select>` is
 chosen, so a real one would render and do nothing.
 
+The file is minified before it lands, since a page carrying every transaction
+crosses a sync folder on its way to a phone. Nothing about reading it changes;
+only viewing its source does.
+
 To write one without opening the application:
 
 ```bash
