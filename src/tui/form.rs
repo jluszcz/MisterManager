@@ -467,9 +467,16 @@ impl TxnForm {
     ///
     /// It is a *default*, not the user's own choice: like the prefilled date,
     /// it stays untouched, so an accepted suggestion may still move it.
-    pub fn add(
+    ///
+    /// The date arrives already built rather than as a day to open on,
+    /// because a `DateField` carries *two* dates -- the day it shows and the
+    /// day its `M/D` shorthand resolves against -- and those part company the
+    /// moment the form opens on anything but today. Two adjacent
+    /// `NaiveDate` parameters would be one transposition away from reading a
+    /// shorthand off the wrong year.
+    pub(super) fn add(
         accounts: Vec<account::Account>,
-        today: NaiveDate,
+        date: DateField,
         preselected: Option<AccountId>,
     ) -> Result<TxnForm> {
         ensure!(
@@ -482,7 +489,7 @@ impl TxnForm {
         Ok(TxnForm {
             editing: None,
             focus: TxnField::Description,
-            date: DateField::today(today),
+            date,
             amount: Field::default(),
             description: Field::default(),
             accounts,
@@ -491,7 +498,11 @@ impl TxnForm {
         })
     }
 
-    pub fn edit(accounts: Vec<account::Account>, today: NaiveDate, txn: &Txn) -> Result<TxnForm> {
+    pub(super) fn edit(
+        accounts: Vec<account::Account>,
+        today: NaiveDate,
+        txn: &Txn,
+    ) -> Result<TxnForm> {
         ensure!(
             !accounts.is_empty(),
             "there is no account of this kind to edit a transaction into"
@@ -1375,7 +1386,7 @@ mod tests {
     /// time.
     #[test]
     fn shift_steps_a_transaction_date_a_week() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         focused(&mut form, TxnField::Date);
         form.choice(Step::NEXT_WEEK);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-22");
@@ -1389,7 +1400,7 @@ mod tests {
     /// very field the hand reaches for it on.
     #[test]
     fn a_week_step_moves_a_selector_one_choice_like_a_plain_arrow() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         focused(&mut form, TxnField::Account);
         form.choice(Step::NEXT_WEEK);
         typed(&mut form, TxnField::Amount, "10");
@@ -1402,7 +1413,7 @@ mod tests {
     /// pressed on one must not reach the other.
     #[test]
     fn a_week_step_on_the_date_leaves_the_account_selector_alone() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         form.choice(Step::NEXT_WEEK);
         typed(&mut form, TxnField::Amount, "10");
         typed(&mut form, TxnField::Description, "Coffee");
@@ -1596,7 +1607,7 @@ mod tests {
     /// code and a name, and both are that account.
     #[test]
     fn the_account_selector_shows_one_colored_account() {
-        let form = TxnForm::add(accounts(), today(), None).unwrap();
+        let form = TxnForm::add(accounts(), DateField::today(today()), None).unwrap();
         let value = form.display(TxnField::Account);
         assert_eq!(value.plain_text(), "CHK — Everyday");
         assert_eq!(value.accounts().len(), 1);
@@ -1608,7 +1619,7 @@ mod tests {
     /// field.
     #[test]
     fn a_forms_ordinary_fields_name_no_account() {
-        let form = TxnForm::add(accounts(), today(), None).unwrap();
+        let form = TxnForm::add(accounts(), DateField::today(today()), None).unwrap();
         assert!(form.display(TxnField::Date).accounts().is_empty());
         assert!(form.display(TxnField::Amount).accounts().is_empty());
         assert!(form.display(TxnField::Description).accounts().is_empty());
@@ -1627,7 +1638,7 @@ mod tests {
 
     #[test]
     fn add_prefills_todays_date_and_commits_what_was_typed() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-15");
 
         typed(&mut form, TxnField::Amount, "$1,234.5");
@@ -1643,7 +1654,7 @@ mod tests {
 
     #[test]
     fn a_date_that_is_not_yyyy_mm_dd_is_refused_with_the_text_that_failed() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         typed(&mut form, TxnField::Amount, "10");
         typed(&mut form, TxnField::Description, "Coffee");
         focused(&mut form, TxnField::Date);
@@ -1660,7 +1671,7 @@ mod tests {
 
     #[test]
     fn an_empty_description_is_refused() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         typed(&mut form, TxnField::Amount, "10");
         let err = form.commit().unwrap_err();
         assert!(err.to_string().contains("description"), "{err}");
@@ -1668,7 +1679,7 @@ mod tests {
 
     #[test]
     fn the_account_selector_cycles_through_this_kinds_accounts() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         focused(&mut form, TxnField::Account);
         form.choice(Step::NEXT);
         typed(&mut form, TxnField::Amount, "10");
@@ -1681,7 +1692,7 @@ mod tests {
     /// is what a shared "cycle" key would do.
     #[test]
     fn cycling_does_nothing_unless_a_selector_is_focused() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         typed(&mut form, TxnField::Description, "Coffee");
         form.choice(Step::NEXT);
         form.choice(Step::NEXT);
@@ -1692,7 +1703,7 @@ mod tests {
 
     #[test]
     fn accepting_a_suggestion_fills_an_untouched_account_and_amount() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         typed(&mut form, TxnField::Description, "Mov");
 
         form.apply_suggestion(&suggestion("Movies", AccountId(2), 1_499));
@@ -1706,7 +1717,7 @@ mod tests {
     /// the description, is infuriating exactly once a month.
     #[test]
     fn accepting_a_suggestion_leaves_a_typed_amount_alone() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         typed(&mut form, TxnField::Amount, "22.50");
         typed(&mut form, TxnField::Description, "Mov");
 
@@ -1753,7 +1764,12 @@ mod tests {
     /// `a` on a ledger filtered to one account opens on that account.
     #[test]
     fn adding_with_a_preselected_account_opens_on_it() {
-        let form = TxnForm::add(accounts(), day(2026, 8, 15), Some(AccountId(2))).unwrap();
+        let form = TxnForm::add(
+            accounts(),
+            DateField::today(day(2026, 8, 15)),
+            Some(AccountId(2)),
+        )
+        .unwrap();
         assert_eq!(
             form.display(TxnField::Account).plain_text(),
             "SAV — Rainy Day"
@@ -1764,7 +1780,12 @@ mod tests {
     /// the same untouched-field rule the prefilled date does.
     #[test]
     fn a_preselected_account_still_yields_to_an_accepted_suggestion() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), Some(AccountId(2))).unwrap();
+        let mut form = TxnForm::add(
+            accounts(),
+            DateField::today(day(2026, 8, 15)),
+            Some(AccountId(2)),
+        )
+        .unwrap();
         typed(&mut form, TxnField::Description, "Mov");
 
         form.apply_suggestion(&suggestion("Movies", AccountId(1), 1_499));
@@ -1776,7 +1797,12 @@ mod tests {
     /// or the wrong kind — must not leave the selector pointing at nothing.
     #[test]
     fn a_preselected_account_that_is_not_on_offer_falls_back_to_the_first() {
-        let form = TxnForm::add(accounts(), day(2026, 8, 15), Some(AccountId(99))).unwrap();
+        let form = TxnForm::add(
+            accounts(),
+            DateField::today(day(2026, 8, 15)),
+            Some(AccountId(99)),
+        )
+        .unwrap();
         assert_eq!(
             form.display(TxnField::Account).plain_text(),
             "CHK — Everyday"
@@ -1785,7 +1811,7 @@ mod tests {
 
     #[test]
     fn a_form_with_no_accounts_to_write_to_is_refused() {
-        let err = TxnForm::add(Vec::new(), day(2026, 8, 15), None).unwrap_err();
+        let err = TxnForm::add(Vec::new(), DateField::today(day(2026, 8, 15)), None).unwrap_err();
         assert!(err.to_string().contains("account"), "{err}");
     }
 
@@ -2276,7 +2302,7 @@ mod tests {
     /// fill in anyway.
     #[test]
     fn the_description_comes_before_the_amount_a_suggestion_fills() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         typed(&mut form, TxnField::Description, "Mov");
         form.apply_suggestion(&suggestion("Movies", AccountId(2), 1_499));
 
@@ -2306,7 +2332,7 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
 
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal
@@ -2340,8 +2366,33 @@ mod tests {
     /// autocomplete reads.
     #[test]
     fn the_add_form_opens_on_the_description() {
-        let form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         assert_eq!(form.focus, TxnField::Description);
+    }
+
+    /// The date a form opens on and the day its `M/D` shorthand resolves
+    /// against are two different facts, and prefilling from an earlier row
+    /// must not collapse them. `9/10` typed in August is this September
+    /// whatever date the field was handed: read from a December prefill it
+    /// would land a year out, in silence.
+    #[test]
+    fn a_date_prefilled_from_an_earlier_row_still_reads_shorthand_from_today() {
+        let mut form = TxnForm::add(
+            accounts(),
+            DateField::on(day(2026, 8, 15), day(2026, 12, 20)),
+            None,
+        )
+        .unwrap();
+
+        focused(&mut form, TxnField::Date);
+        for _ in 0.."2026-12-20".len() {
+            form.backspace();
+        }
+        typed(&mut form, TxnField::Date, "9/10");
+        typed(&mut form, TxnField::Description, "Kite");
+        typed(&mut form, TxnField::Amount, "10");
+
+        assert_eq!(form.commit().unwrap().date, day(2026, 9, 10));
     }
 
     /// One opening position for one form: an edit arrives with every field
@@ -2373,7 +2424,7 @@ mod tests {
 
     #[test]
     fn the_arrows_step_a_transaction_date_by_a_day() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         focused(&mut form, TxnField::Date);
         form.choice(Step::NEXT);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-16");
@@ -2384,7 +2435,7 @@ mod tests {
 
     #[test]
     fn stepping_a_date_crosses_a_month_boundary() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 31), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 31)), None).unwrap();
         focused(&mut form, TxnField::Date);
         form.choice(Step::NEXT);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-09-01");
@@ -2394,7 +2445,7 @@ mod tests {
     /// conjure one: a half-typed date must not be rewritten under the caret.
     #[test]
     fn the_arrows_leave_a_field_that_is_not_a_date_as_typed() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         focused(&mut form, TxnField::Date);
         for _ in 0..10 {
             form.backspace();
@@ -2410,7 +2461,7 @@ mod tests {
     /// stay off the other's field.
     #[test]
     fn stepping_the_date_leaves_the_account_selector_alone() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         form.choice(Step::NEXT);
         typed(&mut form, TxnField::Description, "Coffee");
         typed(&mut form, TxnField::Amount, "10");
@@ -2419,7 +2470,7 @@ mod tests {
 
     #[test]
     fn cycling_the_account_leaves_the_date_alone() {
-        let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         focused(&mut form, TxnField::Account);
         form.choice(Step::NEXT);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-15");

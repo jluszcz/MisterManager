@@ -225,7 +225,7 @@ const LEDGER: [Entry; 11] = [
     Entry {
         key: "a",
         label: Label::Shared("money"),
-        detail: "Add a transaction, opening on the account the ledger is filtered to, or the first when the filter is All. Grouped with t and p under one footer word: all three write new rows, where e and d act on the one selected -- and the ledgers' footer is the widest in the app, so the verbs are spent here and read back in this panel.",
+        detail: "Add a transaction, opening on the account the ledger is filtered to, or the first when the filter is All, and on the date the last row added this session was written for -- today, until a row is added. Entering a statement is a run of rows landing on the same few days, and moving off today is how you say which days those are. Correcting a row with e is not that statement and leaves the date alone. Grouped with t and p under one footer word: all three write new rows, where e and d act on the one selected -- and the ledgers' footer is the widest in the app, so the verbs are spent here and read back in this panel.",
     },
     Entry {
         key: "t",

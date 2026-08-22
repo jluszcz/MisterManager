@@ -288,13 +288,29 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   disagree.
 - **A form's prefilled fields lead, and it opens on the first field the hand has to fill.** Those
   are two rules, and on `TxnForm` they point at different fields: the account arrives from the
-  ledger's own filter and the date arrives prefilled, so `TxnField::ORDER` runs
+  ledger's own filter and the date from the last row added, so `TxnField::ORDER` runs
   `Account, Date, Description, Amount` — two defaults to scan, then two fields to type — while the
   form opens focused on `Description`, which is `ORDER[2]`. A form that opened on a field it had
   already answered would cost two `Tab`s before the first character, every time. `Shift`+`Tab`
   reaches the defaults on the rounds where one of them is wrong.
   `RecurringTxnField::ORDER` satisfies both rules at once, its description being the first field
   either way, which is why nothing there had to change.
+- **`a` on a ledger opens on the date the last row *added* this session was written for.**
+  `App::entry_date` is view state beside `adhoc` — `None` until the first add, which is what leaves
+  today as the answer for the first row without a second rule saying so, and restarting is what
+  returns it there. Entering a statement is a run of rows landing on the same few days, so the day
+  the last one was written for is a better guess than today, and moving off today is how the owner
+  says which days those are. **Only an add writes it**: `e` is a correction to a row already
+  written rather than a statement about the day being worked on, and a fix to something months back
+  that dragged the next new row there with it would be worse than no memory at all. One field
+  serves both ledgers, because what it records is the day being entered for and a statement and the
+  card rows on it are one sitting.
+  - **The day a form opens on and the day its `M/D` shorthand resolves against are two different
+    facts.** `DateField` has carried both since it existed, and they part company the moment a form
+    opens on anything but today: `9/10` typed in August is this September, and read off a December
+    prefill it would land a year out in silence. So `TxnForm::add` takes an already-built
+    `DateField` rather than a day to open on — two adjacent `NaiveDate` parameters would be one
+    transposition away from exactly that.
 - **`Shift` is the only modifier the app reads, and it always means the same thing: the same nudge,
   a bigger step.** It is on the key that already means "move this", rather than a second letter for
   one action, and it reaches every date rather than only the Overview's — a horizon several paydays
