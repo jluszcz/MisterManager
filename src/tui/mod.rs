@@ -31,6 +31,7 @@ pub mod recurring_txn;
 pub mod savings;
 mod search;
 pub mod style;
+mod text;
 pub mod worksheet;
 
 use crate::account_label::{Account, Label};

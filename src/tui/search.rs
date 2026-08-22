@@ -14,8 +14,12 @@
 //!
 //! [`Ledger`]: super::ledger::Ledger
 
+use super::Label;
+use super::form::{Caret, Step, value_spans};
+use super::text::{self, Edit, TextBuffer};
 use crate::money::Cents;
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::text::Span;
 
 /// A search box, without the list it narrows.
 ///
@@ -26,7 +30,7 @@ use ratatui::crossterm::event::KeyCode;
 /// [`Cursor`]: super::cursor::Cursor
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct SearchBox {
-    needle: String,
+    needle: TextBuffer,
     open: bool,
 }
 
@@ -38,7 +42,14 @@ impl SearchBox {
     /// What has been typed. Empty means "match everything", which is why
     /// leaving the box does not have to clear the list.
     pub(super) fn needle(&self) -> &str {
-        &self.needle
+        self.needle.value()
+    }
+
+    /// Where the box draws its caret: on the needle while it is open, and
+    /// nowhere once `Enter` has left it narrowing the list, since a kept
+    /// filter takes no keystrokes.
+    pub(super) fn caret(&self) -> Option<Caret> {
+        self.open.then(|| Caret::in_buffer(&self.needle))
     }
 
     /// Whether keys are going into the box rather than to the screen's own
@@ -63,11 +74,19 @@ impl SearchBox {
     }
 
     pub(super) fn push(&mut self, c: char) {
-        self.needle.push(c);
+        self.needle.insert(c);
     }
 
-    pub(super) fn backspace(&mut self) {
-        self.needle.pop();
+    /// Answer an editing key over the needle, and say what it did.
+    pub(super) fn edit(&mut self, key: KeyEvent) -> Edit {
+        text::edit_key(&mut self.needle, key)
+    }
+
+    /// Move the caret one character. A search box has no date and no
+    /// selector, so `←`/`→` are the caret's here with nothing to share them
+    /// with.
+    pub(super) fn step_caret(&mut self, step: Step) {
+        self.needle.step(step.direction());
     }
 }
 
@@ -139,6 +158,13 @@ pub(super) trait Search {
         self.search_box().needle()
     }
 
+    /// The needle as a screen draws it: the text, with the caret over one
+    /// character of it while the box is open -- see [`SearchBox::caret`].
+    fn search_spans(&self) -> Vec<Span<'static>> {
+        let box_ = self.search_box();
+        value_spans(&Label::from(box_.needle()), box_.caret())
+    }
+
     /// The needle as something a row can be held up against -- see
     /// [`Matcher`]. A `refilter` builds one and asks it about every row.
     fn matcher(&self) -> Matcher {
@@ -163,9 +189,19 @@ pub(super) trait Search {
         self.refilter();
     }
 
-    fn backspace_search(&mut self) {
-        self.search_box_mut().backspace();
-        self.refilter();
+    /// Answer an editing key, re-narrowing the list only when the needle
+    /// actually changed: a caret moved across it leaves every row where it
+    /// was.
+    fn edit_search(&mut self, key: KeyEvent) -> Edit {
+        let edit = self.search_box_mut().edit(key);
+        if edit == Edit::Changed {
+            self.refilter();
+        }
+        edit
+    }
+
+    fn step_search_caret(&mut self, step: Step) {
+        self.search_box_mut().step_caret(step);
     }
 }
 
@@ -173,13 +209,13 @@ pub(super) trait Search {
 ///
 /// A screen's key handler tries this while the box is open, ahead of its own
 /// operators. `Esc` abandons the filter; `Enter` leaves the box and keeps it.
-pub(super) fn search_key(target: &mut impl Search, code: KeyCode) -> bool {
-    match code {
+pub(super) fn search_key(target: &mut impl Search, key: KeyEvent) -> bool {
+    match key.code {
         KeyCode::Esc => target.clear_search(),
         KeyCode::Enter => target.end_search(),
-        KeyCode::Backspace => target.backspace_search(),
-        KeyCode::Char(c) => target.push_search(c),
-        _ => return false,
+        KeyCode::Left => target.step_search_caret(Step::PREVIOUS),
+        KeyCode::Right => target.step_search_caret(Step::NEXT),
+        _ => return target.edit_search(key) != Edit::Ignored,
     }
     true
 }
@@ -205,6 +241,8 @@ pub(super) fn escape_kept_filter(target: &mut impl Search) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::form::backspace_key;
+    use ratatui::crossterm::event::KeyModifiers;
 
     /// The four figures the amount tests below are written against, as a row
     /// would offer them.
@@ -370,10 +408,10 @@ mod tests {
         }
         assert_eq!(screen.visible, vec!["Lego", "Legal Fees"]);
 
-        screen.backspace_search();
+        screen.edit_search(backspace_key());
         assert_eq!(screen.visible, vec!["Lego", "Legal Fees"]);
-        screen.backspace_search();
-        screen.backspace_search();
+        screen.edit_search(backspace_key());
+        screen.edit_search(backspace_key());
         assert_eq!(screen.visible, vec!["Lego", "Legal Fees", "Dropbox"]);
     }
 
@@ -406,7 +444,7 @@ mod tests {
         assert_eq!(screen.refilters, 0, "opening the box changes no needle");
 
         screen.push_search('L');
-        screen.backspace_search();
+        screen.edit_search(backspace_key());
         screen.clear_search();
         assert_eq!(screen.refilters, 3);
 
@@ -414,23 +452,44 @@ mod tests {
         assert_eq!(screen.refilters, 3, "leaving the box keeps the needle");
     }
 
+    fn press(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
     #[test]
-    fn the_four_search_keys_are_consumed_and_nothing_else_is() {
+    fn the_box_consumes_the_keys_it_answers_and_nothing_else() {
         let mut screen = Screen::new(vec!["Lego", "Dropbox"]);
         screen.begin_search();
 
-        assert!(search_key(&mut screen, KeyCode::Char('L')));
+        assert!(search_key(&mut screen, press(KeyCode::Char('L'))));
         assert_eq!(screen.search(), "L");
-        assert!(search_key(&mut screen, KeyCode::Backspace));
+        assert!(search_key(&mut screen, press(KeyCode::Backspace)));
         assert_eq!(screen.search(), "");
-        assert!(search_key(&mut screen, KeyCode::Enter));
+        assert!(search_key(&mut screen, press(KeyCode::Enter)));
         assert!(!screen.is_searching());
 
         screen.begin_search();
-        assert!(search_key(&mut screen, KeyCode::Esc));
+        assert!(search_key(&mut screen, press(KeyCode::Esc)));
         assert!(!screen.is_searching());
 
         // A key the box has no meaning for falls through to the screen.
-        assert!(!search_key(&mut screen, KeyCode::Up));
+        assert!(!search_key(&mut screen, press(KeyCode::Up)));
+    }
+
+    /// A needle narrowed the list on the way in, so a caret moved back
+    /// across it must not send every row through the matcher again.
+    #[test]
+    fn moving_the_caret_in_the_box_refilters_nothing() {
+        let mut screen = Screen::new(vec!["Lego", "Dropbox"]);
+        screen.begin_search();
+        search_key(&mut screen, press(KeyCode::Char('L')));
+        let refilters = screen.refilters;
+
+        assert!(search_key(&mut screen, press(KeyCode::Left)));
+        assert!(search_key(
+            &mut screen,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        ));
+        assert_eq!(screen.refilters, refilters);
     }
 }

@@ -403,6 +403,7 @@ mod tests {
     use crate::db::account::{Group, Kind};
     use crate::db::goal::Goal;
     use crate::tui::MIN_WIDTH;
+    use crate::tui::form::backspace_key;
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
@@ -763,9 +764,9 @@ mod tests {
         }
         assert_eq!(names(&savings), ["Apple Watch"]);
 
-        savings.backspace_search();
-        savings.backspace_search();
-        savings.backspace_search();
+        savings.edit_search(backspace_key());
+        savings.edit_search(backspace_key());
+        savings.edit_search(backspace_key());
         assert_eq!(names(&savings).len(), 4);
     }
 

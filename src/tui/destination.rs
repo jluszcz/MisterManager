@@ -9,6 +9,7 @@ use super::cursor::{Cursor, Scroll};
 use super::search::{Search, SearchBox};
 use crate::db::GoalId;
 use crate::plan_line::Line;
+use ratatui::text::{Line as TextLine, Span};
 
 /// A goal as the list offers it: what it is called and where it sits.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,15 +150,25 @@ impl Chooser {
             .map(|i| &self.choices[*i])
     }
 
-    pub fn title(&self) -> String {
-        let mut title = format!(
+    /// The border's title. A `Line` rather than a `String` because this modal
+    /// has no footer: its title is where the `/` box is drawn, caret and all.
+    ///
+    /// An open box is drawn even while it is empty, which is the state every
+    /// `/` begins in: with nowhere else to show it, a title that waited for
+    /// the first character would leave `/` looking like a key that does
+    /// nothing, and the `Esc` clearing the box after it like a second one. A
+    /// shut box with a needle still in it is drawn too -- that is a filter
+    /// narrowing the list, and it has to be visible to be undone.
+    pub(super) fn title(&self) -> TextLine<'static> {
+        let mut spans = vec![Span::raw(format!(
             "{} — / search · Enter choose · Esc cancel",
             self.line.label()
-        );
-        if !self.search().is_empty() {
-            title.push_str(&format!(" · /{}", self.search()));
+        ))];
+        if self.is_searching() || !self.search().is_empty() {
+            spans.push(Span::raw(" · /"));
+            spans.extend(self.search_spans());
         }
-        title
+        TextLine::from(spans)
     }
 }
 
@@ -279,6 +290,7 @@ pub fn render(frame: &mut Frame, chooser: &Chooser) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::form::backspace_key;
 
     fn offered() -> Vec<Offered> {
         [
@@ -497,7 +509,7 @@ mod tests {
         assert_eq!(chooser.choices().len(), 2);
 
         for _ in 0.."ation 2026".len() {
-            chooser.backspace_search();
+            chooser.edit_search(backspace_key());
         }
         assert_eq!(chooser.choices().len(), 3);
     }
@@ -507,9 +519,73 @@ mod tests {
     #[test]
     fn the_title_names_the_line_and_the_live_search() {
         let mut chooser = chooser(None, None);
-        assert!(chooser.title().contains("Mom & Dad"));
+        assert!(title(&chooser).contains("Mom & Dad"));
 
         chooser.push_search('v');
-        assert!(chooser.title().contains("/v"), "{}", chooser.title());
+        assert!(title(&chooser).contains("/v"), "{}", title(&chooser));
+    }
+
+    /// This modal has no footer, so its title is where the box itself is
+    /// drawn -- and the caret has to say the box is taking keystrokes. A
+    /// filter kept by `Enter` takes none, and draws none.
+    #[test]
+    fn the_title_carries_a_caret_only_while_the_box_is_open() {
+        use ratatui::style::Modifier;
+
+        let mut chooser = chooser(None, None);
+        chooser.begin_search();
+        chooser.push_search('v');
+        chooser.push_search('a');
+        chooser.step_search_caret(crate::tui::form::Step::PREVIOUS);
+
+        let caret = |chooser: &Chooser| -> String {
+            chooser
+                .title()
+                .spans
+                .iter()
+                .filter(|s| s.style.add_modifier.contains(Modifier::REVERSED))
+                .map(|s| s.content.as_ref())
+                .collect()
+        };
+        assert!(title(&chooser).ends_with("/va"), "{}", title(&chooser));
+        assert_eq!(caret(&chooser), "a");
+
+        chooser.end_search();
+        assert!(title(&chooser).ends_with("/va"), "{}", title(&chooser));
+        assert_eq!(caret(&chooser), "");
+    }
+
+    /// An open box is drawn before anything is typed into it, which is the
+    /// state every `/` begins in. With no footer to hold it, a title that
+    /// waited for the first character would leave `/` looking like a key that
+    /// does nothing -- and the `Esc` that closes the empty box like a second
+    /// one.
+    #[test]
+    fn the_title_shows_the_box_as_soon_as_it_opens() {
+        use ratatui::style::Modifier;
+
+        let mut chooser = chooser(None, None);
+        assert!(!title(&chooser).contains(" · /"), "{}", title(&chooser));
+
+        chooser.begin_search();
+
+        assert!(title(&chooser).contains(" · /"), "{}", title(&chooser));
+        let carets = chooser
+            .title()
+            .spans
+            .iter()
+            .filter(|s| s.style.add_modifier.contains(Modifier::REVERSED))
+            .count();
+        assert_eq!(carets, 1, "the open box draws no caret to type into");
+    }
+
+    /// The title's words, for the assertions that are about wording.
+    fn title(chooser: &Chooser) -> String {
+        chooser
+            .title()
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect()
     }
 }
