@@ -623,6 +623,30 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   title is a chain of filter terms, and the code is the tighter one. Widening a name column is
   still paid for out of another column on the same screen, so the width tests are the guard — see
   *How wide a screen is* above.
+- **A ledger row may have no description, and `tui::description` is what draws one that does not.**
+  A cash withdrawal, or a card charge whose merchant is on the receipt and nowhere worth retyping,
+  is worth having for its amount alone — so `TxnForm::commit` accepts a blank, and a form that
+  refused one would only be worked around by typing a placeholder worse than the blank. It draws as
+  `—`, the same mark every other absence in the app draws: an account with no color, a fund with no
+  percentage, a recurring transaction with no horizon. Three callers, and they are the three places
+  a description is put in front of a human — the ledger's `Description` column, the status line a
+  write reports on, and the label on the delete confirmation. The last two are not cosmetic: a
+  status line reading `added  42.50 on …` has a gap between two spaces where a figure looks to have
+  failed to render, and a delete confirmation is the one irreversible question on the screen, whose
+  label is the whole of what identifies the row being taken away.
+  - **The `/` filter is deliberately not a caller.** `Matcher` matches the stored text, so typing an
+    em dash finds nothing rather than sweeping up every unnamed row — the same split as
+    `search::searchable_amount`, which matches the figure rather than what the screen drew.
+  - **A blank is stored as `""`, never as whitespace.** `commit` trims before it stores, so nothing
+    downstream has to ask whether a description is empty or merely looks it. `txn::autocomplete`
+    needs no guard of its own for the same reason a suggestion never appears over an empty field:
+    `refresh_suggestions` clears the popup when the field is blank, and a `LIKE 'prefix%'` over a
+    non-empty prefix cannot match `""`. An unnamed row is therefore never suggested onto a later one.
+  - **The transfer and recurring-transaction forms still refuse a blank, and that asymmetry is the
+    point.** A transfer writes both its legs from one description, and a pair of unnamed rows in two
+    different accounts is the one shape that cannot be read back out of the ledger later; a
+    recurring rule's description is copied onto every row it generates and is that rule's only
+    identity on screen 8. Both arrive prefilled, so refusing costs nothing that was typed.
 - **A right-aligned column takes a right-aligned header**, through `tui::right_header` — one
   decision in `mod.rs` rather than each screen deciding for itself. Left over right, a
   header sits at the far side of its column from every figure in it and reads as a label for the

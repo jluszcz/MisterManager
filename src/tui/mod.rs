@@ -132,6 +132,26 @@ pub fn share_of(pot: Cents, n: i64) -> Result<Cents> {
     Ok(Cents::from_dollars(pot.dollars() / n))
 }
 
+/// What a transaction's description reads as on screen.
+///
+/// A ledger row may be committed with no description -- a cash withdrawal, a
+/// card charge whose merchant is on the receipt -- so "no description" is a
+/// supported state rather than a row half entered. It draws as an em dash, which
+/// is what every other absence in the app draws as: an account with no color,
+/// a fund with no percentage, a recurring transaction with no horizon.
+///
+/// Display only, and the stored value stays the empty string it was written
+/// as. The three callers are the three places a description is put in front
+/// of a human -- the ledger's Description column, the status line a write
+/// reports on, and the label on the delete confirmation -- and each would
+/// otherwise leave a gap the eye reads as a rendering fault rather than as a
+/// blank the owner chose. What is deliberately *not* a caller is the `/`
+/// filter, which matches the stored text: typing an em dash must not find
+/// every unnamed row.
+pub fn description(raw: &str) -> &str {
+    if raw.trim().is_empty() { "—" } else { raw }
+}
+
 /// A money cell: right-aligned, and colored by [`style::amount_color`].
 ///
 /// Every screen that renders a `Cents` goes through here, so "negative reads
@@ -393,6 +413,25 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_description_with_text_in_it_reads_as_itself() {
+        assert_eq!(description("Whole Foods"), "Whole Foods");
+    }
+
+    #[test]
+    fn a_description_that_was_never_typed_reads_as_an_em_dash() {
+        assert_eq!(description(""), "—");
+    }
+
+    /// The form trims before it stores, so a stored description is never
+    /// whitespace -- but a row written before that trim, or by hand in SQL,
+    /// still has to draw as the blank it is rather than as a column of
+    /// spaces.
+    #[test]
+    fn a_description_of_nothing_but_whitespace_reads_as_an_em_dash() {
+        assert_eq!(description("   "), "—");
+    }
 
     /// The cents are dropped rather than carried: the allocation is a whole
     /// dollar figure, and what is left behind stays in the container's

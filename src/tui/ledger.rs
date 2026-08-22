@@ -499,7 +499,7 @@ pub fn render(frame: &mut Frame, area: Rect, ledger: &Ledger, today: NaiveDate) 
             Row::new(vec![
                 Cell::from(t.date.to_string()),
                 account_cell(&super::Account::named(ledger.accounts(), t.account_id)),
-                Cell::from(t.description.clone()),
+                Cell::from(super::description(&t.description).to_string()),
                 amount(t.cents),
             ])
             .style(if t.date > today {
@@ -1132,6 +1132,42 @@ mod tests {
             text.contains("Account"),
             "the header names the column: {text}"
         );
+    }
+
+    /// A row committed with no description draws the em dash every other
+    /// absence in the app draws, rather than a run of spaces the eye reads as
+    /// a column that failed to render.
+    #[test]
+    fn a_row_with_no_description_draws_an_em_dash_in_that_column() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let today = day(2026, 8, 15);
+        let mut ledger = ledger(today);
+        ledger.set_rows(vec![described(1, "", 450)]);
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &ledger, today);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let text: String = buffer.content.iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("—"), "{text}");
+    }
+
+    /// The em dash is drawn, never stored, so it is not what the filter
+    /// matches on: typing one must not sweep up every unnamed row.
+    #[test]
+    fn searching_for_an_em_dash_does_not_find_a_row_with_no_description() {
+        let mut ledger = unfiltered_ledger();
+        ledger.set_rows(vec![described(1, "", 450), described(2, "Coffee", 450)]);
+
+        search_for(&mut ledger, "—");
+
+        assert!(descriptions(&ledger).is_empty());
     }
 
     /// A right-aligned column wants a right-aligned header over it; left over
