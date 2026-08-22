@@ -293,9 +293,27 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   form opens focused on `Description`, which is `ORDER[2]`. A form that opened on a field it had
   already answered would cost two `Tab`s before the first character, every time. `Shift`+`Tab`
   reaches the defaults on the rounds where one of them is wrong.
-  `RecurringTxnField::ORDER` satisfies both rules at once, its description being the first field
-  either way, which is why nothing there had to change.
-- **`a` on a ledger opens on the date the last row *added* this session was written for.**
+  **`TxnForm` is the form both rules hold on, and the other two each keep one.** The rules are
+  worth stating anyway — they are what a new form is designed against — but a reader checking one
+  against `ORDER` will find the exemptions, so they are named here rather than left to be
+  rediscovered as bugs:
+  - `RecurringTxnField::ORDER` runs `Description, Amount, Account, Cadence, Anchor, Horizon` and
+    opens on `ORDER[0]`, so the second rule holds and the first does not: the prefilled `Account`
+    and `Anchor` sit *after* the typed `Amount`. What leads on `TxnForm` are two prefills that
+    arrived **answered** — a filter the owner set, a day they last worked on — while this form's
+    account is index 0 of a list nothing chose and its anchor is today because a form has to open
+    somewhere. Leading with those would put two fields still to be decided ahead of the two that
+    say what the rule *is*, which is the cost the first rule exists to avoid rather than a case
+    of it.
+  - `TransferField::ORDER` opens on `Date`, which is prefilled, so the first rule holds and the
+    second does not. `t` and `p` are pressed once or twice a sitting where `a` is pressed in runs,
+    and every other field is either prefilled from the kind (`Transfer`, `CC1 Payment`) or a pick
+    from a list, so there is no run of typing for an opening `Tab` to be measured against — and
+    the date, arriving from `App::entry_date`, is the guess on the form worth seeing. `a` answers
+    the same hazard the other way, by naming the date in its confirmation, because there the
+    keystroke is charged on every row.
+- **`a`, `t` and `p` on a ledger open on the date the last row *added* this session was written
+  for.**
   `App::entry_date` is view state beside `adhoc` — `None` until the first add, which is what leaves
   today as the answer for the first row without a second rule saying so, and restarting is what
   returns it there. Entering a statement is a run of rows landing on the same few days, so the day
@@ -304,7 +322,17 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   written rather than a statement about the day being worked on, and a fix to something months back
   that dragged the next new row there with it would be worse than no memory at all. One field
   serves both ledgers, because what it records is the day being entered for and a statement and the
-  card rows on it are one sitting.
+  card rows on it are one sitting — and it serves all three keys, because the card payment at the
+  bottom of a statement belongs to the same sitting as the rows above it. `App::entry_field` is
+  the one place the fallback to today is written, so a form cannot open on a different answer than
+  the one beside it.
+  - **The confirmation names the date, whatever it is.** The form opens on `Description` rather
+    than on the date, so a row can be written without a keystroke ever visiting the date field,
+    and the status line is the only place the day it landed on appears — which matters most
+    exactly when the prefill is stale and the ledger's own month window is showing somewhere else
+    entirely, so the row is not on screen to contradict it. Unconditionally, because a line that
+    spoke up only when the date was surprising is a line the eye learns to skip on the rounds it
+    says nothing.
   - **The day a form opens on and the day its `M/D` shorthand resolves against are two different
     facts.** `DateField` has carried both since it existed, and they part company the moment a form
     opens on anything but today: `9/10` typed in August is this September, and read off a December
@@ -332,8 +360,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   at all — which is the distinction made visible. Every `M/D` reading is present or future and a
   birth date is decades past, so a shorthand there could only ever be a wrong year that nothing
   refuses.
-- **A date field entering something new opens on today, and the four that do not each say why.**
+- **A date field entering something new opens on today, and the ones that do not each say why.**
   `DateField::today` is the default and most fields take it. The exceptions:
+  - The three forms that write a ledger row — `a`, `t` and `p` — open on `App::entry_date` through
+    `App::entry_field`, which is today until a row has been added this session. The bullet above is
+    the whole of why.
   - A new goal's `Goal Date` opens on the first of the next month, through `GoalForm::opening_date`:
     a goal date is a *deadline*, and today is never one.
   - `t`'s confirmation opens two business days out, through `calc::business_day::add(today, 2)`:

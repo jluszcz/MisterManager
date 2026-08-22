@@ -230,12 +230,12 @@ const LEDGER: [Entry; 11] = [
     Entry {
         key: "t",
         label: Label::Shared("money"),
-        detail: "Move money between two cash accounts. Cash ledger only: a transfer leaves an account you hold, so there is nothing on a card for it to start from.",
+        detail: "Move money between two cash accounts, opening on the same date a does -- the day the last row added this session was written for. Cash ledger only: a transfer leaves an account you hold, so there is nothing on a card for it to start from.",
     },
     Entry {
         key: "p",
         label: Label::Shared("money"),
-        detail: "Pay a credit card from a cash account, writing both sides.",
+        detail: "Pay a credit card from a cash account, writing both sides. Opens on the same date a does: the payment at the bottom of a statement belongs to the sitting the rows above it were entered in.",
     },
     Entry {
         key: "e",
