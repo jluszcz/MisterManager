@@ -294,10 +294,11 @@ profile       = "mistermanager"   # default; a profile in ~/.aws/credentials
 interval_days = 7                 # default
 ```
 
-A key the file carries that `mm` does not read — a `[report]` section, a misspelled
+A key the file carries that `mm` does not read — a `[charts]` section, a misspelled
 `interval_dayz` — is skipped rather than failing the run, so everything the build does understand
-still takes effect. What that cannot hide is a misspelled `bucket`, because it has no default: the
-one typo that would leave backups silently switched off is still an error.
+still takes effect. What that cannot hide is a misspelled `bucket`, or a misspelled `dir` in
+`[report]`, because neither has a default: the one typo that would leave a feature silently
+switched off is still an error.
 
 The key prefix is not a setting. Objects go under `mistermanager/`, which is fixed in
 `backup::PREFIX` because the IAM policy is scoped to that path and only a `terraform apply` can

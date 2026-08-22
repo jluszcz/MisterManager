@@ -56,7 +56,6 @@ fn default_interval_days() -> u32 {
 /// key: the section's presence is the switch, and a second way to say "off"
 /// would be a second thing to get wrong.
 #[derive(Debug, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct Report {
     /// No default. It names where the owner's finances are written, the same
     /// kind of fact as [`Backup::bucket`], so it cannot be a literal in a
@@ -222,16 +221,15 @@ mod tests {
         assert_eq!(report.dir().unwrap(), PathBuf::from("/tmp/reports"));
     }
 
-    /// The same rule the backup section follows: a typo must not leave the
-    /// feature silently switched off.
+    /// The same rule the backup section follows, and it holds for the same
+    /// reason: `dir` has no default, so the typo that would leave the report
+    /// silently switched off is a missing required field rather than an
+    /// unknown key.
     #[test]
-    fn a_misspelled_report_key_is_an_error_rather_than_a_silently_disabled_report() {
-        let path = fixture(
-            "report_typo",
-            "[report]\ndir = \"/tmp/reports\"\ndirectory = \"/tmp/other\"\n",
-        );
+    fn a_misspelled_dir_is_an_error_rather_than_a_silently_disabled_report() {
+        let path = fixture("report_typo", "[report]\ndirectory = \"/tmp/other\"\n");
         let err = format!("{:#}", load(&path).unwrap_err());
-        assert!(err.contains("directory"), "unhelpful error: {err}");
+        assert!(err.contains("dir"), "unhelpful error: {err}");
     }
 
     #[test]
