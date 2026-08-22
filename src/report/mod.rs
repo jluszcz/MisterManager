@@ -583,8 +583,17 @@ mod tests {
         let page = std::fs::read_to_string(&written.path).unwrap();
 
         assert!(is_the_page(&page), "the doctype did not survive");
+        // The label is what makes a tab clickable, so the pairing is what
+        // says the tab is there: `Cash` and `Credit` are Overview band
+        // labels too, and matching the name alone would pass with the whole
+        // `<nav>` gone. Quotes come off ahead of the match rather than into
+        // it, so which attributes the minifier unquotes stays its business.
+        let unquoted = page.replace('"', "");
         for (id, name) in html::TABS {
-            assert!(page.contains(name), "no {id} tab label");
+            assert!(
+                unquoted.contains(&format!("for={id}>{name}</label>")),
+                "no {id} tab label"
+            );
             assert!(page.contains(&format!("{id}-panel")), "no {id} panel");
             assert!(
                 page.contains(&format!("#{id}:checked~#{id}-panel")),
