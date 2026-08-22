@@ -19,10 +19,9 @@ fn row_of(range: &import::SheetRange, column: usize, name: &str) -> usize {
 
 /// Like `row_of`, but returns the `occurrence`-th (0-indexed) row holding
 /// `name`. A few goal names repeat in the live workbook -- one three times --
-/// so matching by name alone is ambiguous. Goals import in sheet row order and
-/// `goal::list_with_balances` returns them in that same order (sort then id
-/// both increase with row), so a per-name occurrence counter kept alongside
-/// the iteration over imported goals recovers the right row.
+/// so matching by name alone is ambiguous. A per-name occurrence counter kept
+/// alongside an iteration in `in_sheet_order` recovers the right row: the Nth
+/// goal named X is then the Nth row named X.
 fn nth_row_of(range: &import::SheetRange, column: usize, name: &str, occurrence: usize) -> usize {
     (0..range.height())
         .filter(|r| {
@@ -34,6 +33,19 @@ fn nth_row_of(range: &import::SheetRange, column: usize, name: &str, occurrence:
         })
         .nth(occurrence)
         .unwrap_or_else(|| panic!("no occurrence #{occurrence} in column {column} named {name:?}"))
+}
+
+/// Imported goals in the sheet's own row order, which is what an occurrence
+/// counter has to walk to line up with `nth_row_of`.
+///
+/// Deliberately not the order `goal::list_with_balances` returns: that is the
+/// order the screens show, undated goals by hand and dated ones by deadline,
+/// and a deadline has nothing to do with the row a goal was imported from.
+/// `sort` is assigned per block as the import walks down the sheet and `id`
+/// increases with it, so the pair recovers that walk.
+fn in_sheet_order(mut goals: Vec<goal::GoalWithBalance>) -> Vec<goal::GoalWithBalance> {
+    goals.sort_by_key(|g| (g.goal.sort, g.goal.id));
+    goals
 }
 
 /// A fully imported database and the open workbook, at the workbook's own
@@ -124,13 +136,14 @@ fn every_goal_matches_its_row() {
         return;
     };
     let sheet = import::sheet(&mut sheets, "Savings").unwrap();
-    let goals = goal::list_with_balances(&db, container(&db, Block::Goals)).unwrap();
+    let goals =
+        in_sheet_order(goal::list_with_balances(&db, container(&db, Block::Goals)).unwrap());
 
     // Match by name: the block is not contiguous, so an index offset would
     // silently compare later goals against blank cells. A few names repeat,
     // so track how many times each has been seen and take the matching
-    // occurrence -- goals import in sheet row order, so the Nth goal named X
-    // is the Nth row named X.
+    // occurrence -- which only lines up because `in_sheet_order` put the
+    // goals back in the order the rows are read in.
     let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for g in &goals {
         let occurrence = seen.entry(g.goal.name.as_str()).or_insert(0);
@@ -173,7 +186,8 @@ fn per_paycheck_reproduces_the_sheets_column_f() {
     let today = workbook_today(&mut sheets);
     let period_days = setting::get(&db, key::PAY_PERIOD_DAYS).unwrap().unwrap();
     let sheet = import::sheet(&mut sheets, "Savings").unwrap();
-    let goals = goal::list_with_balances(&db, container(&db, Block::Goals)).unwrap();
+    let goals =
+        in_sheet_order(goal::list_with_balances(&db, container(&db, Block::Goals)).unwrap());
 
     // A few names repeat; see the comment in `every_goal_matches_its_row`
     // for why an occurrence counter is needed to disambiguate them.

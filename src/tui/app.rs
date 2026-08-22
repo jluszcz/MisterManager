@@ -2226,9 +2226,12 @@ impl App {
                     .context("no sales tax rate is configured; import Constants first")?,
             ),
         };
-        // The new goals land at the end of the container's list in the order
-        // the picker showed them -- which is the ticked group first, since
-        // that is the order the picker sorted itself into.
+        // Every goal created here is dated, so each takes its place in the
+        // container's dated block by deadline rather than landing at the end.
+        // `sort` still runs in the order the picker showed them -- the ticked
+        // group first, since that is the order the picker sorted itself into --
+        // but among dated goals it decides only which of two falling on the
+        // same day comes first.
         let first_sort = goal::next_sort(&self.db, container)?;
         let mut new_goals = Vec::with_capacity(chosen.len());
         for (offset, entry) in chosen.iter().enumerate() {

@@ -8,14 +8,14 @@ use mistermanager::money::Cents;
 use mistermanager::savings_block::Block;
 use mistermanager::tui::savings::{Row, Savings};
 use mistermanager::{import, tui};
+use std::collections::HashMap;
 
 /// The `occurrence`-th (0-indexed) row holding `name` in `column`.
 ///
 /// A few goal names repeat in the live workbook -- one three times -- so
-/// matching by name alone is ambiguous. Goals import in sheet row order and
-/// `goal::list_with_balances` returns them in that same order (sort then id
-/// both increase with row), so a per-name occurrence counter kept alongside
-/// the iteration over imported goals recovers the right row.
+/// matching by name alone is ambiguous. A per-name occurrence counter kept
+/// alongside an iteration in `sheet_order` recovers the right row: the Nth
+/// goal named X is then the Nth row named X.
 fn nth_row_of(range: &import::SheetRange, column: usize, name: &str, occurrence: usize) -> usize {
     (0..range.height())
         .filter(|r| {
@@ -27,6 +27,25 @@ fn nth_row_of(range: &import::SheetRange, column: usize, name: &str, occurrence:
         })
         .nth(occurrence)
         .unwrap_or_else(|| panic!("no occurrence #{occurrence} in column {column} named {name:?}"))
+}
+
+/// Each of a container's goals by id, at its position in the sheet's own row
+/// order -- the order an occurrence counter has to walk to line up with
+/// `nth_row_of`.
+///
+/// The screen's order cannot be walked directly: it shows undated goals by
+/// hand and dated ones by deadline, and a deadline has nothing to do with the
+/// row a goal was imported from. `sort` is assigned per block as the import
+/// walks down the sheet and `id` increases with it, so the pair recovers that
+/// walk.
+fn sheet_order(db: &db::Db, container_id: db::AccountId) -> HashMap<db::GoalId, usize> {
+    let mut goals = goal::list_with_balances(db, container_id).unwrap();
+    goals.sort_by_key(|g| (g.goal.sort, g.goal.id));
+    goals
+        .iter()
+        .enumerate()
+        .map(|(position, g)| (g.goal.id, position))
+        .collect()
 }
 
 /// A fully imported database and the open workbook, at the workbook's own
@@ -71,7 +90,7 @@ fn the_savings_screens_goal_rows_agree_with_the_workbook() {
     let sheet = import::sheet(&mut sheets, "Savings").unwrap();
 
     let goals = container(&db, Block::Goals);
-    let rows: Vec<&Row> = screen
+    let mut rows: Vec<&Row> = screen
         .rows()
         .iter()
         .filter(|r| r.container.id() == goals)
@@ -79,9 +98,12 @@ fn the_savings_screens_goal_rows_agree_with_the_workbook() {
         .collect();
     assert!(rows.len() > 40, "only {} goals on screen", rows.len());
 
-    // A few names repeat; goals import in sheet row order and the screen keeps
-    // that order, so the Nth row named X is the Nth sheet row named X.
-    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    // A few names repeat, so the Nth row named X has to be paired with the Nth
+    // sheet row named X by counting occurrences -- which needs the rows walked
+    // in the sheet's order rather than the screen's.
+    let order = sheet_order(&db, goals);
+    rows.sort_by_key(|r| order[&r.goal_id]);
+    let mut seen: HashMap<&str, usize> = HashMap::new();
     let mut compared_pay = 0;
     for row in &rows {
         let occurrence = seen.entry(row.name.as_str()).or_insert(0);
