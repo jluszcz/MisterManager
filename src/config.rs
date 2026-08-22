@@ -9,19 +9,24 @@
 //! alternative is that a misspelled key leaves `bucket` unset and reads as
 //! "off": a backup that quietly stops running is the one failure nothing
 //! downstream ever notices.
+//!
+//! A key nothing reads is neither -- it is ignored, so a file written for
+//! another build still configures every key this one does understand. What
+//! keeps the paragraph above true is that `bucket` has **no default**: the
+//! typo that would switch backups off silently is a missing required field,
+//! and still an error. Refusing the whole file would only ever have caught
+//! keys that were additionally wrong.
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct Config {
     pub backup: Option<Backup>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct Backup {
     /// Where backups are written. No default: it names where the owner's
     /// finances are kept, so it cannot be a literal in a public repository.
@@ -111,17 +116,25 @@ mod tests {
     }
 
     /// The prefix is fixed in `backup::PREFIX` because it has to match an IAM
-    /// policy only an AWS apply can change. `deny_unknown_fields` is what makes
-    /// that a refusal rather than a line silently doing nothing -- the same
-    /// reason a misspelled key is an error.
+    /// policy only an AWS apply can change. A file asking for another one is
+    /// a line that does nothing, and the rest of the file still loads.
     #[test]
-    fn a_prefix_key_is_refused_rather_than_quietly_ignored() {
+    fn a_prefix_key_is_ignored_rather_than_refusing_the_file() {
         let path = fixture(
             "prefix",
             "[backup]\nbucket = \"a-bucket\"\nprefix = \"a-prefix\"\n",
         );
-        let err = format!("{:#}", load(&path).unwrap_err());
-        assert!(err.contains("prefix"), "unhelpful error: {err}");
+        assert_eq!(load(&path).unwrap().backup.unwrap().bucket, "a-bucket");
+    }
+
+    /// A section a later build might add, or an earlier one has dropped.
+    #[test]
+    fn an_unknown_section_does_not_stop_the_rest_of_the_file_loading() {
+        let path = fixture(
+            "section",
+            "[report]\nstyle = \"wide\"\n\n[backup]\nbucket = \"a-bucket\"\n",
+        );
+        assert_eq!(load(&path).unwrap().backup.unwrap().bucket, "a-bucket");
     }
 
     /// An unset feature is an off feature -- the rule the `setting` keys
@@ -142,20 +155,19 @@ mod tests {
         assert_eq!(load(&path).unwrap(), Config::default());
     }
 
-    /// The one failure mode "unset means off" cannot absorb: a typo must not
-    /// leave `bucket` unset and the feature silently switched off, because a
-    /// backup that stops running is a backup nothing downstream notices.
+    /// The one failure mode "unset means off" cannot absorb, and the reason
+    /// `bucket` has no default: a typo in *it* must not leave the section
+    /// parsing and the feature silently switched off, because a backup that
+    /// stops running is a backup nothing downstream notices. An unknown key
+    /// is ignored; a required one missing is still an error.
     #[test]
-    fn a_misspelled_key_is_an_error_rather_than_a_silently_disabled_backup() {
-        let path = fixture(
-            "typo",
-            "[backup]\nbucket = \"a-bucket\"\nbucketname = \"a-bucket\"\n",
-        );
+    fn a_misspelled_bucket_is_an_error_rather_than_a_silently_disabled_backup() {
+        let path = fixture("typo", "[backup]\nbucketname = \"a-bucket\"\n");
         // `{:#}` rather than `to_string()`: anyhow's plain Display prints
         // only the outermost context, which is "parsing <path>". The field
         // name is in the `toml` error it wraps.
         let err = format!("{:#}", load(&path).unwrap_err());
-        assert!(err.contains("bucketname"), "unhelpful error: {err}");
+        assert!(err.contains("bucket"), "unhelpful error: {err}");
     }
 
     #[test]
