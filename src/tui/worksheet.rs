@@ -8,8 +8,9 @@
 //! reconciles against that one container's excess.
 
 use super::cursor::{Cursor, Scroll};
-use super::form::{DateField, Step};
+use super::form::{Caret, DateField, Step, value_spans};
 use super::search::{Search, SearchBox};
+use super::text::Edit;
 use super::{Account, Label};
 use crate::calc;
 use crate::db::account::InterestPolicy;
@@ -18,6 +19,7 @@ use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
 use anyhow::{Result, ensure};
 use chrono::NaiveDate;
+use ratatui::crossterm::event::KeyEvent;
 
 /// What the next keystroke edits.
 ///
@@ -246,6 +248,24 @@ impl Worksheet {
                 }
             }
         }
+    }
+
+    /// Answer an editing key over the date, which is the one text field on
+    /// this modal: the other two focuses accumulate digits and have no caret
+    /// to move.
+    pub(super) fn edit(&mut self, key: KeyEvent) -> Edit {
+        match self.focus {
+            Focus::Date => self.date.edit(key),
+            Focus::Amount | Focus::Lines => Edit::Ignored,
+        }
+    }
+
+    /// Where the header draws its caret on the date: on it while the date
+    /// has focus, and nowhere otherwise. The other two focuses are digit
+    /// accumulators, whose caret is drawn past the figure because the end is
+    /// the only place a digit can land.
+    pub(super) fn date_caret(&self) -> Option<Caret> {
+        (self.focus == Focus::Date).then(|| Caret::in_field(self.date.text()))
     }
 
     /// Step the date by `step`, when the date is what has focus. What `←`/`→`
@@ -533,8 +553,24 @@ use super::{amount, label_line, table_state};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Line as TextLine;
+use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Block, Cell, Clear, Paragraph, Row, Table};
+
+/// The amount, with the caret past the last digit while it has focus.
+///
+/// A figure rather than a line of text: digits are pushed onto the end of it
+/// and rubbed off the end of it, so the end is the only place a caret could
+/// mean anything.
+fn amount_line(sheet: &Worksheet) -> TextLine<'static> {
+    let mut spans = vec![
+        Span::raw("      Amount  "),
+        Span::raw(crate::demo::figure(sheet.amount())),
+    ];
+    if sheet.focus() == Focus::Amount {
+        spans.push(Span::styled(" ", super::form::caret_style()));
+    }
+    TextLine::from(spans)
+}
 
 /// Amount and date at the top, that container's goals below, a live remaining
 /// counter. Returns the line viewport's height, for `PageUp`/`PageDown`.
@@ -555,20 +591,17 @@ pub fn render(frame: &mut Frame, sheet: &Worksheet) -> usize {
     ])
     .areas(inner);
 
-    let caret = |focused: bool| if focused { "▌" } else { "" };
+    // The amount is a figure a digit is pushed onto rather than a line with
+    // a caret in it, so its caret is drawn past the last digit -- which is
+    // the only place the next one can land.
+    let figure = amount_line(sheet);
+    let mut date = vec![Span::raw("        Date  ")];
+    date.extend(value_spans(
+        &Label::from(sheet.date_text()),
+        sheet.date_caret(),
+    ));
     frame.render_widget(
-        Paragraph::new(vec![
-            TextLine::from(format!(
-                "      Amount  {}{}",
-                crate::demo::figure(sheet.amount()),
-                caret(sheet.focus() == Focus::Amount)
-            )),
-            TextLine::from(format!(
-                "        Date  {}{}",
-                sheet.date_text(),
-                caret(sheet.focus() == Focus::Date)
-            )),
-        ]),
+        Paragraph::new(vec![figure, TextLine::from(date)]),
         header_area,
     );
 
@@ -610,15 +643,18 @@ pub fn render(frame: &mut Frame, sheet: &Worksheet) -> usize {
     );
 
     let status = if sheet.is_searching() {
-        format!("/{}  · Enter to keep · Esc to clear", sheet.search())
+        let mut spans = vec![Span::raw("/")];
+        spans.extend(sheet.search_spans());
+        spans.push(Span::raw("  · Enter to keep · Esc to clear"));
+        TextLine::from(spans)
     } else {
-        format!(
+        TextLine::from(format!(
             "remaining {}  ·  {} selected  ·  Space · * · - · z · /N · s · w",
             crate::demo::figure(sheet.remaining()),
             sheet.selected_count()
-        )
+        ))
     };
-    frame.render_widget(Paragraph::new(TextLine::from(status)), footer_area);
+    frame.render_widget(Paragraph::new(status), footer_area);
 
     height
 }

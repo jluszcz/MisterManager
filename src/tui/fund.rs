@@ -6,7 +6,7 @@
 
 use super::Label;
 use super::cursor::{Cursor, Scroll};
-use super::form::{self, Field, FormFields, Step, next_in, step_index};
+use super::form::{self, Caret, Field, Focused, FormFields, Step, next_in, step_index};
 use crate::db::FundId;
 use crate::db::fund::{Fund, FundEdit, Target};
 use crate::fund::Allocation;
@@ -277,27 +277,25 @@ impl FormFields for FundForm {
         self.focus = next_in(&self.fields(), self.focus, -1);
     }
 
-    fn choice(&mut self, step: Step) {
-        if self.focus == FundField::Kind {
-            self.kind = step_index(self.kind, Target::KINDS.len(), step.direction());
+    fn cycle(&mut self, step: Step) {
+        self.kind = step_index(self.kind, Target::KINDS.len(), step.direction());
+    }
+
+    fn focused(&mut self) -> Focused<'_> {
+        match self.focus {
+            FundField::Name => Focused::Text(&mut self.name),
+            FundField::Share => Focused::Text(&mut self.share),
+            FundField::Actual => Focused::Text(&mut self.actual),
+            FundField::Kind => Focused::Selector,
         }
     }
 
-    fn type_char(&mut self, c: char) {
+    fn caret(&self) -> Caret {
         match self.focus {
-            FundField::Name => self.name.push(c),
-            FundField::Share => self.share.push(c),
-            FundField::Actual => self.actual.push(c),
-            FundField::Kind => {}
-        }
-    }
-
-    fn backspace(&mut self) {
-        match self.focus {
-            FundField::Name => self.name.backspace(),
-            FundField::Share => self.share.backspace(),
-            FundField::Actual => self.actual.backspace(),
-            FundField::Kind => {}
+            FundField::Name => Caret::in_field(&self.name),
+            FundField::Share => Caret::in_field(&self.share),
+            FundField::Actual => Caret::in_field(&self.actual),
+            FundField::Kind => Caret::End,
         }
     }
 }
@@ -331,7 +329,13 @@ pub fn render_form(frame: &mut Frame, form: &FundForm) {
     let lines: Vec<TextLine> = form
         .fields()
         .iter()
-        .map(|f| field_line(f.label(), form.display(*f), form.focus == *f))
+        .map(|f| {
+            field_line(
+                f.label(),
+                form.display(*f),
+                (form.focus == *f).then(|| form.caret()),
+            )
+        })
         .collect();
     render_fields(frame, form.title(), lines);
 }
@@ -424,6 +428,7 @@ mod tests {
     use super::*;
     use crate::fund::{Allocation, FundRow};
     use crate::tui::MIN_WIDTH;
+    use crate::tui::form::char_key;
 
     fn row(id: i64, name: &str, target: Option<i64>, actual_bp: i64, dollars: i64) -> FundRow {
         FundRow {
@@ -591,7 +596,7 @@ mod tests {
     fn the_form_commits_what_was_typed() {
         let mut form = FundForm::add();
         for c in "International".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         while !matches!(form.target_kind(), Target::RemainderShare(_)) {
@@ -599,11 +604,11 @@ mod tests {
         }
         form.next_field();
         for c in "40".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         for c in "60,000".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
 
         let edit = form.commit().unwrap();
@@ -618,11 +623,11 @@ mod tests {
     fn the_value_field_refuses_cents() {
         let mut form = FundForm::add();
         for c in "Bonds".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.focus = FundField::Actual;
         for c in "30000.50".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         assert!(form.commit().is_err());
     }

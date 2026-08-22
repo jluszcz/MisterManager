@@ -15,6 +15,7 @@ use super::recurring_goal::{self as recurring_goal_screen, RecurringGoalForm, Re
 use super::recurring_txn::{self as recurring_txn_screen, RecurringTxnForm, RecurringTxns};
 use super::savings::{self, Savings};
 use super::search::{self, Search};
+use super::text::{self, Edit};
 use super::worksheet::{self, Worksheet};
 use super::{Account, Label};
 use crate::calc;
@@ -42,6 +43,7 @@ use chrono::{Datelike, NaiveDate};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
+use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Paragraph, Tabs};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -204,6 +206,19 @@ pub struct App {
     quit: bool,
 }
 
+/// The footer a screen shows while its `/` box is open: the needle with the
+/// caret on it, and what the two keys leaving the box do.
+///
+/// One function for both screen-level boxes, for the reason `search_key`
+/// answers both: a box that said this in its own words could come to say
+/// something else.
+fn search_footer(target: &impl Search) -> TextLine<'static> {
+    let mut spans = vec![Span::raw("/")];
+    spans.extend(target.search_spans());
+    spans.push(Span::raw("  · Enter to keep · Esc to clear"));
+    TextLine::from(spans)
+}
+
 impl App {
     pub fn new(db: Db, today: NaiveDate) -> Result<App> {
         let dates = projection::dates(&db, today)?;
@@ -325,6 +340,20 @@ impl App {
             self.help = Some(Help::new(topic));
             return Ok(());
         }
+        // `Ctrl` means editing the text under the caret, and `Alt` means
+        // nothing at all -- so where there is no caret, a modified character
+        // is dropped rather than read as the bare letter it arrives as. A
+        // hand reaching for `Ctrl`+`F` a beat after `Esc` closed a form must
+        // not find the `f` that toggles a favorite, and `Ctrl`+`D` must not
+        // raise the delete a `Ctrl`+`U` was meant to unmake. Where there *is*
+        // a caret, `text::edit_key` is what drops the combinations it has no
+        // binding for.
+        if matches!(key.code, KeyCode::Char(_))
+            && !text::is_bare(key)
+            && !topic.takes_editing_keys()
+        {
+            return Ok(());
+        }
         if self.modal.is_some() {
             return self.modal_key(key);
         }
@@ -333,11 +362,11 @@ impl App {
         // handler of their own to hold the difference that used to be here.
         match self.screen {
             Screen::Cash | Screen::Credit if self.ledger().is_searching() => {
-                search::search_key(self.ledger_mut(), key.code);
+                search::search_key(self.ledger_mut(), key);
                 return Ok(());
             }
             Screen::Savings if self.savings.is_searching() => {
-                search::search_key(&mut self.savings, key.code);
+                search::search_key(&mut self.savings, key);
                 return Ok(());
             }
             _ => {}
@@ -645,7 +674,7 @@ impl App {
         if let Some(Modal::Destination(chooser)) = &mut self.modal
             && chooser.is_searching()
         {
-            search::search_key(chooser, key.code);
+            search::search_key(chooser, key);
             return Ok(());
         }
         if key.code == KeyCode::Enter {
@@ -1605,43 +1634,38 @@ impl App {
     /// A `match` over the screen, guarded the way [`App::topic`] is, so a ninth
     /// screen is a compile error here rather than a footer that silently reads
     /// as the ledger's.
-    fn footer(&self) -> String {
+    fn footer(&self) -> TextLine<'static> {
         if !self.status.is_empty() {
-            return self.status.clone();
+            return TextLine::from(self.status.clone());
         }
         match self.screen {
-            Screen::Overview => Topic::Overview.footer(),
+            Screen::Overview => TextLine::from(Topic::Overview.footer()),
             Screen::Cash | Screen::Credit if self.ledger().is_searching() => {
-                format!(
-                    "/{}  · Enter to keep · Esc to clear",
-                    self.ledger().search()
-                )
+                search_footer(self.ledger())
             }
-            Screen::Cash => Topic::Ledger.footer(),
+            Screen::Cash => TextLine::from(Topic::Ledger.footer()),
             // `t` opens a transfer, which the Credit ledger does not offer: a
             // footer must not name a key its screen refuses.
-            Screen::Credit => Topic::Ledger.footer_without(&["t"]),
-            Screen::Savings if self.savings.is_searching() => {
-                format!("/{}  · Enter to keep · Esc to clear", self.savings.search())
-            }
-            Screen::Savings => Topic::Savings.footer(),
+            Screen::Credit => TextLine::from(Topic::Ledger.footer_without(&["t"])),
+            Screen::Savings if self.savings.is_searching() => search_footer(&self.savings),
+            Screen::Savings => TextLine::from(Topic::Savings.footer()),
             // `P` is live either way -- it says "nothing pinned" rather than
             // failing silently -- but naming it on an unpinned screen would
             // offer to clear something that is not there.
-            Screen::Planning => match self.planning.is_pinned() {
+            Screen::Planning => TextLine::from(match self.planning.is_pinned() {
                 true => Topic::Planning.footer(),
                 false => Topic::Planning.footer_without(&["P"]),
-            },
+            }),
             // The other dynamic footer, but a prefix rather than a replaced
             // word: a screen showing a row with no target must say why rather
             // than leave a dash unexplained.
-            Screen::Funds => match self.funds.needs_birth_date() {
+            Screen::Funds => TextLine::from(match self.funds.needs_birth_date() {
                 true => format!("birth date unset · {}", Topic::Funds.footer()),
                 false => Topic::Funds.footer(),
-            },
-            Screen::RecurringTxns => Topic::RecurringTxns.footer(),
-            Screen::RecurringGoals => Topic::RecurringGoals.footer(),
-            Screen::Accounts => Topic::Accounts.footer(),
+            }),
+            Screen::RecurringTxns => TextLine::from(Topic::RecurringTxns.footer()),
+            Screen::RecurringGoals => TextLine::from(Topic::RecurringGoals.footer()),
+            Screen::Accounts => TextLine::from(Topic::Accounts.footer()),
         }
     }
 
@@ -1970,6 +1994,11 @@ impl App {
         if sheet.is_pending_slash() {
             sheet.cancel_pending_slash();
             return match key.code {
+                // The worksheet is a context that takes the editing keys, so
+                // `App::dispatch` lets a `Ctrl` through to reach its date --
+                // and this is one of the two arms here that must not read one
+                // as the letter it arrives as. The other is the operators'.
+                KeyCode::Char(_) if !text::is_bare(key) => Ok(()),
                 KeyCode::Char(c) if c.is_ascii_digit() => {
                     sheet.divide(c.to_digit(10).expect("checked above") as i64)
                 }
@@ -1982,7 +2011,7 @@ impl App {
             };
         }
         if sheet.is_searching() {
-            search::search_key(sheet, key.code);
+            search::search_key(sheet, key);
             return Ok(());
         }
         if cursor::scroll_key(sheet, key.code) {
@@ -2012,18 +2041,28 @@ impl App {
             // worksheet as it opens. The date is a text field -- `-` is part
             // of a date, and `s` must not spread while one is being fixed --
             // so it is the one focus that types them instead.
-            KeyCode::Char(c) if sheet.focus() != worksheet::Focus::Date => match c {
-                ' ' => sheet.toggle_selection(),
-                '*' => sheet.select_all_visible(),
-                '-' => sheet.clear_selection(),
-                'z' => sheet.zero_untargeted(),
-                's' => sheet.spread()?,
-                'w' => sheet.spread_by_weight()?,
-                '/' => sheet.slash(),
-                _ => sheet.type_char(c),
-            },
-            KeyCode::Char(c) => sheet.type_char(c),
-            _ => {}
+            //
+            // A modified character never reaches them: `Ctrl` means editing
+            // text everywhere in the app and `Alt` means nothing anywhere, and
+            // a hand reaching for `Ctrl`+`W` on the amount would otherwise
+            // spread the whole pot.
+            KeyCode::Char(c) if sheet.focus() != worksheet::Focus::Date && text::is_bare(key) => {
+                match c {
+                    ' ' => sheet.toggle_selection(),
+                    '*' => sheet.select_all_visible(),
+                    '-' => sheet.clear_selection(),
+                    'z' => sheet.zero_untargeted(),
+                    's' => sheet.spread()?,
+                    'w' => sheet.spread_by_weight()?,
+                    '/' => sheet.slash(),
+                    _ => sheet.type_char(c),
+                }
+            }
+            // The date takes the character itself and the editing keys alike;
+            // for the other two focuses this is where a modified one stops.
+            _ => {
+                sheet.edit(key);
+            }
         }
         Ok(())
     }
@@ -2403,11 +2442,6 @@ impl App {
                         self.status = "cancelled".to_string();
                     }
                     KeyCode::Enter => self.commit_plan_transfers()?,
-                    KeyCode::Backspace => {
-                        if let Some(Modal::PlanTransfers(c)) = &mut self.modal {
-                            c.backspace();
-                        }
-                    }
                     KeyCode::Left => {
                         if let Some(Modal::PlanTransfers(c)) = &mut self.modal {
                             c.step_date(week_step(key, Step::PREVIOUS_WEEK, Step::PREVIOUS));
@@ -2418,12 +2452,13 @@ impl App {
                             c.step_date(week_step(key, Step::NEXT_WEEK, Step::NEXT));
                         }
                     }
-                    KeyCode::Char(c) => {
+                    // The date is a text field, and the editing keys reach it
+                    // here as they do in every form.
+                    _ => {
                         if let Some(Modal::PlanTransfers(confirm)) = &mut self.modal {
-                            confirm.type_char(c);
+                            confirm.edit(key);
                         }
                     }
-                    _ => {}
                 }
                 Ok(())
             }
@@ -2503,15 +2538,10 @@ impl App {
                 Step::PREVIOUS
             }),
             KeyCode::Right => fields.choice(if week { Step::NEXT_WEEK } else { Step::NEXT }),
-            KeyCode::Backspace => {
-                fields.backspace();
-                edited = true;
-            }
-            KeyCode::Char(c) => {
-                fields.type_char(c);
-                edited = true;
-            }
-            _ => {}
+            // Everything a text field answers -- the character itself, and
+            // the `Ctrl` editing keys -- in one place, so a suggestion is
+            // re-asked for on the presses that changed the text and no other.
+            _ => edited = fields.edit(key) == Edit::Changed,
         }
         if edited {
             self.refresh_suggestions()?;
@@ -2793,8 +2823,34 @@ mod tests {
         app.savings.rows().iter().map(|r| r.name.clone()).collect()
     }
 
+    /// The footer as text. It is a `Line` because the `/` box draws a caret
+    /// into it, and every assertion here is about the words.
+    fn footer(app: &App) -> String {
+        app.footer()
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect()
+    }
+
+    /// The character the footer draws its caret on, which is the `/` box's.
+    fn footer_caret(app: &App) -> String {
+        use ratatui::style::Modifier;
+        app.footer()
+            .spans
+            .iter()
+            .filter(|s| s.style.add_modifier.contains(Modifier::REVERSED))
+            .map(|s| s.content.as_ref())
+            .collect()
+    }
+
     fn press(app: &mut App, code: KeyCode) {
         app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    /// A `Ctrl` combination -- the editing keys, and nothing else in the app.
+    fn ctrl_press(app: &mut App, c: char) {
+        app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
     }
 
     /// The same key with Shift held, which crossterm reports as the arrow
@@ -3026,12 +3082,12 @@ mod tests {
         press(&mut app, KeyCode::Char('4'));
         press(&mut app, KeyCode::Char('U'));
         let keys = Topic::Savings.footer();
-        assert_ne!(app.footer(), keys);
+        assert_ne!(footer(&app), keys);
 
         app.expire_status_at(Instant::now() + STATUS_TTL);
 
         assert_eq!(app.status, "");
-        assert_eq!(app.footer(), keys);
+        assert_eq!(footer(&app), keys);
     }
 
     #[test]
@@ -3533,11 +3589,11 @@ mod tests {
         let keys = Topic::Overview.footer();
 
         shift_press(&mut app, KeyCode::Right);
-        assert_eq!(app.footer(), "scrubbed +7d");
+        assert_eq!(footer(&app), "scrubbed +7d");
 
         app.expire_status_at(Instant::now() + STATUS_TTL);
 
-        assert_eq!(app.footer(), keys);
+        assert_eq!(footer(&app), keys);
         assert_eq!(app.scrubbed_days(), 7, "the message faded, not the scrub");
     }
 
@@ -4444,6 +4500,36 @@ mod tests {
         assert!(worksheet(&app).date_text().ends_with('s'));
     }
 
+    /// The worksheet's date is a text field with a key handler of its own,
+    /// and the editing keys have to reach it there too.
+    #[test]
+    fn the_worksheets_date_answers_the_editing_keys() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('A'));
+        press(&mut app, KeyCode::Tab);
+        ctrl_press(&mut app, 'u');
+        type_str(&mut app, "2026-09-01");
+
+        assert_eq!(worksheet(&app).date_text(), "2026-09-01");
+    }
+
+    /// `Ctrl` means editing text everywhere in the app, so it must not reach
+    /// an operator: a hand reaching for "delete the last word" would
+    /// otherwise spread the whole pot.
+    #[test]
+    fn a_ctrl_key_does_not_reach_the_worksheets_operators() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('A'));
+        let before: Vec<Cents> = worksheet(&app).lines().iter().map(|l| l.amount).collect();
+
+        ctrl_press(&mut app, 'z');
+
+        let after: Vec<Cents> = worksheet(&app).lines().iter().map(|l| l.amount).collect();
+        assert_eq!(before, after, "Ctrl+Z zeroed the untargeted lines");
+    }
+
     /// Over-allocating would hand out money the container does not hold, and
     /// the failure has to reach the status line rather than the panic hook.
     #[test]
@@ -5058,6 +5144,23 @@ mod tests {
         assert_eq!(confirm.commit().unwrap(), day(2026, 8, 18));
     }
 
+    /// The confirmation's date is a text field like any other, and it has a
+    /// key handler of its own -- the one place the editing keys could be
+    /// missing while every form had them.
+    #[test]
+    fn the_transfer_confirmation_answers_the_editing_keys() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        press(&mut app, KeyCode::Char('t'));
+        ctrl_press(&mut app, 'u');
+        type_str(&mut app, "2026-09-01");
+
+        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
+            panic!("no transfer confirmation is open");
+        };
+        assert_eq!(confirm.commit().unwrap(), day(2026, 9, 1));
+    }
+
     /// What `t`'s confirmation modal says it will move for one line.
     fn modal_transfer_amount(app: &App, wanted: Line) -> Cents {
         let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
@@ -5363,7 +5466,7 @@ mod tests {
     /// the left half now, so a width test that measured it alone would stop
     /// seeing the twenty columns the chrome holds.
     fn footer_line(app: &App) -> String {
-        [app.footer(), app.footer_chrome()].join(" · ")
+        [footer(app), app.footer_chrome()].join(" · ")
     }
 
     /// The footer row as the terminal receives it, trailing spaces and all.
@@ -6020,7 +6123,13 @@ mod tests {
         let Some(Modal::Destination(chooser)) = &app.modal else {
             panic!("the list closed");
         };
-        assert!(chooser.title().contains("/?"), "{}", chooser.title());
+        let title: String = chooser
+            .title()
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<String>();
+        assert!(title.contains("/?"), "{title}");
 
         // F1 is the way in while a question mark is a character.
         press(&mut app, KeyCode::F(1));
@@ -6882,8 +6991,8 @@ mod tests {
     fn the_savings_footer_advertises_the_month_keys() {
         let mut app = app();
         press(&mut app, KeyCode::Char('4'));
-        assert!(app.footer().contains("[ ] month"));
-        assert!(app.footer().contains("Esc clear"));
+        assert!(footer(&app).contains("[ ] month"));
+        assert!(footer(&app).contains("Esc clear"));
     }
 
     /// The ledgers answer Esc with the rest of them, under the word every
@@ -6893,7 +7002,7 @@ mod tests {
     fn the_ledger_footer_advertises_esc_as_clearing() {
         let mut app = app();
         press(&mut app, KeyCode::Char('2'));
-        assert!(app.footer().contains("Esc clear"));
+        assert!(footer(&app).contains("Esc clear"));
     }
 
     /// The keys reach the Savings screen. `app()` holds one dated goal
@@ -7233,7 +7342,7 @@ mod tests {
     /// be the last thing that happened.
     fn footer_of(app: &mut App, screen: char) -> String {
         press(app, KeyCode::Char(screen));
-        app.footer()
+        footer(app)
     }
 
     /// The eight footers as they read, with Planning's leading `↑/↓ constant`
@@ -7283,7 +7392,7 @@ mod tests {
     fn the_planning_footer_offers_unpin_only_once_a_plan_is_pinned() {
         let mut app = app();
         press(&mut app, KeyCode::Char('5'));
-        let unpinned = app.footer();
+        let unpinned = footer(&app);
         assert!(unpinned.contains("p pin"), "{unpinned}");
         assert!(
             !unpinned.contains("P unpin"),
@@ -7292,7 +7401,7 @@ mod tests {
 
         press(&mut app, KeyCode::Char('p'));
         press(&mut app, KeyCode::Char('5'));
-        let pinned = app.footer();
+        let pinned = footer(&app);
         assert_eq!(
             pinned,
             unpinned.replacen("p pin", "p pin · P unpin", 1),
@@ -7358,6 +7467,39 @@ mod tests {
         assert!(app.modal.is_none(), "a swallowed key opened a form");
     }
 
+    /// The box has to show where the next keystroke lands, or `Ctrl`+`A` is
+    /// a key with nothing on screen to say what it did.
+    #[test]
+    fn a_search_box_draws_its_caret_where_the_caret_is() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "rent");
+        ctrl_press(&mut app, 'a');
+
+        assert!(footer(&app).starts_with("/rent"), "{}", footer(&app));
+        assert_eq!(footer_caret(&app), "r");
+    }
+
+    /// The footer is the box; the title only reports what the list is
+    /// narrowed to. Two carets on one screen would leave the box ambiguous,
+    /// so the echo in the title carries none even while the box is open.
+    ///
+    /// At the end of the needle the caret sits on the space past it, which is
+    /// the one place it costs a column.
+    #[test]
+    fn the_title_echoes_the_needle_without_a_caret() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "rent");
+
+        let title = app.ledger().title().plain_text();
+        assert!(title.ends_with("/rent"), "{title}");
+        assert!(footer(&app).starts_with("/rent "), "{}", footer(&app));
+        assert_eq!(footer_caret(&app), " ");
+    }
+
     /// A search box is a text field, and a search may legitimately be for a
     /// question mark.
     #[test]
@@ -7389,6 +7531,175 @@ mod tests {
 
         press(&mut app, KeyCode::F(1));
         assert!(open_on(&app, Topic::SuggestForm));
+    }
+
+    /// `Ctrl` means editing the text under the caret, so on a screen -- where
+    /// there is no caret -- it must reach nothing at all.
+    ///
+    /// The hazard is a hand reaching for `Ctrl`+`F` a beat after `Esc` closed
+    /// a form: as a bare `Char` it is the `f` that marks a goal, and the
+    /// write would be in the database before anything on screen said so.
+    #[test]
+    fn a_ctrl_letter_reaches_no_screen_operator() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+
+        ctrl_press(&mut app, 'f');
+        assert_eq!(
+            savings_favorites(&app),
+            vec![false, false],
+            "Ctrl+F marked a goal"
+        );
+
+        for c in ['a', 'e', 'c', 'n', 'i', 'A', 'U'] {
+            ctrl_press(&mut app, c);
+            assert!(app.modal.is_none(), "Ctrl+{c} opened a modal");
+        }
+    }
+
+    /// The same rule over the keys `dispatch` answers itself, which are the
+    /// ones live on every screen at once: `Ctrl`+`Q` is a hand short of the
+    /// quit that discards nothing but is still not what was asked for.
+    #[test]
+    fn a_ctrl_letter_reaches_none_of_the_app_wide_keys() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+
+        ctrl_press(&mut app, 'q');
+        assert!(!app.should_quit(), "Ctrl+Q quit the app");
+
+        ctrl_press(&mut app, '2');
+        ctrl_press(&mut app, '6');
+        assert_eq!(app.screen, Screen::Savings, "a Ctrl+digit switched screens");
+    }
+
+    /// `Alt` is bound nowhere, and an unbound modifier is dropped for the
+    /// reason a `Ctrl` is -- on a screen as in a buffer. `Alt`+`F` is the
+    /// word motion a hand that has just learned `Ctrl`+`F` reaches for next.
+    #[test]
+    fn an_alt_letter_reaches_no_screen_operator() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+
+        app.on_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT));
+
+        assert_eq!(
+            savings_favorites(&app),
+            vec![false, false],
+            "Alt+F marked a goal"
+        );
+    }
+
+    /// The confirm dialogs' second carve-out from "any key but `y` cancels",
+    /// beside the `?` above: a modified character is not a key the app reads
+    /// anywhere, so it neither commits the delete nor throws it away. `d` and
+    /// `y` sit a finger apart, and the row a `Ctrl`+`Y` deleted would have no
+    /// undo.
+    #[test]
+    fn a_ctrl_y_neither_commits_a_confirm_dialog_nor_cancels_it() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('d'));
+
+        ctrl_press(&mut app, 'y');
+
+        assert_eq!(
+            descriptions(&app.cash),
+            ["Paycheck", "Whole Foods", "Transfer", "Rent"]
+        );
+        assert!(
+            matches!(
+                app.modal,
+                Some(Modal::Confirm {
+                    action: Confirm::DeleteTxn(_),
+                    ..
+                })
+            ),
+            "the dialog is gone"
+        );
+    }
+
+    /// The `Ctrl` editing keys, in the box they are hardest to get right: a
+    /// form field, where the same arrow that moves this caret steps a date
+    /// one field away.
+    #[test]
+    fn ctrl_a_puts_the_next_keystroke_at_the_start_of_a_form_field() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('a'));
+        focus(&mut app, TxnField::Description);
+        type_str(&mut app, "grocery");
+        ctrl_press(&mut app, 'a');
+        type_str(&mut app, "big ");
+
+        assert_eq!(form(&app).description(), "big grocery");
+    }
+
+    #[test]
+    fn ctrl_w_deletes_the_word_before_the_caret_in_a_form_field() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('a'));
+        focus(&mut app, TxnField::Description);
+        type_str(&mut app, "weekly grocery run");
+        ctrl_press(&mut app, 'w');
+
+        assert_eq!(form(&app).description(), "weekly grocery ");
+    }
+
+    /// A `Ctrl` nobody has bound used to arrive as its bare letter, so
+    /// `Ctrl`+`C` typed a `c` into whatever field had the focus.
+    #[test]
+    fn a_ctrl_letter_with_no_binding_does_not_type_its_letter_into_a_form() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('a'));
+        focus(&mut app, TxnField::Description);
+        type_str(&mut app, "rent");
+        ctrl_press(&mut app, 'c');
+
+        assert_eq!(form(&app).description(), "rent");
+    }
+
+    /// `←`/`→` act on the field under the caret: a text field moves the
+    /// caret, where a date field steps a day and a selector cycles.
+    #[test]
+    fn an_arrow_moves_the_caret_in_a_text_field() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('a'));
+        focus(&mut app, TxnField::Description);
+        type_str(&mut app, "rent");
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Left);
+        type_str(&mut app, "!");
+
+        assert_eq!(form(&app).description(), "re!nt");
+    }
+
+    #[test]
+    fn ctrl_w_deletes_the_word_before_the_caret_in_a_search_box() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "weekly grocery run");
+        ctrl_press(&mut app, 'w');
+
+        assert_eq!(app.ledger().search(), "weekly grocery ");
+    }
+
+    /// A search box has no date and no selector, so the arrows are the
+    /// caret's there with nothing to share them with.
+    #[test]
+    fn an_arrow_moves_the_caret_in_a_search_box() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "rent");
+        press(&mut app, KeyCode::Left);
+        type_str(&mut app, "!");
+
+        assert_eq!(app.ledger().search(), "ren!t");
     }
 
     /// The worksheet is not a text field: two of its three focuses drop everything
@@ -7594,7 +7905,10 @@ mod tests {
     ///   the panel does not spend a row on either. Backspace keeps its own
     ///   entry everywhere else it appears -- the two field-form topics, the
     ///   three search topics, and the transfer confirmation -- where it is a
-    ///   named, explained key rather than typing;
+    ///   named, explained key rather than typing. The `Ctrl` editing keys those
+    ///   same catch-alls now carry into `text::edit_key` *are* listed, under
+    ///   `help::EDITING`'s one key string: eight keys nobody would guess from
+    ///   watching a character appear;
     /// - `?` and `F1`, which `dispatch` answers before any of these handlers see
     ///   them. A table names the one that is surprising: `F1` where `?` would be
     ///   typed instead, and `?` on the confirm dialogs, where every other key
@@ -7605,6 +7919,7 @@ mod tests {
             (
                 Topic::Worksheet,
                 &[
+                    "Ctrl+A/E/B/F/W/U/K/D",
                     "Tab",
                     "BackTab",
                     "←/→",
@@ -7624,12 +7939,13 @@ mod tests {
             (Topic::Destination, &["/", "Enter", "Esc"]),
             (
                 Topic::DestinationSearch,
-                &["Enter", "Esc", "Backspace", "F1"],
+                &["Ctrl+A/E/B/F/W/U/K/D", "Enter", "Esc", "Backspace", "F1"],
             ),
             (Topic::Confirm, &["y", "any", "?"]),
             (
                 Topic::Form,
                 &[
+                    "Ctrl+A/E/B/F/W/U/K/D",
                     "Tab",
                     "BackTab",
                     "Backspace",
@@ -7643,6 +7959,7 @@ mod tests {
             (
                 Topic::SuggestForm,
                 &[
+                    "Ctrl+A/E/B/F/W/U/K/D",
                     "Tab",
                     "BackTab",
                     "Backspace",
@@ -7654,12 +7971,28 @@ mod tests {
                     "F1",
                 ],
             ),
-            (Topic::LedgerSearch, &["Enter", "Esc", "Backspace", "F1"]),
-            (Topic::SavingsSearch, &["Enter", "Esc", "Backspace", "F1"]),
-            (Topic::WorksheetSearch, &["Enter", "Esc", "Backspace", "F1"]),
+            (
+                Topic::LedgerSearch,
+                &["Ctrl+A/E/B/F/W/U/K/D", "Enter", "Esc", "Backspace", "F1"],
+            ),
+            (
+                Topic::SavingsSearch,
+                &["Ctrl+A/E/B/F/W/U/K/D", "Enter", "Esc", "Backspace", "F1"],
+            ),
+            (
+                Topic::WorksheetSearch,
+                &["Ctrl+A/E/B/F/W/U/K/D", "Enter", "Esc", "Backspace", "F1"],
+            ),
             (
                 Topic::PlanTransfers,
-                &["Esc", "←/→", "Shift+←/→", "Enter", "Backspace"],
+                &[
+                    "Ctrl+A/E/B/F/W/U/K/D",
+                    "Esc",
+                    "←/→",
+                    "Shift+←/→",
+                    "Enter",
+                    "Backspace",
+                ],
             ),
         ];
         assert_documented(&handlers);
@@ -7819,9 +8152,9 @@ mod tests {
         assert!(app.modal.is_none());
         assert_eq!(app.screen, Screen::Funds);
         assert!(
-            app.footer().contains("birth date unset"),
+            footer(&app).contains("birth date unset"),
             "{}",
-            app.footer()
+            footer(&app)
         );
 
         // And it comes back on the next visit.

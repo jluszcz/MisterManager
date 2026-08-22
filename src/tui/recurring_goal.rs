@@ -6,7 +6,9 @@
 
 use super::Label;
 use super::cursor::{Cursor, Scroll};
-use super::form::{Field, FormFields, Step, next_in, parse_whole_amount, step_index};
+use super::form::{
+    Caret, Field, Focused, FormFields, Step, next_in, parse_whole_amount, step_index,
+};
 use super::month::MonthCycle;
 use crate::db::RecurringGoalId;
 use crate::db::recurring_goal::{Cadence, Entry, NewEntry};
@@ -261,7 +263,7 @@ impl FormFields for RecurringGoalForm {
         self.focus = next_in(&RecurringGoalField::ORDER, self.focus, -1);
     }
 
-    fn choice(&mut self, step: Step) {
+    fn cycle(&mut self, step: Step) {
         match self.focus {
             RecurringGoalField::Month => self.month = wrapped_month(self.month, step.direction()),
             RecurringGoalField::Taxed => self.taxed = !self.taxed,
@@ -272,20 +274,22 @@ impl FormFields for RecurringGoalForm {
         }
     }
 
-    fn type_char(&mut self, c: char) {
+    fn focused(&mut self) -> Focused<'_> {
         match self.focus {
-            RecurringGoalField::Name => self.name.push(c),
-            RecurringGoalField::Amount => self.amount.push(c),
+            RecurringGoalField::Name => Focused::Text(&mut self.name),
+            RecurringGoalField::Amount => Focused::Text(&mut self.amount),
             RecurringGoalField::Month | RecurringGoalField::Taxed | RecurringGoalField::Cadence => {
+                Focused::Selector
             }
         }
     }
 
-    fn backspace(&mut self) {
+    fn caret(&self) -> Caret {
         match self.focus {
-            RecurringGoalField::Name => self.name.backspace(),
-            RecurringGoalField::Amount => self.amount.backspace(),
+            RecurringGoalField::Name => Caret::in_field(&self.name),
+            RecurringGoalField::Amount => Caret::in_field(&self.amount),
             RecurringGoalField::Month | RecurringGoalField::Taxed | RecurringGoalField::Cadence => {
+                Caret::End
             }
         }
     }
@@ -302,7 +306,13 @@ use ratatui::widgets::{Block, Cell, Row as TableRow, Table};
 pub fn render_form(frame: &mut Frame, form: &RecurringGoalForm) {
     let lines: Vec<TextLine> = RecurringGoalField::ORDER
         .iter()
-        .map(|f| field_line(f.label(), form.display(*f), form.focus == *f))
+        .map(|f| {
+            field_line(
+                f.label(),
+                form.display(*f),
+                (form.focus == *f).then(|| form.caret()),
+            )
+        })
         .collect();
     render_fields(frame, form.title(), lines);
 }
@@ -367,6 +377,7 @@ pub fn render(frame: &mut Frame, area: Rect, recurring_goal: &RecurringGoals) ->
 mod tests {
     use super::*;
     use crate::tui::MIN_WIDTH;
+    use crate::tui::form::{backspace_key, char_key};
 
     fn entry(id: i64, name: &str, month: i64, cadence: Cadence) -> Entry {
         Entry {
@@ -598,7 +609,7 @@ mod tests {
         assert_eq!(form.editing, None);
 
         for c in "Dropbox".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         for _ in 1..9 {
@@ -606,7 +617,7 @@ mod tests {
         }
         form.next_field();
         for c in "128".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         form.choice(Step::NEXT);
@@ -684,14 +695,14 @@ mod tests {
     fn a_base_with_cents_in_it_is_refused() {
         let mut form = RecurringGoalForm::add();
         for c in "Dropbox".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         // Month is a selector and takes whatever it opens on; the base is the
         // field under test.
         form.next_field();
         form.next_field();
         for c in "128.99".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         let err = form.commit().unwrap_err().to_string();
         assert!(err.contains("128.99"), "{err}");
@@ -703,7 +714,7 @@ mod tests {
         form.next_field();
         form.next_field();
         for c in "128".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         let err = form.commit().unwrap_err();
         assert!(err.to_string().contains("name"), "{err}");
@@ -745,13 +756,13 @@ mod tests {
     fn typing_at_the_month_selector_changes_nothing() {
         let mut form = RecurringGoalForm::add();
         for c in "Dropbox".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.next_field();
         for c in "13".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
-        form.backspace();
+        form.edit(backspace_key());
 
         assert_eq!(
             form.display(RecurringGoalField::Name).plain_text(),

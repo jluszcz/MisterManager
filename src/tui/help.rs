@@ -467,9 +467,53 @@ const RECURRING_GOALS: [Entry; 6] = [
     },
 ];
 
+/// The one key string the editing entries share, so the two of them cannot
+/// come to advertise different keys.
+const EDITING_KEYS: &str = "Ctrl+A/E/B/F/W/U/K/D";
+
+/// What the editing keys do, as a macro rather than a `const` so a table that
+/// has to *qualify* it -- the worksheet, where only one focus holds text --
+/// can `concat!` a clause onto the end at compile time instead of restating
+/// the eight keys in its own words.
+macro_rules! editing_detail {
+    () => {
+        "Edit the text under the caret: A to the start of the line, E to the end, B and F one character back or forward, W deletes the word before the caret, U deletes back to the start, K forward to the end, D the character the caret is on -- as Delete does. Ctrl is the one modifier that means editing text, and a combination with no binding is dropped rather than typed as its letter. Alt is deliberately unused: macOS sends Option as Meta only if you have turned that on, and a key the terminal never delivers is a key that does nothing with nothing on screen to say why."
+    };
+}
+
+/// The editing keys, which every text box in the app answers.
+///
+/// One entry rather than eight rows, and one entry shared by every table
+/// whose context takes text rather than a copy per table: `text::edit_key` is
+/// what answers them, so `Ctrl`+`W` deletes a word in a form, in a search box
+/// and on the worksheet's date alike, and a table that said so in its own
+/// words could come to say something else.
+const EDITING: Entry = Entry {
+    key: EDITING_KEYS,
+    label: Label::Hidden,
+    detail: editing_detail!(),
+};
+
+/// [`EDITING`], qualified for the worksheet, which is the one context that
+/// takes these keys on some of its focuses and not others.
+///
+/// Two of its three take digits and drop everything else, so the unqualified
+/// entry would promise eight keys that do nothing on the focus the worksheet
+/// opens on -- with nothing on screen to say why, which is the failure the
+/// panel exists to prevent.
+const WORKSHEET_EDITING: Entry = Entry {
+    key: EDITING_KEYS,
+    label: Label::Hidden,
+    detail: concat!(
+        editing_detail!(),
+        " The date is the one focus here that holds text: the amount takes digits and the line list takes the operators, so these keys do nothing on either."
+    ),
+};
+
 /// Shared by all four search boxes: the keys are the same, and only the rows
 /// underneath and the figures they answer to differ.
-const SEARCH: [Entry; 4] = [
+const SEARCH: [Entry; 5] = [
+    EDITING,
     Entry {
         key: "Enter",
         label: Label::Hidden,
@@ -483,7 +527,7 @@ const SEARCH: [Entry; 4] = [
     Entry {
         key: "Backspace",
         label: Label::Hidden,
-        detail: "Delete the last character. Every keystroke re-filters.",
+        detail: "Delete the character before the caret. Every keystroke that changes the needle re-filters; moving the caret does not.",
     },
     Entry {
         key: "F1",
@@ -492,7 +536,8 @@ const SEARCH: [Entry; 4] = [
     },
 ];
 
-const WORKSHEET: [Entry; 13] = [
+const WORKSHEET: [Entry; 14] = [
+    WORKSHEET_EDITING,
     Entry {
         key: "Tab",
         label: Label::Hidden,
@@ -620,7 +665,8 @@ const CONFIRM: [Entry; 3] = [
     },
 ];
 
-const FORM: [Entry; 8] = [
+const FORM: [Entry; 9] = [
+    EDITING,
     Entry {
         key: "Tab",
         label: Label::Hidden,
@@ -634,7 +680,7 @@ const FORM: [Entry; 8] = [
     Entry {
         key: "←/→",
         label: Label::Hidden,
-        detail: "Cycle a choice field, such as a bill's category or a close-out's destination -- or, on a date field, step it back or forward a day. A date stays typeable; this is the nudge. A field holding no date, such as an undated goal's, has nothing to step.",
+        detail: "The field under the caret decides: a text field moves the caret one character, a date field steps back or forward a day, and a choice field -- a bill's category, a close-out's destination -- cycles. A date stays typeable; the step is the nudge, and a field holding no date, such as an undated goal's, has nothing to step.",
     },
     Entry {
         key: "Shift+←/→",
@@ -644,7 +690,7 @@ const FORM: [Entry; 8] = [
     Entry {
         key: "Backspace",
         label: Label::Hidden,
-        detail: "Delete the last character of the focused text field. A choice field ignores it.",
+        detail: "Delete the character before the caret in the focused text field. A choice field ignores it.",
     },
     Entry {
         key: "Enter",
@@ -663,7 +709,8 @@ const FORM: [Entry; 8] = [
     },
 ];
 
-const SUGGEST_FORM: [Entry; 9] = [
+const SUGGEST_FORM: [Entry; 10] = [
+    EDITING,
     Entry {
         key: "Tab",
         label: Label::Hidden,
@@ -716,7 +763,8 @@ const SUGGEST_FORM: [Entry; 9] = [
 /// convention as [`Topic::Form`]: `TransferConfirm::type_char` forwards any
 /// `char` to the date field, which needs `-` as well as digits, so no single
 /// key stands in for it.
-const PLAN_TRANSFERS: [Entry; 5] = [
+const PLAN_TRANSFERS: [Entry; 6] = [
+    EDITING,
     Entry {
         key: "Esc",
         label: Label::Hidden,
@@ -740,7 +788,7 @@ const PLAN_TRANSFERS: [Entry; 5] = [
     Entry {
         key: "Backspace",
         label: Label::Hidden,
-        detail: "Delete the last character of the date. Typing appends to the prefill rather than replacing it, so retyping the date means backspacing it out first.",
+        detail: "Delete the character before the caret in the date. Typing inserts at the caret rather than replacing the prefill, so retyping the date means clearing it first -- Ctrl+U does that in one press.",
     },
 ];
 
@@ -867,6 +915,43 @@ impl Topic {
             | Topic::Details
             | Topic::Confirm
             | Topic::PlanTransfers => false,
+        }
+    }
+
+    /// Whether there is text under a caret here, which is what makes the
+    /// `Ctrl` editing keys mean anything.
+    ///
+    /// Wider than [`takes_typed_chars`]: the worksheet drops all but digits
+    /// on two of its three focuses and `PlanTransfers` has no field but a
+    /// date, yet both hand a key to a buffer, so both answer these. Narrower
+    /// than "any modal": a confirm dialog, the picker, the details panel and
+    /// the destination chooser with its box shut hold no text at all, and
+    /// `App::dispatch` is where a combination they cannot use stops rather
+    /// than falling through to the bare letter's operator.
+    ///
+    /// [`takes_typed_chars`]: Topic::takes_typed_chars
+    pub(super) fn takes_editing_keys(self) -> bool {
+        match self {
+            Topic::Form
+            | Topic::SuggestForm
+            | Topic::LedgerSearch
+            | Topic::SavingsSearch
+            | Topic::WorksheetSearch
+            | Topic::DestinationSearch
+            | Topic::Worksheet
+            | Topic::PlanTransfers => true,
+            Topic::Overview
+            | Topic::Ledger
+            | Topic::Savings
+            | Topic::Planning
+            | Topic::Funds
+            | Topic::RecurringTxns
+            | Topic::RecurringGoals
+            | Topic::Accounts
+            | Topic::Picker
+            | Topic::Destination
+            | Topic::Details
+            | Topic::Confirm => false,
         }
     }
 
@@ -1441,6 +1526,52 @@ mod tests {
         assert!(
             drawn.iter().any(|line| line.to_string().starts_with("Esc")),
             "a Hidden entry should still draw a panel row"
+        );
+    }
+
+    /// A context that takes a typed character necessarily has a caret to edit,
+    /// so the wider predicate has to cover the narrower one. The reverse does
+    /// not hold: the worksheet and the transfer confirmation answer the
+    /// editing keys over a date without taking a `?`.
+    #[test]
+    fn every_topic_that_takes_typed_chars_takes_the_editing_keys() {
+        for topic in ALL {
+            assert!(
+                !topic.takes_typed_chars() || topic.takes_editing_keys(),
+                "{topic:?} takes typed characters but not the keys that edit them"
+            );
+        }
+    }
+
+    /// Every table that names the editing keys is a context that answers
+    /// them, and every context that answers them names them: the panel is
+    /// where a key nobody could guess is advertised, and `App::dispatch`
+    /// reads the same predicate to decide whether a `Ctrl` reaches a caret at
+    /// all.
+    #[test]
+    fn a_topic_names_the_editing_keys_exactly_when_it_answers_them() {
+        for topic in ALL {
+            let named = topic.keys().iter().any(|e| e.key == EDITING_KEYS);
+            assert_eq!(named, topic.takes_editing_keys(), "{topic:?}");
+        }
+    }
+
+    /// The worksheet is the one context that answers these keys on some of
+    /// its focuses and not others, so its entry has to say which -- and it
+    /// must still be the shared sentence with a clause on the end rather than
+    /// a second account of the eight keys.
+    #[test]
+    fn the_worksheets_editing_entry_qualifies_the_shared_one_rather_than_restating_it() {
+        let entry = Topic::Worksheet
+            .keys()
+            .iter()
+            .find(|e| e.key == EDITING_KEYS)
+            .expect("the worksheet answers the editing keys");
+        assert!(entry.detail.starts_with(EDITING.detail), "{}", entry.detail);
+        assert!(
+            entry.detail.contains("date is the one focus here"),
+            "{}",
+            entry.detail
         );
     }
 

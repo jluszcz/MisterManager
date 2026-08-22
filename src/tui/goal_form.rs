@@ -6,8 +6,8 @@
 //! render functions at the bottom drawing only.
 
 use super::form::{
-    DateField, Field, FormFields, Step, field_line, field_line_noted, is_share, next_in,
-    parse_share, parse_whole_amount, render_fields, step_index,
+    Caret, DateField, Field, Focused, FormFields, Step, field_line, field_line_noted, is_share,
+    next_in, parse_share, parse_whole_amount, render_fields, step_index,
 };
 use super::{Account, Label};
 use crate::db::goal::GoalEdit;
@@ -159,27 +159,20 @@ impl FormFields for AllocationForm {
         self.focus = next_in(&AllocField::ORDER, self.focus, -1);
     }
 
-    // The date is the only field `←`/`→` reach: the amount takes `/N` and the
-    // note is free text, and neither may move when an arrow is pressed.
-    fn choice(&mut self, step: Step) {
-        if self.focus == AllocField::Date {
-            self.date.step(step.days());
+    // No selector: `←`/`→` step the date and move the caret in the other two.
+    fn focused(&mut self) -> Focused<'_> {
+        match self.focus {
+            AllocField::Date => Focused::Date(&mut self.date),
+            AllocField::Amount => Focused::Text(&mut self.amount),
+            AllocField::Note => Focused::Text(&mut self.note),
         }
     }
 
-    fn type_char(&mut self, c: char) {
+    fn caret(&self) -> Caret {
         match self.focus {
-            AllocField::Date => self.date.push(c),
-            AllocField::Amount => self.amount.push(c),
-            AllocField::Note => self.note.push(c),
-        }
-    }
-
-    fn backspace(&mut self) {
-        match self.focus {
-            AllocField::Date => self.date.backspace(),
-            AllocField::Amount => self.amount.backspace(),
-            AllocField::Note => self.note.backspace(),
+            AllocField::Date => Caret::in_field(self.date.text()),
+            AllocField::Amount => Caret::in_field(&self.amount),
+            AllocField::Note => Caret::in_field(&self.note),
         }
     }
 }
@@ -353,32 +346,27 @@ impl FormFields for GoalForm {
     }
 
     // Eligibility is the only selector here, and it has two values, so both
-    // directions are the same flip. The goal date is the one field where the
-    // two directions differ -- and an undated goal has no date to step, which
-    // is what keeps an arrow press from dating one.
-    fn choice(&mut self, step: Step) {
+    // directions are the same flip. An undated goal has no date to step,
+    // which is what keeps an arrow press from dating one.
+    fn cycle(&mut self, _step: Step) {
+        self.eligible = !self.eligible;
+    }
+
+    fn focused(&mut self) -> Focused<'_> {
         match self.focus {
-            GoalField::Date => self.date.step(step.days()),
-            GoalField::Interest => self.eligible = !self.eligible,
-            GoalField::Name | GoalField::Target => {}
+            GoalField::Name => Focused::Text(&mut self.name),
+            GoalField::Target => Focused::Text(&mut self.target),
+            GoalField::Date => Focused::Date(&mut self.date),
+            GoalField::Interest => Focused::Selector,
         }
     }
 
-    fn type_char(&mut self, c: char) {
+    fn caret(&self) -> Caret {
         match self.focus {
-            GoalField::Name => self.name.push(c),
-            GoalField::Target => self.target.push(c),
-            GoalField::Date => self.date.push(c),
-            GoalField::Interest => {}
-        }
-    }
-
-    fn backspace(&mut self) {
-        match self.focus {
-            GoalField::Name => self.name.backspace(),
-            GoalField::Target => self.target.backspace(),
-            GoalField::Date => self.date.backspace(),
-            GoalField::Interest => {}
+            GoalField::Name => Caret::in_field(&self.name),
+            GoalField::Target => Caret::in_field(&self.target),
+            GoalField::Date => Caret::in_field(self.date.text()),
+            GoalField::Interest => Caret::End,
         }
     }
 }
@@ -491,28 +479,23 @@ impl FormFields for CloseForm {
         self.focus = next_in(&CloseField::ORDER, self.focus, -1);
     }
 
-    // Guarded on focus, the same way `TxnForm` guards its account selector:
     // `←`/`→` step the date on one field and cycle the destination on the
     // other, and neither may reach across.
-    fn choice(&mut self, step: Step) {
+    fn cycle(&mut self, step: Step) {
+        self.destination = step_index(self.destination, self.destinations.len(), step.direction());
+    }
+
+    fn focused(&mut self) -> Focused<'_> {
         match self.focus {
-            CloseField::Date => self.date.step(step.days()),
-            CloseField::Destination => {
-                self.destination =
-                    step_index(self.destination, self.destinations.len(), step.direction())
-            }
+            CloseField::Date => Focused::Date(&mut self.date),
+            CloseField::Destination => Focused::Selector,
         }
     }
 
-    fn type_char(&mut self, c: char) {
-        if self.focus == CloseField::Date {
-            self.date.push(c);
-        }
-    }
-
-    fn backspace(&mut self) {
-        if self.focus == CloseField::Date {
-            self.date.backspace();
+    fn caret(&self) -> Caret {
+        match self.focus {
+            CloseField::Date => Caret::in_field(self.date.text()),
+            CloseField::Destination => Caret::End,
         }
     }
 }
@@ -536,7 +519,12 @@ pub fn render_allocation(frame: &mut Frame, form: &AllocationForm) {
             } else {
                 ""
             };
-            field_line_noted(f.label(), form.display(*f), form.focus == *f, note)
+            field_line_noted(
+                f.label(),
+                form.display(*f),
+                (form.focus == *f).then(|| form.caret()),
+                note,
+            )
         })
         .collect();
     lines.push(TextLine::from(format!("  {}", form.unallocated_line())));
@@ -547,7 +535,13 @@ pub fn render_allocation(frame: &mut Frame, form: &AllocationForm) {
 pub fn render_goal(frame: &mut Frame, form: &GoalForm) {
     let lines: Vec<TextLine> = GoalField::ORDER
         .iter()
-        .map(|f| field_line(f.label(), form.display(*f), form.focus == *f))
+        .map(|f| {
+            field_line(
+                f.label(),
+                form.display(*f),
+                (form.focus == *f).then(|| form.caret()),
+            )
+        })
         .collect();
     render_fields(frame, form.title(), lines);
 }
@@ -556,7 +550,13 @@ pub fn render_goal(frame: &mut Frame, form: &GoalForm) {
 pub fn render_close(frame: &mut Frame, form: &CloseForm) {
     let lines: Vec<TextLine> = CloseField::ORDER
         .iter()
-        .map(|f| field_line(f.label(), form.display(*f), form.focus == *f))
+        .map(|f| {
+            field_line(
+                f.label(),
+                form.display(*f),
+                (form.focus == *f).then(|| form.caret()),
+            )
+        })
         .collect();
     render_fields(frame, form.title(), lines);
 }
@@ -565,6 +565,7 @@ pub fn render_close(frame: &mut Frame, form: &CloseForm) {
 mod tests {
     use super::*;
     use crate::db::account::{self, Group, Kind};
+    use crate::tui::form::{backspace_key, char_key};
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
@@ -608,7 +609,7 @@ mod tests {
             form.next_field();
         }
         for c in text.chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
     }
 
@@ -671,10 +672,10 @@ mod tests {
             form.next_field();
         }
         for _ in 0..10 {
-            form.backspace();
+            form.edit(backspace_key());
         }
         for c in "08/16/2026".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         let err = form.commit().unwrap_err();
         assert!(err.to_string().contains("08/16/2026"), "{err}");
@@ -827,7 +828,7 @@ mod tests {
             form.next_field();
         }
         for c in text.chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
     }
 
@@ -867,10 +868,10 @@ mod tests {
             form.next_field();
         }
         for _ in 0.."1,000.50".len() {
-            form.backspace();
+            form.edit(backspace_key());
         }
         for c in "1000".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         assert_eq!(form.commit().unwrap().goal_cents, Cents(100_000));
     }
@@ -891,7 +892,7 @@ mod tests {
             form.next_field();
         }
         for _ in 0..10 {
-            form.backspace();
+            form.edit(backspace_key());
         }
         assert_eq!(form.commit().unwrap().goal_date, None);
     }
@@ -987,7 +988,7 @@ mod tests {
             form.next_field();
         }
         for _ in 0.."2026-09-01".len() {
-            form.backspace();
+            form.edit(backspace_key());
         }
 
         assert_eq!(form.commit().unwrap().goal_date, None);
@@ -1028,7 +1029,7 @@ mod tests {
             form.next_field();
         }
         for _ in 0..10 {
-            form.backspace();
+            form.edit(backspace_key());
         }
         let err = form.commit().unwrap_err();
         assert!(err.to_string().contains("name"), "{err}");
@@ -1126,10 +1127,10 @@ mod tests {
             form.next_field();
         }
         for _ in 0..10 {
-            form.backspace();
+            form.edit(backspace_key());
         }
         for c in "2026-".chars() {
-            form.type_char(c);
+            form.edit(char_key(c));
         }
         form.choice(Step::NEXT);
         assert_eq!(form.display(AllocField::Date).plain_text(), "2026-");
