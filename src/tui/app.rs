@@ -7529,7 +7529,7 @@ mod tests {
         let mut app = app();
         press(&mut app, KeyCode::Char('2'));
         press(&mut app, KeyCode::Char('a'));
-        assert_eq!(form(&app).focus, TxnField::Date, "a form opens on its date");
+        focus(&mut app, TxnField::Date);
 
         press(&mut app, KeyCode::Right);
         assert_eq!(
@@ -7608,6 +7608,7 @@ mod tests {
         let mut app = app();
         press(&mut app, KeyCode::Char('2'));
         press(&mut app, KeyCode::Char('a'));
+        focus(&mut app, TxnField::Date);
 
         shift_press(&mut app, KeyCode::Right);
         assert_eq!(

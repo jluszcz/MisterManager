@@ -390,14 +390,18 @@ pub enum TxnField {
 impl TxnField {
     /// Tab order, and the order the fields render in.
     ///
+    /// The account and the date are the two that arrive prefilled -- the
+    /// account from the ledger's own filter -- so they lead, and the form
+    /// reads as two defaults to scan and then two fields to fill.
+    ///
     /// The description comes before the amount because accepting a suggestion
     /// fills the amount: with the amount first, reaching the description
     /// meant tabbing *through* a field the suggestion was about to write
     /// anyway, and tabbing off the description now lands on the figure that
     /// arrived with it.
     pub const ORDER: [TxnField; 4] = [
-        TxnField::Date,
         TxnField::Account,
+        TxnField::Date,
         TxnField::Description,
         TxnField::Amount,
     ];
@@ -477,7 +481,7 @@ impl TxnForm {
             .unwrap_or(0);
         Ok(TxnForm {
             editing: None,
-            focus: TxnField::Date,
+            focus: TxnField::Description,
             date: DateField::today(today),
             amount: Field::default(),
             description: Field::default(),
@@ -498,7 +502,7 @@ impl TxnForm {
             .unwrap_or(0);
         Ok(TxnForm {
             editing: Some(txn.id),
-            focus: TxnField::Date,
+            focus: TxnField::Description,
             date: DateField::given(today, Some(txn.date)),
             amount: Field::given(txn.cents.to_string()),
             description: Field::given(txn.description.clone()),
@@ -1372,6 +1376,7 @@ mod tests {
     #[test]
     fn shift_steps_a_transaction_date_a_week() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        focused(&mut form, TxnField::Date);
         form.choice(Step::NEXT_WEEK);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-22");
         form.choice(Step::PREVIOUS_WEEK);
@@ -1385,9 +1390,7 @@ mod tests {
     #[test]
     fn a_week_step_moves_a_selector_one_choice_like_a_plain_arrow() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
-        while form.focus != TxnField::Account {
-            form.next_field();
-        }
+        focused(&mut form, TxnField::Account);
         form.choice(Step::NEXT_WEEK);
         typed(&mut form, TxnField::Amount, "10");
         typed(&mut form, TxnField::Description, "Transfer in");
@@ -1563,10 +1566,17 @@ mod tests {
         }
     }
 
-    fn typed(form: &mut TxnForm, field: TxnField, text: &str) {
+    /// Tab to `field`. The form opens on its description, so a test about any
+    /// other field says which one it means rather than relying on where the
+    /// caret happens to start.
+    fn focused(form: &mut TxnForm, field: TxnField) {
         while form.focus != field {
             form.next_field();
         }
+    }
+
+    fn typed(form: &mut TxnForm, field: TxnField, text: &str) {
+        focused(form, field);
         for c in text.chars() {
             form.type_char(c);
         }
@@ -1636,9 +1646,7 @@ mod tests {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
         typed(&mut form, TxnField::Amount, "10");
         typed(&mut form, TxnField::Description, "Coffee");
-        while form.focus != TxnField::Date {
-            form.next_field();
-        }
+        focused(&mut form, TxnField::Date);
         for _ in 0..10 {
             form.backspace();
         }
@@ -1661,9 +1669,7 @@ mod tests {
     #[test]
     fn the_account_selector_cycles_through_this_kinds_accounts() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
-        while form.focus != TxnField::Account {
-            form.next_field();
-        }
+        focused(&mut form, TxnField::Account);
         form.choice(Step::NEXT);
         typed(&mut form, TxnField::Amount, "10");
         typed(&mut form, TxnField::Description, "Transfer in");
@@ -2278,6 +2284,83 @@ mod tests {
         assert_eq!(form.focus, TxnField::Amount);
     }
 
+    /// The two fields that arrive prefilled lead, and the two the hand has to
+    /// fill follow: the account comes from the ledger's own filter.
+    #[test]
+    fn the_prefilled_fields_come_before_the_typed_ones() {
+        assert_eq!(
+            TxnField::ORDER,
+            [
+                TxnField::Account,
+                TxnField::Date,
+                TxnField::Description,
+                TxnField::Amount,
+            ]
+        );
+    }
+
+    /// `render_txn` maps over `ORDER`, which is what stops the screen and the
+    /// tab key from disagreeing -- so the drawn rows are worth reading back.
+    #[test]
+    fn the_form_draws_its_fields_in_the_order_tab_visits_them() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_txn(frame, &form, &Autocomplete::default());
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        // The border title also carries "transaction", so the labels are
+        // found by their own rows rather than by the first line matching.
+        let drawn: Vec<&str> = (0..24u16)
+            .map(|y| {
+                (0..80u16)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .filter_map(|line| {
+                TxnField::ORDER
+                    .iter()
+                    .map(|f| f.label())
+                    .find(|label| line.contains(label))
+            })
+            .collect();
+
+        assert_eq!(drawn, ["Account", "Date", "Description", "Amount"]);
+    }
+
+    /// The account and the date open on defaults worth accepting; the
+    /// description is the first field with nothing in it, and the one
+    /// autocomplete reads.
+    #[test]
+    fn the_add_form_opens_on_the_description() {
+        let form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        assert_eq!(form.focus, TxnField::Description);
+    }
+
+    /// One opening position for one form: an edit arrives with every field
+    /// filled, so there is no second rule for it to follow.
+    #[test]
+    fn the_edit_form_opens_on_the_description_too() {
+        let row = Txn {
+            id: TxnId(1),
+            date: day(2026, 1, 2),
+            cents: Cents(1_000),
+            account_id: AccountId(1),
+            description: "Coffee".to_string(),
+            recurring_txn_id: None::<RecurringTxnId>,
+            edited: false,
+        };
+        let form = TxnForm::edit(accounts(), day(2026, 8, 15), &row).unwrap();
+        assert_eq!(form.focus, TxnField::Description);
+    }
+
     #[test]
     fn the_transfer_description_comes_before_its_amount_too() {
         let mut form = TransferForm::transfer(all_accounts(), day(2026, 8, 31)).unwrap();
@@ -2291,6 +2374,7 @@ mod tests {
     #[test]
     fn the_arrows_step_a_transaction_date_by_a_day() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
+        focused(&mut form, TxnField::Date);
         form.choice(Step::NEXT);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-16");
         form.choice(Step::PREVIOUS);
@@ -2301,6 +2385,7 @@ mod tests {
     #[test]
     fn stepping_a_date_crosses_a_month_boundary() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 31), None).unwrap();
+        focused(&mut form, TxnField::Date);
         form.choice(Step::NEXT);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-09-01");
     }
@@ -2310,9 +2395,7 @@ mod tests {
     #[test]
     fn the_arrows_leave_a_field_that_is_not_a_date_as_typed() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
-        while form.focus != TxnField::Date {
-            form.next_field();
-        }
+        focused(&mut form, TxnField::Date);
         for _ in 0..10 {
             form.backspace();
         }
@@ -2337,9 +2420,7 @@ mod tests {
     #[test]
     fn cycling_the_account_leaves_the_date_alone() {
         let mut form = TxnForm::add(accounts(), day(2026, 8, 15), None).unwrap();
-        while form.focus != TxnField::Account {
-            form.next_field();
-        }
+        focused(&mut form, TxnField::Account);
         form.choice(Step::NEXT);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-15");
     }

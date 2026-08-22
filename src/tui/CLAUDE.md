@@ -285,7 +285,16 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   suggestion was about to write anyway — and tabbing off the description now lands on the figure
   that arrived with it, which is the one worth checking. `TxnField::ORDER` and
   `TransferField::ORDER` are both tab order and render order, so the screen and the hand cannot
-  disagree; `RecurringTxnField::ORDER` already opens on its description.
+  disagree.
+- **A form's prefilled fields lead, and it opens on the first field the hand has to fill.** Those
+  are two rules, and on `TxnForm` they point at different fields: the account arrives from the
+  ledger's own filter and the date arrives prefilled, so `TxnField::ORDER` runs
+  `Account, Date, Description, Amount` — two defaults to scan, then two fields to type — while the
+  form opens focused on `Description`, which is `ORDER[2]`. A form that opened on a field it had
+  already answered would cost two `Tab`s before the first character, every time. `Shift`+`Tab`
+  reaches the defaults on the rounds where one of them is wrong.
+  `RecurringTxnField::ORDER` satisfies both rules at once, its description being the first field
+  either way, which is why nothing there had to change.
 - **`Shift` is the only modifier the app reads, and it always means the same thing: the same nudge,
   a bigger step.** It is on the key that already means "move this", rather than a second letter for
   one action, and it reaches every date rather than only the Overview's — a horizon several paydays
