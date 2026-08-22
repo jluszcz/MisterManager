@@ -222,6 +222,20 @@ mod tests {
 
     /// The separators are drawn for reading and would have to be typed
     /// exactly to match; taking them out is what lets `1234` find `1,234.56`.
+    /// A needle is matched against the figure itself, never against what the
+    /// screen draws -- so `mm --demo` narrows a list by amount exactly as an
+    /// ordinary run does. Routing this through `demo` would turn every row's
+    /// key into the mask and quietly leave the owner unable to find anything
+    /// while demonstrating the app. The needle stays visible for the same
+    /// reason: it is a query the owner is typing, not a figure off a row.
+    #[test]
+    fn a_demo_still_finds_a_row_by_its_amount() {
+        crate::demo::install(true);
+        assert_eq!(searchable_amount(Cents(123_456)), "1234.56");
+        assert!(Matcher::new("1234").matches("Lego", &amounts()));
+        assert!(!Matcher::new("9999").matches("Lego", &amounts()));
+    }
+
     #[test]
     fn a_needle_matches_an_amount_with_its_separators_taken_out() {
         assert_eq!(searchable_amount(Cents(123_456)), "1234.56");

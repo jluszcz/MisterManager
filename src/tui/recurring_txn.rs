@@ -232,7 +232,7 @@ impl RecurringTxnForm {
     pub fn display(&self, field: RecurringTxnField) -> Label {
         match field {
             RecurringTxnField::Description => Label::from(self.description.value()),
-            RecurringTxnField::Amount => Label::from(self.amount.value()),
+            RecurringTxnField::Amount => Label::from(crate::demo::typed(self.amount.value())),
             RecurringTxnField::Anchor => {
                 Label::from(self.anchor.display(self.focus == RecurringTxnField::Anchor))
             }
@@ -662,6 +662,31 @@ mod tests {
             form.type_char(c);
         }
         assert_eq!(form.commit().unwrap().horizon, None);
+    }
+
+    /// The amount is money; the description, account, cadence and anchor
+    /// date are the rule it repeats on.
+    #[test]
+    fn a_demo_blocks_the_amount_and_keeps_the_rule() {
+        crate::demo::install(true);
+        let form = RecurringTxnForm::edit(
+            accounts(),
+            today(),
+            &recurring_txn(2, "Mortgage", -120_000, Cadence::Monthly, false),
+        )
+        .unwrap();
+        assert_eq!(
+            form.display(RecurringTxnField::Amount).plain_text(),
+            "██████"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Description).plain_text(),
+            "Mortgage"
+        );
+        assert_eq!(
+            form.display(RecurringTxnField::Anchor).plain_text(),
+            "2026-08-28"
+        );
     }
 
     #[test]

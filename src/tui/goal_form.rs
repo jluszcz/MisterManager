@@ -6,8 +6,8 @@
 //! render functions at the bottom drawing only.
 
 use super::form::{
-    DateField, Field, FormFields, Step, field_line, field_line_noted, next_in, parse_share,
-    parse_whole_amount, render_fields, step_index,
+    DateField, Field, FormFields, Step, field_line, field_line_noted, is_share, next_in,
+    parse_share, parse_whole_amount, render_fields, step_index,
 };
 use super::{Account, Label};
 use crate::db::goal::GoalEdit;
@@ -91,7 +91,7 @@ impl AllocationForm {
     /// itself on the status line at Enter, like every other bad field.
     pub fn resolved_share(&self) -> Option<Cents> {
         let raw = self.amount.value().trim();
-        raw.starts_with('/')
+        is_share(raw)
             .then(|| parse_share(raw, self.unallocated).ok())
             .flatten()
     }
@@ -108,7 +108,8 @@ impl AllocationForm {
     pub fn unallocated_line(&self) -> String {
         format!(
             "{} unallocated {} · /N takes 1/N",
-            self.container_name, self.unallocated
+            self.container_name,
+            crate::demo::figure(self.unallocated)
         )
     }
 
@@ -122,7 +123,18 @@ impl AllocationForm {
     pub fn display(&self, field: AllocField) -> Label {
         Label::plain(match field {
             AllocField::Date => self.date.display(self.focus == AllocField::Date),
-            AllocField::Amount => self.amount.value().to_string(),
+            // The one amount field that can be holding something other than an
+            // amount. `/12` is a count, and counts are not masked: what it
+            // divides is the unallocated remainder on the line below, which is
+            // blocked out there, and `resolved_share` puts the answer beside
+            // the field blocked out too. Masking the divisor as well would
+            // leave the one field whose text is not a figure with no visible
+            // feedback at all -- `/12` and `/2` would read the same right up
+            // to Enter.
+            AllocField::Amount => match is_share(self.amount.value()) {
+                true => self.amount.value().to_string(),
+                false => crate::demo::typed(self.amount.value()),
+            },
             AllocField::Note => self.note.value().to_string(),
         })
     }
@@ -312,7 +324,7 @@ impl GoalForm {
     pub fn display(&self, field: GoalField) -> Label {
         Label::plain(match field {
             GoalField::Name => self.name.value().to_string(),
-            GoalField::Target => self.target.value().to_string(),
+            GoalField::Target => crate::demo::typed(self.target.value()),
             GoalField::Date => self.date.display(self.focus == GoalField::Date),
             GoalField::Interest => if self.eligible { "yes" } else { "no" }.to_string(),
         })
@@ -443,7 +455,8 @@ impl CloseForm {
     pub fn title(&self) -> String {
         format!(
             "Close out {} ({}) — ←/→ destination · Enter save · Esc cancel",
-            self.goal_name, self.balance
+            self.goal_name,
+            crate::demo::figure(self.balance)
         )
     }
 
@@ -513,7 +526,7 @@ use ratatui::text::Line as TextLine;
 pub fn render_allocation(frame: &mut Frame, form: &AllocationForm) {
     let share = form
         .resolved_share()
-        .map(|cents| format!("= {}", cents.to_whole_dollars()))
+        .map(|cents| format!("= {}", crate::demo::whole_figure(cents)))
         .unwrap_or_default();
     let mut lines: Vec<TextLine> = AllocField::ORDER
         .iter()
@@ -681,6 +694,72 @@ mod tests {
         );
         typed(&mut form, AllocField::Amount, "/2");
         assert_eq!(form.commit().unwrap().cents, Cents::from_dollars(1300));
+    }
+
+    /// Two figures reach this modal beside whatever is typed -- the share a
+    /// `/N` resolves to, and the container's remainder underneath -- and a
+    /// demo blocks both. The divisor itself is a count and stays, which is
+    /// what leaves the field feedback: blocked, `/12` and `/2` would read the
+    /// same right up to Enter, and the answer beside them is blocked already.
+    #[test]
+    fn a_demo_blocks_the_share_and_the_remainder_but_not_the_divisor() {
+        crate::demo::install(true);
+        let mut form = AllocationForm::new(
+            GoalId(7),
+            "Lego",
+            "Rainy Day",
+            Cents(260_017),
+            day(2026, 8, 16),
+        );
+        typed(&mut form, AllocField::Amount, "/12");
+        let text = rendered(&form);
+
+        assert!(!text.contains("216"), "the resolved share survived: {text}");
+        assert!(!text.contains("2,600"), "the remainder survived: {text}");
+        assert!(text.contains("/12"), "the divisor is a count: {text}");
+        assert!(text.contains("██████"), "nothing was blocked: {text}");
+        assert!(text.contains("Lego"), "the goal name must stay: {text}");
+        assert!(text.contains("2026-08-16"), "the date must stay: {text}");
+    }
+
+    /// The other half of the same field. A typed figure *is* a figure, and
+    /// the form opens prefilled on an edit -- a field showing what is already
+    /// there publishes it to whoever is watching.
+    #[test]
+    fn a_demo_blocks_an_amount_typed_into_the_same_field() {
+        crate::demo::install(true);
+        let mut form = AllocationForm::new(
+            GoalId(7),
+            "Lego",
+            "Rainy Day",
+            Cents(260_017),
+            day(2026, 8, 16),
+        );
+        typed(&mut form, AllocField::Amount, "1234");
+        let text = rendered(&form);
+
+        assert!(!text.contains("1234"), "the typed amount survived: {text}");
+        assert!(text.contains("██████"), "nothing was blocked: {text}");
+    }
+
+    fn rendered(form: &AllocationForm) -> String {
+        use crate::tui::MIN_WIDTH;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_allocation(frame, form);
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
     }
 
     /// A divisor is not a figure, so the form resolves it on screen rather
@@ -1007,6 +1086,23 @@ mod tests {
         );
         assert!(form.title().contains("Couch"), "{}", form.title());
         assert!(form.title().contains("600.00"), "{}", form.title());
+    }
+
+    /// The balance is the whole point of the title -- it is what is about to
+    /// move -- so it is exactly the figure a demo has to block.
+    #[test]
+    fn a_demo_blocks_the_balance_a_close_out_is_about_to_move() {
+        crate::demo::install(true);
+        let form = CloseForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(60_000),
+            siblings(),
+            day(2026, 8, 16),
+        );
+        assert!(!form.title().contains("600.00"), "{}", form.title());
+        assert!(form.title().contains("██████"), "{}", form.title());
+        assert!(form.title().contains("Couch"), "{}", form.title());
     }
 
     /// Every date field in the app steps a day at a time under `←`/`→`, and

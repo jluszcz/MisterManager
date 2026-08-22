@@ -388,7 +388,7 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
                 whole_amount(r.goal),
                 percent(r.percent),
                 optional(goal_date(r)),
-                optional(r.per_paycheck.map(Cents::to_whole_dollars)),
+                optional(r.per_paycheck.map(crate::demo::whole_figure)),
             ])
             .style(if r.favorite { band } else { Style::default() })
         })
@@ -440,7 +440,11 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
             } else {
                 "!"
             };
-            format!("{} {excess} {marker}", savings.account_name(*id))
+            format!(
+                "{} {} {marker}",
+                savings.account_name(*id),
+                crate::demo::figure(*excess)
+            )
         })
         .collect::<Vec<_>>()
         .join(" · ");
@@ -982,6 +986,48 @@ mod tests {
     /// right-aligned cell that gets truncated loses its *leading* characters,
     /// so a shortfall here silently turns `2026-11-27` into a wrong year
     /// rather than an obviously-broken string.
+    /// A demo blocks the money and nothing else: the `%` column is a shape
+    /// rather than a sum, and a goal's name, date and container are already
+    /// the owner's own words.
+    #[test]
+    fn a_demo_blocks_the_figures_and_keeps_the_percentages() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        crate::demo::install(true);
+        let savings = savings();
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &savings);
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+
+        assert!(!text.contains("13,000"), "a balance survived: {text}");
+        assert!(!text.contains("15,000"), "a target survived: {text}");
+        assert!(
+            !text.contains("0.23"),
+            "the unallocated footer survived: {text}"
+        );
+        assert!(text.contains("██████"), "nothing was blocked: {text}");
+        assert!(text.contains("106%"), "the percentages must stay: {text}");
+        assert!(
+            text.contains("Apple Watch"),
+            "the goal names must stay: {text}"
+        );
+        assert!(
+            text.contains("2026-09-01"),
+            "the goal dates must stay: {text}"
+        );
+    }
+
     #[test]
     fn the_goal_date_column_is_not_truncated_at_the_minimum_width() {
         use ratatui::Terminal;

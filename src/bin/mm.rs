@@ -16,6 +16,12 @@ struct Cli {
     /// Config file. Defaults to ~/.config/mistermanager/config.toml
     #[arg(long, global = true)]
     config: Option<PathBuf>,
+    /// Block every dollar figure out, for showing the application to someone.
+    ///
+    /// Not global, unlike the three above: it changes what the screens draw
+    /// and nothing else, and no subcommand prints a figure for it to block.
+    #[arg(long)]
+    demo: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -76,7 +82,7 @@ fn main() -> Result<()> {
     match cli.command {
         // No subcommand launches the application. `--db` and `--today` are
         // global, so the TUI honors them exactly as the importer does.
-        None => tui::run(db, today)?,
+        None => tui::run(db, today, cli.demo)?,
         Some(Command::Import { workbook, replace }) => {
             match import::import_all(&db, &workbook, today, replace)? {
                 // The Savings sheet names its two blocks by position and

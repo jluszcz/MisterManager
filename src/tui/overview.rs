@@ -393,10 +393,10 @@ mod tests {
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        // Row 0 is the top border, and columns 0 and 79 are the sides.
+        // Row 0 is the top border, and the first and last columns are the sides.
         (1..height - 1)
             .map(|y| {
-                (1..79)
+                (1..MIN_WIDTH - 1)
                     .map(|x| buffer[(x, y)].symbol())
                     .collect::<String>()
                     .trim_end()
@@ -431,6 +431,25 @@ mod tests {
             placed(&db, code, name, Kind::Credit, Group::Credit);
         }
         db
+    }
+
+    /// The screen knows nothing about `--demo`: every figure it draws goes
+    /// through `tui::amount`, so blocking them is one decision rather than
+    /// one per screen. The rows, the names and the bands are untouched --
+    /// what a demo hides is the money.
+    #[test]
+    fn a_demo_blocks_the_balances_and_leaves_the_rows_standing() {
+        crate::demo::install(true);
+        let rows = drawn();
+        let text = rows.join("\n");
+        assert!(!text.contains("1,000"), "the balance survived: {text:?}");
+        assert!(
+            !text.contains("70.00"),
+            "the card balance survived: {text:?}"
+        );
+        assert!(text.contains("██████"), "nothing was blocked: {text:?}");
+        assert!(text.contains("Everyday"), "the account names must stay");
+        assert!(text.contains("Net"), "the subtotals must stay");
     }
 
     /// So the dates read as labels for the columns below them rather than as

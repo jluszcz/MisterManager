@@ -233,7 +233,7 @@ impl RecurringGoalForm {
         Label::plain(match field {
             RecurringGoalField::Name => self.name.value().to_string(),
             RecurringGoalField::Month => super::month_full_name(self.month),
-            RecurringGoalField::Amount => self.amount.value().to_string(),
+            RecurringGoalField::Amount => crate::demo::typed(self.amount.value()),
             RecurringGoalField::Taxed => (if self.taxed { "yes" } else { "no" }).to_string(),
             RecurringGoalField::Cadence => Cadence::ALL[self.cadence].as_str().to_string(),
         })
@@ -619,6 +619,33 @@ mod tests {
         assert_eq!(new.base_cents, Cents::from_dollars(128));
         assert!(new.taxed);
         assert_eq!(new.cadence, Cadence::Biennial);
+    }
+
+    /// The base amount is money; the month, the cadence and whether it is
+    /// taxed are the rule rather than the figure.
+    #[test]
+    fn a_demo_blocks_the_base_amount_and_keeps_the_rule() {
+        crate::demo::install(true);
+        let form = RecurringGoalForm::edit(&Entry {
+            id: RecurringGoalId(2),
+            name: "Dropbox".to_string(),
+            month: 9,
+            base_cents: Cents::from_dollars(128),
+            taxed: true,
+            cadence: Cadence::Biennial,
+        });
+        assert_eq!(
+            form.display(RecurringGoalField::Amount).plain_text(),
+            "██████"
+        );
+        assert_eq!(
+            form.display(RecurringGoalField::Month).plain_text(),
+            "September"
+        );
+        assert_eq!(
+            form.display(RecurringGoalField::Cadence).plain_text(),
+            "biennial"
+        );
     }
 
     #[test]

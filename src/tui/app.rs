@@ -425,7 +425,11 @@ impl App {
         let prefills = self.worksheet_prefills(&rows)?;
         transfer::execute(&self.db, from, date, &rows)?;
         let total: Cents = rows.iter().map(|r| r.cents()).sum();
-        self.status = format!("wrote {} transfers, {total}", rows.len());
+        self.status = format!(
+            "wrote {} transfers, {}",
+            rows.len(),
+            crate::demo::figure(total)
+        );
         self.close_modal();
         self.reload()?;
         // Only stored once the reload has succeeded: a queue assigned before
@@ -505,10 +509,15 @@ impl App {
         match opened {
             None | Some((None, _, _)) => self.status = NOTHING_SELECTED.to_string(),
             Some((Some(planning::Editable::Constant(target)), label, prefill)) => {
-                self.modal = Some(Modal::Value(
-                    target,
-                    ValueForm::new(label.trim().to_string(), &prefill),
-                ));
+                // A percentage and a count of pay periods open the same
+                // modal a target does, and only one of the three is money.
+                let label = label.trim().to_string();
+                let form = if target.is_money() {
+                    ValueForm::money(label, &prefill)
+                } else {
+                    ValueForm::new(label, &prefill)
+                };
+                self.modal = Some(Modal::Value(target, form));
             }
             Some((Some(planning::Editable::Destination(line)), _, _)) => {
                 self.open_destination(line)?
@@ -678,7 +687,7 @@ impl App {
                 )?;
             }
         }
-        self.status = format!("{} {}", edit.label, edit.cents);
+        self.status = format!("{} {}", edit.label, crate::demo::figure(edit.cents));
         self.close_modal();
         self.reload()
     }
@@ -705,7 +714,7 @@ impl App {
             return Ok(());
         };
         let found = bill::get(&self.db, id)?;
-        let label = format!("{}  {}", found.label, found.cents);
+        let label = format!("{}  {}", found.label, crate::demo::figure(found.cents));
         self.modal = Some(Modal::Confirm {
             action: Confirm::DeleteBill(id),
             label,
@@ -746,7 +755,7 @@ impl App {
         // value and pressing Enter must not quietly round it.
         self.modal = Some(Modal::FundValue(
             row.fund_id,
-            ValueForm::new("Actual Value", &row.actual.to_string()),
+            ValueForm::money("Actual Value", &row.actual.to_string()),
         ));
     }
 
@@ -766,7 +775,7 @@ impl App {
         };
         self.modal = Some(Modal::Confirm {
             action: Confirm::DeleteFund(row.fund_id),
-            label: format!("{} — {}", row.name, row.actual.to_whole_dollars()),
+            label: format!("{} — {}", row.name, crate::demo::whole_figure(row.actual)),
         });
     }
 
@@ -890,7 +899,9 @@ impl App {
             Some(row) => {
                 let label = format!(
                     "{} · {} · {} ledger rows will be released, not deleted",
-                    row.description, row.cents, row.owned
+                    row.description,
+                    crate::demo::figure(row.cents),
+                    row.owned
                 );
                 self.modal = Some(Modal::Confirm {
                     action: Confirm::DeleteRecurringTxn(row.recurring_txn_id),
@@ -1021,7 +1032,8 @@ impl App {
         let goals = recurring_goal::goal_count(&self.db, row.recurring_goal_id)?;
         let label = format!(
             "{} · {} · {goals} goal(s), open or closed, reference it",
-            row.name, row.base_cents
+            row.name,
+            crate::demo::figure(row.base_cents)
         );
         self.modal = Some(Modal::Confirm {
             action: Confirm::DeleteRecurringGoal(row.recurring_goal_id),
@@ -1132,7 +1144,7 @@ impl App {
         };
         let label = Label::plain("Target · ").account(Account::named(ledger.accounts(), id));
         let prefill = ledger.target().map(|t| t.to_string()).unwrap_or_default();
-        self.modal = Some(Modal::Reconcile(id, ValueForm::new(label, &prefill)));
+        self.modal = Some(Modal::Reconcile(id, ValueForm::money(label, &prefill)));
     }
 
     /// An empty field clears the target: that is how one goes away, since
@@ -1154,7 +1166,7 @@ impl App {
         let name = self.ledger().account_name(id).to_string();
         self.ledger_mut().set_target(target);
         self.status = match target {
-            Some(cents) => format!("{name} target {cents}"),
+            Some(cents) => format!("{name} target {}", crate::demo::figure(cents)),
             None => format!("{name} target cleared"),
         };
         self.close_modal();
@@ -1434,8 +1446,8 @@ impl App {
         // that made the first: the figure below the plan has just changed
         // under the owner, and "pinned" alone would not say so.
         self.status = match was_pinned {
-            true => format!("re-pinned {pinned}"),
-            false => format!("pinned {pinned}"),
+            true => format!("re-pinned {}", crate::demo::figure(pinned)),
+            false => format!("pinned {}", crate::demo::figure(pinned)),
         };
         self.reload()
     }
@@ -1653,7 +1665,12 @@ impl App {
         match self.ledger().selected().cloned() {
             None => self.status = NOTHING_SELECTED.to_string(),
             Some(row) => {
-                let label = format!("{}  {}  {}", row.date, row.description, row.cents);
+                let label = format!(
+                    "{}  {}  {}",
+                    row.date,
+                    row.description,
+                    crate::demo::figure(row.cents)
+                );
                 self.modal = Some(Modal::Confirm {
                     action: Confirm::DeleteTxn(row.id),
                     label,
@@ -1701,7 +1718,7 @@ impl App {
         )?;
         self.status = format!(
             "allocated {} · U undoes the last batch, not this",
-            allocated.cents
+            crate::demo::figure(allocated.cents)
         );
         self.close_modal();
         self.reload()
@@ -2008,7 +2025,8 @@ impl App {
         let total: Cents = committed.shares.iter().map(|(_, c)| *c).sum();
         goal::insert_allocations(&self.db, kind, committed.date, &committed.shares, None)?;
         self.status = format!(
-            "posted {total} across {} goals · U undoes it",
+            "posted {} across {} goals · U undoes it",
+            crate::demo::figure(total),
             committed.shares.len()
         );
         self.close_modal();
@@ -2034,10 +2052,11 @@ impl App {
         let shares = goal::batch_shares(&self.db, batch.id)?;
         let total: Cents = shares.iter().map(|(_, c)| *c).sum();
         let label = format!(
-            "{} {} · {} goals · {total}",
+            "{} {} · {} goals · {}",
             batch.kind.as_str(),
             batch.date,
-            shares.len()
+            shares.len(),
+            crate::demo::figure(total)
         );
         self.modal = Some(Modal::Confirm {
             action: Confirm::UndoBatch(batch.id),
@@ -2421,7 +2440,11 @@ impl App {
                 "added"
             }
         };
-        self.status = format!("{verb} {} {}", new.description, new.cents);
+        self.status = format!(
+            "{verb} {} {}",
+            new.description,
+            crate::demo::figure(new.cents)
+        );
         self.close_modal();
         self.reload()
     }
@@ -2441,7 +2464,7 @@ impl App {
             &moved.description,
             &moved.description,
         )?;
-        self.status = format!("{} {}", moved.description, moved.cents);
+        self.status = format!("{} {}", moved.description, crate::demo::figure(moved.cents));
         self.close_modal();
         self.reload()
     }
@@ -3243,6 +3266,180 @@ mod tests {
 
         assert_eq!(app.credit.target(), None);
         assert!(!drawn(&mut app).contains("Target"));
+    }
+
+    /// The net under the whole application: every screen, drawn in a demo,
+    /// with none of the fixture's own figures anywhere in the buffer. A new
+    /// screen, or a new `format!` that formats a `Cents` itself instead of
+    /// asking `tui::demo`, fails here rather than on a shared terminal.
+    ///
+    /// The fixture is the one with rows on every list, because an absence
+    /// check over an empty table passes for free: `app()` has no funds, no
+    /// recurring goals and no recurring transactions, which left three of the
+    /// nine screens drawing nothing to catch. Asserting that a mask *appears*
+    /// is what holds that shut from here on. Accounts is the one screen
+    /// exempt -- it draws a name, a band and a position, and no figure at all.
+    #[test]
+    fn a_demo_leaves_no_figure_on_any_screen() {
+        crate::demo::install(true);
+        let mut app = app_with_two_rows_on_every_list();
+        for screen in "123456789".chars() {
+            press(&mut app, KeyCode::Char(screen));
+            let drawn = drawn(&mut app);
+            for figure in DEMO_FIXTURE_FIGURES {
+                assert!(
+                    !drawn.contains(figure),
+                    "{figure} survived on screen {screen}:\n{drawn}"
+                );
+            }
+            assert!(
+                screen == '9' || drawn.contains("██████"),
+                "screen {screen} drew no masked figure, so the check above passed for free:\n{drawn}"
+            );
+        }
+    }
+
+    /// Every figure `app_with_two_rows_on_every_list` puts in the database, as
+    /// the screens would print it unmasked. One list rather than one per
+    /// sweep, so a row added to that fixture is covered by both.
+    const DEMO_FIXTURE_FIGURES: [&str; 10] = [
+        "1,000", "1,200", "14.99", "25.99", "15,000", "10,000", "100.00", "128", "30,000", "90,000",
+    ];
+
+    /// A write reports what it wrote on the status line, which sits in the
+    /// footer of whatever screen is open.
+    #[test]
+    fn a_demo_blocks_the_amount_a_written_row_reports() {
+        crate::demo::install(true);
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('a'));
+        focus(&mut app, TxnField::Amount);
+        type_str(&mut app, "76.54");
+        focus(&mut app, TxnField::Description);
+        type_str(&mut app, "Hardware");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(!app.status.contains("76.54"), "{}", app.status);
+        assert!(app.status.contains("██████"), "{}", app.status);
+        assert!(app.status.contains("Hardware"), "{}", app.status);
+    }
+
+    /// A confirmation names the row it is about to delete, and what makes a
+    /// ledger row recognisable is its amount. The modal is drawn over the
+    /// screen, so a figure that survives here survives in the middle of the
+    /// terminal.
+    #[test]
+    fn a_demo_leaves_no_figure_on_a_delete_confirmation() {
+        crate::demo::install(true);
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('d'));
+
+        let drawn = drawn(&mut app);
+        assert!(drawn.contains("Delete"), "no confirmation opened:\n{drawn}");
+        // Every ledger row behind the modal is blocked already, so the only
+        // thing that can put this figure on screen is the label itself.
+        assert!(!drawn.contains("200.00"), "the amount survived:\n{drawn}");
+        assert!(drawn.contains("2026-08-12"), "the date must stay:\n{drawn}");
+    }
+
+    /// The same net one layer in: every key that opens a form or a worksheet
+    /// over a row that carries a figure, with the mask on and none of the
+    /// fixture's figures reaching the buffer.
+    ///
+    /// The screen sweep above cannot see any of this -- it only ever draws
+    /// screens `1`-`9` -- which is exactly how `BillField::Amount` came to be
+    /// the one amount field this feature missed. A form prefills from the row
+    /// it opens on, so a form is where a real figure is most likely to reach
+    /// the screen, not least.
+    ///
+    /// Every pair asserts a modal actually opened first. A key that finds
+    /// nothing to open on leaves the screen as it was and passes an absence
+    /// check without ever drawing a form -- which is what `('2', 'r')` did,
+    /// silently, until it was given the account filter `r` needs.
+    #[test]
+    fn a_demo_leaves_no_figure_on_any_form_a_row_opens() {
+        crate::demo::install(true);
+        for (screen, key) in [
+            ('2', 'a'),
+            ('2', 'e'),
+            ('2', 'r'),
+            ('2', 't'),
+            ('4', 'e'),
+            ('4', 'a'),
+            ('4', 'A'),
+            ('4', 'n'),
+            ('5', 'e'),
+            ('5', 'E'),
+            ('5', 'a'),
+            ('6', 'e'),
+            ('6', 'E'),
+            ('7', 'a'),
+            ('8', 'a'),
+            ('9', 'e'),
+        ] {
+            // Screen 6 draws off the `fund` table, which `planning_app` has no
+            // rows in; every other screen here has one on the fixture that
+            // carries the bills screen 5 needs.
+            let mut app = match screen {
+                '6' => app_with_two_rows_on_every_list(),
+                _ => planning_app(),
+            };
+            press(&mut app, KeyCode::Char(screen));
+            match (screen, key) {
+                ('5', _) => {
+                    select_first_bill(&mut app);
+                }
+                // `r` reconciles the one account a ledger is narrowed to, and
+                // a ledger opens on `All`.
+                ('2', 'r') => press(&mut app, KeyCode::Tab),
+                _ => {}
+            }
+            press(&mut app, KeyCode::Char(key));
+
+            assert!(
+                app.modal.is_some(),
+                "{key} opened nothing on screen {screen}, so the check below \
+                 would pass without a form ever being drawn: {}",
+                app.status
+            );
+            let drawn = drawn(&mut app);
+            let figures: &[&str] = match screen {
+                '6' => &DEMO_FIXTURE_FIGURES,
+                _ => &["1,200", "300.00", "1,000", "50,000", "5,000"],
+            };
+            for figure in figures {
+                assert!(
+                    !drawn.contains(figure),
+                    "{figure} survived {key} on screen {screen}:\n{drawn}"
+                );
+            }
+        }
+    }
+
+    /// A status line is on screen as surely as a column is, and this one
+    /// quotes the figure that was just typed back at the owner.
+    #[test]
+    fn a_demo_blocks_the_target_a_reconciliation_reports() {
+        crate::demo::install(true);
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('r'));
+        type_str(&mut app, "1200");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(!app.status.contains("1,200"), "{}", app.status);
+        assert!(app.status.contains("██████"), "{}", app.status);
+
+        // The buffer still holds the real figure: reopening and pressing
+        // Enter must not write the mask back.
+        press(&mut app, KeyCode::Char('r'));
+        let Some(Modal::Reconcile(_, form)) = &app.modal else {
+            panic!("r must reopen the form: {:?}", app.status);
+        };
+        assert_eq!(form.value(), "1,200.00");
     }
 
     /// Reopening on a target already set shows it, so a figure being
@@ -4562,6 +4759,28 @@ mod tests {
             }
             _ => panic!("no bill form is open"),
         }
+    }
+
+    /// `E` prefills the bill's own figure, so the form is where that figure
+    /// would otherwise be published to whoever is watching -- the same rule
+    /// every other amount field follows.
+    #[test]
+    fn a_demo_blocks_the_amount_capital_e_opens_a_bill_on() {
+        use crate::tui::planning::BillField;
+        crate::demo::install(true);
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        let bill = select_first_bill(&mut app);
+
+        press(&mut app, KeyCode::Char('E'));
+
+        let Some(Modal::Bill(form)) = &app.modal else {
+            panic!("no bill form is open");
+        };
+        assert_eq!(form.display(BillField::Amount).plain_text(), "██████");
+        assert_eq!(form.display(BillField::Label).plain_text(), bill.label);
+        // The buffer is untouched, so Enter still rewrites the real figure.
+        assert_eq!(form.commit().unwrap().cents, bill.cents);
     }
 
     /// `E` is the whole row, so committing it must rewrite the bill it opened

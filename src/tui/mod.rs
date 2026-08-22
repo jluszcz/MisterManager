@@ -140,7 +140,7 @@ pub fn share_of(pot: Cents, n: i64) -> Result<Cents> {
 /// a column too narrow for its figures is visibly wrong rather than quietly
 /// off by a digit.
 fn amount(cents: Cents) -> Cell<'static> {
-    money_cell(cents, cents.to_string())
+    money_cell(cents, crate::demo::figure(cents))
 }
 
 /// The same cell with the cents dropped — see [`Cents::to_whole_dollars`].
@@ -150,7 +150,7 @@ fn amount(cents: Cents) -> Cell<'static> {
 /// is the exception and keeps its cents: the whole point of that line is the
 /// $0.23 a container can sit at, which truncates away to nothing.
 fn whole_amount(cents: Cents) -> Cell<'static> {
-    money_cell(cents, cents.to_whole_dollars())
+    money_cell(cents, crate::demo::whole_figure(cents))
 }
 
 /// A header cell over a right-aligned column.
@@ -251,7 +251,7 @@ fn money_span(cents: Cents) -> Span<'static> {
 /// with `Cents`'s own formatting, and there is one place that decides where the
 /// digits and their separators go.
 fn money_text(cents: Cents) -> String {
-    let figure = cents.to_string();
+    let figure = crate::demo::figure(cents);
     match figure.strip_prefix('-') {
         Some(magnitude) => format!("-${magnitude}"),
         None => format!("${figure}"),
@@ -352,7 +352,14 @@ fn column_of(line: &str, needle: &str) -> u16 {
     line[..byte].chars().count() as u16
 }
 
-pub fn run(db: Db, today: NaiveDate) -> Result<()> {
+/// Opens the application.
+///
+/// `demo` blocks every absolute figure the screens draw -- see
+/// [`crate::demo`]. Installed here, before the first frame, because it is a
+/// constant of the run rather than state a screen can reach: nothing after
+/// this point can turn it on or off.
+pub fn run(db: Db, today: NaiveDate, demo: bool) -> Result<()> {
+    crate::demo::install(demo);
     let mut app = App::new(db, today)?;
     // `try_init` enables raw mode, enters the alternate screen, and installs
     // a panic hook that restores the terminal before unwinding -- so a bug
