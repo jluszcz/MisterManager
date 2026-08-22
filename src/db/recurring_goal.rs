@@ -293,11 +293,12 @@ mod tests {
         let new_goal = |name: &str, recurring_goal_id| crate::db::goal::NewGoal {
             name: name.to_string(),
             container_account_id: savings,
-            goal_cents: Cents::from_dollars(340),
+            base_cents: Cents::from_dollars(340),
             goal_date: None,
             recurring_goal_id: Some(recurring_goal_id),
             interest_eligible: true,
             sort: 0,
+            taxed: false,
         };
         crate::db::goal::insert(&db, &new_goal("Lego", lego)).unwrap();
         crate::db::goal::insert(&db, &new_goal("Lego", lego)).unwrap();
@@ -372,11 +373,12 @@ mod tests {
             &crate::db::goal::NewGoal {
                 name: "Lego".to_string(),
                 container_account_id: savings,
-                goal_cents: Cents::from_dollars(340),
+                base_cents: Cents::from_dollars(340),
                 goal_date: None,
                 recurring_goal_id: Some(id),
                 interest_eligible: true,
                 sort: 0,
+                taxed: false,
             },
         )
         .unwrap();

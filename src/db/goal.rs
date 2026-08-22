@@ -51,19 +51,20 @@ impl FromStr for BatchKind {
 pub struct NewGoal {
     pub name: String,
     pub container_account_id: AccountId,
-    pub goal_cents: Cents,
+    pub base_cents: Cents,
     pub goal_date: Option<NaiveDate>,
     pub recurring_goal_id: Option<RecurringGoalId>,
     pub interest_eligible: bool,
     pub sort: i64,
+    pub taxed: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Goal {
     pub id: GoalId,
     pub name: String,
     pub container_account_id: AccountId,
-    pub goal_cents: Cents,
+    pub base_cents: Cents,
     pub goal_date: Option<NaiveDate>,
     pub recurring_goal_id: Option<RecurringGoalId>,
     pub interest_eligible: bool,
@@ -74,6 +75,10 @@ pub struct Goal {
     /// a goal arrives unfavorited and `set_favorite` is the only way out of
     /// that.
     pub favorite: bool,
+    /// Whether this goal's target is `calc::tax` of its base rather than the
+    /// base itself. The base is what the table holds; `crate::goal::target`
+    /// is the one place the derivation happens.
+    pub taxed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -87,13 +92,14 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Goal> {
         id: row.get(0)?,
         name: row.get(1)?,
         container_account_id: row.get(2)?,
-        goal_cents: Cents(row.get(3)?),
+        base_cents: Cents(row.get(3)?),
         goal_date: date::parse_opt(row.get(4)?, 4)?,
         recurring_goal_id: row.get(5)?,
         interest_eligible: row.get::<_, i64>(6)? != 0,
         closed: row.get::<_, i64>(7)? != 0,
         sort: row.get(8)?,
         favorite: row.get::<_, i64>(9)? != 0,
+        taxed: row.get::<_, i64>(10)? != 0,
     })
 }
 
@@ -102,22 +108,24 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Goal> {
 /// idiom.
 ///
 /// The `with_balance` arm is those same columns qualified with the `g` alias
-/// a join needs, followed by the goal's allocation sum as column index 10 --
+/// a join needs, followed by the goal's allocation sum as column index 11 --
 /// what [`GoalWithBalance`] reads. Two lists rather than one, but adjacent,
 /// so a column added to the table is one edit in one place.
 macro_rules! select_goal {
     ($tail:literal) => {
         concat!(
-            "SELECT id, name, container_account_id, goal_cents, goal_date,
-                    recurring_goal_id, interest_eligible, closed, sort, favorite
+            "SELECT id, name, container_account_id, base_cents, goal_date,
+                    recurring_goal_id, interest_eligible, closed, sort, favorite,
+                    taxed
                FROM goal ",
             $tail
         )
     };
     (with_balance $tail:literal) => {
         concat!(
-            "SELECT g.id, g.name, g.container_account_id, g.goal_cents, g.goal_date,
+            "SELECT g.id, g.name, g.container_account_id, g.base_cents, g.goal_date,
                     g.recurring_goal_id, g.interest_eligible, g.closed, g.sort, g.favorite,
+                    g.taxed,
                     COALESCE((SELECT SUM(a.cents) FROM allocation a WHERE a.goal_id = g.id), 0)
                FROM goal g ",
             $tail
@@ -128,16 +136,17 @@ macro_rules! select_goal {
 pub fn insert(db: &Db, goal: &NewGoal) -> Result<GoalId> {
     db.conn.execute(
         "INSERT INTO goal
-           (name, container_account_id, goal_cents, goal_date, recurring_goal_id, interest_eligible, sort)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+           (name, container_account_id, base_cents, goal_date, recurring_goal_id, interest_eligible, sort, taxed)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             goal.name,
             goal.container_account_id,
-            goal.goal_cents.0,
+            goal.base_cents.0,
             goal.goal_date.map(iso),
             goal.recurring_goal_id,
             goal.interest_eligible as i64,
-            goal.sort
+            goal.sort,
+            goal.taxed as i64
         ],
     )?;
     Ok(GoalId(db.conn.last_insert_rowid()))
@@ -241,7 +250,7 @@ pub fn has_goal_dated_in_year(
 /// **The one row-by-id read that hands its caller an `Option`.**
 /// [`super::account::get`] is the rule everywhere else -- a dangling foreign
 /// key is a corrupt database, so it errors -- and a goal id is usually one
-/// too, which is why [`shortfall`] and [`move_value`] put the `Option` back
+/// too, which is why [`crate::goal::shortfall`] and [`move_value`] put the `Option` back
 /// into that shape immediately.
 ///
 /// What keeps the `Option` here is that absence is *also* an ordinary answer
@@ -295,28 +304,6 @@ pub fn balance(db: &Db, goal_id: GoalId) -> Result<Cents> {
     Ok(Cents(sum))
 }
 
-/// How much a goal still needs: its target less its balance, clamped at zero.
-///
-/// Errors if the goal does not exist. A caller holding an id for a goal that
-/// is gone is looking at a corrupt database, not at an unfunded goal, and
-/// reporting zero there would silently disable a Planning gate.
-///
-/// Clamped because goals overshoot: Emergency Savings sits above its target
-/// in the live workbook, and a negative need would read as "needs funding"
-/// at every call site that compares against zero.
-///
-/// Ignores `closed`, as `container_excess` does -- a closed goal's
-/// allocations still count.
-pub fn shortfall(db: &Db, goal_id: GoalId) -> Result<Cents> {
-    let goal = get(db, goal_id)?.with_context(|| format!("no goal with id {goal_id}"))?;
-    let remaining = goal.goal_cents - balance(db, goal_id)?;
-    Ok(if remaining < Cents::ZERO {
-        Cents::ZERO
-    } else {
-        remaining
-    })
-}
-
 pub fn list_with_balances(
     db: &Db,
     container_account_id: AccountId,
@@ -328,7 +315,7 @@ pub fn list_with_balances(
     let rows = stmt.query_map(params![container_account_id], |row| {
         Ok(GoalWithBalance {
             goal: from_row(row)?,
-            current: Cents(row.get(10)?),
+            current: Cents(row.get(11)?),
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -354,7 +341,7 @@ pub fn all_with_balances(db: &Db) -> Result<Vec<GoalWithBalance>> {
     let rows = stmt.query_map([], |row| {
         Ok(GoalWithBalance {
             goal: from_row(row)?,
-            current: Cents(row.get(10)?),
+            current: Cents(row.get(11)?),
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -503,24 +490,30 @@ pub fn batch_shares(db: &Db, batch: BatchId) -> Result<Vec<(GoalId, Cents)>> {
 /// about the goal. The importer sets the opening value from the workbook's
 /// own weighting; whether a bucket keeps taking a share of a posting after
 /// that is the owner's call.
+///
+/// The flag is here rather than being a column with one writer of its own,
+/// the way `favorite` is: the goal form has a field for it, so an edit that
+/// left it alone would make the field unable to take a mark back off.
 #[derive(Clone, Debug)]
 pub struct GoalEdit {
     pub name: String,
-    pub goal_cents: Cents,
+    pub base_cents: Cents,
     pub goal_date: Option<NaiveDate>,
     pub interest_eligible: bool,
+    pub taxed: bool,
 }
 
 pub fn update(db: &Db, id: GoalId, edit: &GoalEdit) -> Result<()> {
     let changed = db.conn.execute(
-        "UPDATE goal SET name = ?2, goal_cents = ?3, goal_date = ?4, \
-         interest_eligible = ?5 WHERE id = ?1",
+        "UPDATE goal SET name = ?2, base_cents = ?3, goal_date = ?4, \
+         interest_eligible = ?5, taxed = ?6 WHERE id = ?1",
         params![
             id,
             edit.name,
-            edit.goal_cents.0,
+            edit.base_cents.0,
             edit.goal_date.map(iso),
             edit.interest_eligible as i64,
+            edit.taxed as i64,
         ],
     )?;
     ensure!(changed == 1, "no goal with id {id}");
@@ -657,11 +650,12 @@ mod tests {
         NewGoal {
             name: name.to_string(),
             container_account_id: container,
-            goal_cents: Cents::from_dollars(goal),
+            base_cents: Cents::from_dollars(goal),
             goal_date: None,
             recurring_goal_id: None,
             interest_eligible: true,
             sort: 0,
+            taxed: false,
         }
     }
 
@@ -862,10 +856,13 @@ mod tests {
         // Explicit, distinct ids/values everywhere so a transposed `select_goal!`
         // ordering shows up as a mismatch instead of passing coincidentally.
         // AccountId and RecurringGoalId now make that particular swap a
-        // compile error, but the two bools -- interest_eligible and the
-        // always-false closed flag -- are still the same type, and
-        // auto-assigned rowids still collide at id 1 in every fresh table. Do
-        // not "tidy" these back to defaults/insert().
+        // compile error, but interest_eligible, the always-false closed flag,
+        // the always-false favorite flag, and taxed are all still the same
+        // type, and auto-assigned rowids still collide at id 1 in every fresh
+        // table. Do not "tidy" these back to defaults/insert(). `taxed: true`
+        // against `favorite`'s fixed `false` is what catches a favorite/taxed
+        // transposition: either bool reading the other's column flips exactly
+        // one of the two assertions below.
         db.conn
             .execute(
                 "INSERT INTO account (id, code, name, kind, grp)
@@ -883,11 +880,12 @@ mod tests {
         let goal = NewGoal {
             name: "Roof Replacement".to_string(),
             container_account_id: AccountId(7),
-            goal_cents: Cents(54_321),
+            base_cents: Cents(54_321),
             goal_date: Some(day(2027, 3, 5)),
             recurring_goal_id: Some(RecurringGoalId(3)),
             interest_eligible: true,
             sort: 9,
+            taxed: true,
         };
         let id = insert(&db, &goal).unwrap();
 
@@ -895,12 +893,14 @@ mod tests {
         assert_eq!(found.id, id);
         assert_eq!(found.name, "Roof Replacement");
         assert_eq!(found.container_account_id, AccountId(7));
-        assert_eq!(found.goal_cents, Cents(54_321));
+        assert_eq!(found.base_cents, Cents(54_321));
         assert_eq!(found.goal_date, Some(day(2027, 3, 5)));
         assert_eq!(found.recurring_goal_id, Some(RecurringGoalId(3)));
         assert!(found.interest_eligible);
         assert!(!found.closed);
         assert_eq!(found.sort, 9);
+        assert!(found.taxed);
+        assert!(!found.favorite, "a goal arrives unfavorited");
     }
 
     #[test]
@@ -1143,74 +1143,6 @@ mod tests {
         assert_eq!(before, Cents::ZERO);
     }
 
-    #[test]
-    fn shortfall_is_the_target_less_the_balance() {
-        let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
-        let id = insert(&db, &new_goal("Roth IRA", savings, 5_500)).unwrap();
-        insert_allocation(
-            &db,
-            id,
-            day(2026, 1, 1),
-            Cents::from_dollars(2_000),
-            None,
-            None,
-        )
-        .unwrap();
-
-        assert_eq!(shortfall(&db, id).unwrap(), Cents::from_dollars(3_500));
-    }
-
-    #[test]
-    fn shortfall_of_an_exactly_funded_goal_is_zero() {
-        let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
-        let id = insert(&db, &new_goal("Roth IRA", savings, 5_500)).unwrap();
-        insert_allocation(
-            &db,
-            id,
-            day(2026, 1, 1),
-            Cents::from_dollars(5_500),
-            None,
-            None,
-        )
-        .unwrap();
-
-        assert_eq!(shortfall(&db, id).unwrap(), Cents::ZERO);
-    }
-
-    /// Emergency Savings sits above its target in the live workbook, so an
-    /// overfunded goal is a real state and not a hypothetical. Reporting a
-    /// negative need would turn the emergency gate on and divert the entire
-    /// discretionary split into a bucket that is already full.
-    #[test]
-    fn shortfall_of_an_overfunded_goal_is_zero_not_negative() {
-        let db = db::open_in_memory().unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 0).unwrap();
-        let id = insert(&db, &new_goal("Emergency Savings", brokerage, 100_000)).unwrap();
-        insert_allocation(
-            &db,
-            id,
-            day(2026, 1, 1),
-            Cents::from_dollars(120_000),
-            None,
-            None,
-        )
-        .unwrap();
-
-        assert_eq!(shortfall(&db, id).unwrap(), Cents::ZERO);
-    }
-
-    /// A dangling id is a corrupt database, not an unfunded goal. Returning
-    /// zero here would silently switch a Planning gate off -- the exact
-    /// failure this whole indirection exists to remove.
-    #[test]
-    fn shortfall_of_a_missing_goal_is_an_error() {
-        let db = db::open_in_memory().unwrap();
-        let err = shortfall(&db, GoalId(999)).unwrap_err();
-        assert!(err.to_string().contains("999"), "{err}");
-    }
-
     /// Only accounts that actually hold goals may be reconciled. Running
     /// `container_excess` against Everyday checking would report its entire
     /// balance as unallocated, which is true and useless.
@@ -1451,16 +1383,17 @@ mod tests {
             id,
             &GoalEdit {
                 name: "Sofa".to_string(),
-                goal_cents: Cents(150_000),
+                base_cents: Cents(150_000),
                 goal_date: Some(day(2027, 3, 5)),
                 interest_eligible: true,
+                taxed: false,
             },
         )
         .unwrap();
 
         let found = get(&db, id).unwrap().unwrap();
         assert_eq!(found.name, "Sofa");
-        assert_eq!(found.goal_cents, Cents(150_000));
+        assert_eq!(found.base_cents, Cents(150_000));
         assert_eq!(found.goal_date, Some(day(2027, 3, 5)));
     }
 
@@ -1479,9 +1412,10 @@ mod tests {
             id,
             &GoalEdit {
                 name: "Couch".to_string(),
-                goal_cents: Cents(100_000),
+                base_cents: Cents(100_000),
                 goal_date: None,
                 interest_eligible: true,
+                taxed: false,
             },
         )
         .unwrap();
@@ -1502,9 +1436,10 @@ mod tests {
             id,
             &GoalEdit {
                 name: "Down Payment".to_string(),
-                goal_cents: Cents::from_dollars(1_000),
+                base_cents: Cents::from_dollars(1_000),
                 goal_date: None,
                 interest_eligible: false,
+                taxed: false,
             },
         )
         .unwrap();
@@ -1554,9 +1489,10 @@ mod tests {
             id,
             &GoalEdit {
                 name: "Home Down Payment".to_string(),
-                goal_cents: Cents::from_dollars(2_000),
+                base_cents: Cents::from_dollars(2_000),
                 goal_date: None,
                 interest_eligible: true,
+                taxed: false,
             },
         )
         .unwrap();
@@ -1580,9 +1516,10 @@ mod tests {
                 GoalId(999),
                 &GoalEdit {
                     name: "Ghost".to_string(),
-                    goal_cents: Cents(100),
+                    base_cents: Cents(100),
                     goal_date: None,
                     interest_eligible: true,
+                    taxed: false,
                 },
             )
             .is_err()

@@ -11,6 +11,7 @@ use crate::db::goal::Goal;
 use crate::db::setting::Key;
 use crate::db::txn::{self, NewTxn};
 use crate::db::{AccountId, Db, GoalId, goal, setting};
+use crate::goal as goal_engine;
 use crate::money::Cents;
 use crate::plan_line::{Destination, Line};
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -117,18 +118,47 @@ fn claimed_goals_tolerant(db: &Db) -> Result<Vec<GoalId>> {
 
 /// [`spread_goals`], read tolerantly. The set a screen shows.
 fn spread_goals_tolerant(db: &Db) -> Result<Vec<Goal>> {
-    Ok(shares_of(&unclaimed_with_balances(
+    Ok(shares_of(&unclaimed_with_balances_tolerant(
         db,
         &claimed_goals_tolerant(db)?,
     )?))
 }
 
-/// Every open goal `claimed` does not name, with its balance.
-fn unclaimed_with_balances(db: &Db, claimed: &[GoalId]) -> Result<Vec<goal::GoalWithBalance>> {
-    Ok(goal::all_with_balances(db)?
-        .into_iter()
-        .filter(|g| !claimed.contains(&g.goal.id))
-        .collect())
+/// Every open goal `claimed` does not name, with its balance and its target.
+fn unclaimed_with_balances(db: &Db, claimed: &[GoalId]) -> Result<Vec<goal_engine::Funding>> {
+    Ok(unclaimed_funding(
+        goal_engine::all_with_balances(db)?,
+        claimed,
+    ))
+}
+
+/// [`unclaimed_with_balances`], read tolerantly.
+///
+/// The claims are not the only thing a screen has to read past: a taxed goal
+/// with no rate on record refuses to derive a target, and the strict reader
+/// would carry that refusal up through `wiring` into the blank Planning
+/// screen `wiring` exists to prevent. `goal_engine::all_with_balances_tolerant`
+/// targets the base instead, and the strict twin below is what keeps `plan`
+/// refusing before it moves money.
+fn unclaimed_with_balances_tolerant(
+    db: &Db,
+    claimed: &[GoalId],
+) -> Result<Vec<goal_engine::Funding>> {
+    Ok(unclaimed_funding(
+        goal_engine::all_with_balances_tolerant(db)?,
+        claimed,
+    ))
+}
+
+/// The filter both readings share, the way [`unclaimed`] is shared, so
+/// "unclaimed" cannot come to mean two things here either.
+fn unclaimed_funding(
+    all: Vec<goal_engine::Funding>,
+    claimed: &[GoalId],
+) -> Vec<goal_engine::Funding> {
+    all.into_iter()
+        .filter(|f| !claimed.contains(&f.goal.id))
+        .collect()
 }
 
 /// The filter itself, over a set the claims have already been taken out of.
@@ -137,16 +167,19 @@ fn unclaimed_with_balances(db: &Db, claimed: &[GoalId]) -> Result<Vec<goal::Goal
 /// reads claims strictly and refuses a dangling key, while [`wiring`] has to
 /// report one and draw the screen anyway. Which goals the plug spreads over
 /// is the same question either way, and this is the one answer to it.
-fn shares_of(unclaimed: &[goal::GoalWithBalance]) -> Vec<Goal> {
+///
+/// Short means short of the **target**, so a taxed goal sitting at its base is
+/// still in the set: what it needs is the tax.
+fn shares_of(unclaimed: &[goal_engine::Funding]) -> Vec<Goal> {
     let short: Vec<Goal> = unclaimed
         .iter()
-        .filter(|g| g.current < g.goal.goal_cents)
-        .map(|g| g.goal.clone())
+        .filter(|f| f.current < f.target)
+        .map(|f| f.goal.clone())
         .collect();
     if !short.is_empty() {
         return short;
     }
-    unclaimed.iter().map(|g| g.goal.clone()).collect()
+    unclaimed.iter().map(|f| f.goal.clone()).collect()
 }
 
 /// The distinct containers the plug's goals sit in, in the order the Savings
@@ -347,7 +380,7 @@ pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
     // list inside the loop above would be a second copy of one rule, and the
     // plug's landing disagreeing with the panel's breakdown is precisely the
     // failure that costs.
-    let with_balances = unclaimed_with_balances(db, &claimed_goals_tolerant(db)?)?;
+    let with_balances = unclaimed_with_balances_tolerant(db, &claimed_goals_tolerant(db)?)?;
     let unclaimed: Vec<Goal> = with_balances.iter().map(|g| g.goal.clone()).collect();
     let containers = spread_containers(&shares_of(&with_balances));
     let spread = match containers.len() {
@@ -760,9 +793,11 @@ mod tests {
     use super::*;
     use crate::db::account::{Group, Kind};
     use crate::db::goal::NewGoal;
+    use crate::db::setting::key;
     use crate::db::txn;
     use crate::db::{self, GoalId, account, goal, setting};
     use crate::gate::Gate;
+    use crate::rate::BasisPoints;
     use chrono::NaiveDate;
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
@@ -784,11 +819,12 @@ mod tests {
                 &NewGoal {
                     name: name.to_string(),
                     container_account_id: container,
-                    goal_cents: Cents::from_dollars(1_000),
+                    base_cents: Cents::from_dollars(1_000),
                     goal_date: None,
                     recurring_goal_id: None,
                     interest_eligible: true,
                     sort: 0,
+                    taxed: false,
                 },
             )
             .unwrap()
@@ -830,11 +866,12 @@ mod tests {
             &NewGoal {
                 name: name.to_string(),
                 container_account_id: container,
-                goal_cents: Cents::from_dollars(1_000),
+                base_cents: Cents::from_dollars(1_000),
                 goal_date: None,
                 recurring_goal_id: None,
                 interest_eligible: true,
                 sort: 0,
+                taxed: false,
             },
         )
         .unwrap()
@@ -908,6 +945,128 @@ mod tests {
         fund(&db, goal_id(&db, "Lego"), 1_000);
 
         assert_eq!(spread_names(&db), vec!["Dropbox".to_string()]);
+    }
+
+    /// A taxed goal sitting at its base is not funded -- it is short by the
+    /// tax. The plug's set is the goals that are still short, so it has to be
+    /// in it, and it has to be offered a share. A second, already-met goal
+    /// sits alongside it so `shares_of`'s "nothing short -> spread over
+    /// everyone" fallback cannot paper over a reader that goes back to the
+    /// base: under that filter neither goal reads as short, the fallback
+    /// fires, and it returns both.
+    #[test]
+    fn a_taxed_goal_funded_to_its_base_is_still_in_the_plugs_set() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let taxed = goal::insert(
+            &db,
+            &NewGoal {
+                name: "Couch".to_string(),
+                container_account_id: savings,
+                base_cents: Cents::from_dollars(1_000),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: true,
+            },
+        )
+        .unwrap();
+        let met = goal::insert(
+            &db,
+            &NewGoal {
+                name: "Lamp".to_string(),
+                container_account_id: savings,
+                base_cents: Cents::from_dollars(500),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 1,
+                taxed: false,
+            },
+        )
+        .unwrap();
+        goal::insert_allocation(
+            &db,
+            taxed,
+            day(2026, 1, 1),
+            Cents::from_dollars(1_000),
+            None,
+            None,
+        )
+        .unwrap();
+        goal::insert_allocation(
+            &db,
+            met,
+            day(2026, 1, 1),
+            Cents::from_dollars(500),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let spread = spread_goals(&db).unwrap();
+
+        assert_eq!(
+            spread.iter().map(|g| g.id).collect::<Vec<_>>(),
+            vec![taxed],
+            "a goal short by its tax must still be offered a share"
+        );
+    }
+
+    /// The other half of the same rule: once the *taxed* figure is funded the
+    /// goal needs nothing, so it drops out of the set -- and, because the same
+    /// set decides where the plug lands, it stops pulling the spread into its
+    /// container too.
+    ///
+    /// This case cannot discriminate a reader that still uses the base from
+    /// one that uses the target: funded to the taxed figure, the goal reads
+    /// as met either way, so a reader that regressed to the base would pass
+    /// this test too. `a_taxed_goal_funded_to_its_base_is_still_in_the_plugs_set`
+    /// above is the one that pins the target reading.
+    #[test]
+    fn a_taxed_goal_funded_to_its_taxed_figure_drops_out_of_the_plugs_set() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let taxed = goal::insert(
+            &db,
+            &NewGoal {
+                name: "Couch".to_string(),
+                container_account_id: savings,
+                base_cents: Cents::from_dollars(1_000),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: true,
+            },
+        )
+        .unwrap();
+        let short = goal::insert(
+            &db,
+            &NewGoal {
+                name: "Rug".to_string(),
+                container_account_id: savings,
+                base_cents: Cents::from_dollars(500),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 1,
+                taxed: false,
+            },
+        )
+        .unwrap();
+        goal::insert_allocation(&db, taxed, day(2026, 1, 1), Cents(106_500), None, None).unwrap();
+
+        let spread = spread_goals(&db).unwrap();
+
+        assert_eq!(
+            spread.iter().map(|g| g.id).collect::<Vec<_>>(),
+            vec![short],
+            "a goal at its taxed figure needs nothing"
+        );
     }
 
     /// The bug this rule exists for: unfunding a line leaves its goal
@@ -1067,6 +1226,41 @@ mod tests {
             Landing::Dangling {
                 key: key_of(Line::Bills).name().to_string()
             }
+        );
+        assert!(plan(&db, &lines()).is_err(), "plan still refuses");
+    }
+
+    /// The same asymmetry over a goal that cannot derive a target. `plan` is
+    /// about to spend the figure and refuses; `wiring` draws the plug against
+    /// the base, because a Planning screen that refused here would be blank on
+    /// exactly the database the owner opened it to understand.
+    #[test]
+    fn wiring_draws_the_plug_over_a_taxed_goal_with_no_rate_rather_than_refusing() {
+        let (db, _, _) = configured();
+        goal::insert(
+            &db,
+            &NewGoal {
+                name: "Couch".to_string(),
+                container_account_id: container(&db, "SAV").id,
+                base_cents: Cents::from_dollars(1_000),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            landing_of(&db, Line::Goals),
+            Landing::Spread {
+                container: container(&db, "SAV")
+            }
+        );
+        assert!(
+            diagnose(&db, &lines()).is_ok(),
+            "the detail panel draws too"
         );
         assert!(plan(&db, &lines()).is_err(), "plan still refuses");
     }
@@ -1309,11 +1503,12 @@ mod tests {
             &NewGoal {
                 name: "Sabbatical".to_string(),
                 container_account_id: brokerage,
-                goal_cents: Cents::from_dollars(1_000),
+                base_cents: Cents::from_dollars(1_000),
                 goal_date: None,
                 recurring_goal_id: None,
                 interest_eligible: true,
                 sort: 9,
+                taxed: false,
             },
         )
         .unwrap();

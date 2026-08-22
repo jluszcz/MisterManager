@@ -865,16 +865,41 @@ derive it from `MIN_WIDTH` rather than write the offset out.
 - **A container reconciles when `|excess| < $1.00`**, through `savings::is_reconciled`, called by the
   Savings screen's `Unallocated` footer — the one place the reconciliation is shown. One container
   has sat a few cents out for months; a warning that is always on is a warning nobody reads.
-- **The goal form's `Interest` field is the one thing on it that is not typed.** It is a selector,
-  flipped with `←`/`→` and ignoring keystrokes, because a `bool` the owner is spelling out one
-  letter at a time can sit at `n`, `no`, or `nope` and mean nothing in between. It is on the form
-  at all because eligibility is a *policy* rather than a fact about the goal: the importer sets the
-  opening value from `Planning!J7`'s forced-zero weight, and whether a bucket keeps sitting out
-  every interest posting after that is the owner's call — under either policy, since
+- **The goal form's two `bool`s are selectors, not typed fields.** `Taxed` and `Interest` are
+  flipped with `←`/`→` and ignore keystrokes, because a `bool` the owner is spelling out one
+  letter at a time can sit at `n`, `no`, or `nope` and mean nothing in between. `Interest` is on
+  the form at all because eligibility is a *policy* rather than a fact about the goal: the importer
+  sets the opening value from `Planning!J7`'s forced-zero weight, and whether a bucket keeps
+  sitting out every interest posting after that is the owner's call — under either policy, since
   `interest_prefill` filters a `manual` container's copied posting to the eligible set before
   rescaling it. `n` opens it eligible, which is what every goal the sheet ever had is. Nothing else
   about a posting is editable here: the split itself is the worksheet's, and this only decides who
   gets weighed in it.
+- **`Taxed` is a field of the goal, and the Target field holds the base.** The flag is stored in
+  `goal.taxed` and `crate::goal::target` derives the figure from it on every read, so a goal saved
+  at `1,000` taxed reopens holding `1,000` with the selector still on — flipping it off is how it
+  is untaxed, and nothing can tax a taxed figure twice. What makes the derived figure visible
+  before Enter rather than after is the **note beside the Target**: `GoalForm::tax_note` puts
+  `(1,065 w/ tax)` past the caret — the same place, and for the same reason, that the allocation
+  form shows what a `/N` share comes to. The Recurring Goals form's `Base` field carries the same
+  note, so the two forms answer the same question the same way.
+  - **The Target field's label stays `Target`, not `Base`.** `Base` would match the other form
+    exactly, but this field is the goal's target for every goal that is not taxed, which is most of
+    them, and the note is what disambiguates the ones that are.
+  - **The rate is read when the form opens, not when it commits.** The note has to be drawable on
+    every keystroke. `None` — a database no `Constants` sheet has reached — still opens the form and
+    draws no note, and the commit still **refuses a taxed goal** with `goal::NO_TAX_RATE`, even
+    though it no longer needs the rate to compute anything: letting it through would write precisely
+    the row the read side calls corrupt, and the form is the one place that can ask for the rate
+    before there is a goal to be broken by its absence.
+  - **The note is empty wherever there is nothing to say**, and never a guess: the flag is off, the
+    Target is not a whole figure yet, or no rate is on record. It is drawn through
+    `demo::whole_figure`, so `--demo` blocks it like every other absolute figure on a form.
+  - **The `Base` field carries the same note the goal form's `Target` does.** `RecurringGoalForm::tax_note`
+    puts `(1,065 w/ tax)` past the caret whenever the `Taxed` selector is on and the field holds a whole
+    figure, so both forms that edit a base answer the same question in the same words. This form asks
+    nothing about the rate — an entry writes no goal, and it is `App::commit_picker`, the picker that
+    turns a taxed entry into one, that refuses when no rate is on record.
 - **Creating one goal and creating goals from recurring entries are different keys on different
   screens.** `n` on Savings is a goal typed from scratch — `a` there is the allocation the screen is
   mostly used for, so the add takes another letter. `s` on Recurring Goals opens the picker: goals

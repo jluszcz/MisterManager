@@ -129,6 +129,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/savings.rs` | A goal's derived columns — `%`, `$/Pay`, expired — and what a container has left unallocated. Read by the Savings screen and by `report`. |
 | `src/plan.rs` | Reads settings and balances out of `db`, feeds `calc::planning::compute`. |
 | `src/fund.rs` | Reads the `fund` table and the birth date out of `db`, feeds `calc::fund`. The one place `db::fund::Target` becomes `calc::fund::Rule`. |
+| `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
 | `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and Funds in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. |
@@ -389,6 +390,34 @@ matches, since nothing but a test ties them together.
   the **same container**) — and it closes the goal itself, in one transaction. The next round of a
   recurring goal is created from the `recurring_goal` table. Crossing containers is refused: no cash moved between
   the accounts, so allowing it would break both reconciliations at once.
+- **A goal's target is derived, never stored.** The table holds `goal.base_cents` and `goal.taxed`;
+  `goal::target` is `base_cents` for an untaxed goal and `calc::tax` of it for a taxed one, the way
+  `calc::fund` turns an age rule into a percentage. A rate that changes must not leave a stored
+  figure behind quoting the old one. **The derived figure is the target everywhere** — the shortfall
+  behind a Planning gate, the percentage complete, `$/Pay`, whether the payday plug still counts the
+  goal as short, whether the Savings screen draws it as overdue. The base is shown as itself in
+  exactly two places, the goal form and the recurring-goal form, and both say what it comes to
+  beside it. A goal that funds to its base comes up short at the register, which is the whole
+  reason the column is split in two.
+  - **A taxed goal with no rate on record is a loud error naming `key::TAX_RATE`**, not a silent
+    fallback to the base. An unset key normally means a feature is off, but the flag on the row says
+    tax is wanted, and quietly targeting the base would move the waterfall's plug on the strength of
+    a missing setting — the same reasoning that makes a dangling gate key an error. Both writers
+    refuse to *create* that row for the same reason, with the same sentence: `goal::NO_TAX_RATE` —
+    the goal form's commit, and the recurring-goal picker's, which hands the flag across rather than
+    computing anything and so has to ask before `insert_all` runs.
+  - **That refusal binds every path that *spends* a target, and no path that only *draws* one.**
+    `goal::all_with_balances_tolerant` targets the base instead, and the Savings screen, `wiring`
+    and the report read through it — the split `transfer::claimed_goals_tolerant` already makes
+    over a dangling setting key, for the reason it makes it: a screen cannot decline to draw
+    itself. Here it is sharper than a blank panel, because `App::reload_savings` runs inside
+    `App::new` — a strict read there stops the application starting, and the rate is set from
+    inside the application. `transfer::plan` through `spread_goals`, both worksheet prefills, and
+    `shortfall` behind every Planning gate keep the strict reader, so the owner is told the moment
+    a figure would be acted on and the waterfall's plug is never moved on a missing setting.
+  - **`shortfall` lives in `src/goal.rs`, not in `db::goal`.** It is a target reader and the rate
+    cannot be reached from `db`; a second one left behind in `db` would let `plan::remaining` go on
+    gating the waterfall against a base. `db::goal::balance` stays, because a sum is not a target.
 - **A container's goals are two blocks, and `goal.sort` orders only the first.** Undated goals lead,
   in `sort` order; dated goals follow, soonest first. The halves are arranged by different things — a
   deadline decides a goal's place for it, a goal without one is placed by hand — so `goal::list` and

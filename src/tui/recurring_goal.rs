@@ -7,12 +7,14 @@
 use super::Label;
 use super::cursor::{Cursor, Scroll};
 use super::form::{
-    Caret, Field, Focused, FormFields, Step, next_in, parse_whole_amount, step_index,
+    Caret, Field, Focused, FormFields, Step, field_line_noted, next_in, parse_whole_amount,
+    step_index, tax_note,
 };
 use super::month::MonthCycle;
 use crate::db::RecurringGoalId;
 use crate::db::recurring_goal::{Cadence, Entry, NewEntry};
 use crate::money::Cents;
+use crate::rate::BasisPoints;
 use anyhow::{Result, ensure};
 use std::collections::HashMap;
 
@@ -192,10 +194,16 @@ pub struct RecurringGoalForm {
     amount: Field,
     taxed: bool,
     cadence: usize,
+    /// The sales tax rate the `Taxed` note applies, as it stood when the form
+    /// opened. `None` is a database no `Constants` sheet has been imported
+    /// into: the note simply says nothing. Unlike the goal form, this one
+    /// refuses nothing for it -- an entry writes no goal, and the picker that
+    /// turns one into a goal is where the rate is refused instead.
+    rate: Option<BasisPoints>,
 }
 
 impl RecurringGoalForm {
-    pub fn add() -> RecurringGoalForm {
+    pub fn add(rate: Option<BasisPoints>) -> RecurringGoalForm {
         RecurringGoalForm {
             editing: None,
             focus: RecurringGoalField::Name,
@@ -204,10 +212,11 @@ impl RecurringGoalForm {
             amount: Field::default(),
             taxed: false,
             cadence: 0,
+            rate,
         }
     }
 
-    pub fn edit(entry: &Entry) -> RecurringGoalForm {
+    pub fn edit(entry: &Entry, rate: Option<BasisPoints>) -> RecurringGoalForm {
         RecurringGoalForm {
             editing: Some(entry.id),
             focus: RecurringGoalField::Name,
@@ -221,7 +230,18 @@ impl RecurringGoalForm {
                 .iter()
                 .position(|c| *c == entry.cadence)
                 .unwrap_or(0),
+            rate,
         }
+    }
+
+    /// The note beside the Base: what it comes to once the tax lambda has had
+    /// it -- the same sentence, in the same place, that the goal form's Target
+    /// carries, so the two forms answer the same question the same way. This
+    /// form asks nothing about the rate: an entry writes no goal, and it is
+    /// `App::commit_picker` -- the picker that turns a taxed entry into one --
+    /// that refuses when no rate is on record.
+    pub fn tax_note(&self) -> String {
+        tax_note(self.taxed, self.amount.value(), self.rate)
     }
 
     pub fn title(&self) -> &'static str {
@@ -295,7 +315,7 @@ impl FormFields for RecurringGoalForm {
     }
 }
 
-use super::form::{field_line, render_fields};
+use super::form::render_fields;
 use super::{amount, month_name, right_header, table_state};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
@@ -304,13 +324,23 @@ use ratatui::text::Line as TextLine;
 use ratatui::widgets::{Block, Cell, Row as TableRow, Table};
 
 pub fn render_form(frame: &mut Frame, form: &RecurringGoalForm) {
+    let note = form.tax_note();
     let lines: Vec<TextLine> = RecurringGoalField::ORDER
         .iter()
         .map(|f| {
-            field_line(
+            // The Base field holds the pre-tax figure, so `Taxed` says what it
+            // comes to beside the figure it applies to rather than beside
+            // itself -- the goal form's Target does the same.
+            let note = if *f == RecurringGoalField::Amount {
+                note.as_str()
+            } else {
+                ""
+            };
+            field_line_noted(
                 f.label(),
                 form.display(*f),
                 (form.focus == *f).then(|| form.caret()),
+                note,
             )
         })
         .collect();
@@ -603,9 +633,75 @@ mod tests {
         assert_eq!(recurring_goal.title(), "Recurring Goals · Sep · 1");
     }
 
+    /// The same question the goal form answers, in the same words: the field
+    /// holds the base, and the note says what the goal made from it will
+    /// actually be funded to.
+    #[test]
+    fn the_note_beside_the_base_says_what_it_comes_to_with_tax() {
+        let mut form = RecurringGoalForm::add(Some(BasisPoints(625)));
+        assert_eq!(form.tax_note(), "", "nothing to say while the flag is off");
+
+        while form.focus != RecurringGoalField::Amount {
+            form.next_field();
+        }
+        for c in "1000".chars() {
+            form.edit(char_key(c));
+        }
+        while form.focus != RecurringGoalField::Taxed {
+            form.next_field();
+        }
+        form.choice(Step::NEXT);
+
+        assert_eq!(form.tax_note(), "(1,065 w/ tax)");
+        assert_eq!(
+            form.display(RecurringGoalField::Amount).plain_text(),
+            "1000",
+            "the field itself still holds the base"
+        );
+    }
+
+    /// No rate on record is a database nobody has imported `Constants` into.
+    /// The form still opens and simply says nothing, the way the goal form's
+    /// note does -- this screen writes no goal, so there is nothing to refuse.
+    #[test]
+    fn the_note_is_empty_with_no_rate_on_record() {
+        let mut form = RecurringGoalForm::add(None);
+        while form.focus != RecurringGoalField::Amount {
+            form.next_field();
+        }
+        for c in "1000".chars() {
+            form.edit(char_key(c));
+        }
+        while form.focus != RecurringGoalField::Taxed {
+            form.next_field();
+        }
+        form.choice(Step::NEXT);
+
+        assert_eq!(form.tax_note(), "");
+    }
+
+    /// A half-typed base is not a figure yet, and a note that guessed at one
+    /// would flicker through amounts the owner never asked about.
+    #[test]
+    fn the_note_stays_empty_until_the_base_is_a_whole_figure() {
+        let mut form = RecurringGoalForm::add(Some(BasisPoints(625)));
+        while form.focus != RecurringGoalField::Amount {
+            form.next_field();
+        }
+        for c in "1000.5".chars() {
+            form.edit(char_key(c));
+        }
+        while form.focus != RecurringGoalField::Taxed {
+            form.next_field();
+        }
+        form.choice(Step::NEXT);
+
+        assert_eq!(form.tax_note(), "");
+    }
+
     #[test]
     fn a_catalog_form_commits_what_was_typed() {
-        let mut form = RecurringGoalForm::add();
+        let mut form = RecurringGoalForm::add(None);
         assert_eq!(form.editing, None);
 
         for c in "Dropbox".chars() {
@@ -637,14 +733,17 @@ mod tests {
     #[test]
     fn a_demo_blocks_the_base_amount_and_keeps_the_rule() {
         crate::demo::install(true);
-        let form = RecurringGoalForm::edit(&Entry {
-            id: RecurringGoalId(2),
-            name: "Dropbox".to_string(),
-            month: 9,
-            base_cents: Cents::from_dollars(128),
-            taxed: true,
-            cadence: Cadence::Biennial,
-        });
+        let form = RecurringGoalForm::edit(
+            &Entry {
+                id: RecurringGoalId(2),
+                name: "Dropbox".to_string(),
+                month: 9,
+                base_cents: Cents::from_dollars(128),
+                taxed: true,
+                cadence: Cadence::Biennial,
+            },
+            None,
+        );
         assert_eq!(
             form.display(RecurringGoalField::Amount).plain_text(),
             "██████"
@@ -661,14 +760,17 @@ mod tests {
 
     #[test]
     fn a_catalog_form_opened_on_an_entry_prefills_every_field() {
-        let form = RecurringGoalForm::edit(&Entry {
-            id: RecurringGoalId(2),
-            name: "Dropbox".to_string(),
-            month: 9,
-            base_cents: Cents::from_dollars(128),
-            taxed: true,
-            cadence: Cadence::Biennial,
-        });
+        let form = RecurringGoalForm::edit(
+            &Entry {
+                id: RecurringGoalId(2),
+                name: "Dropbox".to_string(),
+                month: 9,
+                base_cents: Cents::from_dollars(128),
+                taxed: true,
+                cadence: Cadence::Biennial,
+            },
+            None,
+        );
         assert_eq!(form.editing, Some(RecurringGoalId(2)));
         assert_eq!(
             form.display(RecurringGoalField::Name).plain_text(),
@@ -693,7 +795,7 @@ mod tests {
     /// round is a whole dollar.
     #[test]
     fn a_base_with_cents_in_it_is_refused() {
-        let mut form = RecurringGoalForm::add();
+        let mut form = RecurringGoalForm::add(None);
         for c in "Dropbox".chars() {
             form.edit(char_key(c));
         }
@@ -710,7 +812,7 @@ mod tests {
 
     #[test]
     fn an_empty_name_is_refused() {
-        let mut form = RecurringGoalForm::add();
+        let mut form = RecurringGoalForm::add(None);
         form.next_field();
         form.next_field();
         for c in "128".chars() {
@@ -722,7 +824,7 @@ mod tests {
 
     #[test]
     fn the_month_selector_names_the_month_and_wraps_at_both_ends() {
-        let mut form = RecurringGoalForm::add();
+        let mut form = RecurringGoalForm::add(None);
         while form.focus != RecurringGoalField::Month {
             form.next_field();
         }
@@ -754,7 +856,7 @@ mod tests {
     /// Typing at the Month selector must not reach another field's text.
     #[test]
     fn typing_at_the_month_selector_changes_nothing() {
-        let mut form = RecurringGoalForm::add();
+        let mut form = RecurringGoalForm::add(None);
         for c in "Dropbox".chars() {
             form.edit(char_key(c));
         }
@@ -776,7 +878,7 @@ mod tests {
 
     #[test]
     fn the_taxed_selector_cycles_both_ways() {
-        let mut form = RecurringGoalForm::add();
+        let mut form = RecurringGoalForm::add(None);
         while form.focus != RecurringGoalField::Taxed {
             form.next_field();
         }
@@ -793,7 +895,7 @@ mod tests {
 
     #[test]
     fn the_cadence_selector_cycles_both_ways() {
-        let mut form = RecurringGoalForm::add();
+        let mut form = RecurringGoalForm::add(None);
         while form.focus != RecurringGoalField::Cadence {
             form.next_field();
         }
@@ -830,7 +932,7 @@ mod tests {
     /// where it started and the assertion would pass either way.
     #[test]
     fn cycling_does_nothing_unless_a_selector_is_focused() {
-        let mut form = RecurringGoalForm::add();
+        let mut form = RecurringGoalForm::add(None);
         assert_eq!(form.focus, RecurringGoalField::Name);
 
         form.choice(Step::NEXT);

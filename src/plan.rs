@@ -1,8 +1,9 @@
 use crate::calc::planning::{self, PlanInputs, PlanSettings};
 use crate::db::account;
 use crate::db::setting::key;
-use crate::db::{Db, bill, goal, setting, txn};
+use crate::db::{Db, bill, setting, txn};
 use crate::gate::Gate;
+use crate::goal as goal_engine;
 use crate::money::Cents;
 use crate::rate::Percent;
 use anyhow::{Context, Result};
@@ -20,7 +21,7 @@ fn remaining(db: &Db, gate: Gate) -> Result<Cents> {
     let key = gate.key();
     match setting::get(db, key)? {
         None => Ok(Cents::ZERO),
-        Some(id) => goal::shortfall(db, id).with_context(|| format!("setting {key} = {id}")),
+        Some(id) => goal_engine::shortfall(db, id).with_context(|| format!("setting {key} = {id}")),
     }
 }
 
@@ -77,7 +78,7 @@ mod tests {
     use crate::db;
     use crate::db::GoalId;
     use crate::db::account::{Group, Kind};
-    use crate::db::goal::NewGoal;
+    use crate::db::goal::{self, NewGoal};
 
     /// A goal the database does not have configured must leave its gate off,
     /// so a hand-built database -- or a workbook with no Roth row -- can
@@ -97,11 +98,12 @@ mod tests {
             &NewGoal {
                 name: "Roth IRA".to_string(),
                 container_account_id: savings,
-                goal_cents: Cents::from_dollars(5_500),
+                base_cents: Cents::from_dollars(5_500),
                 goal_date: None,
                 recurring_goal_id: None,
                 interest_eligible: true,
                 sort: 0,
+                taxed: false,
             },
         )
         .unwrap();
@@ -120,6 +122,42 @@ mod tests {
             remaining(&db, Gate::Roth).unwrap(),
             Cents::from_dollars(3_500)
         );
+    }
+
+    /// A gate over a taxed goal is not satisfied until the *taxed* figure is
+    /// funded. Gating on the base would open the waterfall's next tier while
+    /// the goal is still short of what the item costs.
+    #[test]
+    fn a_gate_over_a_taxed_goal_is_not_satisfied_until_the_taxed_figure_is_funded() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::TAX_RATE, crate::rate::BasisPoints(625)).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let id = goal::insert(
+            &db,
+            &NewGoal {
+                name: "Roth IRA".to_string(),
+                container_account_id: savings,
+                base_cents: Cents::from_dollars(1_000),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: true,
+            },
+        )
+        .unwrap();
+        goal::insert_allocation(
+            &db,
+            id,
+            NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            Cents::from_dollars(1_000),
+            None,
+            None,
+        )
+        .unwrap();
+        setting::set(&db, Gate::Roth.key(), id).unwrap();
+
+        assert_eq!(remaining(&db, Gate::Roth).unwrap(), Cents(6_500));
     }
 
     /// A recorded id pointing at a goal that is gone must fail loudly and
@@ -186,11 +224,12 @@ mod tests {
             &NewGoal {
                 name: "Emergency Savings".to_string(),
                 container_account_id: brokerage,
-                goal_cents: Cents::from_dollars(100_000),
+                base_cents: Cents::from_dollars(100_000),
                 goal_date: None,
                 recurring_goal_id: None,
                 interest_eligible: true,
                 sort: 0,
+                taxed: false,
             },
         )
         .unwrap();
@@ -210,11 +249,12 @@ mod tests {
             &NewGoal {
                 name: "Roth IRA".to_string(),
                 container_account_id: savings,
-                goal_cents: Cents::from_dollars(5_500),
+                base_cents: Cents::from_dollars(5_500),
                 goal_date: None,
                 recurring_goal_id: None,
                 interest_eligible: true,
                 sort: 0,
+                taxed: false,
             },
         )
         .unwrap();
@@ -229,11 +269,12 @@ mod tests {
             &NewGoal {
                 name: "Home Down Payment".to_string(),
                 container_account_id: brokerage,
-                goal_cents: Cents::from_dollars(500_000),
+                base_cents: Cents::from_dollars(500_000),
                 goal_date: None,
                 recurring_goal_id: None,
                 interest_eligible: false,
                 sort: 1,
+                taxed: false,
             },
         )
         .unwrap();

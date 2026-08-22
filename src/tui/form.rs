@@ -10,6 +10,7 @@ use crate::db::account::{self, Kind};
 use crate::db::txn::{NewTxn, Suggestion, Txn};
 use crate::db::{AccountId, TxnId};
 use crate::money::Cents;
+use crate::rate::BasisPoints;
 use anyhow::{Context, Result, anyhow, ensure};
 use chrono::{Datelike, NaiveDate, TimeDelta};
 use ratatui::crossterm::event::KeyEvent;
@@ -455,6 +456,27 @@ pub(super) fn parse_whole_amount(raw: &str) -> Result<Cents> {
         crate::demo::typed(raw.trim())
     );
     Ok(cents)
+}
+
+/// What a base comes to once the tax lambda has had it -- the note the goal
+/// form's Target and the recurring-goal form's Base both draw past the caret,
+/// in the same words, so the two forms answer the same question the same way.
+///
+/// Empty whenever there is nothing to say, rather than a guess at one of the
+/// three: the flag is off, `typed` is not a whole figure yet, or no rate is
+/// on record. Drawn through `demo::whole_figure`, so `--demo` blocks it like
+/// every other absolute figure on a form.
+pub(super) fn tax_note(taxed: bool, typed: &str, rate: Option<BasisPoints>) -> String {
+    if !taxed {
+        return String::new();
+    }
+    let Some(cents) = parse_whole_amount(typed)
+        .ok()
+        .and_then(|base| crate::calc::tax(base, rate?).ok())
+    else {
+        return String::new();
+    };
+    format!("({} w/ tax)", crate::demo::whole_figure(cents))
 }
 
 /// Whether an amount field is holding a `/N` fraction rather than a figure.

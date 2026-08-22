@@ -30,6 +30,7 @@ use crate::db::txn;
 use crate::db::{AccountId, Db, GoalId, RecurringGoalId};
 use crate::description;
 use crate::fund as fund_engine;
+use crate::goal as goal_engine;
 use crate::money::Cents;
 use crate::overview::Overview;
 use crate::plan;
@@ -620,14 +621,16 @@ impl App {
     /// `A` prefills with -- one function prices a goal, so the column and the
     /// two prefills cannot come to disagree.
     fn spread_asks(&self) -> Result<Vec<(goal::Goal, Cents)>> {
+        let rate = setting::get(&self.db, key::TAX_RATE)?;
         let mut out = Vec::new();
         for g in transfer::spread_goals(&self.db)? {
-            let with_balance = goal::GoalWithBalance {
+            let funding = goal_engine::Funding {
                 current: goal::balance(&self.db, g.id)?,
+                target: goal_engine::target(&g, rate)?,
                 goal: g,
             };
-            let ask = crate::savings::paycheck_ask(&with_balance, self.today, self.period_days)?;
-            out.push((with_balance.goal, ask.unwrap_or(Cents::ZERO)));
+            let ask = crate::savings::paycheck_ask(&funding, self.today, self.period_days)?;
+            out.push((funding.goal, ask.unwrap_or(Cents::ZERO)));
         }
         Ok(out)
     }
@@ -1051,7 +1054,7 @@ impl App {
             KeyCode::Char('[') => self.recurring_goal.previous_month(),
             KeyCode::Char(']') => self.recurring_goal.next_month(),
             KeyCode::Esc => self.recurring_goal.clear_month(),
-            KeyCode::Char('a') => self.open_recurring_goal_add(),
+            KeyCode::Char('a') => self.open_recurring_goal_add()?,
             KeyCode::Char('e') => self.open_recurring_goal_edit()?,
             KeyCode::Char('d') => self.open_recurring_goal_delete()?,
             KeyCode::Char('s') => self.open_recurring_goals()?,
@@ -1060,8 +1063,11 @@ impl App {
         Ok(())
     }
 
-    fn open_recurring_goal_add(&mut self) {
-        self.modal = Some(Modal::RecurringGoalEntry(RecurringGoalForm::add()));
+    fn open_recurring_goal_add(&mut self) -> Result<()> {
+        self.modal = Some(Modal::RecurringGoalEntry(RecurringGoalForm::add(
+            setting::get(&self.db, key::TAX_RATE)?,
+        )));
+        Ok(())
     }
 
     fn open_recurring_goal_edit(&mut self) -> Result<()> {
@@ -1069,7 +1075,10 @@ impl App {
             return self.nothing_selected();
         };
         let found = recurring_goal::get(&self.db, row.recurring_goal_id)?;
-        self.modal = Some(Modal::RecurringGoalEntry(RecurringGoalForm::edit(&found)));
+        self.modal = Some(Modal::RecurringGoalEntry(RecurringGoalForm::edit(
+            &found,
+            setting::get(&self.db, key::TAX_RATE)?,
+        )));
         Ok(())
     }
 
@@ -1571,8 +1580,12 @@ impl App {
         })
     }
 
+    /// The tolerant reader, because this runs during `App::new`: a taxed goal
+    /// with no rate on record would otherwise stop the application starting,
+    /// and the rate is set from inside it.
     fn reload_savings(&mut self) -> Result<()> {
-        self.savings.set_goals(goal::all_with_balances(&self.db)?)?;
+        self.savings
+            .set_goals(goal_engine::all_with_balances_tolerant(&self.db)?)?;
         let excess = crate::savings::containers_with_excess(&self.db)?;
         let containers = excess.iter().map(|(id, _)| *id).collect();
         self.savings.set_containers(containers);
@@ -1818,6 +1831,7 @@ impl App {
         let account = account::get(&self.db, container)?;
         self.modal = Some(Modal::Goal(GoalForm::add(
             Account::named(std::slice::from_ref(&account), container),
+            setting::get(&self.db, key::TAX_RATE)?,
             self.today,
         )));
         Ok(())
@@ -1830,9 +1844,11 @@ impl App {
         self.modal = Some(Modal::Goal(GoalForm::new(
             row.goal_id,
             &row.name,
-            row.goal,
+            row.base,
             row.goal_date,
             row.interest_eligible,
+            row.taxed,
+            setting::get(&self.db, key::TAX_RATE)?,
             self.today,
         )));
         Ok(())
@@ -1858,12 +1874,13 @@ impl App {
                     &goal::NewGoal {
                         name: edit.name.clone(),
                         container_account_id: container,
-                        goal_cents: edit.goal_cents,
+                        base_cents: edit.base_cents,
                         goal_date: edit.goal_date,
                         // A free-form goal answers to no recurring entry.
                         recurring_goal_id: None,
                         interest_eligible: edit.interest_eligible,
                         sort: goal::next_sort(&self.db, container)?,
+                        taxed: edit.taxed,
                     },
                 )?;
                 self.status = format!("created {}", edit.name);
@@ -2120,7 +2137,7 @@ impl App {
             return Ok(None);
         };
         let mut prefill = Vec::new();
-        for g in goal::list_with_balances(&self.db, container)? {
+        for g in goal_engine::list_with_balances(&self.db, container)? {
             let ask = crate::savings::paycheck_ask(&g, self.today, self.period_days)?;
             prefill.push((g.goal.id, g.goal.name, ask.unwrap_or(Cents::ZERO)));
         }
@@ -2290,15 +2307,16 @@ impl App {
         let container = picker.container();
         let chosen: Vec<Entry> = picker.chosen().into_iter().cloned().collect();
         ensure!(!chosen.is_empty(), NOTHING_SELECTED);
-        // Only fetched when it is actually needed, so a database with no tax
-        // rate can still create untaxed goals.
-        let rate = match chosen.iter().any(|e| e.taxed) {
-            false => None,
-            true => Some(
-                setting::get(&self.db, key::TAX_RATE)?
-                    .context("no sales tax rate is configured; import Constants first")?,
-            ),
-        };
+        // The picker is the second place a taxed goal is written, alongside
+        // the goal form's own commit, and it is the one that hands the flag
+        // across rather than computing anything -- so it has to ask for the
+        // rate here, before there is a goal for the read side to call corrupt.
+        if chosen.iter().any(|entry| entry.taxed) {
+            ensure!(
+                setting::get(&self.db, key::TAX_RATE)?.is_some(),
+                goal_engine::NO_TAX_RATE
+            );
+        }
         // Every goal created here is dated, so each takes its place in the
         // container's dated block by deadline rather than landing at the end.
         // `sort` still runs in the order the picker showed them -- the ticked
@@ -2310,18 +2328,19 @@ impl App {
         for (offset, entry) in chosen.iter().enumerate() {
             let has_goal_this_year =
                 goal::has_goal_dated_in_year(&self.db, entry.id, self.today.year())?;
-            let goal_cents = match (entry.taxed, rate) {
-                (true, Some(rate)) => calc::tax(entry.base_cents, rate)?,
-                _ => entry.base_cents,
-            };
             new_goals.push(goal::NewGoal {
                 name: entry.name.clone(),
                 container_account_id: container,
-                goal_cents,
+                // The entry's base and its flag, handed across rather than
+                // spent: a goal made from a taxed entry is indistinguishable
+                // from one the owner marked taxed by hand, and the lambda runs
+                // once, on read.
+                base_cents: entry.base_cents,
                 goal_date: Some(picker::goal_date(entry, has_goal_this_year, self.today)?),
                 recurring_goal_id: Some(entry.id),
                 interest_eligible: true,
                 sort: first_sort + offset as i64,
+                taxed: entry.taxed,
             });
         }
         goal::insert_all(&self.db, &new_goals)?;
@@ -2792,11 +2811,12 @@ mod tests {
             &goal::NewGoal {
                 name: "Vacation 2027".to_string(),
                 container_account_id: savings,
-                goal_cents: Cents(1_500_000),
+                base_cents: Cents(1_500_000),
                 goal_date: Some(day(2027, 1, 1)),
                 recurring_goal_id: None,
                 interest_eligible: true,
                 sort: 0,
+                taxed: false,
             },
         )
         .unwrap();
@@ -2807,11 +2827,12 @@ mod tests {
             &goal::NewGoal {
                 name: "Couch".to_string(),
                 container_account_id: savings,
-                goal_cents: Cents(100_000),
+                base_cents: Cents(100_000),
                 goal_date: None,
                 recurring_goal_id: None,
                 interest_eligible: true,
                 sort: 1,
+                taxed: false,
             },
         )
         .unwrap();
@@ -2886,11 +2907,12 @@ mod tests {
                 &goal::NewGoal {
                     name: name.to_string(),
                     container_account_id: savings,
-                    goal_cents: Cents(100_000),
+                    base_cents: Cents(100_000),
                     goal_date: date,
                     recurring_goal_id: None,
                     interest_eligible: true,
                     sort: i as i64,
+                    taxed: false,
                 },
             )
             .unwrap();
@@ -4590,11 +4612,12 @@ mod tests {
                 &goal::NewGoal {
                     name: name.to_string(),
                     container_account_id: brokerage,
-                    goal_cents: Cents(target),
+                    base_cents: Cents(target),
                     goal_date: None,
                     recurring_goal_id: None,
                     interest_eligible: eligible,
                     sort: 0,
+                    taxed: false,
                 },
             )
             .unwrap();
@@ -4653,7 +4676,10 @@ mod tests {
             form.display(goal_form::GoalField::Name).plain_text(),
             "Home Down Payment"
         );
-        for _ in 0..3 {
+        // Walked to rather than counted to: the form grows fields, and a
+        // count would send the `Right` below into whichever one it grew.
+        while !matches!(&app.modal, Some(Modal::Goal(form)) if form.focus == goal_form::GoalField::Interest)
+        {
             press(&mut app, KeyCode::Tab);
         }
         press(&mut app, KeyCode::Right);
@@ -4797,11 +4823,12 @@ mod tests {
             &goal::NewGoal {
                 name: "Backblaze".to_string(),
                 container_account_id: app.savings.default_container().unwrap(),
-                goal_cents: Cents::from_dollars(99),
+                base_cents: Cents::from_dollars(99),
                 goal_date: Some(day(2026, 11, 1)),
                 recurring_goal_id: Some(id),
                 interest_eligible: true,
                 sort: 9,
+                taxed: false,
             },
         )
         .unwrap();
@@ -4826,6 +4853,9 @@ mod tests {
 
     /// `Tax()` applies to the entries flagged for it and to no others -- the
     /// workbook's own `Savings!Q` column is a mix.
+    ///
+    /// The picker hands the flag across rather than spending it, so the screen
+    /// shows the derived target while the table holds the base.
     #[test]
     fn only_a_taxed_catalog_entry_goes_through_the_tax_lambda() {
         let mut app = app();
@@ -4859,6 +4889,95 @@ mod tests {
         // 9,000 × 1.0625 = 9,562.50, rounded up to the next $5.
         assert_eq!(target("Rolex"), Cents::from_dollars(9_565));
         assert_eq!(target("Dropbox"), Cents::from_dollars(9_000));
+
+        // ...and what the *table* holds is the base and the flag, handed
+        // across rather than spent: the lambda runs on read, so a goal made
+        // from a taxed entry is indistinguishable from one the owner marked
+        // taxed by hand, and nothing can tax the taxed figure a second time.
+        let stored = |name: &str| {
+            let g = goal::all_with_balances(&app.db)
+                .unwrap()
+                .into_iter()
+                .find(|g| g.goal.name == name)
+                .unwrap_or_else(|| panic!("no goal named {name}"));
+            (g.goal.base_cents, g.goal.taxed)
+        };
+        assert_eq!(stored("Rolex"), (Cents::from_dollars(9_000), true));
+        assert_eq!(stored("Dropbox"), (Cents::from_dollars(9_000), false));
+    }
+
+    /// The guards above are what keep a taxed goal with no rate out of the
+    /// database, but a database that already holds one -- hand-edited, or
+    /// migrated from a build that had no flag -- still has to open. A strict
+    /// read in `reload_savings` runs inside `App::new`, so the refusal would
+    /// not blank a screen, it would stop the application starting, and the
+    /// rate is set from inside the application.
+    #[test]
+    fn the_app_starts_on_a_taxed_goal_with_no_rate_and_draws_it_against_its_base() {
+        let db = db::open_in_memory().unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        account::set_group(&db, checking, Group::Checking).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
+        goal::insert(
+            &db,
+            &goal::NewGoal {
+                name: "Couch".to_string(),
+                container_account_id: savings,
+                base_cents: Cents(100_000),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: true,
+            },
+        )
+        .unwrap();
+
+        let app = App::new(db, today()).unwrap();
+        let row = app
+            .savings
+            .rows()
+            .into_iter()
+            .find(|r| r.name == "Couch")
+            .expect("the goal is drawn rather than dropped");
+        assert_eq!(row.goal, Cents(100_000), "the base, for want of a rate");
+    }
+
+    /// The picker is the second place a taxed goal is written, alongside the
+    /// goal form's own commit, and it hands the flag across rather than
+    /// computing anything -- so on a database with no rate on record it has
+    /// to refuse before `insert_all` ever runs. Without the guard this writes
+    /// `taxed = 1` with no rate anywhere, which is the row the read side
+    /// calls corrupt -- every screen then draws it against its base, and
+    /// every path that would spend the figure refuses.
+    #[test]
+    fn s_refuses_a_taxed_entry_on_a_database_with_no_tax_rate_and_writes_no_goal() {
+        let mut app = app();
+        recurring_goal::insert(
+            &app.db,
+            &recurring_goal::NewEntry {
+                name: "Rolex".to_string(),
+                month: 9,
+                base_cents: Cents::from_dollars(9_000),
+                taxed: true,
+                cadence: recurring_goal::Cadence::Annual,
+            },
+        )
+        .unwrap();
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('s'));
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_some(), "the picker stays open on a refusal");
+        assert_eq!(app.status, goal_engine::NO_TAX_RATE);
+        assert!(
+            goal::all_with_balances(&app.db)
+                .unwrap()
+                .iter()
+                .all(|g| g.goal.name != "Rolex"),
+            "no goal is written"
+        );
     }
 
     /// "Open?" is a hint, never a block: goal names are not unique, and a
@@ -4945,11 +5064,12 @@ mod tests {
             &goal::NewGoal {
                 name: "Vacation 2027".to_string(),
                 container_account_id: savings,
-                goal_cents: Cents(1_500_000),
+                base_cents: Cents(1_500_000),
                 goal_date: None,
                 recurring_goal_id: None,
                 interest_eligible: true,
                 sort: 0,
+                taxed: false,
             },
         )
         .unwrap();
@@ -5014,11 +5134,12 @@ mod tests {
                 &goal::NewGoal {
                     name: name.to_string(),
                     container_account_id: container,
-                    goal_cents: Cents::from_dollars(1_000),
+                    base_cents: Cents::from_dollars(1_000),
                     goal_date: None,
                     recurring_goal_id: None,
                     interest_eligible: true,
                     sort: 0,
+                    taxed: false,
                 },
             )
             .unwrap()
@@ -5862,11 +5983,12 @@ mod tests {
             &goal::NewGoal {
                 name: "Sabbatical".to_string(),
                 container_account_id: savings,
-                goal_cents: Cents::from_dollars(1_000),
+                base_cents: Cents::from_dollars(1_000),
                 goal_date: None,
                 recurring_goal_id: None,
                 interest_eligible: true,
                 sort: 9,
+                taxed: false,
             },
         )
         .unwrap();
@@ -6327,9 +6449,10 @@ mod tests {
                 id,
                 &goal::GoalEdit {
                     name: goal::get(&app.db, id).unwrap().unwrap().name,
-                    goal_cents: Cents::from_dollars(1_000),
+                    base_cents: Cents::from_dollars(1_000),
                     goal_date: Some(app.today + chrono::Duration::days(7)),
                     interest_eligible: true,
+                    taxed: false,
                 },
             )
             .unwrap();
@@ -6366,6 +6489,47 @@ mod tests {
             sheet.remaining(),
             plan.lines.goals - Cents::from_dollars(2_000),
         );
+    }
+
+    /// `spread_asks` builds its `Funding` by hand -- current from
+    /// `goal::balance`, target from `goal_engine::target` -- rather than
+    /// reading it off `goal::list_with_balances`, so it is the one caller
+    /// that could silently regress to pricing the plug against the base. A
+    /// goal funded to its base is still short by the tax, one paycheck away.
+    #[test]
+    fn a_taxed_goals_plug_ask_is_measured_against_its_taxed_target() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let id = goal::insert(
+            &db,
+            &goal::NewGoal {
+                name: "Couch".to_string(),
+                container_account_id: savings,
+                base_cents: Cents::from_dollars(1_000),
+                // One pay period (14 days) past `today`, so the ask is the
+                // whole of what is lacking rather than a fraction of it.
+                goal_date: Some(today() + chrono::Duration::days(14)),
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: true,
+            },
+        )
+        .unwrap();
+        goal::insert_allocation(&db, id, today(), Cents::from_dollars(1_000), None, None).unwrap();
+
+        let app = App::new(db, today()).unwrap();
+        let asks = app.spread_asks().unwrap();
+        let (_, ask) = asks
+            .into_iter()
+            .find(|(g, _)| g.id == id)
+            .unwrap_or_else(|| panic!("no plug entry for the taxed goal"));
+
+        // 1,000 taxed at 6.25% is 1,062.50, carried up to 1,065 by the
+        // lambda's $5 increment. Funded to the base, the goal still lacks
+        // the $65 of tax.
+        assert_eq!(ask, Cents::from_dollars(65));
     }
 
     /// An undated goal has no runway to divide, so it asks for nothing and
@@ -6412,11 +6576,12 @@ mod tests {
                 &goal::NewGoal {
                     name: name.to_string(),
                     container_account_id: container,
-                    goal_cents: Cents::from_dollars(1_000),
+                    base_cents: Cents::from_dollars(1_000),
                     goal_date: None,
                     recurring_goal_id: None,
                     interest_eligible: true,
                     sort,
+                    taxed: false,
                 },
             )
             .unwrap()
@@ -8659,11 +8824,12 @@ mod tests {
                     &goal::NewGoal {
                         name: name.to_string(),
                         container_account_id: app.savings.default_container().unwrap(),
-                        goal_cents: Cents::from_dollars(128),
+                        base_cents: Cents::from_dollars(128),
                         goal_date: Some(day(2026, 9, 1)),
                         recurring_goal_id: Some(id),
                         interest_eligible: true,
                         sort: 9,
+                        taxed: false,
                     },
                 )
                 .unwrap();

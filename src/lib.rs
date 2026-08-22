@@ -7,6 +7,7 @@ pub mod demo;
 pub mod description;
 pub mod fund;
 pub mod gate;
+pub mod goal;
 pub mod import;
 pub mod money;
 pub mod overview;

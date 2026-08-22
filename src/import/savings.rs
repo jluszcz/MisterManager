@@ -268,11 +268,16 @@ pub fn import(
             &NewGoal {
                 name: name.clone(),
                 container_account_id: containers.goals.id,
-                goal_cents: target,
+                base_cents: target,
                 goal_date: as_date(&at(row, 4)),
                 recurring_goal_id: None,
                 interest_eligible: true,
                 sort: report.goals as i64,
+                // The sheet's goal column holds whatever the owner typed, tax
+                // included where they applied it, and carries no flag beside
+                // it. An imported goal therefore arrives holding its target,
+                // which is what untaxed means.
+                taxed: false,
             },
         )?;
         roth.offer(id, &name)?;
@@ -297,11 +302,12 @@ pub fn import(
             &NewGoal {
                 name: b.name.clone(),
                 container_account_id: containers.buckets.id,
-                goal_cents: b.target,
+                base_cents: b.target,
                 goal_date: None,
                 recurring_goal_id: None,
                 interest_eligible: eligible,
                 sort: report.buckets as i64,
+                taxed: false,
             },
         )?;
         emergency.offer(id, &b.name)?;

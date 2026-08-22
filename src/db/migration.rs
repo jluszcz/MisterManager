@@ -98,6 +98,30 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // Nothing to move: the default is the state every existing goal is in.
         data: None,
     },
+    Migration {
+        version: 4,
+        // A taxed goal stores what the item costs on the shelf and derives
+        // what it costs at the register, so the column stops being the goal
+        // and starts being the base the goal is computed from. Renaming it is
+        // what makes the compiler visit every reader: a change of meaning is
+        // one no `CHECK` can catch.
+        //
+        // `NOT NULL DEFAULT 0` rather than nullable, for the reason `favorite`
+        // is: there is no third state between taxed and not.
+        sql: "ALTER TABLE goal RENAME COLUMN goal_cents TO base_cents;
+              ALTER TABLE goal ADD COLUMN taxed INTEGER NOT NULL DEFAULT 0",
+        // Nothing to move, and nothing that *could* be moved. Every existing
+        // goal's stored figure already is its target: an imported one came off
+        // a sheet whose goal column holds whatever the owner put there, and a
+        // picker-created one had `calc::tax` applied before the insert.
+        // `taxed = 0` is exactly the reading those rows want.
+        //
+        // Deliberately no back-fill from `recurring_goal.taxed` through
+        // `goal.recurring_goal_id`: those goals hold a taxed figure already,
+        // so flagging them would tax it twice, and the lambda ceilings, so the
+        // base cannot be recovered by inverting it.
+        data: None,
+    },
 ];
 
 /// The version this build's chain leaves a database at.
@@ -367,5 +391,45 @@ mod tests {
         let b: i64 = conn.query_row("SELECT b FROM t", [], |r| r.get(0)).unwrap();
         assert_eq!(b, 1);
         assert_eq!(version(&conn), 3);
+    }
+
+    /// The real chain rather than the synthetic one, because this arm renames
+    /// a column that existing rows carry values in: what matters is that the
+    /// values are still there afterwards, under the new name and under the
+    /// reading `taxed = 0` gives them.
+    ///
+    /// `MIGRATIONS[..2]` is where a database written by the previous build
+    /// sits -- the head of a two-arm chain is version 3.
+    #[test]
+    fn arm_four_renames_the_goal_column_and_leaves_every_goal_untaxed() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn, SCHEMA, &MIGRATIONS[..2]).unwrap();
+        assert_eq!(version(&conn), 3);
+        conn.execute(
+            "INSERT INTO account (id, code, name, kind, grp)
+             VALUES (1, 'SAV', 'Rainy Day', 'cash', 'savings')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO goal (id, name, container_account_id, goal_cents)
+             VALUES (1, 'Couch', 1, 106500)",
+            [],
+        )
+        .unwrap();
+
+        apply(&conn, SCHEMA, MIGRATIONS).unwrap();
+
+        assert_eq!(version(&conn), 4);
+        let (base, taxed): (i64, i64) = conn
+            .query_row("SELECT base_cents, taxed FROM goal WHERE id = 1", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(base, 106_500, "the figure did not survive the rename");
+        assert_eq!(
+            taxed, 0,
+            "an existing goal already holds its target, so it is not taxed"
+        );
     }
 }
