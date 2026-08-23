@@ -1,6 +1,6 @@
 //! The Funds tab: the asset allocation, target against actual.
 
-use super::{escape, money};
+use super::{escape, whole_money};
 use crate::fund::Allocation;
 use crate::palette;
 use crate::rate::BasisPoints;
@@ -31,7 +31,7 @@ pub(super) fn table(funds: &Allocation) -> String {
             percent(r.target, false),
             percent(Some(r.actual_share), false),
             percent(r.delta, funds.furthest_down == Some(i)),
-            money(r.actual.to_whole_dollars(), r.actual),
+            whole_money(r.actual),
         ));
     }
     // Actual and Delta are left empty on purpose: every actual share sums to
@@ -39,7 +39,7 @@ pub(super) fn table(funds: &Allocation) -> String {
     rows.push_str(&format!(
         "<tr class=\"tot\"><td>Total</td>{}<td class=\"n\"></td><td class=\"n\"></td>{}</tr>",
         percent(Some(funds.target_total), false),
-        money(funds.total.to_whole_dollars(), funds.total),
+        whole_money(funds.total),
     ));
     format!("<table>{HEADER}{rows}</table>")
 }

@@ -605,7 +605,8 @@ pub fn move_value(db: &Db, from: GoalId, to: Option<GoalId>, date: NaiveDate) ->
 /// Deliberately undated: `Savings!B1` is a `SUMIF` over the cash ledger
 /// with no date criterion, so future-dated rows count. One container
 /// reconciles to exactly zero in the workbook; the other sits a few cents
-/// out, which is what `savings::RECONCILED_WITHIN` exists for.
+/// out, which is what `savings::unallocated` truncates away before either
+/// sink draws the line.
 pub fn container_excess(db: &Db, container_account_id: AccountId) -> Result<Cents> {
     let held = txn::balance_all_time(db, container_account_id)?;
     let allocated: i64 = db.conn.query_row(

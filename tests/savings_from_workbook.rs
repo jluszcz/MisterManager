@@ -215,7 +215,8 @@ fn the_savings_screens_reconciliation_agrees_with_the_savings_sheet() {
     assert_eq!(excess(goals), sheet_cents(&sheet, 2, 1), "Savings!B3");
     assert_eq!(excess(buckets), Cents::ZERO);
     assert_eq!(screen.excess().len(), 2);
-    // The goal container's few cents of drift are the workbook's steady state
-    // and must not be flagged.
-    assert!(savings::is_reconciled(excess(goals)));
+    // The goal container's few cents of drift are the workbook's steady state,
+    // and the footer truncates them away to nothing rather than reporting
+    // them.
+    assert_eq!(savings::unallocated(excess(goals)), Cents::ZERO);
 }
