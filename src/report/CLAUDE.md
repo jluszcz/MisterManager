@@ -63,6 +63,24 @@ about a figure, one of them is wrong.
   first would be dated at all. The sections keep their separation as `<tbody>`
   groups. The dates go bare, no `To-Date`/`Paycheck-Eve`/`Month-End` above
   them, which is what `tui::overview::column_headers` does for the same reason.
+- **The Planning tab draws the list `plan_rows::rows` hands it and decides
+  nothing about it.** Which blocks there are, what they are headed, what each
+  row is called and where the two footers sit are the waterfall's facts, not
+  the page's: `html::planning` turns each row into a `<tr>` and stops. Two
+  classes rather than one, because what a row *is* and how deep it sits are
+  separate facts and `tr.tot td` and `tr.sub2 td:first-child` are separate
+  rules; `Row::depth` of `n` is `sub{n}`, and `1` is a block's own line, which
+  takes no indent because the heading above it has already set the block
+  apart. The screen spends that same number as two spaces a level, and goes on
+  spending them, so the page spells a class a level and `html::planning`
+  generates the rule behind each -- the way `ledger::month_rules` generates
+  one per month. One `sub` for every level past the first would draw flat a
+  row the screen draws nested, which is the drift one shared list of rows
+  exists to prevent. A
+  `Kind::Blank` draws nothing at all -- the screen's separator is an empty
+  line, and this medium's is `tr.head td`'s padding. Before this, the tab and
+  the screen were hand-transcriptions of each other and had already come to
+  disagree about which blocks were headed.
 - **A cell says what it may do with its width, and a table never widens past the
   phone.** Three classes carry it: `n` is a figure and `d` a date, and neither
   wraps — a comma and a hyphen are both break opportunities, and a column narrow

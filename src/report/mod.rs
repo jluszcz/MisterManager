@@ -18,6 +18,7 @@ use crate::goal as goal_engine;
 use crate::money::Cents;
 use crate::overview::Overview;
 use crate::plan;
+use crate::plan_rows;
 use crate::projection;
 use crate::savings;
 use crate::transfer;
@@ -71,28 +72,6 @@ pub struct LedgerRow {
     pub future: bool,
 }
 
-/// One monthly bill, with the biweekly figure the waterfall spends.
-pub struct BillRow {
-    pub label: String,
-    pub monthly: Cents,
-    pub biweekly: Cents,
-}
-
-/// One transfer the plan would write: where it lands, and the lines that put
-/// it there.
-pub struct Transfer {
-    /// The account it lands in. `None` is a withdrawal -- money leaving the
-    /// tracked system, which is a supported destination and not a failure.
-    pub to: Option<Account>,
-    pub label: String,
-    pub cents: Cents,
-    /// The lines it carries, as [`crate::plan_line::Line`] rather than as
-    /// labels: the Goals line is the one the page annotates, and matching a
-    /// label back to the enum that produced it is a name lookup where an
-    /// identity is already in hand.
-    pub lines: Vec<(crate::plan_line::Line, Cents)>,
-}
-
 /// The Planning screen's figures, or the reason there are none.
 ///
 /// A plan that cannot resolve is an ordinary state -- a database with no
@@ -107,15 +86,12 @@ pub enum Planning {
 pub struct PlanView {
     pub settings: PlanSettings,
     pub plan: crate::calc::planning::Plan,
-    /// `Planning!C6`: the housing subtotal, which is the one bill line that
-    /// is not a bill.
-    pub housing_monthly: Cents,
-    pub housing: Vec<BillRow>,
-    pub other_bills: Vec<BillRow>,
+    pub housing: Vec<plan_rows::Bill>,
+    pub other_bills: Vec<plan_rows::Bill>,
     /// The transfers, or why they cannot be resolved. Separate from the
     /// waterfall above: a dangling destination key stops the money moving
     /// without making any figure above it wrong.
-    pub transfers: Result<Vec<Transfer>, String>,
+    pub transfers: Result<Vec<plan_rows::Transfer>, String>,
     /// What the goals the plug spreads over ask of this paycheck, summed.
     /// The figure the Goals line is measured against, and the same one the
     /// Planning screen measures it against.
@@ -188,21 +164,16 @@ fn ledger(db: &Db, accounts: &[account::Account], kind: Kind, today: NaiveDate) 
 /// `adhoc` and not `App::adhoc`: `Excess (Actual)` *is* the checking balance
 /// at that date, so the figure here has to be quoted at the same day the
 /// Overview's Paycheck-Eve column is.
-fn plan_view(
-    db: &Db,
-    accounts: &[account::Account],
-    today: NaiveDate,
-    adhoc: NaiveDate,
-    period_days: i64,
-) -> Result<PlanView> {
+fn plan_view(db: &Db, today: NaiveDate, adhoc: NaiveDate, period_days: i64) -> Result<PlanView> {
     let settings = plan::settings_from_db(db)?;
     let plan = plan::compute_from_db(db, adhoc)?;
     let periods = settings.periods_per_year;
-    let bills = |category| -> Result<Vec<BillRow>> {
+    let bills = |category| -> Result<Vec<plan_rows::Bill>> {
         bill::list(db, category)?
             .into_iter()
             .map(|b| {
-                Ok(BillRow {
+                Ok(plan_rows::Bill {
+                    id: b.id,
                     label: b.label,
                     monthly: b.cents,
                     biweekly: calc::biweekly(b.cents, periods)?,
@@ -210,7 +181,6 @@ fn plan_view(
             })
             .collect()
     };
-    let housing = bills(bill::Category::Housing)?;
     // The asks are read on their own, exactly as `App::planning_view` reads
     // them and for the reason it does: the payday `Unmet Asks` exists for is
     // the one where every line is zero, which is the payday `transfer::plan`
@@ -226,34 +196,11 @@ fn plan_view(
         .map(|asks| asks.iter().map(|(_, ask)| *ask).sum())
         .unwrap_or(Cents::ZERO);
     let transfers = match transfer::plan(db, &plan.lines) {
-        Ok(rows) => Ok(rows
-            .iter()
-            .map(|row| match row {
-                transfer::Row::Transfer {
-                    to,
-                    name,
-                    cents,
-                    lines,
-                    ..
-                } => Transfer {
-                    to: Some(Account::named(accounts, *to)),
-                    label: name.clone(),
-                    cents: *cents,
-                    lines: lines.clone(),
-                },
-                transfer::Row::Withdrawal { line, cents } => Transfer {
-                    to: None,
-                    label: "Withdrawal".to_string(),
-                    cents: *cents,
-                    lines: vec![(*line, *cents)],
-                },
-            })
-            .collect()),
+        Ok(rows) => Ok(plan_rows::transfers(&rows)),
         Err(e) => Err(format!("{e:#}")),
     };
     Ok(PlanView {
-        housing_monthly: housing.iter().map(|b| b.monthly).sum(),
-        housing,
+        housing: bills(bill::Category::Housing)?,
         other_bills: bills(bill::Category::Other)?,
         settings,
         plan,
@@ -301,7 +248,7 @@ impl Snapshot {
             cash: ledger(db, &accounts, Kind::Cash, today)?,
             credit: ledger(db, &accounts, Kind::Credit, today)?,
             containers,
-            planning: match plan_view(db, &accounts, today, dates.adhoc, period_days) {
+            planning: match plan_view(db, today, dates.adhoc, period_days) {
                 Ok(view) => Planning::Resolved(Box::new(view)),
                 Err(e) => Planning::Unresolvable(format!("{e:#}")),
             },
@@ -564,7 +511,7 @@ mod tests {
         )
         .unwrap();
 
-        let view = plan_view(&db, &account::list(&db).unwrap(), today(), today(), 14).unwrap();
+        let view = plan_view(&db, today(), today(), 14).unwrap();
 
         assert_eq!(
             view.plan.lines.goals,
@@ -619,7 +566,7 @@ mod tests {
         )
         .unwrap();
 
-        let view = plan_view(&db, &account::list(&db).unwrap(), today(), today(), 14).unwrap();
+        let view = plan_view(&db, today(), today(), 14).unwrap();
 
         assert_eq!(
             view.plan.lines.goals,

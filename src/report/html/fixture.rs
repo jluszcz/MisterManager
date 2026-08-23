@@ -11,11 +11,10 @@ use crate::db::{AccountId, FundId, GoalId};
 use crate::fund::{Allocation, FundRow};
 use crate::money::Cents;
 use crate::overview::{Balances, Band, Line, Overview, Section};
+use crate::plan_rows::{Bill, Transfer};
 use crate::projection::Dates;
 use crate::rate::{BasisPoints, Percent};
-use crate::report::{
-    BillRow, Container, Ledger, LedgerMonth, LedgerRow, PlanView, Planning, Snapshot, Transfer,
-};
+use crate::report::{Container, Ledger, LedgerMonth, LedgerRow, PlanView, Planning, Snapshot};
 use crate::test_support::day;
 use chrono::{Local, NaiveDate, TimeZone};
 
@@ -120,13 +119,14 @@ pub(super) fn plan_view() -> PlanView {
     let plan = crate::calc::planning::compute(&settings, &inputs).unwrap();
     PlanView {
         settings,
-        housing_monthly: dollars(2_000),
-        housing: vec![BillRow {
+        housing: vec![Bill {
+            id: crate::db::BillId(1),
             label: "Mortgage".into(),
             monthly: dollars(2_000),
             biweekly: dollars(923),
         }],
-        other_bills: vec![BillRow {
+        other_bills: vec![Bill {
+            id: crate::db::BillId(2),
             label: "Internet".into(),
             monthly: dollars(300),
             biweekly: dollars(139),

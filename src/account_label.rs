@@ -74,6 +74,22 @@ impl Account {
         }
     }
 
+    /// An account whose row the caller already has -- the transfers a payday
+    /// would write, which `transfer::plan` builds from the account rows it
+    /// has just read.
+    ///
+    /// The three above look an id up in a slice because that is what their
+    /// callers hold. This one takes the name and the color directly, so a
+    /// caller holding the row does not read it a second time to get back the
+    /// two fields it is already carrying.
+    pub fn held(id: AccountId, text: impl Into<String>, color: Option<AccountColor>) -> Account {
+        Account {
+            id,
+            text: text.into(),
+            color,
+        }
+    }
+
     pub fn id(&self) -> AccountId {
         self.id
     }

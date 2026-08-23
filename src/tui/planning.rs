@@ -17,39 +17,16 @@ use crate::db::account::AccountColor;
 use crate::db::bill::{self, Bill};
 use crate::db::setting::{self, key};
 use crate::db::{AccountId, BillId, Db};
-use crate::gate::Gate;
 use crate::money::Cents;
 use crate::plan_line::{Destination, Line};
+use crate::plan_rows;
 use crate::rate::Percent;
 use crate::transfer::{self, Container, Landing, Wiring};
 use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
 use ratatui::crossterm::event::KeyEvent;
 
-/// One editable constant on the screen.
-///
-/// An enum rather than a field holding the `Key<T>` being edited, because the
-/// constants have different `T` -- `Cents`, `Percent`, `i64` -- and a struct
-/// field cannot. Each arm owns both its key and how its text parses, which is
-/// the same construction `gate::Gate` uses for its key and its goal-name
-/// substring, and it earns its keep for the same reason: a key written at a
-/// call site reads as "not configured" when mistyped, and every reader here
-/// has a fallback that would hide it.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Target {
-    Target,
-    Buffer,
-    PeriodsPerYear,
-    BillPaymentCap,
-    BillPaymentPct,
-    MomAndDadAnnual,
-    GoalsFloor,
-    FutureHousingPct,
-    RetirementPct,
-    InvestmentPct,
-    PinnedExcess,
-    Bill(BillId),
-}
+pub use crate::plan_rows::Target;
 
 /// A whole-percent share, with a trailing sign tolerated.
 ///
@@ -351,130 +328,93 @@ impl Row {
         }
     }
 
+    /// One [`crate::plan_rows::Row`] in this medium: the depth spent as two
+    /// spaces a level, the tones read off what each cell holds, and the
+    /// editor attached to the constant the row already says it is.
+    ///
+    /// Every row above the Destinations block comes through here. What the
+    /// screen adds is what only a terminal has -- an indent, a tint, a
+    /// cursor, a bold -- and nothing it adds may change which rows there are
+    /// or what they are called.
+    fn of(row: &plan_rows::Row) -> Row {
+        let indent = "  ".repeat(usize::from(row.depth));
+        // The account a transfer lands in is named once, at the head of the
+        // group it heads, so it is tinted in the label column rather than in
+        // the two a destination row uses. `render_with` is the only reader of
+        // its text, here as everywhere: the name and the color arrive
+        // together or not at all.
+        let (label, account) = match &row.label {
+            plan_rows::RowLabel::Text(text) => (format!("{indent}{text}"), None),
+            plan_rows::RowLabel::Account(a) => a.render_with(|text, color| {
+                (
+                    format!("{indent}{text}"),
+                    Some(Tint {
+                        column: Column::Label,
+                        id: a.id(),
+                        color: Some(color),
+                    }),
+                )
+            }),
+        };
+        // Only money can be negative. The value column carries counts and
+        // gate verdicts too, and a count is a number rather than an amount --
+        // which is what keeps `26` from ever rendering red.
+        let (value, tone) = match row.value {
+            plan_rows::Value::Money(cents) => (
+                crate::demo::whole_figure(cents),
+                match cents < Cents::ZERO {
+                    true => Tone::Negative,
+                    false => Tone::Plain,
+                },
+            ),
+            plan_rows::Value::Count(count) => (count.to_string(), Tone::Plain),
+            plan_rows::Value::Stated(text) => (text.to_string(), Tone::Plain),
+            plan_rows::Value::None => (String::new(), Tone::Plain),
+        };
+        // The one thing this cell reports rather than states is a gap the
+        // money will not cover, which is why it is the only one that colors.
+        let (extra, extra_tone) = match row.extra {
+            plan_rows::Extra::Percent(pct) => (format!("{}%", pct.0), Tone::Plain),
+            plan_rows::Extra::Biweekly(cents) => (crate::demo::whole_figure(cents), Tone::Plain),
+            plan_rows::Extra::Gap(cents) => (
+                format!("\u{394} {}", crate::demo::whole_figure(cents)),
+                Tone::Negative,
+            ),
+            // Marked `*` like the Overview column it follows.
+            plan_rows::Extra::Date(date) => (format!("{date}*"), Tone::Plain),
+            plan_rows::Extra::None => (String::new(), Tone::Plain),
+        };
+        Row {
+            label,
+            value,
+            extra,
+            editable: row.target.map(Editable::Constant),
+            edit: row.edit.clone(),
+            bold: matches!(row.kind, plan_rows::Kind::Heading | plan_rows::Kind::Total),
+            tone,
+            extra_tone,
+            account,
+        }
+    }
+
+    /// The transfers block when there is no block: the reason, in the shape
+    /// this screen states a failure in.
+    ///
+    /// Nothing in any line is not a plan that failed to resolve: there is
+    /// nothing to resolve, no goal in the wrong container, and nothing
+    /// `Enter` could explain. So it says so in its own words rather than
+    /// under a label that reads as a failure.
+    fn note(message: &str) -> Row {
+        match message == transfer::NOTHING_TO_TRANSFER {
+            true => Row::figure_text(&format!("  {message}"), ""),
+            false => Row::figure_text("  unresolved", message),
+        }
+    }
+
     fn heading(label: &str) -> Row {
         Row {
             label: label.to_string(),
             bold: true,
-            ..Row::blank()
-        }
-    }
-
-    fn figure(label: &str, value: Cents) -> Row {
-        Row {
-            label: label.to_string(),
-            value: crate::demo::whole_figure(value),
-            tone: if value < Cents::ZERO {
-                Tone::Negative
-            } else {
-                Tone::Plain
-            },
-            ..Row::blank()
-        }
-    }
-
-    fn total(label: &str, value: Cents) -> Row {
-        Row {
-            bold: true,
-            ..Row::figure(label, value)
-        }
-    }
-
-    fn money(label: &str, value: Cents, target: Target) -> Row {
-        Row {
-            editable: Some(Editable::Constant(target)),
-            edit: value.to_string(),
-            ..Row::figure(label, value)
-        }
-    }
-
-    fn count(label: &str, value: i64, target: Target) -> Row {
-        Row {
-            label: label.to_string(),
-            value: value.to_string(),
-            editable: Some(Editable::Constant(target)),
-            edit: value.to_string(),
-            ..Row::blank()
-        }
-    }
-
-    /// A figure the waterfall computed, with the percentage that produced it
-    /// in the extra column. Editing the row edits the percentage.
-    fn split(label: &str, value: Cents, pct: Percent, target: Option<Target>) -> Row {
-        Row {
-            extra: format!("{}%", pct.0),
-            editable: target.map(Editable::Constant),
-            edit: pct.0.to_string(),
-            ..Row::figure(label, value)
-        }
-    }
-
-    /// One Planning line, under the transfer that carries it -- with what the
-    /// excess cut from it in the one cell such a line has spare.
-    ///
-    /// The figure the line *moves* stays plain: it is right, and the gap
-    /// beside it is what is not. A line covered in full says nothing, because
-    /// a cell that reads "nothing is wrong" on every ordinary payday is a
-    /// cell nobody reads.
-    fn transfer_line(line: Line, amount: Cents, shortfall: Cents) -> Row {
-        Row {
-            extra: match shortfall > Cents::ZERO {
-                true => format!("\u{394} {}", crate::demo::whole_figure(shortfall)),
-                false => String::new(),
-            },
-            extra_tone: match shortfall > Cents::ZERO {
-                true => Tone::Negative,
-                false => Tone::Plain,
-            },
-            ..Row::figure(&format!("    {}", line.label()), amount)
-        }
-    }
-
-    /// How far the plug falls short of what its goals asked of this paycheck.
-    ///
-    /// `calc::fit` is about to scale every one of them to the same fraction
-    /// of what it wanted, and nothing else on the screen says so -- the Goals
-    /// line's own figure is right either way, and each goal's `$/Pay` is a
-    /// column on Savings. A footer rather than that line's own cell because
-    /// the plug is `lines.goals` whether or not a transfer row carries it,
-    /// and a plug of nothing has no row at all.
-    fn unmet_asks(gap: Cents) -> Row {
-        Row {
-            label: "  Unmet Asks".to_string(),
-            extra: format!("\u{394} {}", crate::demo::whole_figure(gap)),
-            extra_tone: Tone::Negative,
-            bold: true,
-            ..Row::blank()
-        }
-    }
-
-    /// What the excess left unpaid across every line it cut.
-    ///
-    /// The column the per-line gaps are drawn in, because it is their sum --
-    /// and the whole plan's answer when there are no per-line gaps above it
-    /// at all.
-    fn shortfall(total: Cents) -> Row {
-        Row {
-            label: "  Shortfall".to_string(),
-            extra: format!("\u{394} {}", crate::demo::whole_figure(total)),
-            extra_tone: Tone::Negative,
-            bold: true,
-            ..Row::blank()
-        }
-    }
-
-    fn bill(bill: &Bill, biweekly: Cents) -> Row {
-        Row {
-            extra: crate::demo::whole_figure(biweekly),
-            editable: Some(Editable::Constant(Target::Bill(bill.id))),
-            edit: bill.cents.to_string(),
-            ..Row::figure(&format!("  {}", bill.label), bill.cents)
-        }
-    }
-
-    fn gate(label: &str, needed: bool) -> Row {
-        Row {
-            label: format!("  {label}"),
-            value: if needed { "needed" } else { "met" }.to_string(),
             ..Row::blank()
         }
     }
@@ -618,191 +558,57 @@ pub struct View {
 /// The transfers `t` would write, then `Planning!C1:G41` top to bottom under
 /// them.
 fn build(view: &View) -> Result<Vec<Row>> {
-    let p = &view.plan;
-    let s = &view.settings;
     // The same clamp `compute` makes, for the same reason: a nonsense count
     // must not take the screen down.
-    let periods = s.periods_per_year.max(1);
-    let bw = |monthly: Cents| calc::biweekly(monthly, periods);
-
-    // What `t` would write, above the waterfall that produced it. These rows
-    // are the screen's answer -- the money that actually moves this payday --
-    // and every block below is the working behind it: an owner who trusts the
-    // plan reads the top and presses `t`, and one who doubts a figure scrolls
-    // down to the line that made it.
-    let mut rows = vec![Row::heading("Transfers")];
-    match &view.transfer_error {
-        // Nothing in any line is not a plan that failed to resolve: there is
-        // nothing to resolve, no goal in the wrong container, and nothing
-        // `Enter` could explain. So it says so in its own words rather than
-        // under a label that reads as a failure.
-        Some(message) if message == transfer::NOTHING_TO_TRANSFER => {
-            rows.push(Row::figure_text(&format!("  {message}"), ""))
-        }
-        Some(message) => rows.push(Row::figure_text("  unresolved", message)),
-        None => {
-            for row in &view.transfers {
-                match row {
-                    transfer::Row::Transfer {
-                        to,
-                        name,
-                        color,
-                        cents,
-                        lines,
-                    } => {
-                        // The account this row's money lands in, named in the
-                        // label column -- so it is tinted there rather than
-                        // in the two columns a destination row uses. The
-                        // lines beneath it are the plan's own labels and name
-                        // no account, so they stay plain: the account is said
-                        // once, at the head of the group it heads.
-                        rows.push(Row {
-                            account: Some(Tint {
-                                column: Column::Label,
-                                id: *to,
-                                color: *color,
-                            }),
-                            ..Row::total(&format!("  {name}"), *cents)
-                        });
-                        for (line, amount) in lines {
-                            rows.push(Row::transfer_line(
-                                *line,
-                                *amount,
-                                line.amount(&p.shortfall),
-                            ));
-                        }
-                    }
-                    transfer::Row::Withdrawal { line, cents } => {
-                        rows.push(Row::total("  Withdrawal", *cents));
-                        rows.push(Row::figure(&format!("    {}", line.label()), *cents));
-                    }
-                }
-            }
-        }
-    }
-    // Both footers sit outside the match on purpose: each reports a payday
-    // with no transfer row to hang a per-line cell off -- a plug of nothing
-    // for the first, an excess the fixed bills took whole for the second --
-    // and a gap drawn only inside the block those states empty would go
-    // silent exactly where it is worth most.
-    if let Some(gap) = transfer::unmet_asks(p.lines.goals, view.spread_ask_total) {
-        rows.push(Row::unmet_asks(gap));
-    }
-    if p.shortfall.total() > Cents::ZERO {
-        rows.push(Row::shortfall(p.shortfall.total()));
-    }
-    rows.push(Row::blank());
-
-    rows.extend([
-        Row::money("Target", s.target, Target::Target),
-        Row::money("Buffer", s.buffer, Target::Buffer),
-        Row::count(
-            "Pay Periods / Year",
-            s.periods_per_year,
-            Target::PeriodsPerYear,
-        ),
-        Row::blank(),
-        // The one row a scrub moves. Marked `*` like the Overview column it
-        // follows, and naming the date rather than the drift: this screen has
-        // no column header to hang a date off.
-        Row {
-            extra: match view.scrubbed_adhoc {
-                Some(date) => format!("{date}*"),
-                None => String::new(),
-            },
-            ..Row::figure("Excess (Actual)", p.excess_actual)
+    let periods = view.settings.periods_per_year.max(1);
+    let bills = |list: &[Bill]| -> Result<Vec<plan_rows::Bill>> {
+        list.iter()
+            .map(|b| {
+                Ok(plan_rows::Bill {
+                    id: b.id,
+                    label: b.label.clone(),
+                    monthly: b.cents,
+                    biweekly: calc::biweekly(b.cents, periods)?,
+                })
+            })
+            .collect()
+    };
+    let housing = bills(&view.housing)?;
+    let other_bills = bills(&view.other_bills)?;
+    let transfers = plan_rows::transfers(&view.transfers);
+    let waterfall = plan_rows::rows(&plan_rows::Input {
+        plan: &view.plan,
+        settings: &view.settings,
+        housing: &housing,
+        other_bills: &other_bills,
+        // A misconfigured destination is a block's content, not the screen's:
+        // every figure below it is still right.
+        transfers: match &view.transfer_error {
+            Some(message) => Err(message.as_str()),
+            None => Ok(&transfers),
         },
-        // Editable, and typing a figure here pins it: this is the sheet's
-        // hand-typed `Excess (Fixed)` cell, which `p` only ever fills with the
-        // floored actual. The prefill is `excess_used` in both states, because
-        // that is the pin when there is one and the figure a first pin would
-        // freeze when there is not.
-        Row {
-            editable: Some(Editable::Constant(Target::PinnedExcess)),
-            edit: p.excess_used.to_string(),
-            ..Row::total("Excess (Used)", p.excess_used)
-        },
-        Row::blank(),
-        Row::heading("Bills"),
-    ]);
-
-    // `Planning!C6` -- the housing subtotal, and the only bill line that is
-    // not a bill. Its biweekly figure is `E6`, the one `lines.current_housing`
-    // uses.
-    let housing_monthly: Cents = view.housing.iter().map(|b| b.cents).sum();
-    rows.push(Row {
-        extra: crate::demo::whole_figure(p.housing_biweekly),
-        ..Row::figure("  Mortgage + HOA", housing_monthly)
+        spread_ask_total: view.spread_ask_total,
+        scrubbed_adhoc: view.scrubbed_adhoc,
     });
-    for b in &view.housing {
-        rows.push(Row::bill(b, bw(b.cents)?));
-    }
-    for b in &view.other_bills {
-        rows.push(Row::bill(b, bw(b.cents)?));
-    }
-
-    rows.push(Row::total("Remaining Excess", p.remaining_excess));
-    rows.push(Row::blank());
-    rows.push(Row::heading("Gates"));
-    rows.push(Row::gate(Gate::EmergencyFund.label(), p.need_emergency));
-    rows.push(Row::gate(Gate::Roth.label(), p.need_roth));
-    rows.push(Row::blank());
-
-    rows.push(Row::split(
-        "Bill Payments",
-        p.bill_payments,
-        s.bill_payment_pct,
-        Some(Target::BillPaymentPct),
-    ));
-    rows.push(Row::money(
-        "  Cap",
-        s.bill_payment_cap,
-        Target::BillPaymentCap,
-    ));
-    rows.push(Row::figure("Mom & Dad", p.mom_and_dad));
-    rows.push(Row::money(
-        "  Annual",
-        s.mom_and_dad_annual,
-        Target::MomAndDadAnnual,
-    ));
-    rows.push(Row::total("Remainder", p.remainder));
-    rows.push(Row::money(
-        "  Goals Floor",
-        s.goals_floor,
-        Target::GoalsFloor,
-    ));
-    rows.push(Row::blank());
-
-    rows.push(Row::heading("Split"));
-    rows.push(Row::split(
-        &format!("  {}", Line::FutureHousing.label()),
-        p.future_housing,
-        s.future_housing_pct,
-        Some(Target::FutureHousingPct),
-    ));
-    rows.push(Row::split(
-        &format!("  {}", Line::Retirement.label()),
-        p.retirement,
-        s.retirement_pct,
-        Some(Target::RetirementPct),
-    ));
-    rows.push(Row::split(
-        &format!("  {}", Line::Investment.label()),
-        p.investment,
-        s.investment_pct,
-        Some(Target::InvestmentPct),
-    ));
-    rows.push(Row::split(
-        &format!("  {}", Line::Goals.label()),
-        p.goals,
-        s.goals_pct(),
-        None,
-    ));
-    rows.push(Row::blank());
+    let mut rows: Vec<Row> = waterfall
+        .iter()
+        .map(|row| match row.kind {
+            plan_rows::Kind::Note => Row::note(match &row.label {
+                plan_rows::RowLabel::Text(message) => message,
+                plan_rows::RowLabel::Account(_) => "",
+            }),
+            _ => Row::of(row),
+        })
+        .collect();
 
     // Where the money the split just divided lands. Below the figures rather
     // than beside the transfers at the top: this block is read when one of
     // them is missing or wrong, which is a question about the line above it.
+    //
+    // Screen-only, and the one block `plan_rows` does not carry: a
+    // destination is a thing the owner *changes*, and the report has no way
+    // to offer that.
+    rows.push(Row::blank());
     rows.push(Row::heading("Destinations"));
     rows.extend(view.wiring.iter().map(Row::destination));
 
@@ -1435,20 +1241,47 @@ mod tests {
     use crate::tui::form::char_key;
     // `setting`, `key`, and `Line` already come in through `super::*`.
 
+    /// One waterfall row in this medium. These tests are about the mapper
+    /// rather than the list it maps, so the row is built by hand: what
+    /// `plan_rows` puts in each cell is pinned by its own tests.
+    fn mapped(kind: plan_rows::Kind, value: plan_rows::Value) -> Row {
+        Row::of(&plan_rows::Row {
+            kind,
+            label: plan_rows::RowLabel::Text("Remaining Excess".to_string()),
+            value,
+            extra: plan_rows::Extra::None,
+            depth: 1,
+            target: None,
+            edit: String::new(),
+        })
+    }
+
     /// The value column carries figures, counts and gate verdicts alike, so
-    /// only the constructor that takes money gets to call a row negative. A
-    /// count is a number, not an amount, and must never render red.
+    /// only a cell holding money gets to call a row negative. A count is a
+    /// number, not an amount, and must never render red.
     #[test]
     fn only_a_money_row_below_zero_is_toned_negative() {
-        assert_eq!(Row::figure("Checksum", Cents(-1)).tone, Tone::Negative);
+        use plan_rows::{Kind, Value};
+
         assert_eq!(
-            Row::total("Remaining Excess", Cents(-100)).tone,
+            mapped(Kind::Figure, Value::Money(Cents(-1))).tone,
             Tone::Negative
         );
-        assert_eq!(Row::figure("Checksum", Cents::ZERO).tone, Tone::Plain);
-        assert_eq!(Row::total("Remaining Excess", Cents(1)).tone, Tone::Plain);
         assert_eq!(
-            Row::count("Pay Periods", 26, Target::PeriodsPerYear).tone,
+            mapped(Kind::Total, Value::Money(Cents(-100))).tone,
+            Tone::Negative
+        );
+        assert_eq!(
+            mapped(Kind::Figure, Value::Money(Cents::ZERO)).tone,
+            Tone::Plain
+        );
+        assert_eq!(
+            mapped(Kind::Total, Value::Money(Cents(1))).tone,
+            Tone::Plain
+        );
+        assert_eq!(mapped(Kind::Figure, Value::Count(26)).tone, Tone::Plain);
+        assert_eq!(
+            mapped(Kind::Figure, Value::Stated("needed")).tone,
             Tone::Plain
         );
         assert_eq!(Row::heading("Gates").tone, Tone::Plain);
@@ -2232,6 +2065,11 @@ mod tests {
     /// in, so that name is tinted like the same account everywhere else --
     /// in the *label* column, which is where a transfer names its account
     /// and where no other row on the screen names one.
+    ///
+    /// The shade arrives already resolved: the name reaches this row through
+    /// `account_label::Account::render_with`, which hands the derived color
+    /// with it, so a container the owner has never colored still comes out in
+    /// the one shade it wears on every other screen.
     #[test]
     fn a_transfer_row_is_tinted_by_the_account_it_lands_in() {
         let planning = screen();
@@ -2240,13 +2078,14 @@ mod tests {
             .iter()
             .find(|r| r.label.trim() == "Rainy Day")
             .expect("no Rainy Day transfer row");
+
         assert_eq!(
-            row.account,
-            Some(Tint {
-                column: Column::Label,
-                id: AccountId(1),
-                color: None
-            })
+            row.account.map(|t| (t.column, t.id)),
+            Some((Column::Label, AccountId(1)))
+        );
+        assert_eq!(
+            Tint::color_in(row.account, Column::Label),
+            Some(super::super::style::account_color(AccountId(1), None))
         );
     }
 
@@ -2800,8 +2639,16 @@ mod tests {
     /// that goes below zero.
     #[test]
     fn a_negative_figure_drops_its_cents_like_a_positive_one() {
-        assert_eq!(Row::figure("Checksum", Cents(-20_099)).value, "-200");
-        assert_eq!(Row::figure("Checksum", Cents(20_099)).value, "200");
+        use plan_rows::{Kind, Value};
+
+        assert_eq!(
+            mapped(Kind::Figure, Value::Money(Cents(-20_099))).value,
+            "-200"
+        );
+        assert_eq!(
+            mapped(Kind::Figure, Value::Money(Cents(20_099))).value,
+            "200"
+        );
     }
 
     /// Dropping the digits leaves a sub-dollar negative as `-0`. Shared with
@@ -2809,7 +2656,10 @@ mod tests {
     /// reading a `-0` as a bug in the waterfall rather than in the format.
     #[test]
     fn a_negative_under_a_dollar_keeps_its_sign_over_a_zero() {
-        assert_eq!(Row::figure("Checksum", Cents(-1)).value, "-0");
+        assert_eq!(
+            mapped(plan_rows::Kind::Figure, plan_rows::Value::Money(Cents(-1))).value,
+            "-0"
+        );
     }
 
     #[test]
@@ -3541,7 +3391,7 @@ mod tests {
 
         planning.select_first();
         let mut drawn = draw(&mut planning);
-        while planning.rows()[planning.selected_index()].label != "Excess (Used)" {
+        while planning.rows()[planning.selected_index()].label.trim() != "Excess (Used)" {
             planning.select_next();
             drawn = draw(&mut planning);
         }
@@ -3593,7 +3443,10 @@ mod tests {
             drawn = draw(&mut planning);
         }
 
-        assert_eq!(planning.rows()[planning.selected_index()].label, "Target");
+        assert_eq!(
+            planning.rows()[planning.selected_index()].label.trim(),
+            "Target"
+        );
         assert!(drawn.contains("Transfers"), "{drawn}");
     }
 
