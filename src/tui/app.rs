@@ -207,6 +207,30 @@ pub struct App {
     quit: bool,
 }
 
+/// How far either side of the transfer date `t` looks for a payday it has
+/// already written, in business days.
+///
+/// Wide enough to reach the day a run being corrected landed on -- a re-run
+/// is rarely more than a day or two later -- and narrow enough that it
+/// cannot reach the payday before this one, which is ten business days back.
+const DUPLICATE_SCAN_DAYS: i64 = 2;
+
+/// Add `amount` to whatever `goal` is already down for.
+///
+/// Two Planning lines may name one goal -- `open_destination` offers
+/// every open goal, claimed or not -- and `transfer::plan` merges such
+/// lines into a single transfer. A second entry under the same id would
+/// be dropped by `Worksheet::set_lines`, which resolves each of its
+/// one-per-goal lines by the first match, leaving the sheet short by the
+/// second line and that difference indistinguishable from the remainder
+/// `calc::fit` leaves unallocated on purpose.
+fn add_share(shares: &mut Vec<(GoalId, Cents)>, goal: GoalId, amount: Cents) {
+    match shares.iter_mut().find(|(id, _)| *id == goal) {
+        Some((_, c)) => *c += amount,
+        None => shares.push((goal, amount)),
+    }
+}
+
 /// The footer a screen shows while its `/` box is open: the needle with the
 /// caret on it, and what the two keys leaving the box do.
 ///
@@ -472,10 +496,19 @@ impl App {
         };
         let from = transfer::source(&self.db)?;
         let date = calc::business_day::add(self.today, 2)?;
-        if transfer::already_written(&self.db, from, date, &rows)? {
+        // Business days either side, not the one date the form opens on: the
+        // date is editable before the write, so a run correcting a wrongly
+        // dated first one steps off this default and onto the day that one
+        // landed.
+        let scanned = calc::business_day::window(date, DUPLICATE_SCAN_DAYS, DUPLICATE_SCAN_DAYS)?;
+        let clashing = transfer::already_written(&self.db, from, &scanned, &rows)?;
+        if !clashing.is_empty() {
             // A warning, not a block: these are ordinary ledger rows and a
-            // second run with a corrected date is a real case.
-            self.status = format!("{date} already carries matching rows");
+            // second run with a corrected date is a real case. The dates are
+            // named because they are days the form is not showing.
+            let days: Vec<String> = clashing.iter().map(|d| d.to_string()).collect();
+            let carry = if days.len() == 1 { "carries" } else { "carry" };
+            self.status = format!("{} already {carry} matching rows", transfer::joined(&days));
         }
         self.modal = Some(Modal::PlanTransfers(TransferConfirm::new(
             rows, self.today, date,
@@ -536,7 +569,7 @@ impl App {
                 match line.destination() {
                     Destination::Goal(key) => {
                         if let Some(id) = setting::get(&self.db, key)? {
-                            shares.push((id, *amount));
+                            add_share(&mut shares, id, *amount);
                         }
                     }
                     Destination::Spread => {
@@ -551,7 +584,7 @@ impl App {
                             // money to place by hand rather than money this
                             // has to find a home for.
                             for (id, share) in calc::fit(*amount, &asks)? {
-                                shares.push((GoalId(id), share));
+                                add_share(&mut shares, GoalId(id), share);
                             }
                         }
                     }
@@ -6410,6 +6443,130 @@ mod tests {
             Cents::ZERO,
             "the Roth gate is already met, so plan emits no row for it"
         );
+    }
+
+    /// Nothing stops two lines naming one goal -- `open_destination` offers
+    /// every open goal, claimed or not -- and `transfer::plan` merges them
+    /// into one transfer. The prefill has to merge them the same way, or the
+    /// sheet opens short by the second line and the difference is
+    /// indistinguishable from the remainder `calc::fit` leaves on purpose.
+    ///
+    /// Housing is funded before it is unpointed: a goal no line claims and
+    /// which is still short joins the plug, and a plug spanning Rainy Day and
+    /// Brokerage is a refusal rather than the case under test.
+    #[test]
+    fn two_lines_naming_one_goal_prefill_it_with_their_sum() {
+        let mut app = planning_app();
+        app.screen = Screen::Planning;
+        let savings = account::by_code(&app.db, "SAV", Kind::Cash)
+            .unwrap()
+            .unwrap()
+            .id;
+        let goal_id = |name: &str| {
+            goal::list_with_balances(&app.db, savings)
+                .unwrap()
+                .into_iter()
+                .find(|g| g.goal.name == name)
+                .unwrap_or_else(|| panic!("no {name:?} goal in Rainy Day"))
+                .goal
+                .id
+        };
+        let bill_payments = goal_id("Bill Payments");
+        goal::insert_allocation(
+            &app.db,
+            goal_id("Housing"),
+            day(2026, 8, 1),
+            Cents::from_dollars(1_000),
+            None,
+            None,
+        )
+        .unwrap();
+        let Destination::Goal(housing_key) = Line::CurrentHousing.destination() else {
+            panic!("Current Housing is goal-backed");
+        };
+        setting::set(&app.db, housing_key, bill_payments).unwrap();
+        app.reload().unwrap();
+        let plan = plan::compute_from_db(&app.db, app.adhoc).unwrap();
+
+        press(&mut app, KeyCode::Char('t'));
+        press(&mut app, KeyCode::Enter);
+
+        let Some(Modal::Worksheet(sheet)) = &app.modal else {
+            panic!("no worksheet opened");
+        };
+        let line = sheet
+            .lines()
+            .into_iter()
+            .find(|l| l.goal_id == bill_payments)
+            .expect("no worksheet line for Bill Payments");
+        assert!(plan.lines.current_housing > Cents::ZERO, "nothing to lose");
+        assert_eq!(line.amount, plan.lines.bills + plan.lines.current_housing);
+        assert_eq!(
+            sheet.remaining(),
+            Cents::ZERO,
+            "the sheet did not open reconciled"
+        );
+    }
+
+    /// The rows a payday of this fixture writes, put on the ledger at
+    /// `date` -- a first run, so a later `t` has something to clash with.
+    fn payday_landed_on(app: &App, date: NaiveDate) {
+        let from = transfer::source(&app.db).unwrap();
+        let plan = plan::compute_from_db(&app.db, app.adhoc).unwrap();
+        let rows = transfer::plan(&app.db, &plan.lines).unwrap();
+        transfer::execute(&app.db, from, date, &rows).unwrap();
+    }
+
+    /// The form's date is editable, so the day a first run landed on is not
+    /// the day the second run opens on -- which is the whole case the warning
+    /// exists for. It scans business days either side and names what it
+    /// found, because those are days the owner cannot see on the form.
+    ///
+    /// The fixture's today is a Saturday, so the default is Tuesday the 18th
+    /// and Monday the 17th is one business day behind it.
+    #[test]
+    fn t_warns_when_a_neighbouring_business_day_already_carries_the_payday() {
+        let mut app = planning_app();
+        app.screen = Screen::Planning;
+        payday_landed_on(&app, day(2026, 8, 17));
+        app.reload().unwrap();
+
+        press(&mut app, KeyCode::Char('t'));
+
+        assert_eq!(app.status, "2026-08-17 already carries matching rows");
+    }
+
+    /// Two clashes are both named: the owner is picking a date, and being
+    /// told about one of the two days to avoid is worse than being told the
+    /// count.
+    #[test]
+    fn t_names_every_neighbouring_day_that_clashes() {
+        let mut app = planning_app();
+        app.screen = Screen::Planning;
+        payday_landed_on(&app, day(2026, 8, 17));
+        payday_landed_on(&app, day(2026, 8, 19));
+        app.reload().unwrap();
+
+        press(&mut app, KeyCode::Char('t'));
+
+        assert_eq!(
+            app.status,
+            "2026-08-17 and 2026-08-19 already carry matching rows"
+        );
+    }
+
+    /// The window has an edge, and past it the warning stays quiet: Friday
+    /// the 21st is three business days past the 18th.
+    #[test]
+    fn t_is_quiet_about_a_payday_beyond_the_window() {
+        let mut app = planning_app();
+        app.screen = Screen::Planning;
+        payday_landed_on(&app, day(2026, 8, 21));
+        app.reload().unwrap();
+
+        press(&mut app, KeyCode::Char('t'));
+
+        assert!(app.status.is_empty(), "{}", app.status);
     }
 
     /// `planning_app`'s spare goals live in Brokerage, so the Rainy Day sheet

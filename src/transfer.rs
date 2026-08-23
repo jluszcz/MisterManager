@@ -195,7 +195,11 @@ fn spread_containers(goals: &[Goal]) -> Vec<AccountId> {
 }
 
 /// `a`, `a and b`, `a, b and c`.
-fn joined(names: &[String]) -> String {
+///
+/// Shared with the Planning screen's duplicate-payday warning, which lists
+/// dates rather than containers: two sentences listing things in two
+/// house styles is what one joiner exists to prevent.
+pub fn joined(names: &[String]) -> String {
     match names.split_last() {
         None => String::new(),
         Some((last, [])) => last.clone(),
@@ -764,7 +768,15 @@ pub fn execute(db: &Db, from: AccountId, date: NaiveDate, rows: &[Row]) -> Resul
     })
 }
 
-/// Whether the source ledger already carries this payday's rows on `date`.
+/// Which of `dates` the source ledger already carries this payday's rows on,
+/// in the order asked.
+///
+/// A window rather than the single date the dialog opens on, because that
+/// date is editable before the write: the case the warning exists for is a
+/// first run dated wrongly and a second stepped onto the day it landed on,
+/// and checking only the default checks the one date that case moves off.
+/// Which days clashed is the caller's to report -- they are days the owner
+/// cannot see on the form.
 ///
 /// A warning rather than a block: these are ordinary ledger rows, deletable
 /// one at a time, and a genuine second run -- the first one dated wrongly --
@@ -775,17 +787,29 @@ pub fn execute(db: &Db, from: AccountId, date: NaiveDate, rows: &[Row]) -> Resul
 /// convention rather than the general per-kind one `txn::write_transfer`
 /// applies. `from` is a free parameter, but every real caller passes
 /// [`source`], the Everyday cash account, so a leg leaving it is always negative.
-pub fn already_written(db: &Db, from: AccountId, date: NaiveDate, rows: &[Row]) -> Result<bool> {
-    let existing = txn::on_date(db, from, date)?;
-    Ok(rows.iter().any(|row| {
-        let (description, cents) = match row {
-            Row::Transfer { name, cents, .. } => (name.clone(), -*cents),
-            Row::Withdrawal { line, cents } => (line.label().to_string(), -*cents),
-        };
-        existing
-            .iter()
-            .any(|t| t.description == description && t.cents == cents)
-    }))
+pub fn already_written(
+    db: &Db,
+    from: AccountId,
+    dates: &[NaiveDate],
+    rows: &[Row],
+) -> Result<Vec<NaiveDate>> {
+    let mut clashing = Vec::new();
+    for date in dates {
+        let existing = txn::on_date(db, from, *date)?;
+        let clashes = rows.iter().any(|row| {
+            let (description, cents) = match row {
+                Row::Transfer { name, cents, .. } => (name.clone(), -*cents),
+                Row::Withdrawal { line, cents } => (line.label().to_string(), -*cents),
+            };
+            existing
+                .iter()
+                .any(|t| t.description == description && t.cents == cents)
+        });
+        if clashes {
+            clashing.push(*date);
+        }
+    }
+    Ok(clashing)
 }
 
 #[cfg(test)]
@@ -1770,9 +1794,43 @@ mod tests {
         let rows = plan(&db, &lines()).unwrap();
         let date = day(2026, 8, 20);
 
-        assert!(!already_written(&db, checking, date, &rows).unwrap());
+        assert!(
+            already_written(&db, checking, &[date], &rows)
+                .unwrap()
+                .is_empty()
+        );
         execute(&db, checking, date, &rows).unwrap();
-        assert!(already_written(&db, checking, date, &rows).unwrap());
-        assert!(!already_written(&db, checking, day(2026, 8, 21), &rows).unwrap());
+        assert_eq!(
+            already_written(&db, checking, &[date], &rows).unwrap(),
+            vec![date]
+        );
+        assert!(
+            already_written(&db, checking, &[day(2026, 8, 21)], &rows)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// The dates come back in the order they were asked about, and only the
+    /// ones that clash: the warning names days the owner cannot see, so it
+    /// has to say which.
+    #[test]
+    fn only_the_dates_that_clash_come_back_and_in_the_order_asked() {
+        let (db, _, _) = configured();
+        let checking = source(&db).unwrap();
+        let rows = plan(&db, &lines()).unwrap();
+        let scanned = [
+            day(2026, 8, 19),
+            day(2026, 8, 20),
+            day(2026, 8, 21),
+            day(2026, 8, 24),
+        ];
+        execute(&db, checking, day(2026, 8, 24), &rows).unwrap();
+        execute(&db, checking, day(2026, 8, 20), &rows).unwrap();
+
+        assert_eq!(
+            already_written(&db, checking, &scanned, &rows).unwrap(),
+            vec![day(2026, 8, 20), day(2026, 8, 24)]
+        );
     }
 }

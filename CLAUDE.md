@@ -328,6 +328,21 @@ matches, since nothing but a test ties them together.
   - `savings::paycheck_ask` exists because several callers want that number: the `$/Pay` column, the `A`
     prefill, and this one. A figure a screen shows and a figure a prefill writes must be the same
     figure, and a copy of the unpacking in each is how they stop being.
+  - **Two lines may name one goal, and the prefill adds rather than replaces.** The destination
+    chooser offers every open goal, claimed or not, and `transfer::plan` merges two lines sharing a
+    destination into one transfer. `tui::app::add_share` merges them the same way, because
+    `Worksheet::set_lines` resolves its one-per-goal lines by the first match — a second entry under
+    the same id would be dropped, leaving the sheet short by an amount the owner cannot tell from
+    the remainder the line above leaves on purpose.
+- **The duplicate-payday warning scans a window, because the date it is checked against is
+  editable.** `t` looks `DUPLICATE_SCAN_DAYS` business days either side of the two-business-day
+  default, through `transfer::already_written` — which takes a set of dates and reports the ones
+  that clash, since they are days the form is not showing. Checking the default alone checks the
+  one date the case it exists for moves off: a first run dated wrongly, and a second stepped onto
+  the day that one landed. Two days reaches that day and still cannot reach the previous payday,
+  ten business days back. It stays a warning rather than a block — these are ordinary ledger rows
+  and a corrected re-run is a real case — and it is computed once, when the modal opens, so a date
+  stepped clean outside the window is written unwarned.
 - **An unset destination key and a dangling one mean opposite things, and must never be
   conflated.** `plan_line::Line::destination` and `gate::Gate::key` both resolve through `setting`,
   and for a destination key "unset" is a real, supported state: the money leaves the tracked system
