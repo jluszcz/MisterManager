@@ -434,13 +434,14 @@ impl Scroll for Ledger {
 }
 
 use super::{
-    Label, account_cell, amount, label_line, money_span, money_text, right_header, table_state,
+    Chrome, Label, account_cell, amount, label_line, money_span, money_text, render_table,
+    right_header,
 };
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
-use ratatui::widgets::{Block, Cell, Row, Table};
+use ratatui::widgets::{Cell, Row};
 
 /// [`Ledger::title`]'s spans, and then the balance that chain names.
 ///
@@ -529,21 +530,18 @@ pub(super) fn render(frame: &mut Frame, area: Rect, ledger: &Ledger, today: Naiv
         Constraint::Min(20),
         Constraint::Length(14),
     ];
-    let table = Table::new(rows, widths)
-        .header(header)
-        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .highlight_symbol("> ")
-        .block(Block::bordered().title(title_line(ledger)));
-
-    // Two borders and the header row are not available to data rows.
-    let height = usize::from(area.height).saturating_sub(3);
-
     // The selection lives in `Ledger`, which holds no ratatui state; the
     // widget's scroll offset is resolved from it and from where the last draw
     // left the list.
-    let (mut state, viewport) = table_state(ledger, ledger.rows().len(), height);
-    frame.render_stateful_widget(table, area, &mut state);
-    viewport
+    render_table(
+        frame,
+        area,
+        ledger,
+        Chrome::titled(title_line(ledger)).header(header),
+        &widths,
+        rows,
+        ledger.rows().len(),
+    )
 }
 
 #[cfg(test)]

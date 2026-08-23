@@ -217,11 +217,11 @@ impl Scroll for Chooser {
 }
 
 use super::form::centered;
-use super::table_state;
+use super::{Chrome, render_table};
 use ratatui::Frame;
 use ratatui::layout::Constraint;
-use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Cell, Clear, Row, Table};
+use ratatui::style::Style;
+use ratatui::widgets::{Block, Cell, Clear, Row};
 
 /// One row per goal, its container beside it, and the withdrawal among them.
 /// Returns the [`Viewport`] it drew: the height `PageUp`/`PageDown` move by,
@@ -276,16 +276,15 @@ pub(super) fn render(frame: &mut Frame, chooser: &Chooser) -> Viewport {
         Constraint::Length(12),
         Constraint::Length(10),
     ];
-    let height = usize::from(inner.height);
-    let (mut state, viewport) = table_state(chooser, choices.len(), height);
-    frame.render_stateful_widget(
-        Table::new(rows, widths)
-            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-            .highlight_symbol("> "),
+    render_table(
+        frame,
         inner,
-        &mut state,
-    );
-    viewport
+        chooser,
+        Chrome::bare(),
+        &widths,
+        rows,
+        choices.len(),
+    )
 }
 
 #[cfg(test)]

@@ -301,12 +301,12 @@ impl FormFields for FundForm {
 }
 
 use super::form::{field_line, render_fields};
-use super::{right_header, style, table_state, whole_amount};
+use super::{Chrome, render_table, right_header, style, whole_amount};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line as TextLine;
-use ratatui::widgets::{Block, Cell, Row as TableRow, Table};
+use ratatui::widgets::{Cell, Row as TableRow};
 
 /// A right-aligned percentage cell, or `—` where there is no figure.
 fn percent(bp: Option<BasisPoints>) -> Cell<'static> {
@@ -401,8 +401,6 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
         Constraint::Length(14),
     ];
 
-    // Two borders and the header row are not available to data rows.
-    let height = usize::from(area.height).saturating_sub(3);
     // The drawn count includes the `Total` row, so a long list scrolls to the
     // end of what is actually on screen. An empty table draws only its
     // placeholder, and selects nothing.
@@ -410,18 +408,15 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
         true => 0,
         false => funds.rows().len() + 1,
     };
-    let (mut state, viewport) = table_state(funds, drawn, height);
-    frame.render_stateful_widget(
-        Table::new(rows, widths)
-            .header(header)
-            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-            .highlight_symbol("> ")
-            .block(Block::bordered().title(funds.title())),
+    render_table(
+        frame,
         area,
-        &mut state,
-    );
-
-    viewport
+        funds,
+        Chrome::titled(funds.title()).header(header),
+        &widths,
+        rows,
+        drawn,
+    )
 }
 
 #[cfg(test)]

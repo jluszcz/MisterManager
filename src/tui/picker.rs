@@ -152,11 +152,10 @@ impl Scroll for Picker {
 }
 
 use super::form::centered;
-use super::{amount, label_line, month_name, table_state};
+use super::{Chrome, amount, label_line, month_name, render_table};
 use ratatui::Frame;
 use ratatui::layout::Constraint;
-use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Cell, Clear, Row, Table};
+use ratatui::widgets::{Block, Cell, Clear, Row};
 
 /// One row per recurring goal entry, ticked where it is selected. Returns the
 /// [`Viewport`] it drew: the height `PageUp`/`PageDown` move by, and the row
@@ -201,17 +200,15 @@ pub(super) fn render(frame: &mut Frame, picker: &Picker) -> Viewport {
         Constraint::Length(8),
         Constraint::Length(7),
     ];
-    let height = usize::from(inner.height);
-    let (mut state, viewport) = table_state(picker, picker.entries().len(), height);
-    frame.render_stateful_widget(
-        Table::new(rows, widths)
-            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-            .highlight_symbol("> "),
+    render_table(
+        frame,
         inner,
-        &mut state,
-    );
-
-    viewport
+        picker,
+        Chrome::bare(),
+        &widths,
+        rows,
+        picker.entries().len(),
+    )
 }
 
 #[cfg(test)]

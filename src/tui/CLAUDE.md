@@ -1194,7 +1194,33 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     page height it already carried. One rule, in one function, resolved once per
     frame: a screen that kept a scroll offset of its own would be a second
     answer to the same question. `table_state` is where every list reaches it,
+    and every list but the worksheet reaches *that* through `tui::render_table`,
     which is what keeps a new screen on the same rule by construction.
+
+- **Every list is drawn by `tui::render_table`, and its `Chrome` is what the rows pay for.** The
+  reversed highlight and the `> ` marker are written once, because they are what a cursor has to
+  look like everywhere for the hand to read it as one cursor — a screen picking its own marker
+  costs the same reflex the key vocabulary above exists to protect. `Chrome` is the frame around
+  them: `Chrome::titled` for a screen in a bordered block of its own, `Chrome::bare` for a chooser
+  handed an area someone else has already inset, and `.header(…)` wherever the columns are
+  labelled — three lists go without one: Planning, whose rows label themselves, and the two
+  choosers, whose one column needs no name. It answers in one place what seven screens were each
+  subtracting for themselves: a border takes two of the area's lines before a data row is drawn,
+  and a header takes `HEADER_LINES` more. That constant is set on the header row rather than read
+  off it, because ratatui charges a row's margins to the table and hands back no reader for them —
+  a header quietly taking two lines would leave the arithmetic a line short, and the cursor would
+  be offered a row that was never drawn.
+  - **`drawn` is not `rows.len()`, and the two screens where it differs both mean it.** It is how
+    many rows the *cursor* may travel over: Funds counts the bold `Total` it appends so a long
+    list scrolls to the end of what is on screen, and Accounts does not count the placeholder it
+    draws in place of an empty list, which is not a row anything may select.
+  - **The worksheet is the one list that draws its own table**, because its highlight answers to
+    the focus rather than to the cursor — the bar belongs to `Focus::Lines` alone while the marker
+    stays under every focus, which is the invariant above about its two marks. Passing a highlight
+    style would make it a parameter nine callers write identically.
+  - **What stays at the call sites is what each screen decides for itself**: its `widths`, which
+    *How wide a screen is* budgets per screen, and the bolding of its own header. The Overview is
+    outside all of this — it holds no list and no cursor, so it has no `Scroll` to hand over.
 
 - **Every form is drawn by `form::render_fields`, and its height is its lines.** The centered
   `FORM_WIDTH` box, the border and its title, and one row per line are written once; the callers

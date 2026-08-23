@@ -316,12 +316,12 @@ impl FormFields for RecurringGoalForm {
 }
 
 use super::form::render_fields;
-use super::{amount, month_name, right_header, table_state};
+use super::{Chrome, amount, month_name, render_table, right_header};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line as TextLine;
-use ratatui::widgets::{Block, Cell, Row as TableRow, Table};
+use ratatui::widgets::{Cell, Row as TableRow};
 
 pub fn render_form(frame: &mut Frame, form: &RecurringGoalForm) {
     let note = form.tax_note();
@@ -383,20 +383,15 @@ pub(super) fn render(frame: &mut Frame, area: Rect, recurring_goal: &RecurringGo
         Constraint::Length(4),
     ];
 
-    // Two borders and the header row are not available to data rows.
-    let height = usize::from(area.height).saturating_sub(3);
-    let (mut state, viewport) = table_state(recurring_goal, recurring_goal.rows().len(), height);
-    frame.render_stateful_widget(
-        Table::new(rows, widths)
-            .header(header)
-            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-            .highlight_symbol("> ")
-            .block(Block::bordered().title(recurring_goal.title())),
+    render_table(
+        frame,
         area,
-        &mut state,
-    );
-
-    viewport
+        recurring_goal,
+        Chrome::titled(recurring_goal.title()).header(header),
+        &widths,
+        rows,
+        recurring_goal.rows().len(),
+    )
 }
 
 #[cfg(test)]
