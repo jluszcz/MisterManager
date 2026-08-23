@@ -99,6 +99,13 @@ named something new. Those builders are also the only thing shared across `mod t
 besides `day`: what a module *chose* stays in the module, which is why each `today()` is still
 local, naming the day that module's schedules and deadlines turn on.
 
+The one exception is `src/tui/app/`, and it is a *family* rather than a second crate-wide seam:
+the screen modules there test one `App` against one fixture database, so `test_support` holds the
+fixture and the `today()` that indexes into it. The rows `app()` writes are dated around that day
+by hand, so a per-module `today()` would be a copy free to drift from the fixture it reads — the
+day is a property of the shared fixture, not a choice each screen makes. A module wanting a
+different day builds its own app rather than moving this one.
+
 `CHK` appears under both kinds deliberately: one code naming two accounts is exactly what
 `UNIQUE (code, kind)` exists for, and a fixture set without that property would stop exercising it.
 No name here is `Checking`, `Savings`, `Cash` or `Credit`, which are what `Group::label` and

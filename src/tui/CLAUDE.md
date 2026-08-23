@@ -663,10 +663,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     screen's `Code` column — so the sanctioned list is wider than "not a display" and says so
     entry by entry. A source scan rather than a type, because the property is "nobody reached for
     the escape hatch", which no signature can state — and it is purely textual, so a reflow that
-    hid an escape behind a local variable would pass it just the same. **It reads three roots, not
+    hid an escape behind a local variable would pass it just the same. **It reads four roots, not
     just this directory**: `src/account_label.rs`, which owns `Account` and whose constructors are
-    the one sanctioned place the text is read; `src/tui/`; and `src/report/`, the second sink,
-    which would otherwise be free to flatten an account into a `format!`. Entries are keyed by the
+    the one sanctioned place the text is read; `src/tui/`; `src/report/`, the second sink, which
+    would otherwise be free to flatten an account into a `format!`; and `src/transfer.rs`, which
+    names accounts in `diagnose`'s prose and carries the name and the color apart on
+    `Wiring`'s `Container` and the `Row::Transfer` beside it. Entries are keyed by the
     path below `src/`, since `tui/ledger.rs` and `report/html/ledger.rs` are two different files and a
     sanctioned line in one must not excuse the same text in the other. The same test's second
     clause pins `Label::plain_text`, the escape for a `Label` rather than an `AccountName`: it
