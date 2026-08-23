@@ -17,6 +17,7 @@ pub mod plan_line;
 pub mod plan_rows;
 pub mod projection;
 pub mod rate;
+pub mod reading;
 pub mod recurring_txn;
 pub mod report;
 pub mod savings;

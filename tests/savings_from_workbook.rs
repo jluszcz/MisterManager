@@ -7,6 +7,7 @@ use mistermanager::db::{self, goal};
 use mistermanager::goal as goal_engine;
 use mistermanager::import;
 use mistermanager::money::Cents;
+use mistermanager::reading::Reading;
 use mistermanager::savings::{self, Row};
 use mistermanager::savings_block::Block;
 use mistermanager::tui::savings::Savings;
@@ -64,7 +65,7 @@ fn screen(db: &db::Db, today: NaiveDate) -> Savings {
     let period_days = setting::get_or(db, key::PAY_PERIOD_DAYS, 14).unwrap();
     let mut savings = Savings::new(db::account::list(db).unwrap(), today, period_days);
     savings
-        .set_goals(goal_engine::all_with_balances(db).unwrap())
+        .set_goals(goal_engine::all_with_balances(db, Reading::Strict).unwrap())
         .unwrap();
     let excess = savings::containers_with_excess(db).unwrap();
     let containers = excess.iter().map(|(id, _)| *id).collect();

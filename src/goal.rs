@@ -17,6 +17,7 @@ use crate::db::setting::{self, key};
 use crate::db::{AccountId, Db, GoalId};
 use crate::money::Cents;
 use crate::rate::BasisPoints;
+use crate::reading::Reading;
 use anyhow::{Context, Result};
 
 /// What a taxed goal with no rate on record reports, on the read side and on
@@ -63,11 +64,22 @@ pub fn target(goal: &Goal, rate: Option<BasisPoints>) -> Result<Cents> {
 
 /// The rate once, for a whole list. Reading it per goal would be one query
 /// per row for a figure that cannot change while the list is being built.
-fn derive(rate: Option<BasisPoints>, rows: Vec<GoalWithBalance>) -> Result<Vec<Funding>> {
+fn derive(
+    rate: Option<BasisPoints>,
+    reading: Reading,
+    rows: Vec<GoalWithBalance>,
+) -> Result<Vec<Funding>> {
     rows.into_iter()
         .map(|g| {
+            let derived = target(&g.goal, rate);
             Ok(Funding {
-                target: target(&g.goal, rate)?,
+                target: match reading {
+                    Reading::Strict => derived?,
+                    // Falls back on any failure to derive, not only on a
+                    // missing rate: what a drawing path needs is a number,
+                    // and the base is the one the table actually holds.
+                    Reading::Tolerant => derived.unwrap_or(g.goal.base_cents),
+                },
                 goal: g.goal,
                 current: g.current,
             })
@@ -77,46 +89,28 @@ fn derive(rate: Option<BasisPoints>, rows: Vec<GoalWithBalance>) -> Result<Vec<F
 
 /// Every open goal in every container, with its balance and its target, in
 /// `db::goal::all_with_balances` order.
-pub fn all_with_balances(db: &Db) -> Result<Vec<Funding>> {
-    let rate = setting::get(db, key::TAX_RATE)?;
-    derive(rate, goal::all_with_balances(db)?)
-}
-
-/// [`all_with_balances`], read the way a screen has to read it: a taxed goal
-/// with no rate on record targets its base rather than refusing.
 ///
-/// The split `transfer::claimed_goals_tolerant` makes over a dangling setting
-/// key, for the same reason and in the same shape. Every path that *acts* on
-/// a target keeps the strict twin and still refuses with [`NO_TAX_RATE`] --
-/// `transfer::plan` through `spread_goals`, both worksheet prefills, and
-/// [`shortfall`] behind every Planning gate -- so the owner is told the
-/// moment a figure would be spent, and the waterfall's plug is never moved on
-/// the strength of a missing setting.
-///
-/// What cannot afford that refusal is anything which only *draws*. A screen
-/// declining to render is the failure `wiring` exists to prevent, and here it
-/// is worse than a blank panel: `App::reload_savings` runs during `App::new`,
-/// so a strict read would stop the application starting -- and the rate is
-/// set from inside the application, leaving no way back.
-pub fn all_with_balances_tolerant(db: &Db) -> Result<Vec<Funding>> {
+/// [`Reading::Strict`] refuses a taxed goal with no rate on record, with
+/// [`NO_TAX_RATE`]; [`Reading::Tolerant`] targets its base. Which one a
+/// caller wants is [`Reading`]'s to explain -- the paths that spend a target
+/// take the first, the Savings screen, `transfer::wiring` and the report take
+/// the second.
+pub fn all_with_balances(db: &Db, reading: Reading) -> Result<Vec<Funding>> {
     let rate = setting::get(db, key::TAX_RATE)?;
-    Ok(goal::all_with_balances(db)?
-        .into_iter()
-        .map(|g| Funding {
-            // Falls back on any failure to derive, not only on a missing
-            // rate: what a drawing path needs is a number, and the base is
-            // the one the table actually holds.
-            target: target(&g.goal, rate).unwrap_or(g.goal.base_cents),
-            goal: g.goal,
-            current: g.current,
-        })
-        .collect())
+    derive(rate, reading, goal::all_with_balances(db)?)
 }
 
 /// One container's open goals, in the order every screen shows them.
+///
+/// Strict, with no reading to choose: its caller is the worksheet prefill,
+/// which is about to price every goal in the container and write the result.
 pub fn list_with_balances(db: &Db, container: AccountId) -> Result<Vec<Funding>> {
     let rate = setting::get(db, key::TAX_RATE)?;
-    derive(rate, goal::list_with_balances(db, container)?)
+    derive(
+        rate,
+        Reading::Strict,
+        goal::list_with_balances(db, container)?,
+    )
 }
 
 /// How much a goal still needs: its target less its balance, clamped at zero.
@@ -224,7 +218,9 @@ mod tests {
         let (db, savings) = seeded();
         db::goal::insert(&db, &new_goal("Couch", savings, 1_000, true)).unwrap();
 
-        let err = all_with_balances(&db).unwrap_err().to_string();
+        let err = all_with_balances(&db, Reading::Strict)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains(key::TAX_RATE.name()), "{err}");
         assert!(err.contains("Couch"), "{err}");
     }
@@ -237,12 +233,12 @@ mod tests {
         let (db, savings) = seeded();
         db::goal::insert(&db, &new_goal("Couch", savings, 1_000, true)).unwrap();
 
-        let funded = all_with_balances_tolerant(&db).unwrap();
+        let funded = all_with_balances(&db, Reading::Tolerant).unwrap();
         assert_eq!(funded[0].target, Cents::from_dollars(1_000));
         assert!(funded[0].goal.taxed, "the flag is carried, not cleared");
         assert!(
-            all_with_balances(&db).is_err(),
-            "the strict reader still refuses"
+            all_with_balances(&db, Reading::Strict).is_err(),
+            "the strict reading still refuses"
         );
     }
 
@@ -258,7 +254,7 @@ mod tests {
         db::goal::insert(&db, &new_goal("Couch", savings, 1_000, true)).unwrap();
 
         assert_eq!(
-            all_with_balances_tolerant(&db).unwrap()[0].target,
+            all_with_balances(&db, Reading::Tolerant).unwrap()[0].target,
             Cents(106_500)
         );
     }
@@ -270,7 +266,7 @@ mod tests {
         let (db, savings) = seeded();
         db::goal::insert(&db, &new_goal("Couch", savings, 1_000, false)).unwrap();
 
-        let funded = all_with_balances(&db).unwrap();
+        let funded = all_with_balances(&db, Reading::Strict).unwrap();
         assert_eq!(funded[0].target, Cents::from_dollars(1_000));
     }
 

@@ -20,6 +20,7 @@ use crate::overview::Overview;
 use crate::plan;
 use crate::plan_rows;
 use crate::projection;
+use crate::reading::Reading;
 use crate::savings;
 use crate::transfer;
 use anyhow::{Context, Result};
@@ -218,12 +219,12 @@ impl Snapshot {
         let accounts = account::list(db)?;
         let period_days =
             crate::db::setting::get_or(db, crate::db::setting::key::PAY_PERIOD_DAYS, 14)?;
-        // The tolerant reader, for the reason the plan section below catches
+        // `Reading::Tolerant`, for the reason the plan section below catches
         // `transfer::plan`'s error rather than propagating it: a page cannot
         // decline to draw itself, and a report is the copy read on a phone
         // with nothing to fix the database from.
         let all = savings::rows(
-            goal_engine::all_with_balances_tolerant(db)?,
+            goal_engine::all_with_balances(db, Reading::Tolerant)?,
             &accounts,
             today,
             period_days,
