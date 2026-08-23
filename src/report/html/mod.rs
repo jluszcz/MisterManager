@@ -211,7 +211,6 @@ const STYLE: &str = "\
     tr.expired td:first-child::after{content:' !'}\
     tr.head td{padding-top:0.9rem;font-weight:600}\
     tr.tot td{font-weight:600}\
-    tr.sub td:first-child{padding-left:1.4rem;color:#666666}\
     tr.future{opacity:0.55}\
     tr.note td{color:#666666}\
     input.tab,input.pick{position:absolute;opacity:0;width:0;height:0}\
@@ -261,13 +260,16 @@ pub fn page(snapshot: &Snapshot) -> String {
             format!("<section class=\"panel\" id=\"{id}-panel\">{html}</section>")
         })
         .collect();
-    // The month filters are per-ledger and per-month, so their rules cannot
-    // be a constant: what months exist is a fact about the database.
+    // The month filters are per-ledger and per-month, and the waterfall's
+    // indents are per-level, so their rules cannot be constants: what months
+    // exist is a fact about the database, and how deep the waterfall goes is
+    // a fact about the plan.
     let rules = format!(
-        "{}{}{}",
+        "{}{}{}{}",
         tab_rules(),
         ledger::month_rules(&snapshot.cash),
         ledger::month_rules(&snapshot.credit),
+        planning::depth_rules(&snapshot.planning),
     );
     format!(
         "<!DOCTYPE html>\n<html lang=\"en\"><head>\

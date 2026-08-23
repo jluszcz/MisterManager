@@ -240,7 +240,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
       `r` reconciles against, and screen 6 needs a fixture with a `fund` row under the cursor.
 - **Every editable Planning constant is a `Target` variant**, which owns both its `Key<T>` and how
   its text parses — the same construction as `gate::Gate`. Never write a Planning key at a call
-  site. A row's `Editable` says which of the two kinds of edit `e` opens on it — a constant into a
+  site. The enum lives in `plan_rows` and the half that is this screen's — how each arm's text
+  parses, and where it is written — is an `impl` here: which row *is* which constant is a fact
+  about the waterfall, and a screen that paired them again would be pairing them a second time. A row's `Editable` says which of the two kinds of edit `e` opens on it — a constant into a
   field, a destination into a list of goals — and the cursor skips every row carrying neither.
 - **Some destination rows are read-only, and for reasons that differ.** The plug has no key to
   point anywhere. Retirement and Investment hold an *account* id, and unset there means the
@@ -504,7 +506,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     floor drops — never to zero, which is what makes a *fresh* pin distinguishable from one that
     happens to sit exactly on the excess.
 - **Planning leads with the transfers, not with the sheet's first row.** The rows `t` would write
-  head the screen; `Planning!C1:G41` follows underneath, Target and Buffer first. The transfers are
+  head the screen; `Planning!C1:G41` follows underneath, Target and Buffer first. That order is
+  `plan_rows::rows` and not this file's: the report's Planning tab draws the same list, and
+  `build` here only spends it in a terminal's units — the indent from `Row::depth`, the tint, the
+  bold, and the `Editable` the cursor stops on. The Destinations block is appended after it, and is
+  the one block the page has no counterpart for. The transfers are
   what the owner acts on, and everything below them is the working that produced them — so a
   trusted plan is read without scrolling, and a doubted figure is chased downwards from the total
   that looked wrong. When the plan does not resolve, `unresolved` and its message take the block's
@@ -627,10 +633,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
       Allocation modal's body by `unallocated_line`. It reads through `Savings::account_name`,
       whose only caller it now is, and it is a real display kept out of `Account` because
       converting `AllocationForm` is outside this guarantee's scope.
-    - **`transfer::Container`'s `String` name, and `planning::Tint`.** The Planning screen tints
-      an account through that mechanism (below) rather than through `account_label::Account`: `plan` and
-      `wiring` already have the account row in hand, and `Account` would only look it up again
-      for the same color.
+    - **`transfer::Container`'s `String` name, in the Planning screen's Destinations block.**
+      Those rows tint an account through `planning::Tint` (below) rather than through
+      `account_label::Account`: `wiring` already has the account row in hand, and `Account` would
+      only look it up again for the same color. The block *above* them is not among these — a
+      transfer's head reaches its label through `plan_rows::RowLabel::Account`, so its name comes
+      with its color like every other account display.
     - **The Accounts screen's `Code` column**, built in `app.rs` and drawn by `accounts.rs` as a
       bare `Cell`. Deliberately plain rather than missed: the next cell along that row is
       `account_cell`, which names the same account in color, so the row already says which
@@ -656,9 +664,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   for a transfer, which heads its own account; `Column::Value` for the two account-backed
   destination lines; `Column::Extra` for a goal's container or the plug's. One field rather than
   one per column because a row naming *two* accounts is not a state this screen has, and making
-  that unrepresentable is cheaper than checking it. The id and color reach the screen on
-  `transfer::Container` (destinations) and on `transfer::Row::Transfer`'s own `color` (transfers):
-  `plan` and `wiring` have the account row in hand and the screen does not. Red and amber carry
+  that unrepresentable is cheaper than checking it. A destination row's id and color reach the
+  screen on `transfer::Container`, because `wiring` has the account row in hand and the screen does
+  not. A transfer's head is the one that does not: its label is a `plan_rows::RowLabel::Account`,
+  and `Row::of` builds the tint inside `render_with`, so the shade it carries is the *resolved*
+  one — an account the owner has never colored still reaches the row in the shade its id derives. Red and amber carry
   *instructions* where a tint only says which account, so `render` reads the tone first. Three
   states carry no tint at all, for the same reason each time — nothing single is named: an
   ambiguous plug spans several containers, a withdrawal leaves the tracked system, and a suggestion

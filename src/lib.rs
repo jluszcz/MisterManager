@@ -14,6 +14,7 @@ pub mod overview;
 pub mod palette;
 pub mod plan;
 pub mod plan_line;
+pub mod plan_rows;
 pub mod projection;
 pub mod rate;
 pub mod recurring_txn;

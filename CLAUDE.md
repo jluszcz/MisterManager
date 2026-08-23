@@ -122,6 +122,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the setting key naming its container account. |
 | `src/config.rs` | The TOML config file. `serde` and `toml` are named here, and both again in `src/backup/state.rs`, whose `State` derives `Serialize` as well as `Deserialize`. |
 | `src/plan_line.rs` | Every Planning line: its label, the amount it moves, and the setting key that says where it lands. |
+| `src/plan_rows.rs` | The Planning waterfall as an ordered list of rows, in neither medium -- a peer of `overview` and `savings`. The order, the labels, the grouping, the two footers outside the transfers block, and `Target`, the constant a row *is*. The Planning screen and the report's Planning tab both read it, and each spends `Row::depth` in its own units. |
 | `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `pro_rata`, the Planning waterfall, `fund` (the target/actual/delta derivation), `schedule` (when a recurring thing happens). No database. |
 | `src/description.rs` | What a transaction's description reads as, in any medium: the stored text, or `—` when there is none. One rule rather than one per sink, the same split `palette` makes for color — `tui`'s ledger, status line and delete confirmation read it, and so does `report::html::ledger`. |
 | `src/demo.rs` | `mm --demo`: the mask every absolute figure is drawn through, and the once-per-run flag that turns it on. Named by `tui` and by `transfer`, the two layers that put a figure in front of a human. |
@@ -139,7 +140,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. `spread_asks` prices the plug's set, and `unmet_asks` says when the plug falls short of it. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
-| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and Funds in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. |
+| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and Funds in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/backup/` | The schedule, the snapshot, and the upload. `aws_config`, `aws_sdk_s3` and `tokio` are named only in `s3.rs`. |
 | `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `mod.rs` rather than in whichever screen needed it first. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
@@ -316,6 +317,23 @@ matches, since nothing but a test ties them together.
   divide is `10,000 bp` minus every age row's target, clamped at zero; an age row with **no birth
   date on record** claims nothing, so the share rows divide the whole 100% rather than being told a
   zero that is really a question.
+- **The Planning waterfall is one ordered list, read twice.** `plan_rows::rows` is the sequence —
+  which blocks there are, what they are headed, what each row is called, and which of them the two
+  footers sit under. `tui::planning::build` maps it into a terminal `Row` and `report::html::planning`
+  into a `<tr>`, and neither may add, drop, rename or reorder one: what a sink adds is only what its
+  own medium has, which is a cursor, a tint and an editor for the screen and a class for the page.
+  The two were hand-transcriptions of each other until they read one list, and they had already come
+  to disagree about which blocks are headed at all — the same duplication `transfer::unmet_asks`
+  exists to prevent for the figure drawn *into* those rows.
+  - **`Row::depth` is the one thing the two mediums genuinely spell differently**, which is why it
+    is a number: the screen spends two spaces a level and the page spends a `sub{n}` class a level,
+    and neither spelling belongs in a list both of them read. Each medium keeps indenting for as
+    long as the number goes -- the page generates its rule per level the way the ledgers generate
+    one per month, since a level the stylesheet never named would draw flat a row the screen draws
+    nested.
+  - **The Destinations block is the screen's alone**, and is appended after the shared list rather
+    than carried in it: a destination is a thing the owner *changes*, and the page has no way to
+    offer that.
 - **The transfers never total more than the excess.** `lines.total() <= excess_used` is the one
   rule the whole waterfall answers to, and the two lines that could break it are the fixed biweekly
   bills — `current_housing` and `bills` — which do not scale with the excess. Each is capped by what
