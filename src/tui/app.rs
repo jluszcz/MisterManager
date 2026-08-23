@@ -2764,36 +2764,38 @@ impl App {
             Screen::Overview => {
                 overview::render(frame, body, &self.overview, self.scrubbed_days() != 0)
             }
-            // The viewport height comes back out of the draw so `PageUp` and
-            // `PageDown` move by a screenful, the same way the autocomplete
-            // popup's drawn-row count does below.
+            // The viewport comes back out of the draw -- its height, so
+            // `PageUp` and `PageDown` move by a screenful, and the row it
+            // started at, so the next draw carries on from where this one left
+            // the list. The autocomplete popup's drawn-row count comes back
+            // the same way below.
             Screen::Cash | Screen::Credit => {
-                let height = ledger::render(frame, body, self.ledger(), self.today);
-                self.ledger_mut().set_page_height(height);
+                let viewport = ledger::render(frame, body, self.ledger(), self.today);
+                self.ledger_mut().record_viewport(viewport);
             }
             Screen::Savings => {
-                let height = savings::render(frame, body, &self.savings);
-                self.savings.set_page_height(height);
+                let viewport = savings::render(frame, body, &self.savings);
+                self.savings.record_viewport(viewport);
             }
             Screen::Planning => {
-                let height = planning::render(frame, body, &self.planning);
-                self.planning.set_page_height(height);
+                let viewport = planning::render(frame, body, &self.planning);
+                self.planning.record_viewport(viewport);
             }
             Screen::Funds => {
-                let height = fund_screen::render(frame, body, &self.funds);
-                self.funds.set_page_height(height);
+                let viewport = fund_screen::render(frame, body, &self.funds);
+                self.funds.record_viewport(viewport);
             }
             Screen::RecurringTxns => {
-                let height = recurring_txn_screen::render(frame, body, &self.recurring_txn);
-                self.recurring_txn.set_page_height(height);
+                let viewport = recurring_txn_screen::render(frame, body, &self.recurring_txn);
+                self.recurring_txn.record_viewport(viewport);
             }
             Screen::RecurringGoals => {
-                let height = recurring_goal_screen::render(frame, body, &self.recurring_goal);
-                self.recurring_goal.set_page_height(height);
+                let viewport = recurring_goal_screen::render(frame, body, &self.recurring_goal);
+                self.recurring_goal.record_viewport(viewport);
             }
             Screen::Accounts => {
-                let height = accounts_screen::render(frame, body, &self.accounts);
-                self.accounts.set_page_height(height);
+                let viewport = accounts_screen::render(frame, body, &self.accounts);
+                self.accounts.record_viewport(viewport);
             }
         }
 

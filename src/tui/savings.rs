@@ -1,4 +1,4 @@
-use super::cursor::{Cursor, Scroll};
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::month::{MonthCycle, YearMonth};
 use super::search::{Search, SearchBox};
 use crate::db::account::Account;
@@ -323,9 +323,10 @@ fn goal_date(row: &Row) -> Option<String> {
 /// thousands -- a footer reading `0` is the footer saying there is nothing
 /// there worth placing by hand.
 ///
-/// Returns the viewport height in rows, which `App` records on the `Savings`
-/// for `PageUp` and `PageDown` to move by.
-pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
+/// Returns the [`Viewport`] it drew — the height `PageUp` and `PageDown` move
+/// by, and the row the next draw starts from — which `App` records on the
+/// `Savings`.
+pub(super) fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> Viewport {
     let [table_area, footer_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).areas(area);
 
@@ -387,7 +388,7 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
 
     // Two borders and the header row are not available to data rows.
     let height = usize::from(table_area.height).saturating_sub(3);
-    let mut state = table_state(savings.selected_index(), savings.rows().len(), height);
+    let (mut state, viewport) = table_state(savings, savings.rows().len(), height);
     frame.render_stateful_widget(table, table_area, &mut state);
 
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -414,7 +415,7 @@ pub fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> usize {
         footer_area,
     );
 
-    height
+    viewport
 }
 
 #[cfg(test)]

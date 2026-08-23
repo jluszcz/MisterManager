@@ -1146,6 +1146,46 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   it up — a new list screen that forgets its `scroll_key` call breaks
   undocumented keys, with nothing on screen to say they ever worked. The
   Overview is the one screen where they do nothing, and it holds no list.
+- **A list scrolls only when the cursor runs out of room, and the draw is what decides it.**
+  `cursor::viewport_offset` holds the view still until the cursor comes within
+  `MARGIN` rows of an edge and then moves it by exactly what that costs, so a
+  screen the cursor has moved a few rows into has not scrolled at all and the
+  context follows the direction of travel. Keeping the cursor centred instead
+  would move the list from the halfway row onwards, which takes Planning's
+  transfers off the top on the way down to a constant a dozen rows below them —
+  on a screen whose whole point is that the block at the top is what the owner
+  acts on. The margin is what stops the cursor riding the edge it is moving towards,
+  where the viewport shows only rows already behind it; it gives way at the ends
+  of the list and on a viewport too short to hold it.
+  - **A row the cursor cannot reach is still the view's to reach.** Planning is
+    the one screen whose rows are not all selectable, and `Up` from `Target`
+    moves the cursor nowhere — so a rule that only ever followed the cursor
+    would leave the transfers above it scrolled off for the rest of the
+    session. `Scroll::context_row` is what says so: the run of rows above the
+    selection that the cursor can never rest on comes into view with it. It is
+    the selection itself everywhere else, so the default costs the other
+    screens nothing. Context rather than a second cursor — a run taller than
+    the viewport gives way, since the row the cursor is on has to be drawn.
+  - **The run at the *end* of the list has nothing below it to travel with.**
+    Every other unreachable run comes into view with the editable row beneath
+    it, so `context_row` alone covers them; the rows after Planning's last
+    editable one have no such row, and a view that only followed the cursor
+    would leave them off the bottom for good. `Scroll::tail_row` is the mirror
+    that says so, and Planning is again the one screen that overrides it. The
+    tail asks for no margin under itself — it is the end of a run rather than a
+    cursor about to move past it — and it wins over the context above, since
+    the two can only disagree at the foot of the list. How long that run is
+    depends on the plan and how short the terminal is: `MARGIN` shrinks on a
+    viewport too small to hold it, so a screen may not assume the last few rows
+    ride in on the cursor's own margin.
+  - **The rule needs where the last draw left the list, and the draw is the only
+    place the height is known** — so both come back out of it as a
+    `cursor::Viewport`, which `record_viewport` writes to the cursor beside the
+    page height it already carried. One rule, in one function, resolved once per
+    frame: a screen that kept a scroll offset of its own would be a second
+    answer to the same question. `table_state` is where every list reaches it,
+    which is what keeps a new screen on the same rule by construction.
+
 - **Every form is drawn by `form::render_fields`, and its height is its lines.** The centered
   `FORM_WIDTH` box, the border and its title, and one row per line are written once; the callers
   only build their lines. Height is `lines + 2`, which is what makes the forms that add a line past

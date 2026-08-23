@@ -40,6 +40,7 @@ use account_label::{account_cell, label_line};
 use anyhow::{Result, ensure};
 use app::App;
 use chrono::NaiveDate;
+use cursor::{Scroll, Viewport};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use ratatui::style::Style;
@@ -244,35 +245,35 @@ fn formatted_month(month: i64, format: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Where the viewport starts, given where the cursor is.
+/// The scroll state for a list of `rows` drawn in a viewport `height` tall,
+/// and the [`Viewport`] the screen hands back to its cursor.
 ///
-/// Keeps the cursor near the middle so there is as much list visible below it
-/// as above, and clamps at both ends so the first and last rows stay reachable
-/// rather than the view scrolling past them.
-///
-/// Every screen with a list derives its offset from its selection each frame
-/// rather than storing one, so they all land here.
-fn scroll_offset(selected: usize, rows: usize, height: usize) -> usize {
-    if rows <= height {
-        return 0;
-    }
-    selected.saturating_sub(height / 2).min(rows - height)
-}
-
-/// The scroll state for a list of `rows` with the cursor on `selected`.
-///
-/// Handing `TableState` a bare default instead would leave the offset at zero,
-/// and ratatui would scroll the minimum needed to reveal the selection --
-/// pinning the cursor to the last visible line, with the rest of the window
-/// showing only rows already behind it. An empty list selects nothing, so the
-/// highlight does not sit on a row that is not there.
-fn table_state(selected: usize, rows: usize, height: usize) -> TableState {
+/// Every screen with a list resolves its offset here rather than keeping a
+/// rule of its own, and the rule needs the offset the last draw settled on --
+/// which is what the cursor holds it for. Handing `TableState` a bare default
+/// instead would leave the offset at zero, and ratatui would scroll the
+/// minimum needed to reveal the selection: pinning the cursor to the last
+/// visible line, with the rest of the window showing only rows already behind
+/// it. An empty list selects nothing, so the highlight does not sit on a row
+/// that is not there.
+fn table_state(list: &impl Scroll, rows: usize, height: usize) -> (TableState, Viewport) {
+    let selected = list.selected_index();
+    let offset = cursor::viewport_offset(
+        list.cursor().offset(),
+        cursor::Selection {
+            context: list.context_row(),
+            selected,
+            tail: list.tail_row(),
+        },
+        rows,
+        height,
+    );
     let mut state = TableState::default();
     if rows > 0 {
         state.select(Some(selected));
-        *state.offset_mut() = scroll_offset(selected, rows, height);
+        *state.offset_mut() = offset;
     }
-    state
+    (state, Viewport { height, offset })
 }
 
 /// Where each of `labels` ends in `line`, matched left to right.
@@ -408,38 +409,47 @@ mod tests {
         assert!(share_of(Cents::from_dollars(100), -3).is_err());
     }
 
-    #[test]
-    fn a_list_shorter_than_the_viewport_never_scrolls() {
-        assert_eq!(scroll_offset(0, 4, 10), 0);
-        assert_eq!(scroll_offset(3, 4, 10), 0);
-    }
+    /// A list with nothing but a cursor in it, so the shared scroll state can
+    /// be asserted without a screen behind it.
+    struct List(cursor::Cursor);
 
-    #[test]
-    fn the_cursor_rides_the_middle_of_a_long_list() {
-        assert_eq!(scroll_offset(800, 1600, 10), 795);
-    }
+    impl Scroll for List {
+        fn cursor(&self) -> &cursor::Cursor {
+            &self.0
+        }
 
-    /// Near the top there is nothing to scroll to, so the cursor moves down
-    /// the screen instead of the list moving under it.
-    #[test]
-    fn the_offset_stays_at_zero_until_the_cursor_reaches_the_middle() {
-        assert_eq!(scroll_offset(2, 1600, 10), 0);
-        assert_eq!(scroll_offset(5, 1600, 10), 0);
-        assert_eq!(scroll_offset(6, 1600, 10), 1);
-    }
+        fn cursor_mut(&mut self) -> &mut cursor::Cursor {
+            &mut self.0
+        }
 
-    /// The last row must be reachable: pinning the cursor to the middle to the
-    /// very end would scroll past the list.
-    #[test]
-    fn the_offset_stops_with_the_last_row_on_screen() {
-        assert_eq!(scroll_offset(1599, 1600, 10), 1590);
+        fn row_count(&self) -> usize {
+            0
+        }
     }
 
     /// An empty list must select nothing: a highlight on row zero of no rows
     /// is a cursor on a row that is not there.
     #[test]
     fn an_empty_list_selects_nothing() {
-        assert_eq!(table_state(0, 0, 10).selected(), None);
-        assert_eq!(table_state(0, 1, 10).selected(), Some(0));
+        let list = List(cursor::Cursor::new());
+        assert_eq!(table_state(&list, 0, 10).0.selected(), None);
+        assert_eq!(table_state(&list, 1, 10).0.selected(), Some(0));
+    }
+
+    /// The offset a draw resolves is the one it reports back, so the next
+    /// draw carries on from where this one left the list.
+    #[test]
+    fn the_drawn_offset_is_the_one_reported_back() {
+        let mut list = List(cursor::Cursor::new());
+        list.cursor_mut().select(57);
+        let (state, viewport) = table_state(&list, 58, 30);
+        assert_eq!(state.offset(), 28);
+        assert_eq!(
+            viewport,
+            Viewport {
+                height: 30,
+                offset: 28
+            }
+        );
     }
 }

@@ -14,7 +14,7 @@
 //! and no `Db` on the type. `App` runs the queries and hands the results in.
 
 use super::Label;
-use super::cursor::{Cursor, Scroll};
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::form::{Caret, Field, Focused, FormFields, Step, next_in, step_index};
 use crate::db::AccountId;
 use crate::db::account::{Account, AccountColor, Group, InterestPolicy, Kind};
@@ -555,8 +555,9 @@ pub fn render_form(frame: &mut Frame, form: &AccountForm) {
     render_fields(frame, form.title(), lines);
 }
 
-/// One row per account. Returns the viewport's height, for `PageUp`/`PageDown`.
-pub fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> usize {
+/// One row per account. Returns the [`Viewport`] it drew: the height
+/// `PageUp`/`PageDown` move by, and the row the next draw starts from.
+pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> Viewport {
     let mut rows: Vec<TableRow> = accounts
         .rows()
         .iter()
@@ -611,7 +612,7 @@ pub fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> usize {
 
     // Two borders and the header row are not available to data rows.
     let height = usize::from(area.height).saturating_sub(3);
-    let mut state = table_state(accounts.selected_index(), accounts.rows().len(), height);
+    let (mut state, viewport) = table_state(accounts, accounts.rows().len(), height);
     frame.render_stateful_widget(
         Table::new(rows, widths)
             .header(header)
@@ -622,7 +623,7 @@ pub fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> usize {
         &mut state,
     );
 
-    height
+    viewport
 }
 
 #[cfg(test)]

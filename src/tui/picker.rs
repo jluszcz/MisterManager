@@ -12,7 +12,7 @@
 //! listed either way -- so a preselection is a starting point the list can be
 //! scrolled out of rather than a cage.
 
-use super::cursor::{Cursor, Scroll};
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::{Account, Label};
 use crate::db::recurring_goal::{Cadence, Entry};
 use crate::db::{AccountId, RecurringGoalId};
@@ -159,8 +159,9 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Cell, Clear, Row, Table};
 
 /// One row per recurring goal entry, ticked where it is selected. Returns the
-/// viewport's height, for `PageUp`/`PageDown`.
-pub fn render(frame: &mut Frame, picker: &Picker) -> usize {
+/// [`Viewport`] it drew: the height `PageUp`/`PageDown` move by, and the row
+/// the next draw starts from.
+pub(super) fn render(frame: &mut Frame, picker: &Picker) -> Viewport {
     // Wide enough for the whole title, which names the container the goals
     // land in -- the one thing on screen that is not otherwise visible.
     let area = centered(
@@ -201,7 +202,7 @@ pub fn render(frame: &mut Frame, picker: &Picker) -> usize {
         Constraint::Length(7),
     ];
     let height = usize::from(inner.height);
-    let mut state = table_state(picker.selected_index(), picker.entries().len(), height);
+    let (mut state, viewport) = table_state(picker, picker.entries().len(), height);
     frame.render_stateful_widget(
         Table::new(rows, widths)
             .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
@@ -210,7 +211,7 @@ pub fn render(frame: &mut Frame, picker: &Picker) -> usize {
         &mut state,
     );
 
-    height
+    viewport
 }
 
 #[cfg(test)]

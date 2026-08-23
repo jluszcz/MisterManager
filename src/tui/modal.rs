@@ -255,11 +255,11 @@ impl Confirm {
 ///
 /// That count is what `popup_key` may select: gated on what this draw fitted
 /// rather than on the list being non-empty, so a popup clipped off the bottom
-/// of a short terminal captures no keys. The page heights the three list
-/// modals need come back out of their own draws for the same reason, which is
-/// why this takes the modal by `&mut` and writes them back here.
+/// of a short terminal captures no keys. The viewports the three list modals
+/// need come back out of their own draws for the same reason, which is why
+/// this takes the modal by `&mut` and writes them back here.
 pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autocomplete) -> usize {
-    let mut height = None;
+    let mut viewport = None;
     let drawn = match &*modal {
         Some(Modal::Txn(f)) => form::render_txn(frame, f, popup),
         Some(Modal::Transfer(f)) => form::render_transfer(frame, f, popup),
@@ -276,15 +276,15 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
             0
         }
         Some(Modal::Worksheet(sheet)) => {
-            height = Some(worksheet::render(frame, sheet));
+            viewport = Some(worksheet::render(frame, sheet));
             0
         }
         Some(Modal::Picker(p)) => {
-            height = Some(picker::render(frame, p));
+            viewport = Some(picker::render(frame, p));
             0
         }
         Some(Modal::Destination(chooser)) => {
-            height = Some(destination::render(frame, chooser));
+            viewport = Some(destination::render(frame, chooser));
             0
         }
         Some(Modal::Details(title, lines)) => {
@@ -338,11 +338,11 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
         }
         None => 0,
     };
-    if let Some(height) = height {
+    if let Some(viewport) = viewport {
         match modal {
-            Some(Modal::Worksheet(sheet)) => sheet.set_page_height(height),
-            Some(Modal::Picker(p)) => p.set_page_height(height),
-            Some(Modal::Destination(chooser)) => chooser.set_page_height(height),
+            Some(Modal::Worksheet(sheet)) => sheet.record_viewport(viewport),
+            Some(Modal::Picker(p)) => p.record_viewport(viewport),
+            Some(Modal::Destination(chooser)) => chooser.record_viewport(viewport),
             _ => {}
         }
     }
