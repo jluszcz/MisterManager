@@ -514,12 +514,12 @@ impl AccountForm {
 }
 
 use super::form::{field_line, field_line_tinted, render_fields};
-use super::{account_cell, table_state};
+use super::{Chrome, account_cell, render_table};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line as TextLine;
-use ratatui::widgets::{Block, Cell, Row as TableRow, Table};
+use ratatui::widgets::{Cell, Row as TableRow};
 
 pub fn render_form(frame: &mut Frame, form: &AccountForm) {
     let lines: Vec<TextLine> = form
@@ -610,20 +610,17 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
         Constraint::Length(8),
     ];
 
-    // Two borders and the header row are not available to data rows.
-    let height = usize::from(area.height).saturating_sub(3);
-    let (mut state, viewport) = table_state(accounts, accounts.rows().len(), height);
-    frame.render_stateful_widget(
-        Table::new(rows, widths)
-            .header(header)
-            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-            .highlight_symbol("> ")
-            .block(Block::bordered().title(accounts.title())),
+    // The placeholder an empty list draws is not a row the cursor may rest
+    // on, so the drawn count is the list's own length rather than `rows`.
+    render_table(
+        frame,
         area,
-        &mut state,
-    );
-
-    viewport
+        accounts,
+        Chrome::titled(accounts.title()).header(header),
+        &widths,
+        rows,
+        accounts.rows().len(),
+    )
 }
 
 #[cfg(test)]

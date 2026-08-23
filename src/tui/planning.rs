@@ -1071,12 +1071,12 @@ impl TransferConfirm {
 }
 
 use super::form::{centered, field_line, field_line_noted, render_fields};
-use super::table_state;
+use super::{Chrome, render_table};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line as TextLine;
-use ratatui::widgets::{Block, Clear, Paragraph, Row as TableRow, Table, Wrap};
+use ratatui::widgets::{Block, Clear, Paragraph, Row as TableRow, Wrap};
 
 pub fn render_bill(frame: &mut Frame, form: &BillForm) {
     let lines: Vec<TextLine> = BillField::ORDER
@@ -1208,16 +1208,14 @@ pub(super) fn render(frame: &mut Frame, area: Rect, planning: &Planning) -> View
         Constraint::Length(24),
     ];
 
-    // Two borders are not available to data rows; there is no header here.
-    let height = usize::from(table_area.height).saturating_sub(2);
-    let (mut state, viewport) = table_state(planning, planning.rows().len(), height);
-    frame.render_stateful_widget(
-        Table::new(rows, widths)
-            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-            .highlight_symbol("> ")
-            .block(Block::bordered().title(planning.title())),
+    let viewport = render_table(
+        frame,
         table_area,
-        &mut state,
+        planning,
+        Chrome::titled(planning.title()),
+        &widths,
+        rows,
+        planning.rows().len(),
     );
 
     if let Some(pin) = pin {

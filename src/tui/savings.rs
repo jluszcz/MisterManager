@@ -282,12 +282,12 @@ impl Scroll for Savings {
     }
 }
 
-use super::{Label, account_cell, label_line, right_header, table_state, whole_amount};
+use super::{Chrome, Label, account_cell, label_line, render_table, right_header, whole_amount};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
-use ratatui::widgets::{Block, Cell, Paragraph, Row as TableRow, Table};
+use ratatui::widgets::{Block, Cell, Paragraph, Row as TableRow};
 
 /// A right-aligned cell, or an em dash where the sheet leaves the cell blank.
 fn optional(text: Option<String>) -> Cell<'static> {
@@ -380,16 +380,15 @@ pub(super) fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> Viewpo
         Constraint::Length(11),
         Constraint::Length(7),
     ];
-    let table = Table::new(rows, widths)
-        .header(header)
-        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .highlight_symbol("> ")
-        .block(Block::bordered().title(label_line(&savings.title())));
-
-    // Two borders and the header row are not available to data rows.
-    let height = usize::from(table_area.height).saturating_sub(3);
-    let (mut state, viewport) = table_state(savings, savings.rows().len(), height);
-    frame.render_stateful_widget(table, table_area, &mut state);
+    let viewport = render_table(
+        frame,
+        table_area,
+        savings,
+        Chrome::titled(label_line(&savings.title())).header(header),
+        &widths,
+        rows,
+        savings.rows().len(),
+    );
 
     let mut spans: Vec<Span<'static>> = Vec::new();
     for (id, excess) in savings.excess() {

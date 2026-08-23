@@ -644,6 +644,10 @@ pub(super) fn render(frame: &mut Frame, sheet: &Worksheet) -> Viewport {
     // marker stays either way: the scroll keys move the cursor whatever has
     // focus, and its width is reserved on every row, so dropping it would
     // shift the whole table as focus moved.
+    //
+    // This is why the worksheet draws its own table rather than going through
+    // `super::render_table`: it is the one list whose highlight answers to
+    // something other than the cursor.
     let lines_focused = sheet.focus() == Focus::Lines;
     frame.render_stateful_widget(
         Table::new(rows, widths)

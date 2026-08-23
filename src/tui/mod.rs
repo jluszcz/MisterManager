@@ -42,10 +42,12 @@ use app::App;
 use chrono::NaiveDate;
 use cursor::{Scroll, Viewport};
 use ratatui::DefaultTerminal;
+use ratatui::Frame;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
-use ratatui::style::Style;
+use ratatui::layout::{Constraint, Rect};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
-use ratatui::widgets::{Cell, TableState};
+use ratatui::widgets::{Block, Cell, Row as TableRow, Table, TableState};
 use std::time::Duration;
 use style::Color;
 
@@ -274,6 +276,104 @@ fn table_state(list: &impl Scroll, rows: usize, height: usize) -> (TableState, V
         *state.offset_mut() = offset;
     }
     (state, Viewport { height, offset })
+}
+
+/// How many of the area's lines a header row takes, its margins included.
+///
+/// [`Chrome::header`] sets it on the row rather than reading it off one a
+/// caller built, because ratatui exposes no reader for a `Row`'s height and
+/// charges `top_margin + height + bottom_margin` for it. A header given a
+/// margin of its own would leave [`Chrome::lines`] a line short, and the
+/// scroll arithmetic would then offer the cursor a row that was never drawn.
+const HEADER_LINES: u16 = 1;
+
+/// What frames a list, and what that costs the rows inside it.
+///
+/// Two questions each screen was answering for itself, in the same two
+/// subtractions: the bordered block takes two lines off the data rows and the
+/// header row takes a third, and seven screens carried the same sentence
+/// saying so beside seven copies of the arithmetic.
+struct Chrome {
+    /// The title of the block the table is drawn in, or `None` for a chooser
+    /// handed an area someone else has already inset for a border.
+    title: Option<TextLine<'static>>,
+    /// The header row, or `None` on Planning, whose rows label themselves, and
+    /// on the two choosers.
+    header: Option<TableRow<'static>>,
+}
+
+impl Chrome {
+    /// A list in a bordered block of its own.
+    fn titled(title: impl Into<TextLine<'static>>) -> Chrome {
+        Chrome {
+            title: Some(title.into()),
+            header: None,
+        }
+    }
+
+    /// A list drawn into an area already inset by whoever owns the border.
+    fn bare() -> Chrome {
+        Chrome {
+            title: None,
+            header: None,
+        }
+    }
+
+    /// Label the columns, in [`HEADER_LINES`] of them.
+    fn header(mut self, header: TableRow<'static>) -> Chrome {
+        self.header = Some(header.height(HEADER_LINES).top_margin(0).bottom_margin(0));
+        self
+    }
+
+    /// How many of `area`'s lines the chrome takes before any row is drawn.
+    fn lines(&self) -> usize {
+        let block = 2 * usize::from(self.title.is_some());
+        let header = self
+            .header
+            .as_ref()
+            .map_or(0, |_| usize::from(HEADER_LINES));
+        block + header
+    }
+}
+
+/// One list, drawn the way every list in the app is drawn, and the [`Viewport`]
+/// the screen hands back to its cursor.
+///
+/// What is written here rather than per screen is everything a cursor has to
+/// look the same for it to read as one cursor -- the reversed highlight, the
+/// `> ` marker, and the [`Chrome`] the rows are fitted inside.
+///
+/// `drawn` is how many rows that cursor may travel over, which is deliberately
+/// not `rows.len()`: Funds counts the bold `Total` it appends, and Accounts
+/// does not count the placeholder it draws in place of an empty list.
+///
+/// What stays at the call sites is what each screen decides for itself: its
+/// `widths`, which this directory's `CLAUDE.md` budgets per screen, and the
+/// bolding of its own header.
+fn render_table(
+    frame: &mut Frame,
+    area: Rect,
+    list: &impl Scroll,
+    chrome: Chrome,
+    widths: &[Constraint],
+    rows: Vec<TableRow<'static>>,
+    drawn: usize,
+) -> Viewport {
+    let height = usize::from(area.height).saturating_sub(chrome.lines());
+    let (mut state, viewport) = table_state(list, drawn, height);
+
+    let mut table = Table::new(rows, widths.iter().copied())
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("> ");
+    if let Some(header) = chrome.header {
+        table = table.header(header);
+    }
+    if let Some(title) = chrome.title {
+        table = table.block(Block::bordered().title(title));
+    }
+    frame.render_stateful_widget(table, area, &mut state);
+
+    viewport
 }
 
 /// Where each of `labels` ends in `line`, matched left to right.
