@@ -11,8 +11,16 @@
 //!
 //! The colors are `Color::Rgb`, not the ANSI names: a named color is whatever
 //! the user's terminal theme says it is, and a red-to-green ramp needs the
-//! shades between them to be the ones chosen here. That costs a 24-bit-color
-//! terminal.
+//! shades between them to be exactly the ones asked for. That costs a
+//! 24-bit-color terminal.
+//!
+//! What those shades *are* is `crate::palette`'s to say wherever a color is
+//! drawn in more than one medium -- the account tints, the negative red, and
+//! the funding ramp all reach a screen through a wrapper here, so the report
+//! cannot come to a second opinion about what half funded looks like. What is
+//! chosen in this file is what nothing outside a terminal draws: the warning
+//! amber, the favorite band and the foreground it has to bring with it, and,
+//! for all of them, which value wears which color.
 
 use crate::db::AccountId;
 use crate::db::account::AccountColor;
