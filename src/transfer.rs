@@ -14,6 +14,7 @@ use crate::db::{AccountId, Db, GoalId, goal, setting};
 use crate::goal as goal_engine;
 use crate::money::Cents;
 use crate::plan_line::{Destination, Line};
+use crate::reading::Reading;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use chrono::NaiveDate;
 
@@ -49,11 +50,19 @@ impl Row {
     }
 }
 
-/// The goals no line claims -- the ones the plug is spread over.
+/// The goals no line claims.
+///
+/// Not [`spread_goals`], which narrows this to the ones still short: a goal
+/// sitting at its target takes none of the plug and is still a perfectly good
+/// destination for a line.
 ///
 /// Open goals only, and in the order the Savings screen lists them.
 pub fn unclaimed_goals(db: &Db) -> Result<Vec<Goal>> {
-    Ok(unclaimed(open_goals(db)?, &claimed_goals(db)?))
+    let claimed = claimed_goals(db, Reading::Strict)?;
+    Ok(open_goals(db)?
+        .into_iter()
+        .filter(|g| !claimed.contains(&g.id))
+        .collect())
 }
 
 /// Every open goal, in the order the Savings screen lists them.
@@ -62,15 +71,6 @@ fn open_goals(db: &Db) -> Result<Vec<Goal>> {
         .into_iter()
         .map(|g| g.goal)
         .collect())
-}
-
-/// The filter both the strict and the tolerant readings share, so "unclaimed"
-/// cannot come to mean two things.
-fn unclaimed(goals: Vec<Goal>, claimed: &[GoalId]) -> Vec<Goal> {
-    goals
-        .into_iter()
-        .filter(|g| !claimed.contains(&g.id))
-        .collect()
 }
 
 /// The goals a payday's plug is spread over.
@@ -89,9 +89,8 @@ fn unclaimed(goals: Vec<Goal>, claimed: &[GoalId]) -> Vec<Goal> {
 /// so the plug still has a container to land in. Their asks are all zero, so
 /// the whole plug ends up unallocated -- the right answer when everything is
 /// already funded.
-pub fn spread_goals(db: &Db) -> Result<Vec<Goal>> {
-    let unclaimed = unclaimed_with_balances(db, &claimed_goals(db)?)?;
-    Ok(cloned(shares_of(&unclaimed)))
+pub fn spread_goals(db: &Db, reading: Reading) -> Result<Vec<Goal>> {
+    Ok(cloned(shares_of(&unclaimed_with_balances(db, reading)?)))
 }
 
 /// The plug's set, with what each of its goals asks of this paycheck.
@@ -106,7 +105,7 @@ pub fn spread_goals(db: &Db) -> Result<Vec<Goal>> {
 /// back at zero rather than dropping out: it is in the set, and `fit` reads
 /// a zero ask as "hand this one nothing".
 pub fn spread_asks(db: &Db, today: NaiveDate, period_days: i64) -> Result<Vec<(Goal, Cents)>> {
-    let unclaimed = unclaimed_with_balances(db, &claimed_goals(db)?)?;
+    let unclaimed = unclaimed_with_balances(db, Reading::Strict)?;
     let mut priced = Vec::new();
     for funding in shares_of(&unclaimed) {
         let ask = crate::savings::paycheck_ask(funding, today, period_days)?;
@@ -143,66 +142,30 @@ pub fn unmet_asks(plug: Cents, asked: Cents) -> Option<Cents> {
     (asked > plug).then(|| plug - asked)
 }
 
-/// The claims, read the way a screen has to read them: a key naming a goal
-/// that is gone is skipped rather than refused.
-///
-/// [`claimed_goals`] is the strict twin, and [`plan`] keeps it -- it is about
-/// to move real money, and a corrupt key there must stop everything. Nothing
-/// that only *draws* can afford that, and a corrupt key is often the very
-/// thing that causes what the drawing has to explain.
-fn claimed_goals_tolerant(db: &Db) -> Result<Vec<GoalId>> {
-    let mut claimed = Vec::new();
-    for line in Line::ALL {
-        if let Destination::Goal(key) = line.destination()
-            && let Some(id) = setting::get(db, key)?
-            && goal::get(db, id)?.is_some()
-        {
-            claimed.push(id);
-        }
-    }
-    Ok(claimed)
-}
-
-/// [`spread_goals`], read tolerantly. The set a screen shows.
-fn spread_goals_tolerant(db: &Db) -> Result<Vec<Goal>> {
-    let unclaimed = unclaimed_with_balances_tolerant(db, &claimed_goals_tolerant(db)?)?;
-    Ok(cloned(shares_of(&unclaimed)))
-}
-
 /// The goals themselves, for the callers that want the set and not its
 /// funding.
 fn cloned(funding: Vec<&goal_engine::Funding>) -> Vec<Goal> {
     funding.into_iter().map(|f| f.goal.clone()).collect()
 }
 
-/// Every open goal `claimed` does not name, with its balance and its target.
-fn unclaimed_with_balances(db: &Db, claimed: &[GoalId]) -> Result<Vec<goal_engine::Funding>> {
-    Ok(unclaimed_funding(
-        goal_engine::all_with_balances(db)?,
-        claimed,
-    ))
-}
-
-/// [`unclaimed_with_balances`], read tolerantly.
+/// Every open goal no line claims, with its balance and its target.
 ///
-/// The claims are not the only thing a screen has to read past: a taxed goal
-/// with no rate on record refuses to derive a target, and the strict reader
-/// would carry that refusal up through `wiring` into the blank Planning
-/// screen `wiring` exists to prevent. `goal_engine::all_with_balances_tolerant`
-/// targets the base instead, and the strict twin below is what keeps `plan`
-/// refusing before it moves money.
-fn unclaimed_with_balances_tolerant(
-    db: &Db,
-    claimed: &[GoalId],
-) -> Result<Vec<goal_engine::Funding>> {
+/// Both halves take the one [`Reading`], because a screen has two things to
+/// read past and they arrive together: a setting key naming a goal that is
+/// gone, and a taxed goal with no rate on record. Reading the claims one way
+/// and the targets the other is not a combination any caller wants, so the
+/// claim list is read here rather than handed in -- the pairing cannot be got
+/// wrong at a call site that never states it.
+fn unclaimed_with_balances(db: &Db, reading: Reading) -> Result<Vec<goal_engine::Funding>> {
+    let claimed = claimed_goals(db, reading)?;
     Ok(unclaimed_funding(
-        goal_engine::all_with_balances_tolerant(db)?,
-        claimed,
+        goal_engine::all_with_balances(db, reading)?,
+        &claimed,
     ))
 }
 
-/// The filter both readings share, the way [`unclaimed`] is shared, so
-/// "unclaimed" cannot come to mean two things here either.
+/// The filter both readings share, so "unclaimed" cannot come to mean two
+/// things across them.
 fn unclaimed_funding(
     all: Vec<goal_engine::Funding>,
     claimed: &[GoalId],
@@ -284,7 +247,7 @@ fn ambiguous_plug(containers: &[String]) -> String {
 /// the containers, because the owner reading it has to find the goal in the
 /// wrong one to act on it.
 pub fn spread_container(db: &Db) -> Result<Option<AccountId>> {
-    let containers = spread_containers(&spread_goals(db)?);
+    let containers = spread_containers(&spread_goals(db, Reading::Strict)?);
     if containers.len() > 1 {
         bail!("{}", ambiguous_plug(&container_names(db, &containers)?));
     }
@@ -432,7 +395,7 @@ pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
     // list inside the loop above would be a second copy of one rule, and the
     // plug's landing disagreeing with the panel's breakdown is precisely the
     // failure that costs.
-    let with_balances = unclaimed_with_balances_tolerant(db, &claimed_goals_tolerant(db)?)?;
+    let with_balances = unclaimed_with_balances(db, Reading::Tolerant)?;
     let unclaimed: Vec<Goal> = with_balances.iter().map(|g| g.goal.clone()).collect();
     let containers = spread_containers(&cloned(shares_of(&with_balances)));
     let spread = match containers.len() {
@@ -575,7 +538,7 @@ fn unclaimed_by_container(db: &Db) -> Result<Vec<String>> {
     /// Past this many, the names stop being an aid and start being a list.
     const NAMED: usize = 5;
 
-    let goals = spread_goals_tolerant(db)?;
+    let goals = spread_goals(db, Reading::Tolerant)?;
     let mut out = Vec::new();
     for id in spread_containers(&goals) {
         let names: Vec<&str> = goals
@@ -600,19 +563,21 @@ fn unclaimed_by_container(db: &Db) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// The goal a setting key names, validating the reference when the key holds
-/// one. `None` when the key is unset.
+/// The goal a setting key names. `None` when the key is unset -- and, under
+/// [`Reading::Tolerant`], when it names a goal that is gone.
 ///
 /// The one place a `Key<GoalId>` becomes a [`Goal`], so [`destination_account`]
-/// and [`claimed_goals`] cannot validate a dangling reference differently.
-fn resolve_goal(db: &Db, key: Key<GoalId>) -> Result<Option<Goal>> {
-    match setting::get(db, key)? {
-        None => Ok(None),
-        Some(id) => {
-            Ok(Some(goal::get(db, id)?.with_context(|| {
-                format!("setting {key} = {id} names no goal")
-            })?))
-        }
+/// and [`claimed_goals`] cannot tell an unset key from a dangling one
+/// differently. Only the dangling row bends: a failed query is an error under
+/// either reading.
+fn resolve_goal(db: &Db, key: Key<GoalId>, reading: Reading) -> Result<Option<Goal>> {
+    let Some(id) = setting::get(db, key)? else {
+        return Ok(None);
+    };
+    match (goal::get(db, id)?, reading) {
+        (Some(goal), _) => Ok(Some(goal)),
+        (None, Reading::Tolerant) => Ok(None),
+        (None, Reading::Strict) => bail!("setting {key} = {id} names no goal"),
     }
 }
 
@@ -623,11 +588,11 @@ fn resolve_goal(db: &Db, key: Key<GoalId>) -> Result<Option<Goal>> {
 /// [`spread_container`] is often resolved before the line whose key is
 /// dangling, so a corrupt reference must surface here too, not only when
 /// that line's own turn comes up.
-fn claimed_goals(db: &Db) -> Result<Vec<GoalId>> {
+fn claimed_goals(db: &Db, reading: Reading) -> Result<Vec<GoalId>> {
     let mut claimed = Vec::new();
     for line in Line::ALL {
         if let Destination::Goal(key) = line.destination()
-            && let Some(goal) = resolve_goal(db, key)?
+            && let Some(goal) = resolve_goal(db, key, reading)?
         {
             claimed.push(goal.id);
         }
@@ -649,7 +614,9 @@ fn claimed_goals(db: &Db) -> Result<Vec<GoalId>> {
 /// this module exists to prevent.
 fn destination_account(db: &Db, line: Line) -> Result<Option<AccountId>> {
     match line.destination() {
-        Destination::Goal(key) => Ok(resolve_goal(db, key)?.map(|g| g.container_account_id)),
+        Destination::Goal(key) => {
+            Ok(resolve_goal(db, key, Reading::Strict)?.map(|g| g.container_account_id))
+        }
         Destination::Account(key) => match setting::get(db, key)? {
             None => Ok(None),
             Some(id) => {
@@ -998,7 +965,7 @@ mod tests {
     }
 
     fn spread_names(db: &db::Db) -> Vec<String> {
-        spread_goals(db)
+        spread_goals(db, Reading::Strict)
             .unwrap()
             .into_iter()
             .map(|g| g.name)
@@ -1143,7 +1110,7 @@ mod tests {
         )
         .unwrap();
 
-        let spread = spread_goals(&db).unwrap();
+        let spread = spread_goals(&db, Reading::Strict).unwrap();
 
         assert_eq!(
             spread.iter().map(|g| g.id).collect::<Vec<_>>(),
@@ -1197,7 +1164,7 @@ mod tests {
         .unwrap();
         goal::insert_allocation(&db, taxed, day(2026, 1, 1), Cents(106_500), None, None).unwrap();
 
-        let spread = spread_goals(&db).unwrap();
+        let spread = spread_goals(&db, Reading::Strict).unwrap();
 
         assert_eq!(
             spread.iter().map(|g| g.id).collect::<Vec<_>>(),

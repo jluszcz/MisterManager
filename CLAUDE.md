@@ -126,6 +126,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/palette.rs` | What a color *is*, in numbers: the eight account colors, the negative color, and the funding ramp — how funded a goal is, red through yellow to green — as `(u8, u8, u8)`. `tui::style` wraps them for a terminal; `report` spells them as `#rrggbb`. |
 | `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. `BasisPoints` prints itself as a percentage with two decimals, on the type rather than beside a screen, so the Funds screen and the report cannot render one share two ways. |
 | `src/gate.rs` | `Gate` — the Planning gates, each owning its setting key and goal-name substring. |
+| `src/reading.rs` | `Reading` — whether a reader refuses a row it cannot resolve or draws past it. One parameter rather than a strict function and a tolerant twin, so the two readings differ in nothing but the thing they name. Taken by `goal::all_with_balances` and by the `transfer` readers built on it. |
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the setting key naming its container account. |
 | `src/config.rs` | The TOML config file. `serde` and `toml` are named here, and both again in `src/backup/state.rs`, whose `State` derives `Serialize` as well as `Deserialize`. |
 | `src/plan_line.rs` | Every Planning line: its label, the amount it moves, and the setting key that says where it lands. |
@@ -382,8 +383,8 @@ matches, since nothing but a test ties them together.
   - **The set is not `unclaimed_goals`, and the two must not be collapsed.** A met goal is still a
     perfectly good destination for a line, so it stays suggestible: that is exactly what makes
     `Home Down Payment?` worth offering on a Future Housing row that no longer funds it.
-  - The claim list reaching the set differs by caller — `plan` reads claims strictly and refuses a
-    dangling key, `wiring` has to report one and draw the screen anyway — so `shares_of` takes an
+  - The reading reaching the set differs by caller — `plan` refuses a dangling key, `wiring` has to
+    report one and draw the screen anyway — so it arrives as a `Reading` and `shares_of` takes an
     already-filtered set rather than reaching for the database itself.
 - **A payday prefills what each goal asks, and leaves the rest unallocated on purpose.** The ask is
   `savings::paycheck_ask` — `calc::per_paycheck`, and the same figure the Savings screen shows in
@@ -513,13 +514,13 @@ matches, since nothing but a test ties them together.
     the goal form's commit, and the recurring-goal picker's, which hands the flag across rather than
     computing anything and so has to ask before `insert_all` runs.
   - **That refusal binds every path that *spends* a target, and no path that only *draws* one.**
-    `goal::all_with_balances_tolerant` targets the base instead, and the Savings screen, `wiring`
-    and the report read through it — the split `transfer::claimed_goals_tolerant` already makes
-    over a dangling setting key, for the reason it makes it: a screen cannot decline to draw
+    Which of the two a caller gets is a `Reading` it passes: `Reading::Tolerant` targets the base,
+    and the Savings screen, `wiring` and the report read that way — the same split the reading
+    makes over a dangling setting key, for the reason it makes it: a screen cannot decline to draw
     itself. Here it is sharper than a blank panel, because `App::reload_savings` runs inside
     `App::new` — a strict read there stops the application starting, and the rate is set from
     inside the application. `transfer::plan` through `spread_goals`, both worksheet prefills, and
-    `shortfall` behind every Planning gate keep the strict reader, so the owner is told the moment
+    `shortfall` behind every Planning gate stay `Reading::Strict`, so the owner is told the moment
     a figure would be acted on and the waterfall's plug is never moved on a missing setting.
   - **`shortfall` lives in `src/goal.rs`, not in `db::goal`.** It is a target reader and the rate
     cannot be reached from `db`; a second one left behind in `db` would let `plan::remaining` go on

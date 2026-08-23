@@ -2,14 +2,15 @@
 //! allocate to one, rewrite it, reorder it, or end it.
 //!
 //! `reload_savings` runs inside `App::new`, which is why it reads goals
-//! through `goal::all_with_balances_tolerant`: a strict read here would stop
-//! the application starting over a tax rate that is set from inside it.
+//! through [`Reading::Tolerant`]: a strict read here would stop the
+//! application starting over a tax rate that is set from inside it.
 
 use super::{Account, App, Move};
 use crate::db::setting::{self, key};
 use crate::db::{GoalId, account, goal};
 use crate::goal as goal_engine;
 use crate::money::Cents;
+use crate::reading::Reading;
 use crate::tui::cursor;
 use crate::tui::goal_form::{AllocationForm, CloseForm, GoalForm, GoalTarget};
 use crate::tui::modal::Modal;
@@ -51,12 +52,12 @@ impl App {
         Ok(())
     }
 
-    /// The tolerant reader, because this runs during `App::new`: a taxed goal
-    /// with no rate on record would otherwise stop the application starting,
-    /// and the rate is set from inside it.
+    /// [`Reading::Tolerant`], because this runs during `App::new`: a taxed
+    /// goal with no rate on record would otherwise stop the application
+    /// starting, and the rate is set from inside it.
     pub(super) fn reload_savings(&mut self) -> Result<()> {
         self.savings
-            .set_goals(goal_engine::all_with_balances_tolerant(&self.db)?)?;
+            .set_goals(goal_engine::all_with_balances(&self.db, Reading::Tolerant)?)?;
         let excess = crate::savings::containers_with_excess(&self.db)?;
         let containers = excess.iter().map(|(id, _)| *id).collect();
         self.savings.set_containers(containers);
