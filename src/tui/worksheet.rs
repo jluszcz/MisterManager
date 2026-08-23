@@ -7,7 +7,7 @@
 //! transfers. It is also what makes the remaining counter meaningful, since it
 //! reconciles against that one container's excess.
 
-use super::cursor::{Cursor, Scroll};
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::form::{Caret, DateField, Step, value_spans};
 use super::search::{Search, SearchBox};
 use super::text::Edit;
@@ -573,8 +573,9 @@ fn amount_line(sheet: &Worksheet) -> TextLine<'static> {
 }
 
 /// Amount and date at the top, that container's goals below, a live remaining
-/// counter. Returns the line viewport's height, for `PageUp`/`PageDown`.
-pub fn render(frame: &mut Frame, sheet: &Worksheet) -> usize {
+/// counter. Returns the line list's [`Viewport`]: the height `PageUp`/`PageDown`
+/// move by, and the row the next draw starts from.
+pub(super) fn render(frame: &mut Frame, sheet: &Worksheet) -> Viewport {
     let area = centered(
         frame.area(),
         76,
@@ -622,7 +623,7 @@ pub fn render(frame: &mut Frame, sheet: &Worksheet) -> usize {
         Constraint::Length(12),
     ];
     let height = usize::from(lines_area.height);
-    let mut state = table_state(sheet.selected_index(), sheet.lines().len(), height);
+    let (mut state, viewport) = table_state(sheet, sheet.lines().len(), height);
     // The bar says the lines are what the next keystroke edits, so it belongs
     // to the focus and not to the cursor -- on an amount-focused worksheet it
     // reads as the first goal having focus, which the digits contradict. The
@@ -656,7 +657,7 @@ pub fn render(frame: &mut Frame, sheet: &Worksheet) -> usize {
     };
     frame.render_widget(Paragraph::new(status), footer_area);
 
-    height
+    viewport
 }
 
 #[cfg(test)]

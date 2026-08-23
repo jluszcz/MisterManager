@@ -5,7 +5,7 @@
 //! no `Db` on the type. `App` runs the queries and hands the results in.
 
 use super::Label;
-use super::cursor::{Cursor, Scroll};
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::form::{
     Caret, DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index,
 };
@@ -370,9 +370,9 @@ pub fn render_form(frame: &mut Frame, form: &RecurringTxnForm, popup: &Autocompl
     render_popup(frame, area, popup)
 }
 
-/// One row per recurring transaction. Returns the viewport's height, for
-/// `PageUp`/`PageDown`.
-pub fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> usize {
+/// One row per recurring transaction. Returns the [`Viewport`] it drew: the
+/// height `PageUp`/`PageDown` move by, and the row the next draw starts from.
+pub(super) fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> Viewport {
     let optional = |value: Option<String>| {
         Cell::from(TextLine::from(value.unwrap_or_else(|| "—".to_string())))
     };
@@ -419,7 +419,7 @@ pub fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> usize {
 
     // Two borders and the header row are not available to data rows.
     let height = usize::from(area.height).saturating_sub(3);
-    let mut state = table_state(list.selected_index(), list.rows().len(), height);
+    let (mut state, viewport) = table_state(list, list.rows().len(), height);
     frame.render_stateful_widget(
         Table::new(rows, widths)
             .header(header)
@@ -430,7 +430,7 @@ pub fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> usize {
         &mut state,
     );
 
-    height
+    viewport
 }
 
 #[cfg(test)]

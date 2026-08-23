@@ -5,7 +5,7 @@
 //! and no `Db` on the type. `App` runs the queries and hands the results in.
 
 use super::Label;
-use super::cursor::{Cursor, Scroll};
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::form::{self, Caret, Field, Focused, FormFields, Step, next_in, step_index};
 use crate::db::FundId;
 use crate::db::fund::{Fund, FundEdit, Target};
@@ -340,9 +340,10 @@ pub fn render_form(frame: &mut Frame, form: &FundForm) {
     render_fields(frame, form.title(), lines);
 }
 
-/// One row per fund, a bold `Total` under them. Returns the viewport's
-/// height, for `PageUp`/`PageDown`.
-pub fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> usize {
+/// One row per fund, a bold `Total` under them. Returns the [`Viewport`] it
+/// drew: the height `PageUp`/`PageDown` move by, and the row the next draw
+/// starts from.
+pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
     let mut rows: Vec<TableRow> = funds
         .rows()
         .iter()
@@ -409,7 +410,7 @@ pub fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> usize {
         true => 0,
         false => funds.rows().len() + 1,
     };
-    let mut state = table_state(funds.selected_index(), drawn, height);
+    let (mut state, viewport) = table_state(funds, drawn, height);
     frame.render_stateful_widget(
         Table::new(rows, widths)
             .header(header)
@@ -420,7 +421,7 @@ pub fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> usize {
         &mut state,
     );
 
-    height
+    viewport
 }
 
 #[cfg(test)]

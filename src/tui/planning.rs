@@ -4,7 +4,7 @@
 //! no `Db` on the type. `App` runs the queries and hands a [`View`] in.
 
 use super::Label;
-use super::cursor::{Cursor, Scroll};
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::form::{
     Caret, DateField, Field, Focused, FormFields, Step, next_in, parse_amount, parse_whole_amount,
     step_index,
@@ -974,6 +974,43 @@ impl Scroll for Planning {
         self.rows.len()
     }
 
+    /// The run of rows above the cursor that it cannot rest on -- a block's
+    /// heading and the computed lines under it, and above `Target` the whole
+    /// transfers block, which is the top of the screen and the part of it the
+    /// owner acts on. The view is the only thing that can reach any of them,
+    /// so they come with the row below them: `Up` from `Target` moves the
+    /// cursor nowhere, and a list left scrolled past the transfers would stay
+    /// there for the rest of the session.
+    fn context_row(&self) -> usize {
+        let mut row = self.cursor.index().min(self.rows.len());
+        while row > 0 && self.rows[row - 1].editable.is_none() {
+            row -= 1;
+        }
+        row
+    }
+
+    /// The run of rows below the *last* editable one -- the Destinations
+    /// block's own computed lines, and however many of them the screen ends
+    /// with. Every other unreachable run comes into view with the editable
+    /// row beneath it, so only this one has nothing to travel with: the
+    /// cursor stops above it, and the view would stop with the cursor. How
+    /// long the run is depends on the plan -- a line whose destination is
+    /// unset draws one row fewer to rest on -- so it is not a length the
+    /// screen may assume fits inside the scroll margin.
+    fn tail_row(&self) -> usize {
+        let index = self.cursor.index();
+        let editable_below = self
+            .rows
+            .iter()
+            .skip(index + 1)
+            .any(|r| r.editable.is_some());
+        if editable_below {
+            index
+        } else {
+            self.rows.len().saturating_sub(1).max(index)
+        }
+    }
+
     fn select_next(&mut self) {
         if let Some((index, _)) = self
             .rows
@@ -1309,15 +1346,16 @@ pub fn render_details(frame: &mut Frame, title: &str, lines: &[String]) {
 }
 
 /// The waterfall, top to bottom, with the pin line beneath it. Returns the
-/// viewport's height, for `PageUp`/`PageDown`.
-pub fn render(frame: &mut Frame, area: Rect, planning: &Planning) -> usize {
+/// [`Viewport`] it drew: the height `PageUp`/`PageDown` move by, and the row
+/// the next draw starts from.
+pub(super) fn render(frame: &mut Frame, area: Rect, planning: &Planning) -> Viewport {
     if let Some(message) = planning.message() {
         frame.render_widget(
             Paragraph::new(TextLine::from(message.to_string()))
                 .block(Block::bordered().title(planning.title())),
             area,
         );
-        return 1;
+        return Viewport::of_height(1);
     }
 
     let pin = planning.pin_line();
@@ -1366,7 +1404,7 @@ pub fn render(frame: &mut Frame, area: Rect, planning: &Planning) -> usize {
 
     // Two borders are not available to data rows; there is no header here.
     let height = usize::from(table_area.height).saturating_sub(2);
-    let mut state = table_state(planning.selected_index(), planning.rows().len(), height);
+    let (mut state, viewport) = table_state(planning, planning.rows().len(), height);
     frame.render_stateful_widget(
         Table::new(rows, widths)
             .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
@@ -1383,7 +1421,7 @@ pub fn render(frame: &mut Frame, area: Rect, planning: &Planning) -> usize {
         );
     }
 
-    height
+    viewport
 }
 
 #[cfg(test)]
@@ -2464,7 +2502,7 @@ mod tests {
     #[test]
     fn paging_down_moves_a_screenful_of_lines_not_the_whole_list() {
         let mut planning = screen();
-        planning.set_page_height(20);
+        planning.record_viewport(Viewport::of_height(20));
 
         planning.page_down();
         assert_eq!(planning.selected_target(), Some(Target::BillPaymentPct));
@@ -2481,7 +2519,7 @@ mod tests {
     #[test]
     fn paging_up_moves_a_screenful_of_lines_back() {
         let mut planning = screen();
-        planning.set_page_height(20);
+        planning.record_viewport(Viewport::of_height(20));
         planning.select_last();
 
         planning.page_up();
@@ -2494,7 +2532,7 @@ mod tests {
     #[test]
     fn paging_past_either_end_stops_at_that_end() {
         let mut planning = screen();
-        planning.set_page_height(20);
+        planning.record_viewport(Viewport::of_height(20));
 
         for _ in 0..10 {
             planning.page_up();
@@ -3384,7 +3422,7 @@ mod tests {
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
-        (0..12)
+        (0..8)
             .map(|y| {
                 (0..MIN_WIDTH)
                     .map(|x| buffer[(x, y)].symbol())
@@ -3469,5 +3507,147 @@ mod tests {
         }
         confirm.step_date(Step::NEXT);
         assert_eq!(confirm.date_value(), "2026-0");
+    }
+    /// The complaint this scroll rule was written for: on a terminal a dozen
+    /// rows shorter than the screen, walking down to `Excess (Used)` -- the
+    /// nearest editable constant below the transfers -- must not take the
+    /// transfers off the top. There is room for both, and the block at the top
+    /// is what the owner acts on.
+    ///
+    /// Drawn between every keystroke, the way the event loop does, since the
+    /// viewport each draw reports is what the next one scrolls from.
+    #[test]
+    fn walking_down_to_the_pin_leaves_the_transfers_on_screen() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut planning = Planning::new();
+        planning.set_view(view(None, None)).unwrap();
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 32)).unwrap();
+        let mut draw = |planning: &mut Planning| {
+            let mut viewport = Viewport::default();
+            terminal
+                .draw(|frame| viewport = render(frame, frame.area(), planning))
+                .unwrap();
+            planning.record_viewport(viewport);
+            let buffer = terminal.backend().buffer();
+            (0..32)
+                .map(|y| {
+                    (0..MIN_WIDTH)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        planning.select_first();
+        let mut drawn = draw(&mut planning);
+        while planning.rows()[planning.selected_index()].label != "Excess (Used)" {
+            planning.select_next();
+            drawn = draw(&mut planning);
+        }
+
+        assert!(drawn.contains("Transfers"), "{drawn}");
+        assert!(drawn.contains("Excess (Used)"), "{drawn}");
+    }
+    /// The cursor cannot rest above `Target`: the transfers block, and the
+    /// blank under it, carry nothing to edit. So walking back up from the
+    /// bottom has to bring them into view anyway -- a screen whose top rows
+    /// are the ones the owner acts on must not stay scrolled past them
+    /// forever, and nothing but the view can reach them.
+    #[test]
+    fn walking_back_up_brings_the_transfers_into_view() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut planning = Planning::new();
+        planning.set_view(view(None, None)).unwrap();
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 32)).unwrap();
+        let mut draw = |planning: &mut Planning| {
+            let mut viewport = Viewport::default();
+            terminal
+                .draw(|frame| viewport = render(frame, frame.area(), planning))
+                .unwrap();
+            planning.record_viewport(viewport);
+            let buffer = terminal.backend().buffer();
+            (0..32)
+                .map(|y| {
+                    (0..MIN_WIDTH)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        planning.select_last();
+        let mut drawn = draw(&mut planning);
+        assert!(!drawn.contains("Transfers"), "{drawn}");
+
+        // Up until the cursor has nowhere left to go, which is the first
+        // editable row rather than the first row.
+        let mut previous = usize::MAX;
+        while planning.selected_index() != previous {
+            previous = planning.selected_index();
+            planning.select_previous();
+            drawn = draw(&mut planning);
+        }
+
+        assert_eq!(planning.rows()[planning.selected_index()].label, "Target");
+        assert!(drawn.contains("Transfers"), "{drawn}");
+    }
+
+    /// The mirror of the two above, and the end of the list rather than its
+    /// start: the Destinations block ends in rows the cursor cannot rest on,
+    /// so `End` leaves the selection above them and only the view can bring
+    /// them down. On a terminal short enough to squeeze the scroll margin,
+    /// following the cursor alone leaves the last of them off the bottom for
+    /// good.
+    #[test]
+    fn walking_down_brings_the_last_destinations_into_view() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut planning = Planning::new();
+        planning.set_view(view(None, None)).unwrap();
+
+        let last = planning.rows().last().expect("no rows").label.clone();
+        assert_eq!(last.trim(), Line::Investment.label());
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
+        let mut draw = |planning: &mut Planning| {
+            let mut viewport = Viewport::default();
+            terminal
+                .draw(|frame| viewport = render(frame, frame.area(), planning))
+                .unwrap();
+            planning.record_viewport(viewport);
+            let buffer = terminal.backend().buffer();
+            (0..8)
+                .map(|y| {
+                    (0..MIN_WIDTH)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        planning.select_first();
+        let mut drawn = draw(&mut planning);
+        let mut previous = usize::MAX;
+        while planning.selected_index() != previous {
+            previous = planning.selected_index();
+            planning.select_next();
+            drawn = draw(&mut planning);
+        }
+
+        assert_eq!(
+            planning.rows()[planning.selected_index()].label.trim(),
+            Line::MomAndDad.label()
+        );
+        assert!(drawn.contains(last.trim()), "{drawn}");
     }
 }
