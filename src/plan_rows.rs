@@ -222,6 +222,16 @@ impl Row {
         Row::new(Kind::Figure, label, Value::Money(value), depth)
     }
 
+    /// One bill of the block, at the depth its category puts it.
+    fn bill(b: &Bill, depth: u8) -> Row {
+        Row {
+            extra: Extra::Biweekly(b.biweekly),
+            target: Some(Target::Bill(b.id)),
+            edit: b.monthly.to_string(),
+            ..Row::figure(&b.label, b.monthly, depth)
+        }
+    }
+
     fn total(label: &str, value: Cents, depth: u8) -> Row {
         Row::new(Kind::Total, label, Value::Money(value), depth)
     }
@@ -389,13 +399,15 @@ pub fn rows(input: &Input) -> Vec<Row> {
             1,
         )
     });
-    for b in input.housing.iter().chain(input.other_bills) {
-        rows.push(Row {
-            extra: Extra::Biweekly(b.biweekly),
-            target: Some(Target::Bill(b.id)),
-            edit: b.monthly.to_string(),
-            ..Row::figure(&b.label, b.monthly, 2)
-        });
+    for b in input.housing {
+        rows.push(Row::bill(b, 2));
+    }
+    // A bill outside housing is the block's own line and a peer of the
+    // subtotal, not one of the rows it sums: `Mortgage + HOA` adds up
+    // `input.housing` alone, and a bill drawn one level under a figure that
+    // does not count it reads as an omission from that figure.
+    for b in input.other_bills {
+        rows.push(Row::bill(b, 1));
     }
     rows.push(Row::total("Remaining Excess", p.remaining_excess, 1));
 
@@ -595,6 +607,19 @@ mod tests {
         assert_eq!(at(&rows, "Mortgage + HOA").depth, 1);
         assert_eq!(at(&rows, "Mortgage").depth, 2);
         assert_eq!(at(&rows, "Remaining Excess").depth, 1);
+    }
+
+    /// `Mortgage + HOA` sums the housing bills and no others, so only those
+    /// sit under it. A bill outside housing indented there would invite the
+    /// reader to add it into a subtotal that does not carry it -- and both
+    /// mediums spend the depth literally, with nothing between the two halves
+    /// of the block to say where one ends.
+    #[test]
+    fn a_bill_outside_housing_is_not_drawn_under_the_housing_subtotal() {
+        let rows = built(&[], |_| {});
+
+        assert_eq!(at(&rows, "HOA").depth, 2);
+        assert_eq!(at(&rows, "Plumber").depth, 1);
     }
 
     /// `Planning!C6` is the housing subtotal, and it is a sum of the rows
