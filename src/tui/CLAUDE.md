@@ -405,7 +405,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     opens on anything but today: `9/10` typed in August is this September, and read off a December
     prefill it would land a year out in silence. So `TxnForm::add` takes an already-built
     `DateField` rather than a day to open on — two adjacent `NaiveDate` parameters would be one
-    transposition away from exactly that.
+    transposition away from exactly that. `Worksheet::on` takes one for the same reason;
+    `Worksheet::new`, which opens on today and has only the one day to be told, builds it.
 - **The app reads two modifiers, and each means one thing.** `Shift` is always the same nudge with
   a bigger step. It is on the key that already means "move this", rather than a second letter for
   one action, and it reaches every date rather than only the Overview's — a horizon several paydays
@@ -440,6 +441,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     the rows it writes are dated for when the transfers *land* rather than for when the plan was
     read. `business_day::add` skips weekends and deliberately carries no holiday calendar, which
     is the other half of why this date is editable at all.
+  - The worksheets `t` queues behind that confirmation open on the date it wrote, through
+    `Worksheet::on`: an allocation is that transfer read from the container's side, so the two
+    carry one date, and a sheet left on today would credit the goals days before the cash reaches
+    them. It is the *confirmed* date rather than the two-business-day default, since the owner may
+    step it before committing. `A` and `i` open a worksheet of their own and stay on today, which
+    is what they are entering.
   - A recurring transaction's `Horizon` and the birth-date prompt open blank, because blank is a
     supported state in both — a rule that does not end, and a date not on record — and `parse_opt`
     is what reads the first of those back.

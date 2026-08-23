@@ -140,9 +140,9 @@ pub const STATUS_TTL: Duration = Duration::from_secs(4);
 /// empty list is the same state whichever list it is.
 const NOTHING_SELECTED: &str = "nothing selected";
 
-/// One queued worksheet: the container it opens on, its pot, and the shares
-/// it opens with.
-type WorksheetPrefill = (AccountId, Cents, Vec<(GoalId, Cents)>);
+/// One queued worksheet: the container it opens on, the date its transfer
+/// was written for, its pot, and the shares it opens with.
+type WorksheetPrefill = (AccountId, NaiveDate, Cents, Vec<(GoalId, Cents)>);
 
 /// The whole application: which screen is showing, what was last queried, and
 /// what the status line says.
@@ -190,7 +190,8 @@ pub struct App {
     popup: Autocomplete,
     modal: Option<Modal>,
     /// Worksheets waiting to open, in order, after a payday's transfers are
-    /// written. Each is a container, its pot, and the shares it opens with.
+    /// written. Each is a container, the date its transfer was written for,
+    /// its pot, and the shares it opens with.
     ///
     /// A queue rather than one modal because a payday funds two containers
     /// and a worksheet is scoped to one: the second opens as the first
@@ -529,7 +530,7 @@ impl App {
         // container-spanning plug -- the one case it can refuse -- into a
         // refusal before anything is written rather than an error stranded
         // after the payday is already on the ledger.
-        let prefills = self.worksheet_prefills(&rows)?;
+        let prefills = self.worksheet_prefills(date, &rows)?;
         transfer::execute(&self.db, from, date, &rows)?;
         let total: Cents = rows.iter().map(|r| r.cents()).sum();
         self.status = format!(
@@ -553,7 +554,16 @@ impl App {
     /// those lines' amounts; the container holding the unclaimed goals also
     /// carries the plug, spread equally over them the way the worksheet's own
     /// `s` spreads.
-    fn worksheet_prefills(&self, rows: &[transfer::Row]) -> Result<Vec<WorksheetPrefill>> {
+    ///
+    /// `date` is the transfer's, and each sheet opens on it: an allocation is
+    /// the transfer read from the container's side, so a sheet left on today
+    /// would credit the goals before the money reaches them -- and the owner
+    /// may date a payday whenever they like.
+    fn worksheet_prefills(
+        &self,
+        date: NaiveDate,
+        rows: &[transfer::Row],
+    ) -> Result<Vec<WorksheetPrefill>> {
         let spread_container = transfer::spread_container(&self.db)?;
         let spread = self.spread_asks()?;
         let mut out = Vec::new();
@@ -596,7 +606,7 @@ impl App {
             // worksheet to allocate; queuing one would open a container with
             // no goals and the whole pot sitting in `remaining`.
             if !shares.is_empty() {
-                out.push((*to, *cents, shares));
+                out.push((*to, date, *cents, shares));
             }
         }
         Ok(out)
@@ -2166,16 +2176,16 @@ impl App {
         if queue.is_empty() {
             return Ok(());
         }
-        let (container, pot, shares) = queue.remove(0);
+        let (container, date, pot, shares) = queue.remove(0);
         let mut prefill = Vec::new();
         for g in goal::list_with_balances(&self.db, container)? {
             prefill.push((g.goal.id, g.goal.name, Cents::ZERO));
         }
         let account = account::get(&self.db, container)?;
-        let mut sheet = Worksheet::new(
+        let mut sheet = Worksheet::on(
             goal::BatchKind::Paycheck,
             Account::named(std::slice::from_ref(&account), container),
-            self.today,
+            DateField::on(self.today, date),
             prefill,
         );
         sheet.set_amount(pot);
@@ -6463,6 +6473,43 @@ mod tests {
 
         press(&mut app, KeyCode::Esc);
         assert!(app.modal.is_none(), "a third worksheet opened");
+    }
+
+    /// The allocation is the transfer seen from the container's side, so both
+    /// carry the one date -- and it is the date the owner confirmed, not the
+    /// default that date was stepped off: a worksheet dated today would credit
+    /// the goals days before the cash the transfer moves reaches them.
+    #[test]
+    fn each_worksheet_opens_on_the_date_the_transfers_were_written_for() {
+        let mut app = planning_app();
+        app.screen = Screen::Planning;
+        press(&mut app, KeyCode::Char('t'));
+        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
+            panic!("no transfer confirmation is open");
+        };
+        let default = confirm.commit().unwrap();
+
+        // Stepped off the two-business-day default, so a sheet that reached
+        // for either that default or today fails this.
+        press(&mut app, KeyCode::Right);
+        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
+            panic!("no transfer confirmation is open");
+        };
+        let date = confirm.commit().unwrap();
+        assert_eq!(date, default + chrono::TimeDelta::days(1));
+        assert_ne!(date, app.today);
+
+        press(&mut app, KeyCode::Enter);
+
+        let Some(Modal::Worksheet(sheet)) = &app.modal else {
+            panic!("no worksheet opened");
+        };
+        assert_eq!(sheet.date_text(), date.to_string());
+        press(&mut app, KeyCode::Esc);
+        let Some(Modal::Worksheet(sheet)) = &app.modal else {
+            panic!("the second worksheet did not open");
+        };
+        assert_eq!(sheet.date_text(), date.to_string());
     }
 
     /// The Rainy Day worksheet's pot is the transfer, and its lines are the
