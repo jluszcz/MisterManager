@@ -45,13 +45,15 @@ and the second pass needs no flag.
 ```
 
 A code can appear in both columns — a checking account and a card at the same bank. That is why
-accounts are keyed by `(code, kind)` and never by code alone; `account::by_code` takes both.
+accounts are keyed by `(code, kind)` and never by code alone; `account::by_code` takes both, and
+folds the code's case — a code the owner typed on the Accounts screen has to meet the one the sheet
+spells, or this pass writes a second row for an account that is already here.
 
 The codes are all the sheet carries, so that is all the import writes: each new code becomes an
 account **named by itself**, in its kind's `default_group`, with a `sort` appending to whatever
 that kind already holds, and no color at all. The longer name, the color, the band and the order are
 set on the Accounts screen and survive a `--replace` — `account` is not an imported table. A code already present is skipped, so
-re-running the pass is a no-op rather than a `UNIQUE (code, kind)` failure.
+re-running the pass is a no-op rather than an `account_code_kind` failure.
 
 `E2` is a fraction in the sheet and becomes `BasisPoints` (×10,000). The Planning split percentages
 are also fractions in the sheet but become `Percent` (×100). Two scalings, two types, so a value

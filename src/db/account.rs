@@ -11,6 +11,12 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// Every kind, in the order the Accounts screen's `a` selector cycles
+    /// them. Beside the enum rather than on the screen, for
+    /// [`InterestPolicy::ALL`]'s reason: a screen offering a subset would
+    /// leave a variant unreachable with nothing to say so.
+    pub const ALL: [Kind; 2] = [Kind::Cash, Kind::Credit];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Kind::Cash => "cash",
@@ -18,7 +24,8 @@ impl Kind {
         }
     }
 
-    /// What the Overview labels this kind's total row.
+    /// What the Overview labels this kind's total row, and what the Accounts
+    /// screen's `Kind` column and its `a` selector call it.
     pub fn label(self) -> &'static str {
         match self {
             Kind::Cash => "Cash",
@@ -408,7 +415,26 @@ macro_rules! select_account {
 /// Inserts an account in its kind's default group. Placing it in the other
 /// cash band is `set_group`'s job, so that the one guarded write is the only
 /// way `grp` and `kind` can ever come to disagree -- and it refuses.
+///
+/// A code the kind already holds is refused here rather than left to the
+/// schema's `account_code_kind`, because the code is typed by hand on the
+/// Accounts screen: a constraint failure names the index, where the owner
+/// needs to be told which code they just retyped. Per kind, not per code --
+/// one code naming both a cash account and the card drawn on it is what the
+/// index is keyed that way to allow. `import::constants` skips a code the
+/// kind already holds before it gets here, so an import never meets this.
+///
+/// The clash is reported as the code the database holds rather than the one
+/// that was typed, because [`by_code`] folds case: an owner told `"chk"`
+/// already exists, having typed exactly that, has been told nothing.
 pub fn insert(db: &Db, code: &str, name: &str, kind: Kind, sort: i64) -> Result<AccountId> {
+    if let Some(existing) = by_code(db, code, kind)? {
+        bail!(
+            "a {} account with code {:?} already exists",
+            kind.as_str(),
+            existing.code
+        );
+    }
     db.conn.execute(
         "INSERT INTO account (code, name, kind, sort, grp) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
@@ -422,11 +448,21 @@ pub fn insert(db: &Db, code: &str, name: &str, kind: Kind, sort: i64) -> Result<
     Ok(AccountId(db.conn.last_insert_rowid()))
 }
 
+/// The account a code names, if the kind holds one.
+///
+/// Matched case-insensitively, and that is what makes adoption work rather
+/// than a convenience: the code is typed by hand on the Accounts screen and
+/// read off the sheet by the import, and the two have to meet. An account
+/// entered as `chk` against a sheet that later grows `CHK` would otherwise
+/// pass `insert`'s guard, miss `import::constants`' skip, and end up as a
+/// second row for one real account with the balance split between them and no
+/// way to merge the halves. Folding the case is what `account_code_kind`
+/// exists to keep the database in step with.
 pub fn by_code(db: &Db, code: &str, kind: Kind) -> Result<Option<Account>> {
     let found = db
         .conn
         .query_row(
-            select_account!("WHERE code = ?1 AND kind = ?2"),
+            select_account!("WHERE code = ?1 COLLATE NOCASE AND kind = ?2"),
             params![code, kind.as_str()],
             from_row,
         )
@@ -973,5 +1009,58 @@ mod tests {
         assert_eq!(account.code, "SAV");
         assert_eq!(account.name, "Rainy Day");
         assert_eq!(account.name.as_str(), "Rainy Day");
+    }
+
+    /// The schema's `account_code_kind` is the backstop; this is the
+    /// sentence in front of it. A code is typed by hand on the Accounts
+    /// screen now, so the collision is reachable from a modal -- and a raw
+    /// constraint failure names the index rather than the code the owner
+    /// just typed.
+    #[test]
+    fn insert_refuses_a_code_the_kind_already_holds() {
+        let db = db::open_in_memory().unwrap();
+        insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let err = insert(&db, "SAV", "Nest Egg", Kind::Cash, 1).unwrap_err();
+        assert!(err.to_string().contains("SAV"), "{err}");
+        assert_eq!(list_by_kind(&db, Kind::Cash).unwrap().len(), 1);
+    }
+
+    /// Case is folded, because the code is typed by hand here and read off
+    /// the sheet by the import, and adoption is those two meeting. `chk`
+    /// entered against a sheet that later grows `CHK` would otherwise become
+    /// a second row for one real account. The clash names the code on record
+    /// rather than the one typed: told `"chk"` already exists, an owner who
+    /// typed exactly that has been told nothing.
+    #[test]
+    fn insert_refuses_a_code_the_kind_holds_in_another_case() {
+        let db = db::open_in_memory().unwrap();
+        insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let err = insert(&db, "chk", "Everyday Again", Kind::Cash, 1).unwrap_err();
+        assert!(err.to_string().contains("CHK"), "{err}");
+        assert_eq!(list_by_kind(&db, Kind::Cash).unwrap().len(), 1);
+        // And the import finds that row by the case the sheet spells it in,
+        // which is what makes it an adoption rather than a duplicate.
+        assert_eq!(
+            by_code(&db, "chk", Kind::Cash).unwrap().unwrap().name,
+            "Everyday"
+        );
+    }
+
+    /// The refusal is per kind, because the constraint is: one code naming
+    /// both a cash account and the card drawn on it is exactly what
+    /// `UNIQUE (code, kind)` exists to allow.
+    #[test]
+    fn one_code_may_name_a_cash_account_and_a_card() {
+        let db = db::open_in_memory().unwrap();
+        insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        insert(&db, "CHK", "Everyday Card", Kind::Credit, 0).unwrap();
+        assert_eq!(
+            by_code(&db, "CHK", Kind::Cash).unwrap().unwrap().name,
+            "Everyday"
+        );
+        assert_eq!(
+            by_code(&db, "CHK", Kind::Credit).unwrap().unwrap().name,
+            "Everyday Card"
+        );
     }
 }

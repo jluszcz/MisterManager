@@ -136,7 +136,8 @@ allocation worksheets prefilled; `destination` is the list `e` opens on one of i
 rows. `fund` is the sixth screen, its form, and the birth-date prompt the age row needs and no
 other screen owns. `recurring_goal` is the seventh screen and `recurring_txn` the
 eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
-smallest: one key, `e`, over the six things the workbook does not say about an account.
+smallest: `a`, which creates an account the workbook does not name, and `e`, over the six things
+the workbook does not say about one.
 
 `month` is the `[`/`]` filter Savings and Recurring Goals share. `style` is where color is decided —
 `ratatui::style::Color` is *decided* there and nowhere else, so no screen grows its own opinion
@@ -621,21 +622,44 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   accounts come back in: an unplaced account sorts last and taking the scan order would let it
   split its own band in two. A subtotal is set apart by weight alone — every label starts in the
   same column, and the subtotals are the only bold rows. Blank rows separate sections, not bands.
-- **The Accounts screen has no `a` and no `d`, and that is the whole shape of it.** An account
-  exists because the workbook names it, so there is nothing to add; deleting one would orphan every
-  transaction, goal and recurring rule pointing at it, and the next import would put it straight
-  back. What is left is `e` over the six things the sheet does *not* say — the name, the color, the
-  band, the position, how an interest posting against it is divided, and which block of the
-  `Savings` sheet it is the container for — and none of them is touched by an import after the
-  row's first insert. The code and the kind are deliberately not on the form:
-  they are what `account::by_code` matches the next import against, so editing either would orphan
-  the row from the sheet that produced it.
-  - **All but the name are selectors, cycled with `←`/`→` like every other selector in the app.**
+- **The Accounts screen has `a` and `e` and no `d`, and the two it has ask disjoint questions.**
+  Deleting an account would orphan every transaction, goal and recurring rule pointing at it, and
+  the next import would put a sheet's account straight back — so there is no `d`, and a code typed
+  wrongly is corrected by renaming around it rather than by starting over.
+  - **`a` asks the code, the kind and the name, and stops.** Those are the two an account cannot be
+    given afterwards, plus the one it needs to draw as a row. A new account takes its kind's
+    default band, no color, no interest policy, no `Savings` block, and the last place among the
+    accounts of its kind — the row `mm import` writes for a code it has just met, which is what
+    makes an account the sheet does not name indistinguishable from one it does.
+    `account::insert` refuses a code the kind already holds, naming it as the database spells it:
+    the schema's `account_code_kind` is the backstop, but a constraint failure names an index
+    where the owner needs to be told which code they just retyped. Per kind, because the index is
+    — one code naming both a cash account and the card drawn on it is the shape it exists for —
+    and case-insensitively, because a code typed here has to meet the same code read off the
+    sheet. The form bounds the code at `CODE_WIDTH`, the `Code` column's own width: that column is
+    the only place a code is ever drawn, so a code too wide for it would be stored whole and read
+    cut, leaving the owner unable to check the string the next import matches the row against.
+  - **`e` asks the six things the sheet does *not* say** — the name, the color, the band, the
+    position, how an interest posting against it is divided, and which block of the `Savings` sheet
+    it is the container for — and none of them is touched by an import after the row's first
+    insert. All six are *placements*: an account is created by `a` and placed by `e`, which is why
+    the kind decides an edit form's fields and decides nothing on an add form.
+  - **The code and the kind are on `a` and deliberately absent from `e`.** They are what
+    `account::by_code` matches the next import against, so choosing them is the whole of creating
+    an account and editing either would orphan the row from the sheet that produced it. An account
+    created here whose code the workbook later grows is therefore *adopted* by the import rather
+    than duplicated, since `import::constants` skips a code the kind already holds. `AccountForm`
+    carries both modes with `editing: Option<AccountId>`, the shape `FundForm` and
+    `RecurringTxnForm` carry, and `edit` leaves the code field blank rather than seeding it from
+    the account — a field nobody sees is not worth reading an account's text as a bare string for,
+    which is what `nothing_that_draws_an_account_reads_its_name_as_bare_text` would catch.
+  - **All but the name and the code are selectors, cycled with `←`/`→` like every other selector in the app.**
     A band the schema's `CHECK` would refuse, a position off the end of its kind, a policy that is
-    not a policy, and an account claiming *both* `Savings` blocks are all unrepresentable rather
-    than validated. `Group::bands` is what the band selector offers, and it offers exactly what
-    `account::set_group` accepts; the `Savings` selector holds one value per account, which is what
-    makes the both-blocks state impossible to type.
+    not a policy, a kind that is not a kind, and an account claiming *both* `Savings` blocks are all
+    unrepresentable rather than validated. `Kind::ALL` is what the add form's kind selector offers,
+    beside the enum for `InterestPolicy::ALL`'s reason. `Group::bands` is what the band selector
+    offers, and it offers exactly what `account::set_group` accepts; the `Savings` selector holds
+    one value per account, which is what makes the both-blocks state impossible to type.
   - **The `Savings` selector names the block's contents, not its columns.** `Block::label` is
     `goals` and `buckets`: `Savings!A:E` and `Savings!I:K` are what the *import* tells the two
     blocks apart by, and the owner pointing a container at one is choosing between two sets of
@@ -646,11 +670,15 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     Moving an account *off* a block clears that block's key rather than leaving it naming an account
     that no longer answers for it, and a key naming another account is left alone, so editing one
     row never disturbs the other block's mapping.
-  - **Which fields the form shows depends on the kind**, the way `FundForm`'s depend on the target.
+  - **Which fields an *edit* shows depends on the kind**, the way `FundForm`'s depend on the target.
     Credit does not split into bands, so there is nothing for a band selector to cycle; only a cash
     account holds the goals an interest posting is divided among or a `Savings` block fills, so only
-    a cash account is asked about either. A card's form is three fields.
-  - **`Color` is the one of the six that every kind is asked.** A card is named on the Credit
+    a cash account is asked about either. A card's edit form is three fields. An add form is three
+    whatever the kind says, because none of the five a kind decides is on it.
+  - **`Color` is the one of the six every kind is asked, and no kind is asked on `a`.** An account
+    that does not exist yet has no id, so there is no derived shade for `—` to stand for and
+    nothing for the field to draw itself in; a new account is drawn in its derivation until `e`
+    says otherwise. A card is named on the Credit
     ledger and on Recurring Transactions, so it is tinted there like any other account, and what it
     looks like is not a fact about cash. It sits beside the name because the two are one decision:
     what this account looks like wherever it is named.
@@ -660,7 +688,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     like". Only the value: the label and the caret are the form's chrome. It resolves through
     `style::account_color` with the account's own id, so `—` shows the **derived** shade the row
     will actually take rather than nothing at all — which is the whole reason that choice is worth
-    drawing rather than leaving plain.
+    drawing rather than leaving plain. An id is what it needs, which is the other half of why the
+    field is `e`'s alone.
   - **It opens on the color the account is *being drawn in*, not on what it has stored.** An
     account nobody has picked for opens on `AccountColor::derived(id)`, named, rather than on `—`.
     Opening on `—` put the selector somewhere the row behind the modal visibly contradicted, and

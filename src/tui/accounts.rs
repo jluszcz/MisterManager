@@ -21,6 +21,16 @@ use crate::db::account::{Account, AccountColor, Group, InterestPolicy, Kind};
 use crate::savings_block::Block as SavingsBlock;
 use anyhow::{Result, ensure};
 
+/// How wide a code may be: the `Code` column's width, and the bound `a` holds
+/// a typed one to.
+///
+/// One constant for the two, because a code wider than its column is cut in
+/// the only place a code is ever drawn -- leaving the owner unable to read
+/// the string the next import matches this row against, which is the one
+/// thing the field is for. The column is sized by the codes rather than the
+/// codes by the column, so widening it is what makes room for a longer one.
+const CODE_WIDTH: u16 = 8;
+
 /// One account as the screen shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
@@ -104,6 +114,13 @@ impl Scroll for Accounts {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AccountField {
+    /// `a` only. The short code the workbook names an account by, and what
+    /// `account::by_code` matches the next import against -- which is why it
+    /// is asked once, here, and never offered to `e`.
+    Code,
+    /// `a` only, for `Code`'s reason: the other half of what `by_code`
+    /// matches on.
+    Kind,
     Name,
     Color,
     Band,
@@ -115,6 +132,8 @@ pub enum AccountField {
 impl AccountField {
     pub fn label(self) -> &'static str {
         match self {
+            AccountField::Code => "Code",
+            AccountField::Kind => "Kind",
             AccountField::Name => "Name",
             AccountField::Color => "Color",
             AccountField::Band => "Band",
@@ -177,21 +196,49 @@ pub struct AccountEdit {
     pub block: Option<SavingsBlock>,
 }
 
-/// Editing one account. Backs `e`, and there is no `a`: an account exists
-/// because the workbook names it.
+/// What `a` commits: an account the workbook has not named.
 ///
-/// All but the name are selectors rather than text, so a band the schema's
-/// `CHECK` would refuse, a position off the end, a policy that is not a
-/// policy, and an account claiming both `Savings` blocks at once are all
-/// unrepresentable. Which fields it shows depends on the kind, exactly as
-/// `FundForm`'s do on the target: credit does not split into bands, so there
-/// is nothing for a band selector to cycle, and only a cash account holds the
-/// goals an interest posting is divided among or a `Savings` block fills.
+/// The code and the kind are the whole of it beyond a name, because they are
+/// the two an account cannot be given later -- everything else on this screen
+/// is a *placement*, and `e` is where an account is placed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewAccount {
+    pub code: String,
+    pub name: String,
+    pub kind: Kind,
+}
+
+/// One account: `a` creating one, or `e` saying the rest about one that
+/// exists. `editing` is which, the same shape `FundForm` and
+/// `RecurringTxnForm` carry.
+///
+/// The two modes ask disjoint questions, and that is the point rather than an
+/// accident. `a` asks the two things an account cannot be given afterwards --
+/// the code and the kind, which are what `account::by_code` matches the next
+/// import against, so editing either would orphan the row from the sheet that
+/// produced it. `e` asks the six the workbook does not carry, none of which a
+/// new account needs before it exists.
+///
+/// All but the name and the code are selectors rather than text, so a band
+/// the schema's `CHECK` would refuse, a position off the end, a policy that is
+/// not a policy, a kind that is not a kind, and an account claiming both
+/// `Savings` blocks at once are all unrepresentable. Which fields an *edit*
+/// shows depends on the kind, exactly as `FundForm`'s do on the target:
+/// credit does not split into bands, so there is nothing for a band selector
+/// to cycle, and only a cash account holds the goals an interest posting is
+/// divided among or a `Savings` block fills.
 #[derive(Debug)]
 pub struct AccountForm {
-    pub account_id: AccountId,
+    /// The account this form saves back to, or `None` for one `a` will
+    /// insert.
+    pub editing: Option<AccountId>,
     pub focus: AccountField,
-    kind: Kind,
+    /// `a` only: `e` never shows the field, and the account's own code is
+    /// what it would hold.
+    code: Field,
+    /// An index into [`Kind::ALL`] rather than a `Kind`, because `a` cycles
+    /// it. An edit form opens on the account's own and never shows the field.
+    kind: usize,
     name: Field,
     color: usize,
     band: usize,
@@ -203,6 +250,31 @@ pub struct AccountForm {
 }
 
 impl AccountForm {
+    /// A blank form for an account that does not exist yet.
+    ///
+    /// It opens on `Code` rather than on `Name`, which is where every other
+    /// form opens: the code is the field the owner cannot come back and fix,
+    /// so it is the one the caret is handed.
+    pub fn add() -> AccountForm {
+        AccountForm {
+            editing: None,
+            focus: AccountField::Code,
+            code: Field::default(),
+            kind: 0,
+            name: Field::default(),
+            // None of the six is on an add form. They are what `e` asks, and
+            // an account takes its kind's defaults until it is asked: the
+            // default band, no color, appended last, `NULL` interest policy,
+            // and no `Savings` block.
+            color: 0,
+            band: 0,
+            position: 0,
+            of_kind: 1,
+            policy: 0,
+            block: 0,
+        }
+    }
+
     /// `position` and `of_kind` come from [`Accounts::position_of`].
     pub fn edit(
         account: &Account,
@@ -212,9 +284,20 @@ impl AccountForm {
         block: Option<SavingsBlock>,
     ) -> AccountForm {
         AccountForm {
-            account_id: account.id,
+            editing: Some(account.id),
             focus: AccountField::Name,
-            kind: account.kind,
+            // Blank, not seeded: the code is not a field this form shows,
+            // because it is what the next import matches the row against and
+            // `a` is where it is said. Reading it here to fill a field nobody
+            // sees would be an account's text taken as a bare string, which
+            // is how one reaches a screen with no color on it. The *kind* is
+            // still read, because it decides which of the six fields below
+            // are worth asking about.
+            code: Field::default(),
+            kind: Kind::ALL
+                .iter()
+                .position(|k| *k == account.kind)
+                .unwrap_or(0),
             // seeds the form's editable Name field, not a display of an account
             name: Field::given(account.name.as_str().to_string()),
             // The color the account is *being drawn in*, which for one
@@ -253,19 +336,32 @@ impl AccountForm {
         }
     }
 
+    /// The kind this form is working in: the account's own, or the one `a`'s
+    /// selector is sitting on.
+    pub fn kind(&self) -> Kind {
+        Kind::ALL[self.kind]
+    }
+
     /// The fields this form shows, which is also its tab order.
+    ///
+    /// An add form asks three and stops, and the kind decides none of them:
+    /// the five it would decide are all *placements*, and an account is
+    /// placed by `e` once it exists.
     pub fn fields(&self) -> Vec<AccountField> {
+        if self.editing.is_none() {
+            return vec![AccountField::Code, AccountField::Kind, AccountField::Name];
+        }
         // Both kinds, unlike the three below it: a card is named on the
         // Credit ledger and on Recurring Transactions, so it is tinted there
         // too, and the choice belongs to every account rather than to the
         // cash ones. Beside the name because the two are one decision --
         // what this account looks like wherever it is named.
         let mut fields = vec![AccountField::Name, AccountField::Color];
-        if Group::bands(self.kind).len() > 1 {
+        if Group::bands(self.kind()).len() > 1 {
             fields.push(AccountField::Band);
         }
         fields.push(AccountField::Order);
-        if self.kind == Kind::Cash {
+        if self.kind() == Kind::Cash {
             fields.push(AccountField::Interest);
             fields.push(AccountField::Savings);
         }
@@ -273,17 +369,22 @@ impl AccountForm {
     }
 
     pub fn title(&self) -> &'static str {
-        "Edit account — Tab field · ←/→ choice · Enter save · Esc cancel"
+        match self.editing {
+            Some(_) => "Edit account — Tab field · ←/→ choice · Enter save · Esc cancel",
+            None => "Add account — Tab field · ←/→ choice · Enter save · Esc cancel",
+        }
     }
 
     pub fn display(&self, field: AccountField) -> Label {
         Label::plain(match field {
+            AccountField::Code => self.code.value().to_string(),
+            AccountField::Kind => self.kind().label().to_string(),
             AccountField::Name => self.name.value().to_string(),
             AccountField::Color => match color_choices()[self.color] {
                 None => "—".to_string(),
                 Some(color) => color.label().to_string(),
             },
-            AccountField::Band => Group::bands(self.kind)[self.band].label().to_string(),
+            AccountField::Band => Group::bands(self.kind())[self.band].label().to_string(),
             // One-based, because it is a place in a list rather than an index.
             AccountField::Order => format!("{} of {}", self.position + 1, self.of_kind),
             AccountField::Interest => InterestPolicy::ALL[self.policy].label().to_string(),
@@ -311,13 +412,31 @@ impl AccountForm {
         color_choices()[self.color]
     }
 
+    /// What `a` writes. Two fields and a selector, all three of them things
+    /// an account cannot be given after the fact.
+    pub fn commit_new(&self) -> Result<NewAccount> {
+        let code = self.code.value().trim().to_string();
+        ensure!(!code.is_empty(), "code must not be empty");
+        ensure!(
+            code.chars().count() <= usize::from(CODE_WIDTH),
+            "code must be at most {CODE_WIDTH} characters"
+        );
+        let name = self.name.value().trim().to_string();
+        ensure!(!name.is_empty(), "name must not be empty");
+        Ok(NewAccount {
+            code,
+            name,
+            kind: self.kind(),
+        })
+    }
+
     pub fn commit(&self) -> Result<AccountEdit> {
         let name = self.name.value().trim().to_string();
         ensure!(!name.is_empty(), "name must not be empty");
         Ok(AccountEdit {
             name,
             color: color_choices()[self.color],
-            group: Group::bands(self.kind)[self.band],
+            group: Group::bands(self.kind())[self.band],
             position: self.position,
             policy: InterestPolicy::ALL[self.policy],
             block: savings_choices()[self.block],
@@ -343,8 +462,10 @@ impl FormFields for AccountForm {
     // something that means nothing in between.
     fn focused(&mut self) -> Focused<'_> {
         match self.focus {
+            AccountField::Code => Focused::Text(&mut self.code),
             AccountField::Name => Focused::Text(&mut self.name),
-            AccountField::Color
+            AccountField::Kind
+            | AccountField::Color
             | AccountField::Band
             | AccountField::Order
             | AccountField::Interest
@@ -354,8 +475,10 @@ impl FormFields for AccountForm {
 
     fn caret(&self) -> Caret {
         match self.focus {
+            AccountField::Code => Caret::in_field(&self.code),
             AccountField::Name => Caret::in_field(&self.name),
-            AccountField::Color
+            AccountField::Kind
+            | AccountField::Color
             | AccountField::Band
             | AccountField::Order
             | AccountField::Interest
@@ -367,12 +490,15 @@ impl FormFields for AccountForm {
 impl AccountForm {
     fn step_choice(&mut self, step: isize) {
         match self.focus {
-            AccountField::Name => {}
+            AccountField::Code | AccountField::Name => {}
+            AccountField::Kind => {
+                self.kind = step_index(self.kind, Kind::ALL.len(), step);
+            }
             AccountField::Color => {
                 self.color = step_index(self.color, color_choices().len(), step);
             }
             AccountField::Band => {
-                self.band = step_index(self.band, Group::bands(self.kind).len(), step);
+                self.band = step_index(self.band, Group::bands(self.kind()).len(), step);
             }
             AccountField::Order => {
                 self.position = step_index(self.position, self.of_kind, step);
@@ -409,12 +535,19 @@ pub fn render_form(frame: &mut Frame, form: &AccountForm) {
                 // and it goes through `account_color` with the account's own
                 // id, so `—` shows the derived shade the row will actually
                 // take rather than nothing at all.
-                AccountField::Color => field_line_tinted(
-                    f.label(),
-                    value.plain_text(),
-                    focused,
-                    super::style::account_color(form.account_id, form.color_choice()),
-                ),
+                // Only ever an edit form's field: the shade a `—` stands for
+                // is derived from the account's id, and an account `a` has
+                // not written yet has none to derive from. `fields()` is
+                // what makes that so, and the fallback is what says it here.
+                AccountField::Color => match form.editing {
+                    Some(id) => field_line_tinted(
+                        f.label(),
+                        value.plain_text(),
+                        focused,
+                        super::style::account_color(id, form.color_choice()),
+                    ),
+                    None => field_line(f.label(), value, focused.then(|| form.caret())),
+                },
                 _ => field_line(f.label(), value, focused.then(|| form.caret())),
             }
         })
@@ -448,9 +581,14 @@ pub fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> usize {
         .collect();
 
     if rows.is_empty() {
-        rows.push(TableRow::new(vec![Cell::from(
-            "no accounts yet — run mm import",
-        )]));
+        // Behind a blank `Code` cell, so the message lands in `Account` --
+        // the one `Min` column, and the only one wide enough to hold a
+        // sentence. A single cell would sit in `Code` and be cut to
+        // `CODE_WIDTH`, which is a message that reports its own truncation.
+        rows.push(TableRow::new(vec![
+            Cell::from(""),
+            Cell::from("no accounts yet — press a, or run mm import"),
+        ]));
     }
 
     let header = TableRow::new(vec![
@@ -463,7 +601,7 @@ pub fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> usize {
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
     let widths = [
-        Constraint::Length(8),
+        Constraint::Length(CODE_WIDTH),
         Constraint::Min(16),
         Constraint::Length(8),
         Constraint::Length(10),
@@ -759,6 +897,20 @@ mod tests {
         assert!(accounts.selected().is_none());
     }
 
+    /// An empty screen is what a database before its first import looks
+    /// like, and there are two ways out of it now: the import that names
+    /// every account the workbook carries, and `a` for one it does not.
+    /// Naming only the import would send an owner to a workbook they may not
+    /// have.
+    #[test]
+    fn an_empty_screen_names_both_ways_out_of_it() {
+        let mut accounts = Accounts::new();
+        accounts.set_rows(Vec::new());
+        let drawn = drawn(&accounts).join("\n");
+        assert!(drawn.contains("mm import"), "{drawn}");
+        assert!(drawn.contains("press a"), "{drawn}");
+    }
+
     fn drawn(accounts: &Accounts) -> Vec<String> {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
@@ -917,6 +1069,109 @@ mod tests {
             .expect("no Card One row");
         assert!(card.contains('—'), "{card:?}");
         assert!(!card.contains("like last time"), "{card:?}");
+    }
+
+    /// `a` asks the two things `e` refuses to touch -- the code and the kind,
+    /// which are what `account::by_code` matches the next import against --
+    /// and the one thing every account needs to draw as a row. The other five
+    /// are `e`'s, because they are what the account is *placed* by rather
+    /// than what it is.
+    #[test]
+    fn an_add_form_asks_for_a_code_a_kind_and_a_name_and_nothing_else() {
+        let form = AccountForm::add();
+        assert_eq!(
+            form.fields(),
+            vec![AccountField::Code, AccountField::Kind, AccountField::Name]
+        );
+    }
+
+    /// The kind decides an *edit* form's fields -- credit has no band to
+    /// cycle and holds no goals. It decides nothing here: an account is
+    /// placed after it exists, so there is no band, policy or block on this
+    /// form for a kind to add or take away.
+    #[test]
+    fn the_kind_selector_does_not_grow_an_add_forms_field_list() {
+        let mut form = AccountForm::add();
+        let cash = form.fields();
+        form.next_choice_on(AccountField::Kind);
+        assert_eq!(form.display(AccountField::Kind).plain_text(), "Credit");
+        assert_eq!(form.fields(), cash);
+    }
+
+    /// Both kinds, in the order the selector cycles them, and a full cycle
+    /// comes back to where it started.
+    #[test]
+    fn the_kind_selector_round_trips_every_kind() {
+        let mut form = AccountForm::add();
+        assert_eq!(form.display(AccountField::Kind).plain_text(), "Cash");
+        for _ in 0..Kind::ALL.len() {
+            form.next_choice_on(AccountField::Kind);
+        }
+        assert_eq!(
+            form.display(AccountField::Kind).plain_text(),
+            "Cash",
+            "a full cycle must come back to where it started"
+        );
+    }
+
+    /// The code is what the next import matches this row against, and `e`
+    /// cannot fix one: a blank is refused here or nowhere.
+    #[test]
+    fn an_add_form_refuses_an_empty_code() {
+        let mut form = AccountForm::add();
+        type_into(&mut form, AccountField::Name, "Rainy Day");
+        let err = form.commit_new().unwrap_err();
+        assert!(err.to_string().contains("code"), "{err}");
+    }
+
+    /// An account with no name would draw as a blank row on four screens.
+    #[test]
+    fn an_add_form_refuses_an_empty_name() {
+        let mut form = AccountForm::add();
+        type_into(&mut form, AccountField::Code, "SAV");
+        let err = form.commit_new().unwrap_err();
+        assert!(err.to_string().contains("name"), "{err}");
+    }
+
+    /// A code the `Code` column cannot hold is refused rather than stored and
+    /// drawn cut: the column is the only place a code is ever shown, so a
+    /// truncated one leaves the owner unable to read what the next import
+    /// matches the row against.
+    #[test]
+    fn an_add_form_refuses_a_code_wider_than_its_column() {
+        let mut form = AccountForm::add();
+        type_into(&mut form, AccountField::Code, "ABCDEFGHI");
+        type_into(&mut form, AccountField::Name, "Rainy Day");
+        let err = form.commit_new().unwrap_err();
+        assert!(err.to_string().contains("code"), "{err}");
+
+        // One character narrower is the widest the column can draw whole.
+        let mut form = AccountForm::add();
+        type_into(&mut form, AccountField::Code, "ABCDEFGH");
+        type_into(&mut form, AccountField::Name, "Rainy Day");
+        assert_eq!(form.commit_new().unwrap().code, "ABCDEFGH");
+    }
+
+    /// Both text fields are trimmed, the way every other form's are: a code
+    /// with a stray space is a code no import will ever match.
+    #[test]
+    fn an_add_form_commits_a_trimmed_code_name_and_kind() {
+        let mut form = AccountForm::add();
+        type_into(&mut form, AccountField::Code, " CC1 ");
+        type_into(&mut form, AccountField::Name, " Card One ");
+        form.next_choice_on(AccountField::Kind);
+        let new = form.commit_new().unwrap();
+        assert_eq!(new.code, "CC1");
+        assert_eq!(new.name, "Card One");
+        assert_eq!(new.kind, Kind::Credit);
+    }
+
+    /// Focus a field and type into it, the way the modal's key handler does.
+    fn type_into(form: &mut AccountForm, field: AccountField, text: &str) {
+        form.focus = field;
+        for c in text.chars() {
+            form.edit(char_key(c));
+        }
     }
 }
 

@@ -122,6 +122,28 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // base cannot be recovered by inverting it.
         data: None,
     },
+    Migration {
+        version: 5,
+        // Two codes differing only in case name one account, so the baseline's
+        // `UNIQUE (code, kind)` is a case short of what `account::by_code`
+        // matches on. It has to be an index rather than an edit to that
+        // constraint -- SQLite cannot alter one, and the baseline is frozen --
+        // and being stricter, it makes the constraint beside it redundant
+        // rather than contradicted.
+        //
+        // The guard in `account::insert` is what an owner actually meets;
+        // this is the backstop under it, and what makes a database holding
+        // both `chk` and `CHK` in one kind unreachable rather than merely
+        // unwritten. `by_code` would have to pick one of the two, and which
+        // is not a question a row can answer.
+        sql: "CREATE UNIQUE INDEX account_code_kind \
+                ON account (code COLLATE NOCASE, kind)",
+        // Nothing to move. A database already holding a pair the index
+        // refuses has two rows for one account, and the arm failing here is
+        // the first anything has said about it -- one of them has to be
+        // renamed, and only the owner knows which.
+        data: None,
+    },
 ];
 
 /// The version this build's chain leaves a database at.
@@ -420,7 +442,7 @@ mod tests {
 
         apply(&conn, SCHEMA, MIGRATIONS).unwrap();
 
-        assert_eq!(version(&conn), 4);
+        assert_eq!(version(&conn), SCHEMA_VERSION);
         let (base, taxed): (i64, i64) = conn
             .query_row("SELECT base_cents, taxed FROM goal WHERE id = 1", [], |r| {
                 Ok((r.get(0)?, r.get(1)?))
@@ -431,5 +453,43 @@ mod tests {
             taxed, 0,
             "an existing goal already holds its target, so it is not taxed"
         );
+    }
+
+    /// The real chain again, because what this arm adds is a constraint on
+    /// rows an existing database already holds: a code differing from one
+    /// there only in case has to stop being insertable, and one differing in
+    /// more than case has to go on being inserted.
+    #[test]
+    fn arm_five_makes_a_code_unique_within_its_kind_whatever_its_case() {
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn, SCHEMA, &MIGRATIONS[..3]).unwrap();
+        conn.execute(
+            "INSERT INTO account (id, code, name, kind, grp)
+             VALUES (1, 'CHK', 'Everyday', 'cash', 'checking')",
+            [],
+        )
+        .unwrap();
+
+        apply(&conn, SCHEMA, MIGRATIONS).unwrap();
+
+        assert_eq!(version(&conn), SCHEMA_VERSION);
+        let clash = conn.execute(
+            "INSERT INTO account (id, code, name, kind, grp)
+             VALUES (2, 'chk', 'Everyday Again', 'cash', 'checking')",
+            [],
+        );
+        assert!(
+            clash.is_err(),
+            "two codes differing only in case name one account"
+        );
+        // The same code under the other kind is what the index is keyed on
+        // two columns to allow: one bank is both a checking account and the
+        // card drawn on it.
+        conn.execute(
+            "INSERT INTO account (id, code, name, kind, grp)
+             VALUES (3, 'chk', 'Everyday Card', 'credit', 'credit')",
+            [],
+        )
+        .unwrap();
     }
 }
