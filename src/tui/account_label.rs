@@ -193,11 +193,11 @@ mod tests {
             // a status message is transient prose.
             ("tui/ledger.rs", "map_or(\"?\", |a| a.name.as_str())"),
             // `Savings::account_name` -- the second entry in the residual
-            // list. It has two callers, both read here for the same reason:
-            // the Unallocated footer, transient prose like the status line,
-            // and `open_allocate`'s prefill for the Allocation modal's body,
-            // which is a real display and stays uncolored only because
-            // `AllocationForm` is outside this guarantee.
+            // list. Its one caller is `open_allocate`'s prefill for the
+            // Allocation modal's body, a real display that stays uncolored
+            // only because `AllocationForm` is outside this guarantee. The
+            // Unallocated footer used to read through here too and now draws
+            // its containers through `Savings::container_account`.
             ("tui/savings.rs", "map_or(\"?\", |a| a.name.as_str())"),
         ];
 

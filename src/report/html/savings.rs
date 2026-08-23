@@ -1,10 +1,10 @@
 //! The Savings tab: every container's goals, and what it has left over.
 
-use super::{account, escape, money, optional_money};
+use super::{account, escape, optional_money, whole_money};
 use crate::palette;
 use crate::rate::Percent;
 use crate::report::Container;
-use crate::savings::{Row, is_reconciled};
+use crate::savings::{Row, unallocated};
 
 /// The row's `<tr>` classes: `fav` for the owner's highlight, `expired` for a
 /// goal past its date and still short. Either, both, or neither.
@@ -77,22 +77,21 @@ fn section(container: &Container) -> String {
             "<tr{}><td class=\"w\">{}</td>{}{}{}<td class=\"d\">{goal_date}</td>{}</tr>",
             row_classes(r),
             escape(&r.name),
-            money(r.current.to_whole_dollars(), r.current),
-            money(r.goal.to_whole_dollars(), r.goal),
+            whole_money(r.current),
+            whole_money(r.goal),
             percent(r.percent),
             optional_money(r.per_paycheck),
         ));
     }
-    let marker = if is_reconciled(container.excess) {
-        "✓"
-    } else {
-        "!"
-    };
+    // Named rather than left to `whole_money`, which would do the same
+    // arithmetic: this is the rule the screen's own footer reads, and one
+    // function is what stops the two sinks quoting different remainders.
+    let excess = unallocated(container.excess);
     // Six cells, matching every goal row above: the excess is a money figure
     // and Current is where a reader looks for "how much is sitting here".
     rows.push_str(&format!(
         "<tr><td>Unallocated</td>{}<td class=\"n\"></td><td class=\"n\"></td><td class=\"d\"></td><td class=\"n\"></td></tr>",
-        money(format!("{} {marker}", container.excess), container.excess)
+        whole_money(excess)
     ));
     format!(
         "<h3>{}</h3><table>{rows}</table>",
@@ -159,14 +158,82 @@ mod tests {
         }
     }
 
-    /// The screens' own precision: the Savings tables drop their cents and
-    /// the Unallocated footer keeps them, because the $0.23 a container sits
-    /// at is the whole point of that line.
+    /// The screens' own precision, the Unallocated line included: the $0.23 a
+    /// container sits at for months is noise beside figures in the
+    /// thousands, and truncating it is what leaves the line saying nothing
+    /// when there is nothing to say.
     #[test]
-    fn figures_drop_their_cents_and_the_unallocated_line_keeps_them() {
+    fn every_figure_drops_its_cents_the_unallocated_line_included() {
         let page = page(&snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000));
         assert!(page.contains(">500<"), "a savings figure grew cents");
-        assert!(page.contains("0.23"), "the remainder lost its cents");
+        assert!(!page.contains("0.23"), "the remainder kept its cents");
+    }
+
+    /// The container the `Unallocated` row belongs to is named in its own
+    /// color, in the heading above the table -- the screen's footer names the
+    /// same container the same way, on the same line as the figure because a
+    /// terminal has no heading to hang it off.
+    #[test]
+    fn the_container_heading_names_its_account_in_color() {
+        let page = page(&snapshot(vec![], 1_000));
+        let panel = panel(&page, "savings");
+        let teal = palette::hex(palette::account(crate::db::account::AccountColor::Teal));
+        assert!(
+            panel.contains(&format!(
+                "<h3><span style=\"color:{teal}\">Rainy Day</span></h3>"
+            )),
+            "{panel}"
+        );
+    }
+
+    /// The marker the row used to carry is gone: it said "this container is
+    /// within a dollar", which is now what the truncated figure itself says.
+    #[test]
+    fn the_unallocated_row_carries_no_marker() {
+        let page = page(&snapshot(vec![], 1_000));
+        let panel = panel(&page, "savings");
+        for marker in ["✓", "!"] {
+            assert!(!panel.contains(marker), "{marker} survived: {panel}");
+        }
+    }
+
+    /// A container allocated past what it holds reads red, the color every
+    /// other negative figure on the page takes -- and a sub-dollar negative
+    /// does not, because the truncation takes its sign along with its cents.
+    #[test]
+    fn a_negative_remainder_is_red_and_a_sub_dollar_one_is_not() {
+        let red = palette::hex(palette::NEGATIVE);
+        let mut over = snapshot(vec![], 1_000);
+        over.containers[0].excess = crate::money::Cents(-250_000);
+        let over = page(&over);
+        let over = panel(&over, "savings");
+        assert!(over.contains(&red), "an overdrawn container was not red");
+        assert!(over.contains("-2,500"), "{over}");
+
+        let mut drift = snapshot(vec![], 1_000);
+        drift.containers[0].excess = crate::money::Cents(-23);
+        let drift = page(&drift);
+        let drift = panel(&drift, "savings");
+        assert!(!drift.contains(&red), "sub-dollar drift drew red: {drift}");
+        assert!(!drift.contains("-0"), "{drift}");
+    }
+
+    /// A goal's own balance drops its cents before its color is chosen, the
+    /// same as the `Unallocated` row beneath it. The cents a container
+    /// collects land on its goals too -- an interest share, an imported
+    /// correction -- and a figure the page shows as `0` must not be marked as
+    /// a debt.
+    #[test]
+    fn a_sub_dollar_negative_balance_is_neither_signed_nor_red() {
+        let red = palette::hex(palette::NEGATIVE);
+        let mut snapshot = snapshot(vec![row("Rainy Day", 0, 1_000)], 0);
+        snapshot.containers[0].rows[0].current = crate::money::Cents(-23);
+        let page = page(&snapshot);
+        let panel = panel(&page, "savings");
+        assert!(!panel.contains(&red), "sub-dollar drift drew red: {panel}");
+        // `>-0<` rather than `-0`, which every goal date carries.
+        assert!(!panel.contains(">-0<"), "{panel}");
+        assert!(panel.contains("<td class=\"n\">0</td>"), "{panel}");
     }
 
     /// Unlike an empty Overview band, which is a group the owner does not
@@ -177,7 +244,7 @@ mod tests {
         let page = page(&snapshot(vec![], 1_000));
         let panel = panel(&page, "savings");
         assert!(panel.contains("Rainy Day"), "the container vanished");
-        assert!(panel.contains("0.23"), "the remainder vanished");
+        assert!(panel.contains("Unallocated"), "the remainder vanished");
     }
 
     /// A database with no containers holding goals is not a database with

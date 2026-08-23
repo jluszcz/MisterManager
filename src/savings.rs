@@ -71,22 +71,24 @@ pub fn percent_complete(current: Cents, goal: Cents) -> Option<Percent> {
     Some(Percent((scaled * 2 + goal).div_euclid(goal * 2) as i64))
 }
 
-/// How far a container's unallocated remainder may drift before it is worth
-/// flagging. A container can sit at $0.23 for months; a warning that is always
-/// on is a warning nobody reads.
+/// What a container's unallocated remainder is *shown* as: the excess with
+/// its cents dropped, truncated toward zero.
 ///
-/// A documented constant rather than a setting: nothing yet suggests it needs
-/// to vary, and a setting would need a fallback, which is a second place for
-/// it to be wrong.
-pub const RECONCILED_WITHIN: Cents = Cents(100);
-
-/// Whether a container's excess is close enough to zero to stop flagging. The
-/// figure still renders either way -- this only decides the marker.
+/// A container can sit a few cents out for months -- interest and rounding
+/// collect there and nothing rounds them away -- and a line reporting `0.23`
+/// beside a figure in the thousands is a digit of noise standing where a
+/// reader looks for a real remainder. Truncating is what makes the line say
+/// nothing when there is nothing to say: sub-dollar drift of either sign
+/// reads `0`, and the figures that survive are the ones worth placing by
+/// hand.
 ///
-/// Called by the Savings screen's `Unallocated` footer, which is the one place
-/// the reconciliation is shown.
-pub fn is_reconciled(excess: Cents) -> bool {
-    excess.0.abs() < RECONCILED_WITHIN.0
+/// One function so the two sinks cannot drift: the Savings screen's
+/// `Unallocated` footer and the report's `Unallocated` row show the same
+/// remainder, and each decides its color from what this leaves rather than
+/// from the cents behind it -- so a container sitting at `-0.23` draws a
+/// plain `0` rather than a red `-0`.
+pub fn unallocated(excess: Cents) -> Cents {
+    excess.trunc_to_dollar()
 }
 
 /// What one goal asks of this paycheck, or `None` when it asks nothing.
@@ -437,15 +439,25 @@ mod tests {
         assert_eq!(marked, vec![false, true]);
     }
 
-    /// The threshold is exclusive: $0.99 of drift is the workbook's steady
-    /// state, $1.00 is worth looking at.
+    /// $0.99 of drift is the workbook's steady state and reads as nothing;
+    /// $1.00 is a figure the line reports. Either sign, and a negative
+    /// sub-dollar remainder loses its sign along with its cents -- the whole
+    /// reason the truncation happens before the color is chosen.
     #[test]
-    fn sub_dollar_drift_reconciles_in_either_direction() {
-        assert!(is_reconciled(Cents(99)));
-        assert!(is_reconciled(Cents(-99)));
-        assert!(is_reconciled(Cents::ZERO));
-        assert!(!is_reconciled(Cents(100)));
-        assert!(!is_reconciled(Cents(-100)));
+    fn sub_dollar_drift_shows_as_nothing_in_either_direction() {
+        assert_eq!(unallocated(Cents(99)), Cents::ZERO);
+        assert_eq!(unallocated(Cents(-99)), Cents::ZERO);
+        assert_eq!(unallocated(Cents::ZERO), Cents::ZERO);
+        assert_eq!(unallocated(Cents(100)), Cents(100));
+        assert_eq!(unallocated(Cents(-100)), Cents(-100));
+    }
+
+    /// The cents go, the dollars stay: a real remainder is still reported in
+    /// full.
+    #[test]
+    fn a_remainder_above_a_dollar_keeps_its_dollars() {
+        assert_eq!(unallocated(Cents(250_023)), Cents(250_000));
+        assert_eq!(unallocated(Cents(-250_023)), Cents(-250_000));
     }
 
     /// The screen's own order, so the report and the screen list a container's

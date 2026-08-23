@@ -104,8 +104,13 @@ impl AllocationForm {
     /// on the Savings screen behind this modal, and `/N` has no room in the
     /// help table `Topic::Form` shares with the forms that do not offer it.
     ///
-    /// Full precision, as the Savings footer keeps: sub-dollar drift is the
-    /// whole reason that figure is worth showing.
+    /// Full precision, where the Savings footer behind this modal shows whole
+    /// dollars. The two answer different questions: the footer reports
+    /// whether there is a remainder worth placing by hand, and this line
+    /// states what `/N` is about to divide -- which is the untruncated excess
+    /// `App::open_allocate` hands across. So a container sitting at `0.23`
+    /// reads `0` on the footer and `0.23` here, and the key still divides the
+    /// cents it would otherwise leave stranded.
     pub fn unallocated_line(&self) -> String {
         format!(
             "{} unallocated {} · /N takes 1/N",

@@ -617,14 +617,15 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   - **Four account displays are outside this guarantee, and this is the entire list.** The first
     two are gaps nothing has closed yet; the last two are routes deliberately taken around
     `Account`, where the account is tinted by another mechanism or named in color elsewhere on
-    the same row:
+    the same row. The Savings `Unallocated` footer is not among them: it names a container, which
+    is the one thing a reader reads that line to find, so it draws each one through
+    `Savings::container_account` and `label_line` like every other account on the screen:
     - **The destination picker's `Offered.container`**, in `app.rs`'s `open_destination` (backed
       by `destination.rs`): an uncolored account display in a picker column, a genuine gap rather
       than a justified exemption — no task has put `destination.rs` in scope.
     - **`AllocationForm`'s `container_name: String`**, in `goal_form.rs`, drawn into the
       Allocation modal's body by `unallocated_line`. It reads through `Savings::account_name`,
-      which has a second caller too — the Unallocated footer below, transient prose like the
-      status line — but the Allocation modal's is a real display, kept out of `Account` because
+      whose only caller it now is, and it is a real display kept out of `Account` because
       converting `AllocationForm` is outside this guarantee's scope.
     - **`transfer::Container`'s `String` name, and `planning::Tint`.** The Planning screen tints
       an account through that mechanism (below) rather than through `account_label::Account`: `plan` and
@@ -817,17 +818,23 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   screen's own `optional`, which does not right-align, so its header does not either.
 - **Some screens drop the cents, all through `Cents::to_whole_dollars`.** Savings, Planning, and
   Funds render whole dollars; the digits are dropped rather than rounded, truncating toward zero, so
-  `200.99` and `-200.99` read as the same figure under opposite signs. (A sub-dollar negative
-  therefore reads `-0`.) Not `floor_to_dollar`'s direction, which is for *computing* a transfer —
+  `200.99` and `-200.99` read as the same figure under opposite signs. (`to_whole_dollars` alone
+  would leave a sub-dollar negative reading `-0`; `whole_amount` truncates the `Cents` first, so the
+  figure and the color it is chosen from agree and the cell draws a plain `0`.) Not
+  `floor_to_dollar`'s direction, which is for *computing* a transfer —
   these screens only render what is already there. All are display only, but they part ways past
   that: on Savings and Planning the `edit` prefill keeps the stored cents *and* the commit path
   accepts it back, so opening a constant and pressing Enter cannot quietly round it. Funds' `e`
   prefill keeps the stored cents too, but its commit path goes through `form::parse_whole_amount`,
   which *refuses* a value carrying cents rather than rounding it — opening a fund whose actual value
-  has cents and pressing Enter is a parse error, not a silent round. Savings and Planning each keep
-  one footer at full precision — Savings' reconciliation and Planning's pin drift, because sub-dollar
-  drift is the only thing those two lines exist to show. Funds has no such footer: nothing on the
-  screen reconciles at full precision, so there is nothing for one to show.
+  has cents and pressing Enter is a parse error, not a silent round. Planning keeps one footer at
+  full precision — its pin drift, because sub-dollar drift is the only thing that line exists to
+  show. Savings' `Unallocated` footer drops the cents like every column above it, for a reason of
+  its own: sub-dollar drift there is what a container sits at for months, so the line reads `0` and
+  says there is nothing to place. It goes through `savings::unallocated` rather than
+  `to_whole_dollars` directly because the report's `Unallocated` row has to show the same
+  remainder — one function so the two sinks cannot drift. Funds has no such footer at all: nothing
+  on the screen reconciles at full precision, so there is nothing for one to show.
 - **Every figure a goal carries is typed in whole dollars.** A goal's target, a recurring goal's
   base, and the allocations booked against them all parse through `form::parse_whole_amount`, which
   *refuses* cents rather than flooring them — `1800.5` typed for `1800.50` is a typo, and booking
@@ -835,8 +842,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   figure with its cents, so a goal imported off a fractional cell shows what it really holds and is
   rounded by hand rather than silently moved the first time its form is opened. The cents a goal
   drifts by therefore come only from interest and rounding, and they collect in the container's
-  unallocated remainder — which is the figure the Savings footer reports and `savings::is_reconciled`
-  judges. The worksheet is not part of this: its lines are prefilled by `per_paycheck` and
+  unallocated remainder — which is the figure the Savings footer reports, through
+  `savings::unallocated`. The worksheet is not part of this: its lines are prefilled by `per_paycheck` and
   `pro_rata`, not typed.
 - **The worksheet's cursor and its focus are two marks, not one.** `> ` is where the line cursor
   sits and is drawn whatever has focus, since the scroll keys move it from the amount and date
@@ -946,9 +953,16 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     query returned, and updating the copy instead is how a screen starts disagreeing with the
     table under it. It costs nothing here — every goal is already loaded for the reconciliation
     line — and the cursor keeps its index, because nothing reorders.
-- **A container reconciles when `|excess| < $1.00`**, through `savings::is_reconciled`, called by the
-  Savings screen's `Unallocated` footer — the one place the reconciliation is shown. One container
-  has sat a few cents out for months; a warning that is always on is a warning nobody reads.
+- **The `Unallocated` footer is a figure and nothing else — no marker, and no cents.** Each
+  container's remainder goes through `savings::unallocated`, which drops the cents truncating
+  toward zero, and one container has sat a few cents out for months: truncated, that line reads
+  `0` and says what the old `✓` said, without a second glyph saying it again. What survives is a
+  whole-dollar figure, which is money to place by hand. The container is drawn through
+  `Savings::container_account` in its own color, and the figure through `style::amount_color`, so
+  a container allocated past what it holds reads red — and because the truncation happens *before*
+  the color is chosen, sub-dollar drift below zero draws a plain `0` rather than a red `-0`. The
+  report's `Unallocated` row is the same rule through the same function; its container is the
+  `<h3>` above the table, colored there.
 - **The goal form's two `bool`s are selectors, not typed fields.** `Taxed` and `Interest` are
   flipped with `←`/`→` and ignore keystrokes, because a `bool` the owner is spelling out one
   letter at a time can sit at `n`, `no`, or `nope` and mean nothing in between. `Interest` is on

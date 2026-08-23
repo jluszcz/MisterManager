@@ -1,7 +1,7 @@
 //! The Planning tab: what the payday would move, over the waterfall that
 //! decided it.
 
-use super::{account, escape, full_width_row, money};
+use super::{account, escape, full_width_row, whole_money};
 use crate::calc::planning::Lines;
 use crate::gate::Gate;
 use crate::money::Cents;
@@ -28,32 +28,17 @@ fn row(class: &str, label: &str, figure: String, extra: String) -> String {
 /// screen shows -- cents on a plan is a false claim about where a percentage
 /// landed.
 fn figure(label: &str, cents: Cents) -> String {
-    row(
-        "",
-        label,
-        money(cents.to_whole_dollars(), cents),
-        String::new(),
-    )
+    row("", label, whole_money(cents), String::new())
 }
 
 /// A figure the rows above it add up to.
 fn total(label: &str, cents: Cents) -> String {
-    row(
-        "tot",
-        label,
-        money(cents.to_whole_dollars(), cents),
-        String::new(),
-    )
+    row("tot", label, whole_money(cents), String::new())
 }
 
 /// A figure with the percentage that produced it beside it.
 fn split(label: &str, cents: Cents, pct: Percent) -> String {
-    row(
-        "",
-        label,
-        money(cents.to_whole_dollars(), cents),
-        format!("{}%", pct.0),
-    )
+    row("", label, whole_money(cents), format!("{}%", pct.0))
 }
 
 /// A row whose value is not money: a pay-period count, or a gate's answer.
@@ -83,7 +68,7 @@ fn transfer(t: &Transfer, shortfall: &Lines) -> String {
     };
     let head = format!(
         "<tr class=\"tot\"><td>{label}</td>{}<td class=\"n\"></td></tr>",
-        money(t.cents.to_whole_dollars(), t.cents)
+        whole_money(t.cents)
     );
     let lines: String = t
         .lines
@@ -102,7 +87,7 @@ fn transfer(t: &Transfer, shortfall: &Lines) -> String {
             row(
                 "sub",
                 line.label(),
-                money(cents.to_whole_dollars(), *cents),
+                whole_money(*cents),
                 match cut > Cents::ZERO {
                     true => gap(cut),
                     false => String::new(),
@@ -174,17 +159,14 @@ fn resolved(view: &PlanView) -> String {
     rows.push_str(&row(
         "",
         "Mortgage + HOA",
-        money(
-            view.housing_monthly.to_whole_dollars(),
-            view.housing_monthly,
-        ),
+        whole_money(view.housing_monthly),
         p.housing_biweekly.to_whole_dollars(),
     ));
     for b in view.housing.iter().chain(&view.other_bills) {
         rows.push_str(&row(
             "sub",
             &b.label,
-            money(b.monthly.to_whole_dollars(), b.monthly),
+            whole_money(b.monthly),
             b.biweekly.to_whole_dollars(),
         ));
     }
@@ -203,24 +185,21 @@ fn resolved(view: &PlanView) -> String {
     rows.push_str(&row(
         "sub",
         "Cap",
-        money(s.bill_payment_cap.to_whole_dollars(), s.bill_payment_cap),
+        whole_money(s.bill_payment_cap),
         String::new(),
     ));
     rows.push_str(&figure("Mom & Dad", p.mom_and_dad));
     rows.push_str(&row(
         "sub",
         "Annual",
-        money(
-            s.mom_and_dad_annual.to_whole_dollars(),
-            s.mom_and_dad_annual,
-        ),
+        whole_money(s.mom_and_dad_annual),
         String::new(),
     ));
     rows.push_str(&total("Remainder", p.remainder));
     rows.push_str(&row(
         "sub",
         "Goals Floor",
-        money(s.goals_floor.to_whole_dollars(), s.goals_floor),
+        whole_money(s.goals_floor),
         String::new(),
     ));
 

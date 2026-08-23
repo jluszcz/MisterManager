@@ -24,6 +24,19 @@ impl Cents {
         Cents(self.dollars() * 100)
     }
 
+    /// Drop the cents, truncating toward zero -- the `Cents` counterpart of
+    /// [`Cents::to_whole_dollars`], and the other direction from
+    /// [`Cents::floor_to_dollar`], which steps a negative down to the next
+    /// whole dollar.
+    ///
+    /// For a figure whose *color* is decided after its cents are gone: a
+    /// remainder of `-0.23` truncates to zero here and draws as the plain
+    /// `0` it now reads as, where `to_whole_dollars` alone would leave a
+    /// `-0` painted red over a figure that says nothing is owed.
+    pub fn trunc_to_dollar(self) -> Cents {
+        Cents(self.0 / 100 * 100)
+    }
+
     /// Grouped dollars with the cents dropped rather than rounded: `500.23`
     /// and `200.99` both print as their own dollar figure.
     ///
@@ -209,5 +222,33 @@ mod tests {
         assert_eq!(Cents(1750075).floor_to_dollar(), Cents(1750000));
         assert_eq!(Cents(1750000).floor_to_dollar(), Cents(1750000));
         assert_eq!(Cents(-150).floor_to_dollar(), Cents(-200));
+    }
+
+    /// The other direction from `floor_to_dollar`, and the same one
+    /// `to_whole_dollars` prints in: a sub-dollar remainder of either sign
+    /// lands on zero rather than on the dollar below it.
+    #[test]
+    fn trunc_to_dollar_truncates_toward_zero() {
+        assert_eq!(Cents(1750075).trunc_to_dollar(), Cents(1750000));
+        assert_eq!(Cents(-150).trunc_to_dollar(), Cents(-100));
+        assert_eq!(Cents(23).trunc_to_dollar(), Cents::ZERO);
+        assert_eq!(Cents(-23).trunc_to_dollar(), Cents::ZERO);
+    }
+
+    /// The pairing the truncation exists for: it drops exactly the digits
+    /// `to_whole_dollars` already drops, so truncating first changes the
+    /// text in one place only -- the sub-dollar figure that would otherwise
+    /// print as a signed zero.
+    #[test]
+    fn a_truncated_figure_prints_as_it_did_but_for_a_signed_zero() {
+        for cents in [Cents(1750075), Cents(-150), Cents(23)] {
+            assert_eq!(
+                cents.trunc_to_dollar().to_whole_dollars(),
+                cents.to_whole_dollars(),
+                "{cents}",
+            );
+        }
+        assert_eq!(Cents(-23).to_whole_dollars(), "-0");
+        assert_eq!(Cents(-23).trunc_to_dollar().to_whole_dollars(), "0");
     }
 }

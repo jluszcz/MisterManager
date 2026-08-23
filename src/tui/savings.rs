@@ -6,7 +6,7 @@ use crate::db::{AccountId, GoalId};
 use crate::goal::Funding;
 use crate::money::Cents;
 use crate::rate::Percent;
-use crate::savings::{Row, is_reconciled};
+use crate::savings::Row;
 use anyhow::Result;
 use chrono::NaiveDate;
 
@@ -87,12 +87,21 @@ impl Savings {
         &self.excess
     }
 
-    /// The container's name as text, for the two callers that cannot take an
-    /// `Account`: the reconciliation footer below, a status strip rather
-    /// than a place a reader looks to identify an account, and
-    /// `App::open_allocate`'s prefill for the Allocation modal's
-    /// `container_name`, which draws into that modal's body. The second is
-    /// the residual, listed with its reason in `src/tui/CLAUDE.md`'s
+    /// A container as the `Unallocated` footer names it: colored, like every
+    /// other account this screen draws.
+    ///
+    /// The footer used to read through `account_name` below, on the grounds
+    /// that it was a status strip -- but it is the one line on the screen
+    /// that says which container a remainder belongs to, and the column that
+    /// says the same thing about a goal is colored two rows above it.
+    pub fn container_account(&self, id: AccountId) -> super::Account {
+        super::Account::named(&self.accounts, id)
+    }
+
+    /// The container's name as text, for the one caller that cannot take an
+    /// `Account`: `App::open_allocate`'s prefill for the Allocation modal's
+    /// `container_name`, which draws into that modal's body. It is a
+    /// residual, listed with its reason in `src/tui/CLAUDE.md`'s
     /// account-color section -- `AllocationForm` is outside this guarantee.
     pub fn account_name(&self, id: AccountId) -> &str {
         self.accounts
@@ -277,7 +286,7 @@ use super::{Label, account_cell, label_line, right_header, table_state, whole_am
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Line as TextLine;
+use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Block, Cell, Paragraph, Row as TableRow, Table};
 
 /// A right-aligned cell, or an em dash where the sheet leaves the cell blank.
@@ -307,9 +316,12 @@ fn goal_date(row: &Row) -> Option<String> {
 
 /// One flat list of every open goal, with the container reconciliation below.
 ///
-/// The table's money columns are whole dollars ([`super::whole_amount`]). The
-/// reconciliation is not: it exists to show sub-dollar drift, which truncation
-/// would erase.
+/// Every money figure here is whole dollars: the table's columns through
+/// [`super::whole_amount`], and the reconciliation through
+/// [`crate::savings::unallocated`]. A container can sit a few cents out for
+/// months, and that drift is a digit of noise beside balances in the
+/// thousands -- a footer reading `0` is the footer saying there is nothing
+/// there worth placing by hand.
 ///
 /// Returns the [`Viewport`] it drew — the height `PageUp` and `PageDown` move
 /// by, and the row the next draw starts from — which `App` records on the
@@ -379,21 +391,27 @@ pub(super) fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> Viewpo
     let (mut state, viewport) = table_state(savings, savings.rows().len(), height);
     frame.render_stateful_widget(table, table_area, &mut state);
 
-    let line = savings
-        .excess()
-        .iter()
-        .map(|(id, excess)| {
-            let marker = if is_reconciled(*excess) { "✓" } else { "!" };
-            format!(
-                "{} {} {marker}",
-                savings.account_name(*id),
-                crate::demo::figure(*excess)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" · ");
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    for (id, excess) in savings.excess() {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" · "));
+        }
+        // The figure is truncated before it is colored, so the sign the color
+        // reads and the sign the reader reads are the same one: a container
+        // sitting at -$0.23 shows a plain `0`, not a red `-0`.
+        let excess = crate::savings::unallocated(*excess);
+        spans.extend(label_line(&Label::default().account(savings.container_account(*id))).spans);
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            crate::demo::whole_figure(excess),
+            match super::style::amount_color(excess) {
+                Some(color) => Style::default().fg(color),
+                None => Style::default(),
+            },
+        ));
+    }
     frame.render_widget(
-        Paragraph::new(TextLine::from(line)).block(Block::bordered().title("Unallocated")),
+        Paragraph::new(TextLine::from(spans)).block(Block::bordered().title("Unallocated")),
         footer_area,
     );
 
@@ -854,7 +872,12 @@ mod tests {
         use ratatui::backend::TestBackend;
 
         crate::demo::install(true);
-        let savings = savings();
+        let mut savings = savings();
+        // A whole-dollar remainder, since the fixture's sub-dollar one is
+        // truncated to `0` before the mask ever sees it -- a footer showing
+        // the fixture's own drift would pass this test by arithmetic rather
+        // than by being masked.
+        savings.set_excess(vec![(AccountId(1), Cents(250_000))]);
         let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
         terminal
             .draw(|frame| {
@@ -872,7 +895,7 @@ mod tests {
         assert!(!text.contains("13,000"), "a balance survived: {text}");
         assert!(!text.contains("15,000"), "a target survived: {text}");
         assert!(
-            !text.contains("0.23"),
+            !text.contains("2,500"),
             "the unallocated footer survived: {text}"
         );
         assert!(text.contains("██████"), "nothing was blocked: {text}");
@@ -1255,13 +1278,147 @@ mod tests {
         assert!(!text.contains("106,001.95"), "{text}");
     }
 
-    /// The reconciliation is about amounts smaller than a dollar, so
-    /// truncating it would leave the line reading `Rainy Day 0 ✓` and saying
-    /// nothing.
+    /// The footer drops its cents like every other figure on the screen, so
+    /// the $0.23 a container sits at for months reads as the nothing it is.
+    /// A remainder worth placing by hand is a whole-dollar figure, and that
+    /// is what survives.
     #[test]
-    fn the_unallocated_footer_keeps_its_cents() {
+    fn the_unallocated_footer_truncates_sub_dollar_drift_to_nothing() {
         let text = drawn(&savings()).join("\n");
-        assert!(text.contains("Rainy Day 0.23"), "{text}");
+        assert!(text.contains("Rainy Day 0"), "{text}");
+        assert!(!text.contains("0.23"), "the drift survived: {text}");
+    }
+
+    /// The cents go; the dollars do not.
+    #[test]
+    fn a_whole_dollar_remainder_reaches_the_footer_intact() {
+        let mut savings = savings();
+        savings.set_excess(vec![(AccountId(1), Cents(250_023))]);
+        let text = drawn(&savings).join("\n");
+        assert!(text.contains("Rainy Day 2,500"), "{text}");
+    }
+
+    /// The marker the line used to end in is gone. It said "this container is
+    /// within a dollar", which is now what the figure itself says: a
+    /// reconciled container reads `0`, and anything else reads as the amount
+    /// it is out by.
+    #[test]
+    fn the_unallocated_footer_carries_no_marker() {
+        let text = drawn(&savings()).join("\n");
+        for marker in ["✓", "!"] {
+            assert!(!text.contains(marker), "{marker} survived: {text}");
+        }
+    }
+
+    /// The container is an account, and it is colored like every other
+    /// account this screen names -- the `Account` column above says the same
+    /// thing about a goal in the same color.
+    #[test]
+    fn the_unallocated_footer_colors_its_account_names() {
+        let buffer = footer_buffer(&savings());
+        let row = footer_row(&buffer);
+        // `R` opens `Rainy Day` and `B` opens `Brokerage`; each is the first
+        // of its letter on the line.
+        let at = |needle: &str| {
+            (0..MIN_WIDTH)
+                .find(|x| buffer[(*x, row)].symbol() == needle)
+                .map(|x| buffer[(x, row)].fg)
+                .unwrap_or_else(|| panic!("no {needle} on the footer line"))
+        };
+        assert_eq!(
+            at("R"),
+            super::super::style::account_color(AccountId(1), None)
+        );
+        assert_eq!(
+            at("B"),
+            super::super::style::account_color(AccountId(2), None)
+        );
+    }
+
+    /// A container allocated past what it holds is a real state -- a goal
+    /// closed out to a figure the cash does not cover -- and it reads red,
+    /// the color a negative takes on every other screen.
+    #[test]
+    fn a_negative_remainder_is_red_and_a_positive_one_is_not() {
+        let mut savings = savings();
+        savings.set_excess(vec![
+            (AccountId(1), Cents(-250_000)),
+            (AccountId(2), Cents(250_000)),
+        ]);
+        let buffer = footer_buffer(&savings);
+        let row = footer_row(&buffer);
+        let digit = |from: u16| {
+            (from..MIN_WIDTH)
+                .find(|x| buffer[(*x, row)].symbol() == "2")
+                .expect("a figure on the footer line")
+        };
+        let negative = digit(0);
+        assert_eq!(buffer[(negative, row)].fg, super::super::style::NEGATIVE);
+        let positive = digit(negative + 1);
+        assert_eq!(buffer[(positive, row)].fg, ratatui::style::Color::Reset);
+    }
+
+    /// Sub-dollar drift below zero loses its sign with its cents, so the
+    /// figure and the color say the same thing: nothing is out.
+    #[test]
+    fn a_sub_dollar_negative_remainder_is_neither_signed_nor_red() {
+        let mut savings = savings();
+        savings.set_excess(vec![(AccountId(1), Cents(-23))]);
+        let buffer = footer_buffer(&savings);
+        let row = footer_row(&buffer);
+        let zero = (0..MIN_WIDTH)
+            .find(|x| buffer[(*x, row)].symbol() == "0")
+            .expect("the truncated remainder");
+        assert_eq!(buffer[(zero, row)].fg, ratatui::style::Color::Reset);
+        let line: String = (0..MIN_WIDTH).map(|x| buffer[(x, row)].symbol()).collect();
+        assert!(!line.contains("-0"), "{line}");
+    }
+
+    /// A goal's balance drops its cents before its color is chosen, exactly
+    /// as the footer beneath it does. The cents a container collects land on
+    /// its goals as well -- an interest share, an imported correction -- and
+    /// a row the screen shows as `0` must not be painted as a debt.
+    #[test]
+    fn a_sub_dollar_negative_balance_is_neither_signed_nor_red() {
+        let mut savings = savings();
+        savings
+            .set_goals(vec![goal(3, 1, "Dropbox", -23, 15_000, None)])
+            .unwrap();
+        let buffer = band_buffer(&savings);
+        // The `Current` column's figure: the first `0` past a name holding
+        // no digit of its own.
+        let zero = (0..MIN_WIDTH)
+            .find(|x| buffer[(*x, 2)].symbol() == "0")
+            .expect("the truncated balance");
+        assert_eq!(buffer[(zero, 2)].fg, ratatui::style::Color::Reset);
+        let line: String = (0..MIN_WIDTH).map(|x| buffer[(x, 2)].symbol()).collect();
+        assert!(!line.contains("-0"), "{line}");
+    }
+
+    /// The drawn buffer, for the tests that read the footer's colors back
+    /// rather than its text.
+    fn footer_buffer(savings: &Savings) -> ratatui::buffer::Buffer {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), savings);
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// The footer's one line of text, found by its border title rather than
+    /// counted from the top -- the table above it owns every other row, and
+    /// how tall that table is is not this test's business.
+    fn footer_row(buffer: &ratatui::buffer::Buffer) -> u16 {
+        let line = |y: u16| -> String { (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect() };
+        (0..12)
+            .find(|y| line(*y).contains("Unallocated"))
+            .expect("the Unallocated footer")
+            + 1
     }
 
     #[test]
