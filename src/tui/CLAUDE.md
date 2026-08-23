@@ -150,7 +150,19 @@ where they are drawn. `cursor` answers the scroll keys for every list at once, `
 of text under the caret and the keys that edit one — every box in the app is one — and `search` is
 the `/` box the ledgers, Savings, the worksheet and the destination chooser share: the box, its
 keys, and `Matcher`, which is what a needle *means* on all four. What every screen
-shares lives in `mod.rs`, not in whichever screen needed it first.
+shares lives in `tui/mod.rs`, not in whichever screen needed it first.
+
+`app` is a directory rather than a file, and it is split the same way this section reads: one
+module per screen — `app/ledger.rs`, `app/savings.rs`, `app/planning.rs`, `app/worksheet.rs`,
+`app/funds.rs`, `app/accounts.rs`, `app/recurring.rs` — each an `impl App` block carrying that
+screen's key handler, its `open_*` forms, its `commit_*` writes and its `reload_*`, with its own
+tests beneath it. `app/mod.rs` keeps what is about the application rather than about a screen: the
+struct, `dispatch`, `render`, `footer`, `reload`, and the modal, form and help plumbing every
+screen borrows. **The exhaustive `match self.screen` blocks stay there deliberately** — a tenth
+screen has to be answered in each of them before the crate compiles, and that is the guarantee a
+trait object per screen would trade away, so the split is by file and never by `dyn`.
+`app/test_support.rs` is what those test modules share: the fixture app, the keystroke helpers and
+the accessors that name the open modal, in one place rather than one copy per module.
 
 `modal` is not a screen but the layer over one: the `Modal` enum, which of its variants carry form
 fields, which `Topic` each is showing, how each one draws, and what a `Confirm` asks and writes.
@@ -626,7 +638,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     the same row. The Savings `Unallocated` footer is not among them: it names a container, which
     is the one thing a reader reads that line to find, so it draws each one through
     `Savings::container_account` and `label_line` like every other account on the screen:
-    - **The destination picker's `Offered.container`**, in `app.rs`'s `open_destination` (backed
+    - **The destination picker's `Offered.container`**, in `app/planning.rs`'s `open_destination` (backed
       by `destination.rs`): an uncolored account display in a picker column, a genuine gap rather
       than a justified exemption — no task has put `destination.rs` in scope.
     - **`AllocationForm`'s `container_name: String`**, in `goal_form.rs`, drawn into the
@@ -639,7 +651,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
       only look it up again for the same color. The block *above* them is not among these — a
       transfer's head reaches its label through `plan_rows::RowLabel::Account`, so its name comes
       with its color like every other account display.
-    - **The Accounts screen's `Code` column**, built in `app.rs` and drawn by `accounts.rs` as a
+    - **The Accounts screen's `Code` column**, built in `app/accounts.rs` and drawn by `accounts.rs` as a
       bare `Cell`. Deliberately plain rather than missed: the next cell along that row is
       `account_cell`, which names the same account in color, so the row already says which
       account it is and tinting the code as well would say it twice.
@@ -651,10 +663,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     screen's `Code` column — so the sanctioned list is wider than "not a display" and says so
     entry by entry. A source scan rather than a type, because the property is "nobody reached for
     the escape hatch", which no signature can state — and it is purely textual, so a reflow that
-    hid an escape behind a local variable would pass it just the same. **It reads three roots, not
+    hid an escape behind a local variable would pass it just the same. **It reads four roots, not
     just this directory**: `src/account_label.rs`, which owns `Account` and whose constructors are
-    the one sanctioned place the text is read; `src/tui/`; and `src/report/`, the second sink,
-    which would otherwise be free to flatten an account into a `format!`. Entries are keyed by the
+    the one sanctioned place the text is read; `src/tui/`; `src/report/`, the second sink, which
+    would otherwise be free to flatten an account into a `format!`; and `src/transfer.rs`, which
+    names accounts in `diagnose`'s prose and carries the name and the color apart on
+    `Wiring`'s `Container` and the `Row::Transfer` beside it. Entries are keyed by the
     path below `src/`, since `tui/ledger.rs` and `report/html/ledger.rs` are two different files and a
     sanctioned line in one must not excuse the same text in the other. The same test's second
     clause pins `Label::plain_text`, the escape for a `Label` rather than an `AccountName`: it

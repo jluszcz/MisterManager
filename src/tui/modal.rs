@@ -3,11 +3,11 @@
 //! showing, how each one draws, and -- for a confirmation dialog -- what it
 //! asks and what `y` writes.
 //!
-//! Those were four matches over one enum, scattered the length of `app.rs`,
-//! and adding a modal meant finding all four. `modal_key` is the one that
-//! stayed there: `App` owns the `Option<Modal>` and every handler a key
-//! reaches, so each of its arms is a call into one, and it belongs beside the
-//! handlers rather than beside the enum.
+//! Those were four matches over one enum, scattered the length of `app`, and
+//! adding a modal meant finding all four. `modal_key` is the one that stayed
+//! there: `App` owns the `Option<Modal>` and every handler a key reaches, so
+//! each of its arms is a call into one, and it belongs beside the handlers
+//! rather than beside the enum.
 
 use super::accounts::{self as accounts_screen, AccountForm};
 use super::autocomplete::Autocomplete;

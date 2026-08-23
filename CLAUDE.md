@@ -99,6 +99,13 @@ named something new. Those builders are also the only thing shared across `mod t
 besides `day`: what a module *chose* stays in the module, which is why each `today()` is still
 local, naming the day that module's schedules and deadlines turn on.
 
+The one exception is `src/tui/app/`, and it is a *family* rather than a second crate-wide seam:
+the screen modules there test one `App` against one fixture database, so `test_support` holds the
+fixture and the `today()` that indexes into it. The rows `app()` writes are dated around that day
+by hand, so a per-module `today()` would be a copy free to drift from the fixture it reads — the
+day is a property of the shared fixture, not a choice each screen makes. A module wanting a
+different day builds its own app rather than moving this one.
+
 `CHK` appears under both kinds deliberately: one code naming two accounts is exactly what
 `UNIQUE (code, kind)` exists for, and a fixture set without that property would stop exercising it.
 No name here is `Checking`, `Savings`, `Cash` or `Credit`, which are what `Group::label` and
@@ -143,7 +150,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and Funds in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/backup/` | The schedule, the snapshot, and the upload. `aws_config`, `aws_sdk_s3` and `tokio` are named only in `s3.rs`. |
-| `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `mod.rs` rather than in whichever screen needed it first. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
+| `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `tui/mod.rs` rather than in whichever screen needed it first. `app` is a directory, one module per screen over one `App`. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
 | `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `import`, `report` and `backup` are the three subcommands. |
 
 **`rusqlite` is named only inside `src/db/`.** `Db` holds a private `Connection` and deliberately does
