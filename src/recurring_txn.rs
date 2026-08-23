@@ -311,10 +311,7 @@ mod tests {
     use crate::db::txn::{self, Filter, NewTxn, Txn};
     use crate::db::{self, AccountId};
     use crate::money::Cents;
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use crate::test_support::day;
 
     fn today() -> NaiveDate {
         day(2026, 8, 16)

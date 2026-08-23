@@ -217,34 +217,12 @@ pub(super) fn render(frame: &mut Frame, picker: &Picker) -> Viewport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::account::{self, Group, Kind};
+    use crate::db::account::{self};
     use crate::money::Cents;
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use crate::test_support::{cash, day};
 
     fn accounts() -> Vec<account::Account> {
-        vec![
-            account::Account {
-                id: AccountId(1),
-                code: "SAV".into(),
-                name: "Rainy Day".into(),
-                kind: Kind::Cash,
-                sort: 0,
-                group: Group::Savings,
-                color: None,
-            },
-            account::Account {
-                id: AccountId(2),
-                code: "NST".into(),
-                name: "Nest Egg".into(),
-                kind: Kind::Cash,
-                sort: 1,
-                group: Group::Savings,
-                color: None,
-            },
-        ]
+        vec![cash(1, "SAV"), cash(2, "NST")]
     }
 
     fn entry(id: i64, name: &str, month: i64, cadence: Cadence) -> Entry {

@@ -633,38 +633,16 @@ pub fn render_close(frame: &mut Frame, form: &CloseForm) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::account::{self, Group, Kind};
+    use crate::db::account::{self};
+    use crate::test_support::{cash, day};
     use crate::tui::form::{backspace_key, char_key};
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
 
     fn today() -> NaiveDate {
         day(2026, 8, 21)
     }
 
     fn accounts() -> Vec<account::Account> {
-        vec![
-            account::Account {
-                id: AccountId(1),
-                code: "SAV".into(),
-                name: "Rainy Day".into(),
-                kind: Kind::Cash,
-                sort: 0,
-                group: Group::Savings,
-                color: None,
-            },
-            account::Account {
-                id: AccountId(2),
-                code: "NST".into(),
-                name: "Nest Egg".into(),
-                kind: Kind::Cash,
-                sort: 1,
-                group: Group::Savings,
-                color: None,
-            },
-        ]
+        vec![cash(1, "SAV"), cash(2, "NST")]
     }
 
     /// The container and its remainder matter only to `/N`; every test that

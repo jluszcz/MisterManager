@@ -1495,6 +1495,7 @@ mod tests {
     use super::*;
     use crate::db::account::Group;
     use crate::db::{AccountId, RecurringTxnId};
+    use crate::test_support::{cash, day};
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::style::Modifier;
 
@@ -1820,26 +1821,7 @@ mod tests {
     }
 
     fn accounts() -> Vec<account::Account> {
-        vec![
-            account::Account {
-                id: AccountId(1),
-                code: "CHK".into(),
-                name: "Everyday".into(),
-                kind: Kind::Cash,
-                sort: 0,
-                group: Group::Savings,
-                color: None,
-            },
-            account::Account {
-                id: AccountId(2),
-                code: "SAV".into(),
-                name: "Rainy Day".into(),
-                kind: Kind::Cash,
-                sort: 1,
-                group: Group::Savings,
-                color: None,
-            },
-        ]
+        vec![cash(1, "CHK"), cash(2, "SAV")]
     }
 
     fn all_accounts() -> Vec<account::Account> {
@@ -1863,10 +1845,6 @@ mod tests {
             color: None,
         });
         all
-    }
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
 
     fn today() -> NaiveDate {

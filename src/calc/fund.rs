@@ -156,6 +156,7 @@ pub fn compute(rows: &[Row], age: Option<i64>) -> Computed {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::day;
 
     fn age_row(dollars: i64) -> Row {
         Row {
@@ -326,10 +327,6 @@ mod tests {
             None,
         );
         assert_eq!(computed.rows[0].actual, BasisPoints(5_000));
-    }
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
 
     /// `DATEDIF(..., "y")` semantics: whole years only.

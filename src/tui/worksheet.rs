@@ -677,42 +677,11 @@ pub(super) fn render(frame: &mut Frame, sheet: &Worksheet) -> Viewport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::account::{self, Group, Kind};
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use crate::db::account::{self};
+    use crate::test_support::{cash, day};
 
     fn accounts() -> Vec<account::Account> {
-        vec![
-            account::Account {
-                id: AccountId(1),
-                code: "SAV".into(),
-                name: "Rainy Day".into(),
-                kind: Kind::Cash,
-                sort: 0,
-                group: Group::Savings,
-                color: None,
-            },
-            account::Account {
-                id: AccountId(2),
-                code: "BKR".into(),
-                name: "Brokerage".into(),
-                kind: Kind::Cash,
-                sort: 1,
-                group: Group::Savings,
-                color: None,
-            },
-            account::Account {
-                id: AccountId(3),
-                code: "NST".into(),
-                name: "Nest Egg".into(),
-                kind: Kind::Cash,
-                sort: 2,
-                group: Group::Savings,
-                color: None,
-            },
-        ]
+        vec![cash(1, "SAV"), cash(2, "BKR"), cash(3, "NST")]
     }
 
     fn prefill() -> Vec<(GoalId, String, Cents)> {

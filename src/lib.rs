@@ -22,3 +22,9 @@ pub mod savings;
 pub mod savings_block;
 pub mod transfer;
 pub mod tui;
+
+/// Fixtures the `mod tests` blocks share. Not compiled into the binary, and
+/// not reachable from an integration test in `tests/`, which compiles as its
+/// own crate -- those have `tests/common/mod.rs`.
+#[cfg(test)]
+mod test_support;

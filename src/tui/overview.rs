@@ -145,12 +145,9 @@ mod tests {
     use crate::db::account::{Group, Kind};
     use crate::db::txn::{self, NewTxn};
     use crate::db::{self, AccountId, Db, account};
+    use crate::test_support::day;
     use crate::tui::MIN_WIDTH;
     use chrono::NaiveDate;
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
 
     fn dates() -> Dates {
         Dates {

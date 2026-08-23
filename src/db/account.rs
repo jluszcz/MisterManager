@@ -126,7 +126,7 @@ impl FromStr for Group {
 /// screen. Cash defaults to `Savings` rather than `Checking` because a
 /// container added to the workbook is far likelier to be another savings pot
 /// than a second current account.
-fn default_group(kind: Kind) -> Group {
+pub(crate) fn default_group(kind: Kind) -> Group {
     match kind {
         Kind::Cash => Group::Savings,
         Kind::Credit => Group::Credit,

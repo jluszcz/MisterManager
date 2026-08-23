@@ -549,37 +549,14 @@ pub(super) fn render(frame: &mut Frame, area: Rect, ledger: &Ledger, today: Naiv
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::account::Group;
     use crate::db::{RecurringTxnId, TxnId};
     use crate::money::Cents;
+    use crate::test_support::{cash, day};
     use crate::tui::MIN_WIDTH;
     use chrono::NaiveDate;
 
     fn accounts() -> Vec<Account> {
-        vec![
-            Account {
-                id: AccountId(1),
-                code: "CHK".into(),
-                name: "Everyday".into(),
-                kind: Kind::Cash,
-                sort: 0,
-                group: Group::Savings,
-                color: None,
-            },
-            Account {
-                id: AccountId(2),
-                code: "BKR".into(),
-                name: "Brokerage".into(),
-                kind: Kind::Cash,
-                sort: 1,
-                group: Group::Savings,
-                color: None,
-            },
-        ]
-    }
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).expect("test dates are valid")
+        vec![cash(1, "CHK"), cash(2, "BKR")]
     }
 
     fn row(n: i64) -> Txn {

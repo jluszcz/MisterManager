@@ -94,10 +94,7 @@ pub fn next_after(anchor: NaiveDate, step: Step, after: NaiveDate) -> Option<Nai
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use crate::test_support::day;
 
     /// A biweekly paycheck: 14-day gaps, anchored on an occurrence that
     /// falls inside the window rather than at its start.

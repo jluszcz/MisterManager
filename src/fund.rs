@@ -91,11 +91,8 @@ mod tests {
     use super::*;
     use crate::db;
     use crate::db::fund::NewFund;
+    use crate::test_support::day;
     use chrono::Datelike;
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
 
     /// A birth date is personal data, so tests derive one from the day they
     /// are asking about rather than writing one down.

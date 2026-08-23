@@ -41,10 +41,7 @@ mod tests {
     use crate::db::account::{self, Kind};
     use crate::db::recurring_txn::{self, Cadence, NewRecurringTxn};
     use crate::money::Cents;
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use crate::test_support::day;
 
     fn with_paycheck(anchor: NaiveDate) -> Db {
         let db = crate::db::open_in_memory().unwrap();

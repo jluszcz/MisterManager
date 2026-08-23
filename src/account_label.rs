@@ -229,6 +229,7 @@ impl From<String> for Label {
 mod tests {
     use super::*;
     use crate::db::account::{AccountColor, Group, Kind};
+    use crate::test_support::cash;
 
     fn account_row(
         id: i64,
@@ -250,22 +251,12 @@ mod tests {
     fn accounts() -> Vec<account::Account> {
         vec![
             account::Account {
-                id: AccountId(1),
-                code: "CHK".into(),
-                name: "Everyday".into(),
-                kind: Kind::Cash,
-                sort: 0,
                 group: Group::Checking,
-                color: None,
+                ..cash(1, "CHK")
             },
             account::Account {
-                id: AccountId(2),
-                code: "NST".into(),
-                name: "Nest Egg".into(),
-                kind: Kind::Cash,
-                sort: 1,
-                group: Group::Savings,
                 color: Some(AccountColor::Teal),
+                ..cash(2, "NST")
             },
         ]
     }
