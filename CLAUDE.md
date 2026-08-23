@@ -109,7 +109,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 |---|---|
 | `src/account_label.rs` | `Account` and `Label` — an account on its way to a display, in any medium. `render_with` is the only reader of its text, and hands the resolved color alongside. |
 | `src/money.rs` | `Cents(i64)` — the only money type. No floats anywhere in the crate. |
-| `src/palette.rs` | What a color *is*, in numbers: the eight account colors and the negative color as `(u8, u8, u8)`. `tui::style` wraps them for a terminal; `report` spells them as `#rrggbb`. |
+| `src/palette.rs` | What a color *is*, in numbers: the eight account colors, the negative color, and the funding ramp — how funded a goal is, red through yellow to green — as `(u8, u8, u8)`. `tui::style` wraps them for a terminal; `report` spells them as `#rrggbb`. |
 | `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. `BasisPoints` prints itself as a percentage with two decimals, on the type rather than beside a screen, so the Funds screen and the report cannot render one share two ways. |
 | `src/gate.rs` | `Gate` — the Planning gates, each owning its setting key and goal-name substring. |
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the setting key naming its container account. |

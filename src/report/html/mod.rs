@@ -31,11 +31,12 @@ use crate::palette;
 /// simply not be there.
 ///
 /// Escapes `&`, `<`, `>` and `"`, never `'`: the page's only double-quoted
-/// attribute carrying interpolated data is `money`'s and `account`'s
-/// `style="color:{hex}"`, and the hex always comes from `palette::hex` over a
-/// fixed enum-derived RGB triple -- never owner text. A call site that puts
-/// escaped text inside a single-quoted attribute reopens the injection this
-/// function exists to close.
+/// attributes carrying interpolated data are `money`'s, `account`'s and
+/// `savings::percent`'s `style="color:{hex}"`, and the hex always comes from
+/// `palette::hex` over an enum-derived triple or the funding ramp's clamped
+/// interpolation -- never owner text. A call site that puts escaped text
+/// inside a single-quoted attribute reopens the injection this function
+/// exists to close.
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {

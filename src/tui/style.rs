@@ -11,8 +11,16 @@
 //!
 //! The colors are `Color::Rgb`, not the ANSI names: a named color is whatever
 //! the user's terminal theme says it is, and a red-to-green ramp needs the
-//! shades between them to be the ones chosen here. That costs a 24-bit-color
-//! terminal.
+//! shades between them to be exactly the ones asked for. That costs a
+//! 24-bit-color terminal.
+//!
+//! What those shades *are* is `crate::palette`'s to say wherever a color is
+//! drawn in more than one medium -- the account tints, the negative red, and
+//! the funding ramp all reach a screen through a wrapper here, so the report
+//! cannot come to a second opinion about what half funded looks like. What is
+//! chosen in this file is what nothing outside a terminal draws: the warning
+//! amber, the favorite band and the foreground it has to bring with it, and,
+//! for all of them, which value wears which color.
 
 use crate::db::AccountId;
 use crate::db::account::AccountColor;
@@ -25,18 +33,6 @@ use crate::rate::Percent;
 // visibly plumbing.
 pub use ratatui::style::Color;
 use ratatui::style::Style;
-
-/// The funding ramp's three stops: nothing saved, halfway, funded.
-///
-/// Two legs rather than one red-to-green interpolation, which would pass
-/// through a muddy olive at the midpoint instead of the yellow the halfway
-/// mark is supposed to read as.
-const RAMP_LOW: (u8, u8, u8) = (200, 60, 60);
-const RAMP_MID: (u8, u8, u8) = (200, 180, 60);
-const RAMP_HIGH: (u8, u8, u8) = (70, 170, 70);
-
-/// Where [`RAMP_MID`] sits, and so the width of each leg.
-const RAMP_MIDPOINT: i64 = 50;
 
 /// What one account color looks like on a terminal.
 ///
@@ -172,33 +168,16 @@ pub fn account_color(id: AccountId, chosen: Option<AccountColor>) -> Color {
     palette(chosen.unwrap_or_else(|| AccountColor::derived(id)))
 }
 
-/// `step/span` of the way from `from` to `to`, per channel.
-///
-/// `span` is [`RAMP_MIDPOINT`] at both call sites -- a private constant, not a
-/// setting -- so the divide cannot be by zero and needs no `div_ceil`.
-fn lerp(from: (u8, u8, u8), to: (u8, u8, u8), step: i64, span: i64) -> Color {
-    let channel = |a: u8, b: u8| (a as i64 + (b as i64 - a as i64) * step / span) as u8;
-    Color::Rgb(
-        channel(from.0, to.0),
-        channel(from.1, to.1),
-        channel(from.2, to.2),
-    )
-}
-
 /// How funded a goal is, as a color: red at nothing, yellow at halfway, green
 /// at fully funded.
 ///
-/// Clamped to `0..=100` rather than extrapolated. A goal can sit outside that
-/// range in both directions -- Emergency Savings is at 106% -- and the ramp
-/// has nothing to say past its ends: "more than funded" is still green, and
-/// overspent is still red.
+/// A wrapper over [`crate::palette::percent`], the way [`palette`] is one over
+/// [`crate::palette::account`]: where the ramp's stops sit is a fact about the
+/// ramp rather than about a terminal, and the report's Savings tab colors its
+/// own `%` column off the same three.
 pub fn percent_color(percent: Percent) -> Color {
-    let clamped = percent.clamp(Percent::ZERO, Percent::ONE_HUNDRED).0;
-    if clamped <= RAMP_MIDPOINT {
-        lerp(RAMP_LOW, RAMP_MID, clamped, RAMP_MIDPOINT)
-    } else {
-        lerp(RAMP_MID, RAMP_HIGH, clamped - RAMP_MIDPOINT, RAMP_MIDPOINT)
-    }
+    let (r, g, b) = crate::palette::percent(percent);
+    Color::Rgb(r, g, b)
 }
 
 #[cfg(test)]
@@ -418,33 +397,14 @@ mod tests {
         assert_eq!(tone_color(Tone::Plain), None);
     }
 
-    fn rgb(stop: (u8, u8, u8)) -> Color {
-        Color::Rgb(stop.0, stop.1, stop.2)
-    }
-
+    /// The ramp itself is `palette`'s; what is checked here is that the
+    /// terminal's wrapper hands its three channels across in order rather
+    /// than, say, drawing a fully funded goal in the unfunded red.
     #[test]
-    fn the_funding_ramp_hits_its_three_stops_exactly() {
-        assert_eq!(percent_color(Percent::ZERO), rgb(RAMP_LOW));
-        assert_eq!(percent_color(Percent(50)), rgb(RAMP_MID));
-        assert_eq!(percent_color(Percent::ONE_HUNDRED), rgb(RAMP_HIGH));
-    }
-
-    /// A quarter of the way along each leg, so the two legs are interpolated
-    /// rather than stepped between the stops.
-    #[test]
-    fn the_funding_ramp_blends_between_its_stops() {
-        assert_eq!(percent_color(Percent(25)), Color::Rgb(200, 120, 60));
-        assert_eq!(percent_color(Percent(75)), Color::Rgb(135, 175, 65));
-    }
-
-    /// Goals live outside `0..=100` in both directions: Emergency Savings is
-    /// overfunded, and an overspent goal is negative. Extrapolating past the
-    /// stops would run the channels out of range.
-    #[test]
-    fn a_percentage_outside_the_ramp_clamps_to_its_ends() {
-        assert_eq!(percent_color(Percent(106)), rgb(RAMP_HIGH));
-        assert_eq!(percent_color(Percent(10_000)), rgb(RAMP_HIGH));
-        assert_eq!(percent_color(Percent(-15)), rgb(RAMP_LOW));
-        assert_eq!(percent_color(Percent(i64::MIN)), rgb(RAMP_LOW));
+    fn the_funding_ramp_reaches_a_terminal_channel_for_channel() {
+        for percent in [Percent::ZERO, Percent(50), Percent::ONE_HUNDRED] {
+            let (r, g, b) = crate::palette::percent(percent);
+            assert_eq!(percent_color(percent), Color::Rgb(r, g, b), "{percent:?}");
+        }
     }
 }

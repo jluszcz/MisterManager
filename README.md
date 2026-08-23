@@ -268,7 +268,10 @@ Cash, Credit, Savings, Planning, Funds. It opens on Overview, and the switch is
 radio buttons and a stylesheet — no script, so it works on a phone with no
 network and nothing to load. Each container's goals sit under its own heading,
 the Planning tab shows the transfers over the waterfall that produced them, and
-the footer says when the page was written.
+the footer says when the page was written. A goal's `%` is colored the way the
+Savings screen colors it — red at nothing saved, yellow at halfway, green at
+funded, and every shade between — off the same ramp, so a goal is the same
+color on the phone as it is in the terminal.
 
 Cash and Credit carry **every** transaction, not the month or two the screens
 window to, with a dropdown that filters to one month at a time. They open on
