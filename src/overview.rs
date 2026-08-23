@@ -90,13 +90,6 @@ impl Section {
     }
 }
 
-/// The bands, in the order the Overview stacks them.
-///
-/// Fixed here rather than taken from the order accounts happen to come back
-/// in: an account the layout table does not place sorts last, and taking the
-/// scan order would let it split its own band in two.
-const BANDS: [Group; 3] = [Group::Checking, Group::Savings, Group::Credit];
-
 /// Everything the Overview screen shows, as numbers.
 ///
 /// Built by three `balances_at` queries — one per column — rather than one
@@ -120,7 +113,7 @@ impl Overview {
 
         let accounts = account::list(db)?;
         let mut bands: Vec<Band> = Vec::new();
-        for group in BANDS {
+        for group in Group::ALL {
             let lines: Vec<Line> = accounts
                 .iter()
                 .filter(|a| a.group == group)

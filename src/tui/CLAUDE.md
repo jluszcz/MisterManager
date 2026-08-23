@@ -674,7 +674,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   (`account::Group`) inside sections (`account::Kind`): cash breaks into Checking and Savings,
   credit does not break at all. A single band's subtotal and its section's total are the same
   number under two names, so `Section::breaks_down` suppresses the band row — which is why credit
-  shows one `Credit` line and not two. Band order is `crate::overview::BANDS`, fixed, not the order
+  shows one `Credit` line and not two. Band order is `account::Group::ALL`, fixed, not the order
   accounts come back in: an unplaced account sorts last and taking the scan order would let it
   split its own band in two. A subtotal is set apart by weight alone — every label starts in the
   same column, and the subtotals are the only bold rows. Blank rows separate sections, not bands.

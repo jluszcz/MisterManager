@@ -24,6 +24,14 @@ pub enum BatchKind {
 }
 
 impl BatchKind {
+    /// Every kind, for callers that must cover them all.
+    pub const ALL: [BatchKind; 4] = [
+        BatchKind::Paycheck,
+        BatchKind::Interest,
+        BatchKind::Adhoc,
+        BatchKind::Import,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             BatchKind::Paycheck => "paycheck",
@@ -662,12 +670,7 @@ mod tests {
 
     #[test]
     fn batch_kind_as_str_and_from_str_round_trip() {
-        for kind in [
-            BatchKind::Paycheck,
-            BatchKind::Interest,
-            BatchKind::Adhoc,
-            BatchKind::Import,
-        ] {
+        for kind in BatchKind::ALL {
             assert_eq!(kind.as_str().parse::<BatchKind>().unwrap(), kind);
         }
     }
@@ -675,6 +678,24 @@ mod tests {
     #[test]
     fn from_str_rejects_an_unknown_batch_kind() {
         assert!("payckeck".parse::<BatchKind>().is_err());
+    }
+
+    /// `ALL` is written out by hand, so a kind added to the enum without
+    /// being added here would drop out of the test below that inserts one
+    /// batch of every variant looking for a missing `CHECK` arm.
+    #[test]
+    fn all_covers_every_variant() {
+        // The match is exhaustive, so a fifth variant stops this compiling
+        // until it is added to `ALL` and counted here too.
+        for kind in BatchKind::ALL {
+            match kind {
+                BatchKind::Paycheck
+                | BatchKind::Interest
+                | BatchKind::Adhoc
+                | BatchKind::Import => {}
+            }
+        }
+        assert_eq!(BatchKind::ALL.len(), 4);
     }
 
     /// The enum and the schema's `CHECK (kind IN (...))` are two independent
@@ -685,12 +706,7 @@ mod tests {
     #[test]
     fn every_batch_kind_satisfies_the_schema_constraint() {
         let db = db::open_in_memory().unwrap();
-        for kind in [
-            BatchKind::Paycheck,
-            BatchKind::Interest,
-            BatchKind::Adhoc,
-            BatchKind::Import,
-        ] {
+        for kind in BatchKind::ALL {
             insert_batch(&db, kind, day(2026, 1, 1))
                 .unwrap_or_else(|e| panic!("{kind:?} is not in the schema's CHECK list: {e}"));
         }

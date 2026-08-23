@@ -63,6 +63,47 @@ enum Screen {
 }
 
 impl Screen {
+    /// Every screen, in the order the tab bar draws them.
+    ///
+    /// That order is the discriminants', because the bar selects the current
+    /// tab by `self.screen as usize` -- a list in any other order would
+    /// highlight the wrong label.
+    const ALL: [Screen; 9] = [
+        Screen::Overview,
+        Screen::Cash,
+        Screen::Credit,
+        Screen::Savings,
+        Screen::Planning,
+        Screen::Funds,
+        Screen::RecurringGoals,
+        Screen::RecurringTxns,
+        Screen::Accounts,
+    ];
+
+    /// What the tab bar calls this screen, digit included.
+    ///
+    /// Abbreviated on purpose. The bar is a row of shortcuts, not a set of
+    /// headings: spelled out, "7 Recurring Goals" and "8 Recurring Txns"
+    /// spend fourteen columns restating what the screen's own title and
+    /// footer say the moment it is opened.
+    ///
+    /// Beside the discriminants for `from_key`'s reason, and because a label
+    /// written out at the one call site that draws it is checked by nothing:
+    /// a screen added to the enum without one is a compile error here.
+    fn tab_label(self) -> &'static str {
+        match self {
+            Screen::Overview => "1 Overview",
+            Screen::Cash => "2 Cash",
+            Screen::Credit => "3 Credit",
+            Screen::Savings => "4 Savings",
+            Screen::Planning => "5 Planning",
+            Screen::Funds => "6 Funds",
+            Screen::RecurringGoals => "7 Goals",
+            Screen::RecurringTxns => "8 Txns",
+            Screen::Accounts => "9 Accounts",
+        }
+    }
+
     /// The screen a top-row digit switches to, or `None` for any other key.
     ///
     /// Beside the discriminants because it is the other half of the same
@@ -2739,24 +2780,10 @@ impl App {
         ])
         .areas(frame.area());
 
-        // Abbreviated on purpose. The bar is a row of shortcuts, not a set
-        // of headings: spelled out, "7 Recurring Goals" and "8 Recurring
-        // Txns" spend fourteen columns restating what the screen's own title
-        // and footer say the moment it is opened.
         frame.render_widget(
-            Tabs::new(vec![
-                "1 Overview",
-                "2 Cash",
-                "3 Credit",
-                "4 Savings",
-                "5 Planning",
-                "6 Funds",
-                "7 Goals",
-                "8 Txns",
-                "9 Accounts",
-            ])
-            .select(self.screen as usize)
-            .divider("│"),
+            Tabs::new(Screen::ALL.map(Screen::tab_label))
+                .select(self.screen as usize)
+                .divider("│"),
             tab_area,
         );
 
@@ -3720,18 +3747,32 @@ mod tests {
 
         let buffer = terminal.backend().buffer();
         let bar: String = (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect();
-        for tab in [
-            "1 Overview",
-            "2 Cash",
-            "3 Credit",
-            "4 Savings",
-            "5 Planning",
-            "6 Funds",
-            "7 Goals",
-            "8 Txns",
-        ] {
+        for tab in Screen::ALL.map(Screen::tab_label) {
             assert!(bar.contains(tab), "{tab:?} is cut off: {bar:?}");
         }
+    }
+
+    /// The bar highlights the current tab by `self.screen as usize`, so a
+    /// screen out of discriminant order in `ALL` would draw one label and
+    /// underline another. The match is exhaustive, so a tenth screen stops
+    /// this compiling until it is listed and counted here too.
+    #[test]
+    fn every_screen_is_listed_in_discriminant_order() {
+        for (i, screen) in Screen::ALL.into_iter().enumerate() {
+            match screen {
+                Screen::Overview
+                | Screen::Cash
+                | Screen::Credit
+                | Screen::Savings
+                | Screen::Planning
+                | Screen::Funds
+                | Screen::RecurringGoals
+                | Screen::RecurringTxns
+                | Screen::Accounts => {}
+            }
+            assert_eq!(screen as usize, i, "{screen:?} is out of order in ALL");
+        }
+        assert_eq!(Screen::ALL.len(), 9);
     }
 
     /// Everything the screen draws, as one string per test to search.
