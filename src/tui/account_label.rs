@@ -162,18 +162,37 @@ mod tests {
             ("account_label.rs", "|a| a.code.as_str().to_string()"),
             ("account_label.rs", "let code = account.code.as_str();"),
             ("account_label.rs", "let name = account.name.as_str();"),
+            // `container_names`, which names the plug's containers in
+            // `diagnose`'s text report, and the `diagnose` header above it
+            // that counts a container's goals. Both are prose the Planning
+            // screen prints as prose.
+            ("transfer.rs", "account::get(db, *id)?.name.as_str()"),
+            ("transfer.rs", "account::get(db, id)?.name.as_str()"),
+            // Names the goals behind that count -- a goal, not an account,
+            // and outside this guarantee entirely. The scan matches text
+            // rather than types, so a goal row reads exactly like an account
+            // row and has to be sanctioned by hand.
+            ("transfer.rs", "|g| g.name.as_str()"),
+            // `Wiring`'s `Container` and the `Row::Transfer` beside it. Both
+            // are real displays, and both keep the color in a field of their
+            // own for the Planning screen to tint through `planning::Tint` --
+            // see `src/tui/CLAUDE.md`'s account-color section. They are the
+            // one pair of sanctioned sites where the name and the color are
+            // carried apart rather than never separated.
+            ("transfer.rs", "name: a.name.as_str().to_string()"),
+            ("transfer.rs", "name: account.name.as_str().to_string()"),
             // Seeds the Accounts form's editable Name field -- the owner then
             // owns the text.
             ("tui/accounts.rs", "Field::given(account.name.as_str()"),
             // The destination picker's `Offered.container` -- the first entry
             // in the residual list in `src/tui/CLAUDE.md`'s account-color
             // section.
-            ("tui/app.rs", "map_or(\"?\", |a| a.name.as_str())"),
+            ("tui/app/planning.rs", "map_or(\"?\", |a| a.name.as_str())"),
             // The `accounts::Row` `Code` column, deliberately uncolored: the
             // next cell along that row already names the account in color, so
             // tinting the code too would say it twice. The last entry in the
             // residual list in `src/tui/CLAUDE.md`'s account-color section.
-            ("tui/app.rs", "code: account.code.as_str()"),
+            ("tui/app/accounts.rs", "code: account.code.as_str()"),
             // Prefills a description with the card's code. Not a display of an
             // account: it seeds an editable field the owner then owns.
             ("tui/form.rs", "{} Payment"),
@@ -225,7 +244,7 @@ mod tests {
         let plain_text_sanctioned = [
             // The status line, transient prose like every other status
             // message sanctioned above.
-            ("tui/app.rs", "form.label().plain_text().trim()"),
+            ("tui/app/planning.rs", "form.label().plain_text().trim()"),
             // The Accounts screen's `Color` field draws its own value through
             // `field_line_tinted`, whose tint names the chosen color rather
             // than an account -- this flattening is that value argument, not
@@ -277,12 +296,18 @@ mod tests {
     /// Every file the scan reads, as (path below `src/`, the file's production
     /// code).
     ///
-    /// Three roots, because the guarantee has three parts:
+    /// Four roots, because the guarantee has four parts:
     /// `src/account_label.rs`, which owns [`crate::account_label::Account`]
     /// and is the one place its text is meant to be read; `src/tui/`, the
-    /// terminal sink; and `src/report/`, the html one. A scan of the screens alone would have gone on passing while
-    /// a `format!("{}", a.name.as_str())` in `report::html` flattened an
+    /// terminal sink; `src/report/`, the html one; and `src/transfer.rs`,
+    /// which is neither sink but builds display rows both of them draw. A
+    /// scan of the screens alone would have gone on passing while a
+    /// `format!("{}", a.name.as_str())` in `report::html` flattened an
     /// account's color away -- the exact bug this exists to make unwritable.
+    /// `transfer.rs` is the same argument one layer further out: a policy
+    /// module that hands a name downstream is as able to drop the color as
+    /// the screen that draws it, and `Wiring` and `Row::Transfer` both carry
+    /// the name and the color as separate fields.
     ///
     /// The key is the path below `src/` rather than the file name, since
     /// `tui/ledger.rs` and `report/html/ledger.rs` are two different files and
@@ -295,7 +320,7 @@ mod tests {
     /// own test module, and cutting at the first would have left `run` and
     /// `event_loop` -- the event loop itself -- unscanned along with them.
     /// Without the cut landing at the module at all, this test fails on its
-    /// own fixtures: `app.rs`, `savings.rs`, `worksheet.rs`, `picker.rs` and
+    /// own fixtures: `app/`, `savings.rs`, `worksheet.rs`, `picker.rs` and
     /// `recurring_goal.rs` all have test helpers that read `.name.as_str()` on
     /// goal rows, worksheet lines or picker entries -- none of them an
     /// account. This file's own fixture above is the same shape, and is read
@@ -307,6 +332,7 @@ mod tests {
         let mut out = Vec::new();
         let mut pending = vec![
             src.join("account_label.rs"),
+            src.join("transfer.rs"),
             src.join("tui"),
             src.join("report"),
         ];
