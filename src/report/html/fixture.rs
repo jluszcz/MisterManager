@@ -143,16 +143,19 @@ pub(super) fn plan_view() -> PlanView {
                 to: Some(labelled()),
                 label: "Rainy Day".into(),
                 cents: dollars(1_000),
-                lines: vec![("Goals", dollars(1_000))],
+                lines: vec![(crate::plan_line::Line::Goals, dollars(1_000))],
             },
             Transfer {
                 to: None,
                 label: "Withdrawal".into(),
                 cents: dollars(500),
-                lines: vec![("Retirement", dollars(500))],
+                lines: vec![(crate::plan_line::Line::Retirement, dollars(500))],
             },
         ]),
         plan,
+        // Nothing asked of the plug, so the Goals line covers it -- the
+        // tests that are about the gap set this themselves.
+        spread_ask_total: Cents::ZERO,
     }
 }
 

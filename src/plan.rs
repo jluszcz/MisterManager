@@ -47,6 +47,92 @@ pub fn settings_from_db(db: &Db) -> Result<PlanSettings> {
     })
 }
 
+/// Refuse a set of splits that leaves Goals less than nothing.
+///
+/// Goals takes what the other three leave -- `100 - (fh + rt + inv)`,
+/// saturating at zero -- so a set totalling over 100 hands every discretionary
+/// dollar to the other three and Goals nothing at all. `calc::planning` clamps
+/// each share against what the ones above it left, but that is a backstop: the
+/// figures it produces are not the ones the percentages claim, and nothing on
+/// any screen says so.
+///
+/// Both bounds, because a cell is not a field. The form's writer is two
+/// refusals -- `tui::planning::parse_percent` will not let a percentage
+/// outside `0..=100` be typed at all, and `write_split` refuses the set it
+/// would join -- but `import::cell::as_percent` reads whatever the sheet
+/// carries and does not clamp, so an import stating only the set would let a
+/// `150 / -60 / 5` totalling 95 through a rule written for `60 / 30 / 30`.
+/// `Percent::of` does not clamp either, so what that reaches is
+/// `calc::planning` handing a line a negative share: `transfer::plan` skips a
+/// line at zero and nothing anywhere reads its sign, so it would be written
+/// as a real transfer instruction moving money the wrong way.
+///
+/// The set is checked second because the per-field rule is what makes it mean
+/// anything: three shares that sum inside 100 by cancelling each other out is
+/// the arithmetic the set rule assumes cannot happen.
+///
+/// Read through [`settings_from_db`] so an unset key counts as the default the
+/// waterfall will use rather than as nothing.
+pub fn check_splits(db: &Db) -> Result<()> {
+    let s = settings_from_db(db)?;
+    let (fh, rt, inv) = (
+        s.future_housing_pct.0,
+        s.retirement_pct.0,
+        s.investment_pct.0,
+    );
+    for (label, pct) in [
+        ("Future Housing", fh),
+        ("Retirement", rt),
+        ("Investment", inv),
+    ] {
+        anyhow::ensure!(
+            (0..=100).contains(&pct),
+            "the {label} split is {pct}%, which is not a share of anything: \
+             a share below zero allocates its line backwards, and one past a \
+             hundred claims what the excess never had"
+        );
+    }
+    anyhow::ensure!(
+        fh + rt + inv <= 100,
+        "the three splits total {}%, which leaves Goals nothing: \
+         Future Housing {fh}%, Retirement {rt}%, Investment {inv}%",
+        fh + rt + inv
+    );
+    Ok(())
+}
+
+/// Refuse a pinned excess the waterfall cannot run off.
+///
+/// Two bounds, and the waterfall breaks differently under each. A pin below
+/// zero leaves `budget` clamped at nothing while `excess_used` is negative, so
+/// every line floors to zero and `lines.total() <= excess_used` -- the one rule
+/// the whole waterfall answers to -- is false with nothing spent. A pin
+/// carrying cents has the drift line under the plan quoting a difference that
+/// is not one, since what that line reads is the cents `excess_used`'s own
+/// floor drops; the `Excess (Used)` row would then refuse its own prefill.
+///
+/// The stored figure, because that is the shape an import writes.
+/// `tui::planning::parse_pinned_excess` holds the same two bounds on text
+/// typed into the row, which is the shape the form writes; both exist because
+/// both are writers, and the sheet's `Excess (Fixed)` cell would otherwise put
+/// a database straight into the state the row refuses.
+pub fn check_pinned_excess(db: &Db) -> Result<()> {
+    let Some(pinned) = setting::get(db, key::PINNED_EXCESS)? else {
+        return Ok(());
+    };
+    anyhow::ensure!(
+        pinned >= Cents::ZERO,
+        "the pinned excess is {pinned}, and a waterfall run off a figure below \
+         zero allocates nothing while reporting it as spent"
+    );
+    anyhow::ensure!(
+        pinned.0 % 100 == 0,
+        "the pinned excess {pinned} is not a whole number of dollars, which \
+         the drift line under the plan would read as drift"
+    );
+    Ok(())
+}
+
 /// Run the Planning waterfall against imported settings and balances.
 ///
 /// `adhoc` is the date the checking balance is quoted at -- [`crate::projection::Dates::adhoc`]
@@ -371,5 +457,129 @@ mod tests {
             settings_from_db(&db).unwrap().target,
             Cents::from_dollars(9_000)
         );
+    }
+
+    /// The defaults total 60, so a fresh database is already a set the
+    /// waterfall can divide.
+    #[test]
+    fn the_default_splits_leave_goals_a_share() {
+        let db = db::open_in_memory().unwrap();
+        check_splits(&db).unwrap();
+    }
+
+    /// A share below zero is the one the set rule cannot catch: it makes
+    /// room for another past a hundred, and `Percent::of` hands the line the
+    /// negative unclamped -- which `transfer::plan` would write as a real
+    /// instruction, since nothing downstream reads a line's sign.
+    #[test]
+    fn a_split_below_zero_is_refused_even_when_the_three_total_under_a_hundred() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(150)).unwrap();
+        setting::set(&db, key::SPLIT_RETIREMENT_PCT, Percent(-60)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(5)).unwrap();
+
+        let err = check_splits(&db).unwrap_err().to_string();
+
+        // The first one outside the bound, named as the sheet's own row.
+        assert!(
+            err.contains("Future Housing") && err.contains("150"),
+            "the offending split is not named: {err}"
+        );
+    }
+
+    /// The same bound the form holds with `parse_percent`, on the writer that
+    /// has no field to hold it at: `cell::as_percent` reads whatever the
+    /// sheet carries.
+    #[test]
+    fn a_split_past_a_hundred_is_refused_on_its_own() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(101)).unwrap();
+        setting::set(&db, key::SPLIT_RETIREMENT_PCT, Percent(0)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(0)).unwrap();
+
+        let err = check_splits(&db).unwrap_err().to_string();
+
+        assert!(
+            err.contains("101"),
+            "the offending split is not named: {err}"
+        );
+    }
+
+    /// A sheet whose three cells total over 100 would put a database into
+    /// exactly the state the edit form refuses, and every discretionary
+    /// dollar would go somewhere Goals was meant to have a share of.
+    #[test]
+    fn splits_totalling_over_one_hundred_are_refused_with_all_three_named() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(60)).unwrap();
+        setting::set(&db, key::SPLIT_RETIREMENT_PCT, Percent(30)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(30)).unwrap();
+
+        let err = check_splits(&db).unwrap_err().to_string();
+
+        assert!(err.contains("120"), "the total is not named: {err}");
+        for part in ["60", "30"] {
+            assert!(err.contains(part), "{part} is not named: {err}");
+        }
+    }
+
+    /// Exactly 100 leaves Goals nothing, which is a plan the owner may mean
+    /// -- it is only *more* than the remainder that cannot be divided.
+    #[test]
+    fn splits_landing_exactly_on_one_hundred_are_accepted() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(50)).unwrap();
+        setting::set(&db, key::SPLIT_RETIREMENT_PCT, Percent(30)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(20)).unwrap();
+
+        check_splits(&db).unwrap();
+    }
+
+    /// An unset key is a waterfall running off the live balance, which is
+    /// the ordinary case rather than a pin of zero.
+    #[test]
+    fn an_unpinned_excess_is_nothing_to_refuse() {
+        let db = db::open_in_memory().unwrap();
+        check_pinned_excess(&db).unwrap();
+    }
+
+    /// A sheet cell below zero leaves `budget` clamped at nothing while
+    /// `excess_used` is negative, so every line floors to zero and
+    /// `lines.total() <= excess_used` is false with not a dollar moved.
+    #[test]
+    fn a_negative_pinned_excess_is_refused() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::PINNED_EXCESS, Cents::from_dollars(-500)).unwrap();
+
+        let err = check_pinned_excess(&db).unwrap_err().to_string();
+
+        assert!(err.contains("-500.00"), "the figure is not named: {err}");
+    }
+
+    /// The drift line under the plan reads the cents `excess_used`'s floor
+    /// drops, so a pin carrying its own would have it quoting a difference
+    /// that is not one -- and the `Excess (Used)` row would then refuse the
+    /// prefill it opened on.
+    #[test]
+    fn a_pinned_excess_carrying_cents_is_refused() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::PINNED_EXCESS, Cents(1_750_037)).unwrap();
+
+        let err = check_pinned_excess(&db).unwrap_err().to_string();
+
+        assert!(
+            err.contains("whole number of dollars"),
+            "the rule is not named: {err}"
+        );
+    }
+
+    /// A payday whose excess is nothing is an ordinary payday, and holding
+    /// the waterfall at it is what a pin is for.
+    #[test]
+    fn a_pinned_excess_of_zero_is_accepted() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::PINNED_EXCESS, Cents::ZERO).unwrap();
+
+        check_pinned_excess(&db).unwrap();
     }
 }

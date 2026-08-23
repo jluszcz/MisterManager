@@ -130,7 +130,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/plan.rs` | Reads settings and balances out of `db`, feeds `calc::planning::compute`. |
 | `src/fund.rs` | Reads the `fund` table and the birth date out of `db`, feeds `calc::fund`. The one place `db::fund::Target` becomes `calc::fund::Rule`. |
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
-| `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. |
+| `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. `spread_asks` prices the plug's set, and `unmet_asks` says when the plug falls short of it. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
 | `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and Funds in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
@@ -309,8 +309,35 @@ matches, since nothing but a test ties them together.
   divide is `10,000 bp` minus every age row's target, clamped at zero; an age row with **no birth
   date on record** claims nothing, so the share rows divide the whole 100% rather than being told a
   zero that is really a question.
-- **`lines.goals` in the waterfall is a plug**, clamped at zero. The clamp is what makes `checksum` a
-  real check — unclamped, the term cancels algebraically and the checksum is zero for any input.
+- **The transfers never total more than the excess.** `lines.total() <= excess_used` is the one
+  rule the whole waterfall answers to, and the two lines that could break it are the fixed biweekly
+  bills — `current_housing` and `bills` — which do not scale with the excess. Each is capped by what
+  is left when it is reached, and **housing is paid first**: the waterfall is an ordered priority
+  list and `Mortgage + HOA` is the payment least able to wait. What a line lost to that cap is
+  `Plan::shortfall`, one `Cents` per line, which the screen and the report each draw as a `Δ` in the
+  cut line's own extra cell — and, where that line leaves as a withdrawal instead, in neither, since
+  a withdrawal's line is one line under a head repeating its own figure and both sinks draw it
+  plain. So the transfers block foots with a `Shortfall` row carrying the whole total, drawn outside
+  the `match` a failure empties: the payday the figure exists for is the one where the fixed bills
+  took everything, which is also the payday `transfer::plan` finds nothing to move on, with not a
+  line in the block to hang a `Δ` off. There is no checksum: it reported exactly the condition the
+  caps now prevent, and a figure provably zero for every input is not a check.
+- **The three discretionary splits are bounded as a set and one at a time, at both writers.** Goals
+  takes `100 − (fh + rt + inv)`, so a set over 100 leaves it nothing and sends every discretionary
+  dollar elsewhere. `tui::planning::write_split` refuses one percentage at a time — the shape the
+  form writes, where `parse_percent` has already refused anything outside `0..=100` — and
+  `plan::check_splits` refuses both, the shape an import writes, because `import::cell::as_percent`
+  reads whatever the sheet carries and does not clamp. Both exist because both are writers, and the
+  per-field half is what makes the set half mean anything: `150 / -60 / 5` totals 95, and
+  `Percent::of` hands that negative to a line unclamped — a real transfer instruction moving money
+  the wrong way, since `transfer::plan` skips a line at zero and nothing reads its sign.
+  `calc::planning` clamps each share against what the ones above it left,
+  but that is a backstop for a database written before those rules, and it is deliberately silent:
+  the state cannot be reached through the app, so there is nothing for a screen to report.
+- **`lines.goals` in the waterfall is a plug**, clamped at zero. It is `excess_used` minus every
+  other floored line, so it absorbs all the flooring and the totals reconcile exactly. The clamp is
+  a formality now that every claim above it is capped, and it stays because a negative allocation to
+  a savings goal is not a thing whatever the arithmetic says.
 - **The plug's set and the plug's division are two separate questions, answered in two places.**
   `transfer::spread_goals` is the set: the goals no line claims that are *still short*. A goal
   sitting at its target needs nothing, so it is offered nothing — and, because the same set decides
@@ -340,6 +367,26 @@ matches, since nothing but a test ties them together.
   - `savings::paycheck_ask` exists because several callers want that number: the `$/Pay` column, the `A`
     prefill, and this one. A figure a screen shows and a figure a prefill writes must be the same
     figure, and a copy of the unpacking in each is how they stop being.
+  - **The plug's set and its pricing come off one read, `transfer::spread_asks`**, so the figure the
+    Planning screen measures the Goals line against and the asks `calc::fit` is about to divide it
+    by cannot be answers to two different questions about which goals.
+  - **The Planning screen says when the plug will not cover those asks, and nothing else does.** An
+    `Unmet Asks` row foots the transfers block, and is absent when the plug covers them.
+    `transfer::unmet_asks` is the one place that condition is stated — the screen draws it in a
+    table cell and `report::html::planning` in a `<td>`, and two of them deciding separately when a
+    payday is under-funded is two chances to disagree about the one thing the owner reads either of
+    them for. It takes **`lines.goals` and not a transfer row**: `plan` skips a line at zero, so the
+    payday whose plug is nothing has no Goals row at all — and it is the payday whose goals are
+    worst served, so a gap hung off that row would fade out exactly as the condition it reports got
+    worse. That is why it foots the block rather than sitting beside the line, and why it is drawn
+    outside the `match` a failed plan empties, as `Shortfall` beneath it is.
+    - **Both sinks read the asks on their own, never chained to `transfer::plan`.** That call is
+      what a payday with every line at zero *fails*, so asks read through it are zero exactly where
+      the row exists to be drawn, and a row drawn outside the `match` would go silent anyway. A
+      failure of the asks' own read is a different answer: the annotation cannot be made, so it is
+      omitted rather than propagated — the strict target reader is what a taxed goal with no rate
+      on record trips, and it would take a whole screen down over a figure beside the plan rather
+      than in it.
   - **Two lines may name one goal, and the prefill adds rather than replaces.** The destination
     chooser offers every open goal, claimed or not, and `transfer::plan` merges two lines sharing a
     destination into one transfer. `tui::app::add_share` merges them the same way, because

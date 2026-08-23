@@ -211,6 +211,18 @@ fn planning(db: &Db, sheets: &mut Sheets, today: NaiveDate) -> Result<(usize, bo
         }
     }
 
+    // Checked after the writes rather than on the cells themselves: a sheet
+    // carrying only two of the three leaves the third standing at whatever
+    // the database already held, so what the waterfall will actually divide
+    // is only knowable once all three are in. The whole import is one
+    // transaction, so a refusal here takes the rest of it with it.
+    crate::plan::check_splits(db)?;
+
+    // And the pin, for the reason the splits are checked at all: `D3` is a
+    // hand-typed cell, and what it writes is the figure every line below it
+    // is measured against rather than one the waterfall divides.
+    crate::plan::check_pinned_excess(db)?;
+
     // `Constants` has already run, so the birth date is on record if the
     // sheet carries one.
     let quoted_at = setting::get(db, key::WORKBOOK_TODAY)?.unwrap_or(today);

@@ -87,8 +87,10 @@ pub struct Lines {
 }
 
 impl Lines {
-    /// Every line, summed. Equal to `excess_used` whenever the plan
-    /// balances, which is what `Plan::checksum` reports on.
+    /// Every line, summed. Never more than `excess_used`, and equal to it
+    /// for any excess the app can produce: the two lines that could once
+    /// overdraw it are capped, and the Goals plug takes up whatever the
+    /// flooring leaves.
     pub fn total(&self) -> Cents {
         self.bills
             + self.current_housing
@@ -122,19 +124,23 @@ pub struct Plan {
     pub need_emergency: bool,
     pub need_roth: bool,
 
-    /// What each line moves, after the gates and the flooring.
+    /// What each line moves, after the gates, the caps and the flooring.
     pub lines: Lines,
 
-    /// `excess_used` minus everything allocated.
+    /// What each line lost to the cap above it, line for line with
+    /// [`Plan::lines`] — zero for every line that got what it asked for.
     ///
-    /// Zero when the plan balances. Negative, by exactly the amount short,
-    /// when the excess could not cover the fixed biweekly bills — because
-    /// `lines.goals` clamps at zero rather than absorbing it.
+    /// Only the two fixed-bill lines can carry one. Everything below them is
+    /// a share of `remaining_excess`, which is already nothing by the time a
+    /// cap could bind, and the Goals plug is what is left rather than a claim
+    /// on it. The three split shares are clamped too, but silently: that
+    /// clamp only binds on a combination `Target::write` refuses, so there is
+    /// no state for a screen to report.
     ///
-    /// This is a real check only because of that clamp. With an unclamped
-    /// plug the term cancels algebraically and the checksum is zero for any
-    /// input whatsoever.
-    pub checksum: Cents,
+    /// A `Lines` rather than a pair, so `plan_line::Line::amount` reaches a
+    /// line's shortfall by the same exhaustive match it reaches its amount
+    /// by, and `total` gives what the payday came up short by overall.
+    pub shortfall: Lines,
 }
 
 /// `annual` spread over one pay period.
@@ -187,17 +193,38 @@ pub fn compute(settings: &PlanSettings, inputs: &PlanInputs) -> Result<Plan> {
     let (goals, future_housing, retirement, investment) = if remainder <= settings.goals_floor {
         (max_zero(remainder), Cents::ZERO, Cents::ZERO, Cents::ZERO)
     } else {
-        let fh = settings.future_housing_pct.of(remainder);
-        let rt = settings.retirement_pct.of(remainder);
-        let inv = settings.investment_pct.of(remainder);
+        // Each share is capped by what the shares above it left, the same
+        // rule the fixed bills follow below. It binds only when the three
+        // total over 100%, which `Target::write` refuses -- so this is the
+        // backstop for a database written before that rule, and Goals
+        // saturates at nothing underneath it either way.
+        let left = |taken: Cents| max_zero(remainder - taken);
+        let fh = settings.future_housing_pct.of(remainder).min(remainder);
+        let rt = settings.retirement_pct.of(remainder).min(left(fh));
+        let inv = settings.investment_pct.of(remainder).min(left(fh + rt));
         (settings.goals_pct().of(remainder), fh, rt, inv)
     };
 
     let need_emergency = inputs.remaining_emergency > Cents::ZERO;
     let need_roth = inputs.remaining_roth > Cents::ZERO;
 
-    let bills = (other_bills_biweekly + bill_payments).floor_to_dollar();
-    let current_housing = housing_biweekly.floor_to_dollar();
+    // The excess cannot be spent twice. These two are the only lines that
+    // could ever try: both are fixed biweekly figures that do not scale with
+    // the excess, so a payday too small to cover them used to write transfers
+    // totalling more than the account had to give.
+    //
+    // Housing is paid first. The waterfall is an ordered priority list and
+    // `Mortgage + HOA` is the payment least able to wait, so `Bills` is what
+    // takes the cut -- against the budget less the *floored* housing, so no
+    // cents leak between the two.
+    //
+    // Floored to the dollar before the cap rather than after: `Bills` is then
+    // capped by a whole number and stays one itself.
+    let budget = max_zero(excess_used).floor_to_dollar();
+    let housing_ask = housing_biweekly.floor_to_dollar();
+    let bills_ask = (other_bills_biweekly + bill_payments).floor_to_dollar();
+    let current_housing = housing_ask.min(budget);
+    let bills = bills_ask.min(max_zero(budget - current_housing));
     let roth_line = if need_emergency {
         Cents::ZERO
     } else if need_roth {
@@ -244,9 +271,10 @@ pub fn compute(settings: &PlanSettings, inputs: &PlanInputs) -> Result<Plan> {
 
     // Goals is the plug: it absorbs every floor above so the plan balances.
     //
-    // Clamped at zero. Unclamped it goes negative whenever the excess cannot
-    // cover the fixed biweekly bills, which would mean allocating a negative
-    // amount to a savings goal. The shortfall surfaces in `checksum` instead.
+    // Clamped at zero, which is now a formality rather than the thing holding
+    // the plan together: every claim above is capped by what the excess had
+    // left, so `claimed` never passes it. The clamp stays because a negative
+    // allocation to a savings goal is not a thing whatever the arithmetic.
     let claimed = bills
         + current_housing
         + roth_line
@@ -269,7 +297,11 @@ pub fn compute(settings: &PlanSettings, inputs: &PlanInputs) -> Result<Plan> {
         investment: investment_line,
     };
 
-    let checksum = excess_used - lines.total();
+    let shortfall = Lines {
+        bills: bills_ask - bills,
+        current_housing: housing_ask - current_housing,
+        ..Lines::default()
+    };
 
     Ok(Plan {
         excess_actual,
@@ -287,7 +319,7 @@ pub fn compute(settings: &PlanSettings, inputs: &PlanInputs) -> Result<Plan> {
         need_emergency,
         need_roth,
         lines,
-        checksum,
+        shortfall,
     })
 }
 
@@ -331,14 +363,15 @@ mod tests {
         }
     }
 
-    /// The nine lines are the whole of the allocation: anything they do not
-    /// account for shows up in `checksum`, and a plan that balances has
-    /// none.
+    /// The nine lines are the whole of the allocation: `lines.goals` is the
+    /// plug that absorbs every other line's flooring, so the lines total
+    /// exactly what there was to spend -- and with an excess ample enough to
+    /// pay the fixed bills in full, no line is cut to get there.
     #[test]
     fn the_lines_account_for_every_dollar_of_the_excess_used() {
         let plan = compute(&plan_settings(), &plan_inputs()).unwrap();
         assert_eq!(plan.lines.total(), plan.excess_used);
-        assert_eq!(plan.checksum, Cents::ZERO);
+        assert_eq!(plan.shortfall.total(), Cents::ZERO);
     }
 
     /// Future Housing is the whole `future_housing_pct` share under one
@@ -356,7 +389,7 @@ mod tests {
 
     /// An unmet emergency gate zeros the future housing, retirement, and
     /// investment lines and pours the same three amounts into the emergency
-    /// fund line instead, and still nets to a balanced checksum.
+    /// fund line instead, and the lines still total the excess used.
     #[test]
     fn an_unmet_emergency_gate_sweeps_future_housing_into_the_emergency_line() {
         let mut inputs = plan_inputs();
@@ -371,7 +404,7 @@ mod tests {
             plan.lines.emergency_fund,
             (plan.future_housing + plan.retirement + plan.investment).floor_to_dollar()
         );
-        assert_eq!(plan.checksum, Cents::ZERO);
+        assert_eq!(plan.lines.total(), plan.excess_used);
     }
 
     /// Every stage of the waterfall, from one set of inputs, against the
@@ -419,17 +452,17 @@ mod tests {
         assert_eq!(plan.lines.investment, d(1_400)); // D40
         assert_eq!(plan.lines.retirement + plan.lines.investment, d(4_200)); // D38
 
-        assert_eq!(plan.checksum, Cents::ZERO); // D42 = the green tick
+        assert_eq!(plan.lines.total(), plan.excess_used); // D42 = the green tick
     }
 
     #[test]
-    fn checksum_is_zero_when_unpinned_too() {
+    fn the_lines_account_for_the_excess_used_when_unpinned_too() {
         let mut inputs = plan_inputs();
         inputs.pinned_excess = None;
         let plan = compute(&plan_settings(), &inputs).unwrap();
         // Unpinned floors the live excess itself, giving the same figure here.
         assert_eq!(plan.excess_used, Cents::from_dollars(17_500));
-        assert_eq!(plan.checksum, Cents::ZERO);
+        assert_eq!(plan.lines.total(), plan.excess_used);
     }
 
     #[test]
@@ -447,7 +480,7 @@ mod tests {
         assert_eq!(plan.retirement, Cents::ZERO);
         assert_eq!(plan.investment, Cents::ZERO);
         assert_eq!(plan.goals, plan.remainder);
-        assert_eq!(plan.checksum, Cents::ZERO);
+        assert_eq!(plan.lines.total(), plan.excess_used);
     }
 
     #[test]
@@ -467,7 +500,7 @@ mod tests {
         // Future Housing, Retirement, and Investment pile into Emergency Fund.
         // 4200.44 + 2800.29 + 1400.14 = 8400.87, floored once after summing.
         assert_eq!(plan.lines.emergency_fund, d(8_400));
-        assert_eq!(plan.checksum, Cents::ZERO);
+        assert_eq!(plan.lines.total(), plan.excess_used);
     }
 
     #[test]
@@ -480,37 +513,96 @@ mod tests {
         // Retirement line.
         assert_eq!(plan.lines.roth, d(1_000));
         assert_eq!(plan.lines.retirement, d(1_800));
-        assert_eq!(plan.checksum, Cents::ZERO);
+        assert_eq!(plan.lines.total(), plan.excess_used);
     }
 
-    /// A shortfall must be visible, not buried in a negative Goals line.
+    /// The waterfall is an ordered priority list, and `Mortgage + HOA` is the
+    /// payment least able to wait: it is paid in full while there is anything
+    /// to pay it with, and `Bills` takes the cut.
     #[test]
-    fn a_shortfall_clamps_goals_and_surfaces_in_the_checksum() {
+    fn an_excess_short_of_the_fixed_bills_pays_housing_first_and_cuts_bills() {
+        let d = Cents::from_dollars;
+        let mut inputs = plan_inputs();
+        // 693 of housing and 544 of other bills, against 1,000.
+        inputs.pinned_excess = Some(d(1_000));
+        let plan = compute(&plan_settings(), &inputs).unwrap();
+
+        assert_eq!(plan.lines.current_housing, d(693));
+        assert_eq!(plan.lines.bills, d(307));
+        assert_eq!(plan.lines.total(), d(1_000));
+    }
+
+    /// What the cut line lost, so the screen has a figure to draw beside it.
+    /// The line's own amount is right either way; nothing else says it was
+    /// meant to be larger.
+    #[test]
+    fn a_cut_line_records_what_it_lost() {
+        let d = Cents::from_dollars;
+        let mut inputs = plan_inputs();
+        inputs.pinned_excess = Some(d(1_000));
+        let plan = compute(&plan_settings(), &inputs).unwrap();
+
+        assert_eq!(plan.shortfall.bills, d(237));
+        assert_eq!(plan.shortfall.current_housing, Cents::ZERO);
+        assert_eq!(plan.shortfall.total(), d(237));
+    }
+
+    /// An excess of nothing is not "pay the bills anyway": every line the
+    /// excess cannot cover is a transfer that would overdraw the account it
+    /// comes out of.
+    #[test]
+    fn an_excess_of_nothing_moves_nothing_and_both_bill_lines_report_it() {
         let d = Cents::from_dollars;
         let mut inputs = plan_inputs();
         inputs.checking_at_adhoc = d(1_000);
         inputs.pinned_excess = None;
         let plan = compute(&plan_settings(), &inputs).unwrap();
 
-        assert_eq!(plan.excess_actual, Cents::ZERO);
-        assert_eq!(plan.remaining_excess, Cents::ZERO);
-        // The fixed bills still have to be paid.
-        assert_eq!(plan.lines.bills, d(544));
-        assert_eq!(plan.lines.current_housing, d(693));
-        // Goals cannot go negative...
-        assert_eq!(plan.lines.goals, Cents::ZERO);
-        // ...so the 544 + 693 shortfall shows up here instead.
-        assert_eq!(plan.checksum, d(-1_237));
+        assert_eq!(plan.excess_used, Cents::ZERO);
+        assert_eq!(plan.lines.total(), Cents::ZERO);
+        assert_eq!(plan.shortfall.current_housing, d(693));
+        assert_eq!(plan.shortfall.bills, d(544));
     }
 
+    /// The one rule the whole waterfall answers to. Swept across the excess
+    /// rather than asserted at one figure, because the interesting values are
+    /// the ones either side of the fixed bills' own total.
     #[test]
-    fn split_percentages_over_one_hundred_saturate_goals_at_zero() {
+    fn the_lines_never_total_more_than_the_excess_used() {
+        let d = Cents::from_dollars;
+        for pinned in [0, 1, 500, 693, 1_000, 1_237, 1_238, 5_000, 17_500] {
+            let mut inputs = plan_inputs();
+            inputs.pinned_excess = Some(d(pinned));
+            let plan = compute(&plan_settings(), &inputs).unwrap();
+            assert!(
+                plan.lines.total() <= plan.excess_used,
+                "pinned {pinned}: lines total {} against an excess of {}",
+                plan.lines.total(),
+                plan.excess_used
+            );
+        }
+    }
+
+    /// `Target::write` refuses a combination over 100%, so this only ever
+    /// binds on a database written before that rule -- but bind it must, or
+    /// three shares of a healthy remainder overdraw it between them. Clamped
+    /// in the order the screen lists them, the same rule the fixed bills
+    /// follow, and silently: the state cannot be reached through the app, so
+    /// there is nothing here for a screen to report.
+    #[test]
+    fn splits_totalling_over_one_hundred_are_clamped_in_order() {
         let mut settings = plan_settings();
         settings.future_housing_pct = Percent(60);
         settings.retirement_pct = Percent(30);
         settings.investment_pct = Percent(30); // 120 between them
         let plan = compute(&settings, &plan_inputs()).unwrap();
+
         assert_eq!(plan.goals, Cents::ZERO);
+        assert_eq!(
+            plan.future_housing + plan.retirement + plan.investment,
+            plan.remainder
+        );
+        assert_eq!(plan.lines.total(), plan.excess_used);
     }
 
     /// `periods_per_year` is the only divisor left that a setting can zero,

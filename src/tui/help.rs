@@ -327,7 +327,7 @@ const PLANNING: [Entry; 8] = [
     Entry {
         key: "e",
         label: Label::Own("edit"),
-        detail: "Edit the selected row: a constant is typed into a field, a destination is chosen from a list of goals. Barely a third of the rows are editable, and the cursor settles on the nearest one that is after every move. Roth and Emergency Fund are read-only among the destinations: they share their setting key with the gate of the same name, so pointing one somewhere else would decide whether that gate fires rather than where a transfer lands.",
+        detail: "Edit the selected row: a constant is typed into a field, a destination is chosen from a list of goals. Barely a third of the rows are editable, and the cursor settles on the nearest one that is after every move. Roth and Emergency Fund are read-only among the destinations: they share their setting key with the gate of the same name, so pointing one somewhere else would decide whether that gate fires rather than where a transfer lands. Excess (Used) is a constant like any other here, and typing a figure into it pins that figure -- whole dollars, since the waterfall's excess is a whole-dollar figure whether it is pinned or floored. The three split percentages are bounded as a set: Goals takes what they leave, so a combination over 100 between them is refused with the headroom named.",
     },
     Entry {
         key: "E",
@@ -357,12 +357,12 @@ const PLANNING: [Entry; 8] = [
     Entry {
         key: "p",
         label: Label::Own("pin"),
-        detail: "Freeze Excess (Actual) at its whole-dollar floor, so the waterfall holds still while a payday's legs are entered -- transfers land before the ad-hoc date, so each leg entered would otherwise collapse the excess under you with the rest still to go. Always pins, and replaces a pin already there rather than clearing it: the press after a forgotten pin is the next payday's, and the drift line under the plan exists to say a pin has gone stale, which a fresh pin is the answer to. The date moves with the figure, so the drift starts again from zero.",
+        detail: "Freeze Excess (Actual) at its whole-dollar floor, so the waterfall holds still while a payday's legs are entered -- transfers land before the ad-hoc date, so each leg entered would otherwise collapse the excess under you with the rest still to go. Always pins, and replaces a pin already there rather than clearing it: the press after a forgotten pin is the next payday's, and the drift line under the plan exists to say a pin has gone stale, which a fresh pin is the answer to. The date moves with the figure, so the drift starts again from zero. This pins the figure it computed; e on the Excess (Used) row pins whatever is typed there instead.",
     },
     Entry {
         key: "P",
         label: Label::Own("unpin"),
-        detail: "Put the waterfall back on the live balance -- the other half of the payday p covers, and the only way out of a pin. A capital here is not the usual \"same verb, wider object\": it is the inverse of p, which earns its own key because p always pins, and it sits beside p so the pair reads as one. Named on the footer only while something is pinned, though the key is live either way.",
+        detail: "Put the waterfall back on the live balance -- the other half of the payday p covers, and the only way out of a pin. A capital here is not the usual \"same verb, wider object\": it is the inverse of p, which earns its own key because p always pins, and it sits beside p so the pair reads as one. Nothing else clears a pin: typing over Excess (Used) replaces one rather than removing it. Named on the footer only while something is pinned, though the key is live either way.",
     },
 ];
 

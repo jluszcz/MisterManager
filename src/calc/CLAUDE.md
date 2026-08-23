@@ -46,8 +46,8 @@ Two directions, applied by role:
   nothing is transferred on them, so they take the direction that keeps a percentage from claiming a
   hundredth of a point it does not have.
 
-Those two directions are precisely why the waterfall needs a plug and a checksum: the parts are
-rounded one way, the total another, and something has to absorb the difference.
+Those two directions are precisely why the waterfall needs a plug: the parts are rounded one way,
+the total another, and something has to absorb the difference.
 
 `div_ceil` is in `mod.rs` rather than inlined because getting it right is fiddly: `(a + b − 1) / b`
 under-reports for negative dividends (Rust's `/` truncates toward zero) and can overflow near
@@ -72,8 +72,19 @@ excess_used     = pinned excess, else excess_actual floored to the dollar
 
   remainder ≤ goals_floor  → all of it to Goals
   otherwise                → future housing %, retirement %, investment %,
+                             each capped by what the ones above it left,
                              and Goals takes whatever percentage is left
+
+then, against the excess itself:
+
+  current_housing = min(housing_biweekly, budget)
+  bills           = min(other_bills_biweekly + bill_payments,
+                        budget − current_housing)
+  goals           = max(0, excess_used − everything above)
 ```
+
+`budget` is `excess_used` floored to the dollar. The two caps are what hold
+`lines.total() <= excess_used`; see below for why those two lines and no others.
 
 Why this order: the biweekly bills are obligations, so they come out before anything proportional —
 splitting first and paying bills from a share would let a good month fund investments while the
@@ -82,9 +93,16 @@ does not pour into bill payments without limit. `mom_and_dad` is a fixed annual 
 per period, but floored by what is actually left after bills, so it cannot go negative in a thin
 month.
 
-The split percentages are user-editable and can be set to more than 100 between them. Goals' share
-is `Percent::ONE_HUNDRED.saturating_sub(sum)`, so a misconfiguration zeroes Goals rather than
-allocating it a negative amount.
+The split percentages are user-editable, and the three are bounded **as a set** as well as one at a
+time: each inside `0..=100` on its own, and still wrong between them. Both writers hold both bounds
+— at the form, `tui::planning::parse_percent` refuses a percentage outside the range and
+`write_split` refuses the set it would join; at the import, `plan::check_splits` refuses either,
+since `import::cell::as_percent` reads whatever the sheet carries and a `150 / -60 / 5` totals 95.
+A share below zero is the one the set rule cannot catch on its own: `Percent::of` does not clamp,
+so it reaches a line as a negative allocation, and nothing downstream reads a line's sign.
+
+Goals' share is `Percent::ONE_HUNDRED.saturating_sub(sum)`, which now only ever saturates on a
+database written before either rule existed.
 
 ### `Excess (Fixed)` became a pin
 
@@ -97,24 +115,55 @@ drops by that leg's amount and `Excess (Actual)` collapses, while the remaining 
 unentered. The waterfall would move underneath you mid-payday.
 
 Pressing `p` on the Planning screen snapshots the floored actual into `setting`; the waterfall runs
-off the pin until `P` clears it. The screen shows drift since the pin, so a stale pin is visible
-rather than silent, and `p` pressed again re-pins at the current figure — the answer to a stale pin
-is a fresh one, not a cleared one. Unpinned, `excess_used` floors the live actual — which is why the
-checksum holds in both modes.
+off the pin until `P` clears it. `e` on the `Excess (Used)` row writes the same key by hand — the
+sheet's cell restored, for the payday whose excess the owner knows better than the balance does — in
+whole dollars and never below zero, since `excess_used` is a whole-dollar figure in both modes and a
+negative one leaves every line at nothing while claiming the excess was spent. Both bounds are held
+at both writers: `tui::planning::parse_pinned_excess` on the text typed into the row, and
+`plan::check_pinned_excess` on the figure an import writes. The screen shows drift since the pin, so
+a stale pin is visible rather than silent, and `p` pressed again re-pins at the current figure — the
+answer to a stale pin is a fresh one, not a cleared one. Unpinned, `excess_used` floors the live
+actual — which is why `lines.total() <= excess_used` is answered the same way in both modes.
 
-### Goals is a plug, and the clamp is what makes the checksum real
+### The transfers never total more than the excess
+
+**`lines.total() <= excess_used`, always**, and equal to it for any excess the app can produce.
+That is the whole of what the caps below are for, and it is the property the tests pin rather than
+any single figure.
+
+Two lines could once break it, and both are *fixed* biweekly figures that do not scale with the
+excess: `current_housing` (`Mortgage + HOA`) and `bills` (the rest of the monthly block, plus a
+bill-payment share that is already nothing by then). Everything under them is a share of
+`remaining_excess`, which is clamped at zero, so none of it can claim what is not there. A payday
+too small for those two therefore used to write transfers totalling more than the account had to
+give them.
+
+So each is capped by what is left of the excess when it is reached, and **housing is paid first**:
+the waterfall is an ordered priority list and `Mortgage + HOA` is the payment least able to wait, so
+`Bills` is what takes the cut. `Bills` is capped against the budget less the *floored* housing, so
+no cents leak between the two.
+
+The three discretionary splits are clamped the same way, each by what the ones above it left. That
+one is a backstop rather than a rule: `tui::planning::write_split` refuses a combination over 100%
+at the form and `plan::check_splits` refuses one at the import, so it binds only on a database
+written before those existed. It is therefore **silent** — no line reports it — where the bills cap
+reports itself.
+
+### Goals is a plug, and what it absorbs is the flooring
 
 `lines.goals` is not computed from a percentage. It is `excess_used` minus every other floored line,
 so it absorbs all the flooring and the totals reconcile exactly.
 
-It clamps at zero. Unclamped it goes negative whenever the excess cannot cover the fixed biweekly
-bills, which would mean reporting a negative allocation to a savings goal — not a thing. Clamped,
-the shortfall surfaces in `checksum` instead, negative by exactly the amount short.
+It still clamps at zero, but the clamp is now a formality: every claim above it is capped by what
+the excess had left, so `claimed` never passes `excess_used` in the first place. The clamp stays
+because a negative allocation to a savings goal is not a thing whatever the arithmetic says.
 
-That clamp is also the only reason `checksum` tests anything. Substitute the unclamped plug's
-definition into `Lines::total` and every term cancels: the checksum is algebraically zero for *any*
-input and can never detect a mistake. With the clamp it is zero when the plan balances and negative
-by the shortfall when it doesn't.
+There is no checksum. It would report the one condition the caps prevent, and a figure that is
+provably zero for every input is not a check — substitute the plug's definition into `Lines::total`
+and every term cancels. What states the gap instead is `Plan::shortfall`: one `Cents` per line, what
+that line lost to the cap above it. The screen and the report each draw it as a `Δ` in the cut
+line's own extra cell, and foot the transfers block with its whole total — which is what states it
+on the payday where every line is zero and there is no line to draw a `Δ` beside.
 
 ### The gates, in priority order
 

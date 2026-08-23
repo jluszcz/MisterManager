@@ -143,7 +143,7 @@ fn the_waterfall_reproduces_the_workbooks_transfer_instructions() {
         sheet_cents(&planning, 37, 3),
         "D38"
     );
-    assert_eq!(computed.checksum, Cents::ZERO, "checksum");
+    assert_eq!(computed.lines.total(), computed.excess_used, "the lines");
 }
 
 /// Every Planning constant must arrive from the sheet, not from a fallback.
@@ -423,5 +423,5 @@ fn the_transfer_rows_sum_to_the_excess_used() {
     let rows = transfer::plan(&db, &computed.lines).unwrap();
     let total: Cents = rows.iter().map(|r| r.cents()).sum();
     assert_eq!(total, computed.excess_used);
-    assert_eq!(computed.checksum, Cents::ZERO);
+    assert_eq!(computed.lines.total(), computed.excess_used);
 }

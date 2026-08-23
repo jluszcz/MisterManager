@@ -6,7 +6,8 @@
 use super::Label;
 use super::cursor::{Cursor, Scroll};
 use super::form::{
-    Caret, DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index,
+    Caret, DateField, Field, Focused, FormFields, Step, next_in, parse_amount, parse_whole_amount,
+    step_index,
 };
 use super::style::Tone;
 use super::text::Edit;
@@ -46,6 +47,7 @@ pub enum Target {
     FutureHousingPct,
     RetirementPct,
     InvestmentPct,
+    PinnedExcess,
     Bill(BillId),
 }
 
@@ -73,6 +75,68 @@ fn parse_percent(raw: &str) -> Result<Percent> {
     Ok(Percent(value))
 }
 
+/// The figure the whole waterfall then runs off.
+///
+/// Whole dollars, because `excess_used` is a whole-dollar figure however it is
+/// arrived at -- `p` floors the live actual, and `compute` floors it again when
+/// nothing is pinned. The drift line under the plan reads the cents that floor
+/// drops, so a pin carrying cents of its own would have it quoting a difference
+/// that is not one.
+///
+/// Refused below zero: `excess_actual` is clamped there and `p` can only ever
+/// pin its floor, so no other path produces a negative pin -- and one typed
+/// here would drive every line below it off a figure that means nothing. Zero
+/// itself is an ordinary payday, and holding the waterfall at it is exactly
+/// what a pin is for.
+///
+/// Text, because that is the shape this writer takes.
+/// [`crate::plan::check_pinned_excess`] holds the same two bounds on the
+/// stored figure, which is the shape an import writes.
+fn parse_pinned_excess(raw: &str) -> Result<Cents> {
+    let cents = parse_whole_amount(raw)?;
+    ensure!(
+        cents >= Cents::ZERO,
+        "excess cannot be negative: {}",
+        crate::demo::typed(raw.trim())
+    );
+    Ok(cents)
+}
+
+/// Write one of the three discretionary splits, refusing a set that leaves
+/// Goals less than nothing.
+///
+/// Goals takes what the other three leave -- `100 - (fh + rt + inv)`,
+/// saturating at zero -- so a set totalling over 100 hands every discretionary
+/// dollar to the other three and Goals nothing. Bounded as a *set*, because
+/// that is the only thing the bound is about: each of the three is already
+/// inside `0..=100` on its own and still wrong between them.
+///
+/// This is what makes the clamp in `calc::planning` a backstop rather than the
+/// rule. `others` reads through [`crate::plan::settings_from_db`] so the
+/// default an unset key stands for is the one the waterfall will use, rather
+/// than a second copy of it here.
+///
+/// The message quotes the headroom rather than the sum: what the owner needs
+/// is the number they may type, and a set already at 100 means something else
+/// must come down first.
+fn write_split(
+    db: &Db,
+    key: crate::db::setting::Key<Percent>,
+    line: Line,
+    raw: &str,
+    others: impl Fn(&PlanSettings) -> i64,
+) -> Result<()> {
+    let value = parse_percent(raw)?;
+    let claimed = others(&crate::plan::settings_from_db(db)?);
+    ensure!(
+        value.0 + claimed <= 100,
+        "{} leaves {}% at most: the other two splits already claim {claimed}%",
+        line.label(),
+        100 - claimed
+    );
+    setting::set(db, key, value)
+}
+
 /// A count of pay periods.
 ///
 /// Refused at zero or below, with the text in the message. The `.max(1)`
@@ -94,7 +158,12 @@ impl Target {
     /// Parse `raw` as this constant expects it and store it.
     ///
     /// The only place a Planning constant is written.
-    pub fn write(self, db: &Db, raw: &str) -> Result<()> {
+    ///
+    /// `today` is the date a pin is stamped with, and is what the one arm that
+    /// writes two keys needs: the pair moves together, so dating the figure
+    /// belongs beside writing it rather than at the call site. Every other arm
+    /// ignores it.
+    pub fn write(self, db: &Db, today: NaiveDate, raw: &str) -> Result<()> {
         match self {
             Target::Target => setting::set(db, key::PLANNING_TARGET, parse_amount(raw)?),
             Target::Buffer => setting::set(db, key::PLANNING_BUFFER, parse_amount(raw)?),
@@ -107,14 +176,28 @@ impl Target {
                 setting::set(db, key::MOM_AND_DAD_ANNUAL, parse_amount(raw)?)
             }
             Target::GoalsFloor => setting::set(db, key::GOALS_FLOOR, parse_amount(raw)?),
-            Target::FutureHousingPct => {
-                setting::set(db, key::SPLIT_FUTURE_HOUSING_PCT, parse_percent(raw)?)
-            }
+            Target::FutureHousingPct => write_split(
+                db,
+                key::SPLIT_FUTURE_HOUSING_PCT,
+                Line::FutureHousing,
+                raw,
+                |s| s.retirement_pct.0 + s.investment_pct.0,
+            ),
             Target::RetirementPct => {
-                setting::set(db, key::SPLIT_RETIREMENT_PCT, parse_percent(raw)?)
+                write_split(db, key::SPLIT_RETIREMENT_PCT, Line::Retirement, raw, |s| {
+                    s.future_housing_pct.0 + s.investment_pct.0
+                })
             }
             Target::InvestmentPct => {
-                setting::set(db, key::SPLIT_INVESTMENT_PCT, parse_percent(raw)?)
+                write_split(db, key::SPLIT_INVESTMENT_PCT, Line::Investment, raw, |s| {
+                    s.future_housing_pct.0 + s.retirement_pct.0
+                })
+            }
+            // Both keys, for the reason `p` moves both: a date with no amount
+            // would render a line about a plan that is not pinned.
+            Target::PinnedExcess => {
+                setting::set(db, key::PINNED_EXCESS, parse_pinned_excess(raw)?)?;
+                setting::set(db, key::PINNED_AT, today)
             }
             Target::Bill(id) => bill::set_amount(db, id, parse_amount(raw)?),
         }
@@ -135,6 +218,7 @@ impl Target {
             | Target::BillPaymentCap
             | Target::MomAndDadAnnual
             | Target::GoalsFloor
+            | Target::PinnedExcess
             | Target::Bill(_) => true,
             Target::PeriodsPerYear
             | Target::BillPaymentPct
@@ -189,6 +273,15 @@ pub struct Row {
     /// so there is no amount to hand [`super::amount`]. Only [`Row::figure`]
     /// reads it off money, which is why a count can never render red.
     pub tone: Tone,
+    /// What `extra` means, as far as color goes. Only ever [`Tone::Negative`]:
+    /// the one thing that cell reports rather than states is a gap the money
+    /// will not cover.
+    ///
+    /// A second field rather than a second reader of `tone`, because the two
+    /// cells say different things about the same row -- the Goals line's
+    /// figure is right while the gap beside it is the problem, and one tone
+    /// over both would paint the amount red for the plan's sake.
+    pub extra_tone: Tone,
     /// The one account this row names, if it names one, and which of the
     /// three cells holds it.
     ///
@@ -253,6 +346,7 @@ impl Row {
             edit: String::new(),
             bold: false,
             tone: Tone::Plain,
+            extra_tone: Tone::Plain,
             account: None,
         }
     }
@@ -311,6 +405,60 @@ impl Row {
             editable: target.map(Editable::Constant),
             edit: pct.0.to_string(),
             ..Row::figure(label, value)
+        }
+    }
+
+    /// One Planning line, under the transfer that carries it -- with what the
+    /// excess cut from it in the one cell such a line has spare.
+    ///
+    /// The figure the line *moves* stays plain: it is right, and the gap
+    /// beside it is what is not. A line covered in full says nothing, because
+    /// a cell that reads "nothing is wrong" on every ordinary payday is a
+    /// cell nobody reads.
+    fn transfer_line(line: Line, amount: Cents, shortfall: Cents) -> Row {
+        Row {
+            extra: match shortfall > Cents::ZERO {
+                true => format!("\u{394} {}", crate::demo::whole_figure(shortfall)),
+                false => String::new(),
+            },
+            extra_tone: match shortfall > Cents::ZERO {
+                true => Tone::Negative,
+                false => Tone::Plain,
+            },
+            ..Row::figure(&format!("    {}", line.label()), amount)
+        }
+    }
+
+    /// How far the plug falls short of what its goals asked of this paycheck.
+    ///
+    /// `calc::fit` is about to scale every one of them to the same fraction
+    /// of what it wanted, and nothing else on the screen says so -- the Goals
+    /// line's own figure is right either way, and each goal's `$/Pay` is a
+    /// column on Savings. A footer rather than that line's own cell because
+    /// the plug is `lines.goals` whether or not a transfer row carries it,
+    /// and a plug of nothing has no row at all.
+    fn unmet_asks(gap: Cents) -> Row {
+        Row {
+            label: "  Unmet Asks".to_string(),
+            extra: format!("\u{394} {}", crate::demo::whole_figure(gap)),
+            extra_tone: Tone::Negative,
+            bold: true,
+            ..Row::blank()
+        }
+    }
+
+    /// What the excess left unpaid across every line it cut.
+    ///
+    /// The column the per-line gaps are drawn in, because it is their sum --
+    /// and the whole plan's answer when there are no per-line gaps above it
+    /// at all.
+    fn shortfall(total: Cents) -> Row {
+        Row {
+            label: "  Shortfall".to_string(),
+            extra: format!("\u{394} {}", crate::demo::whole_figure(total)),
+            extra_tone: Tone::Negative,
+            bold: true,
+            ..Row::blank()
         }
     }
 
@@ -453,6 +601,10 @@ pub struct View {
     pub wiring: Vec<Wiring>,
     /// The rows `t` would write, already grouped and summed.
     pub transfers: Vec<transfer::Row>,
+    /// What the goals the plug spreads over ask of this paycheck, summed --
+    /// `transfer::spread_asks`, which is the same set and the same pricing
+    /// `t`'s own prefill divides the Goals line by.
+    pub spread_ask_total: Cents,
     /// Why they could not be resolved, when they could not. A misconfigured
     /// destination must not take the whole screen down: every other figure on
     /// it is still correct and still worth reading.
@@ -480,6 +632,13 @@ fn build(view: &View) -> Result<Vec<Row>> {
     // down to the line that made it.
     let mut rows = vec![Row::heading("Transfers")];
     match &view.transfer_error {
+        // Nothing in any line is not a plan that failed to resolve: there is
+        // nothing to resolve, no goal in the wrong container, and nothing
+        // `Enter` could explain. So it says so in its own words rather than
+        // under a label that reads as a failure.
+        Some(message) if message == transfer::NOTHING_TO_TRANSFER => {
+            rows.push(Row::figure_text(&format!("  {message}"), ""))
+        }
         Some(message) => rows.push(Row::figure_text("  unresolved", message)),
         None => {
             for row in &view.transfers {
@@ -506,7 +665,11 @@ fn build(view: &View) -> Result<Vec<Row>> {
                             ..Row::total(&format!("  {name}"), *cents)
                         });
                         for (line, amount) in lines {
-                            rows.push(Row::figure(&format!("    {}", line.label()), *amount));
+                            rows.push(Row::transfer_line(
+                                *line,
+                                *amount,
+                                line.amount(&p.shortfall),
+                            ));
                         }
                     }
                     transfer::Row::Withdrawal { line, cents } => {
@@ -516,6 +679,17 @@ fn build(view: &View) -> Result<Vec<Row>> {
                 }
             }
         }
+    }
+    // Both footers sit outside the match on purpose: each reports a payday
+    // with no transfer row to hang a per-line cell off -- a plug of nothing
+    // for the first, an excess the fixed bills took whole for the second --
+    // and a gap drawn only inside the block those states empty would go
+    // silent exactly where it is worth most.
+    if let Some(gap) = transfer::unmet_asks(p.lines.goals, view.spread_ask_total) {
+        rows.push(Row::unmet_asks(gap));
+    }
+    if p.shortfall.total() > Cents::ZERO {
+        rows.push(Row::shortfall(p.shortfall.total()));
     }
     rows.push(Row::blank());
 
@@ -538,7 +712,16 @@ fn build(view: &View) -> Result<Vec<Row>> {
             },
             ..Row::figure("Excess (Actual)", p.excess_actual)
         },
-        Row::total("Excess (Used)", p.excess_used),
+        // Editable, and typing a figure here pins it: this is the sheet's
+        // hand-typed `Excess (Fixed)` cell, which `p` only ever fills with the
+        // floored actual. The prefill is `excess_used` in both states, because
+        // that is the pin when there is one and the figure a first pin would
+        // freeze when there is not.
+        Row {
+            editable: Some(Editable::Constant(Target::PinnedExcess)),
+            edit: p.excess_used.to_string(),
+            ..Row::total("Excess (Used)", p.excess_used)
+        },
         Row::blank(),
         Row::heading("Bills"),
     ]);
@@ -622,8 +805,6 @@ fn build(view: &View) -> Result<Vec<Row>> {
     // them is missing or wrong, which is a question about the line above it.
     rows.push(Row::heading("Destinations"));
     rows.extend(view.wiring.iter().map(Row::destination));
-    rows.push(Row::blank());
-    rows.push(Row::total("Checksum", p.checksum));
 
     Ok(rows)
 }
@@ -1161,7 +1342,10 @@ pub fn render(frame: &mut Frame, area: Rect, planning: &Planning) -> usize {
                 ),
                 super::tinted(
                     TextLine::from(r.extra.clone()).right_aligned(),
-                    tint(Column::Extra),
+                    // Tone first, the same precedence the value column
+                    // takes: a gap the money will not cover outranks which
+                    // account it lands in.
+                    super::style::tone_color(r.extra_tone).or_else(|| tint(Column::Extra)),
                 ),
             ]);
             if r.bold { row.style(bold) } else { row }
@@ -1417,6 +1601,7 @@ mod tests {
             scrubbed_adhoc: None,
             wiring: wiring(),
             transfers,
+            spread_ask_total: Cents::ZERO,
             transfer_error: None,
             transfer_detail: Vec::new(),
         }
@@ -1579,6 +1764,290 @@ mod tests {
             .take_while(|r| !r.label.is_empty())
             .find(|r| r.label.trim() == line.label())
             .unwrap_or_else(|| panic!("no destination row for {line:?}"))
+    }
+
+    /// The transfers block repeats labels the screen uses elsewhere -- the
+    /// Split section and the Destinations block both carry a "Goals" row --
+    /// so a line of it is found by walking down from the heading, the way
+    /// [`destination`] walks down from its own.
+    fn transfer_line(planning: &Planning, line: Line) -> &Row {
+        let start = planning
+            .rows()
+            .iter()
+            .position(|r| r.label == "Transfers")
+            .expect("no Transfers heading");
+        planning.rows()[start..]
+            .iter()
+            .take_while(|r| !(r.label.is_empty() && r.value.is_empty()))
+            .find(|r| r.label.trim() == line.label())
+            .unwrap_or_else(|| panic!("no transfer line for {line:?}"))
+    }
+
+    /// The plug covering every ask is the ordinary payday, and a figure that
+    /// says "nothing is wrong" on every ordinary payday is a figure nobody
+    /// reads.
+    #[test]
+    fn a_plug_that_covers_every_ask_draws_no_unmet_asks_row() {
+        let mut v = view(None, None);
+        v.spread_ask_total = v.plan.lines.goals;
+        let mut planning = Planning::new();
+        planning.set_view(v).unwrap();
+
+        assert!(
+            planning
+                .rows()
+                .iter()
+                .all(|r| r.label.trim() != "Unmet Asks"),
+            "a covered plug drew a gap"
+        );
+        assert_eq!(transfer_line(&planning, Line::Goals).extra, "");
+    }
+
+    /// The payday where the fixed bills took everything is the one the gap
+    /// exists for, and it is also the one `transfer::plan` finds nothing to
+    /// move on: every line is zero, so there is not a transfer row in the
+    /// block for a per-line gap to hang off. A block that only ever spoke
+    /// through its lines would go silent exactly there.
+    #[test]
+    fn a_plan_that_moves_nothing_still_reports_what_the_excess_left_unpaid() {
+        let mut v = view(Some(Cents::ZERO), None);
+        let total = v.plan.shortfall.total();
+        assert!(total > Cents::ZERO, "the fixed bills were paid in full");
+        v.transfers = Vec::new();
+        v.transfer_error = Some(transfer::NOTHING_TO_TRANSFER.to_string());
+        let mut planning = Planning::new();
+        planning.set_view(v).unwrap();
+
+        let row = row(&planning, "Shortfall");
+        assert_eq!(row.extra, format!("\u{394} {}", total.to_whole_dollars()));
+        assert_eq!(row.extra_tone, Tone::Negative);
+    }
+
+    /// A figure saying "nothing is wrong" on every ordinary payday is a
+    /// figure nobody reads, so the row is absent rather than zero.
+    #[test]
+    fn a_plan_that_pays_every_bill_in_full_draws_no_shortfall_row() {
+        let mut planning = Planning::new();
+        planning.set_view(view(None, None)).unwrap();
+
+        assert!(
+            planning
+                .rows()
+                .iter()
+                .all(|r| r.label.trim() != "Shortfall"),
+            "a covered plan drew a shortfall row"
+        );
+    }
+
+    /// What the plug moves is divided by `calc::fit`, which scales every goal
+    /// to the same fraction of what it asked when the money will not stretch.
+    /// Nothing else on the screen says that is about to happen: the line's own
+    /// figure is correct, and each goal's `$/Pay` is on another screen
+    /// entirely.
+    #[test]
+    fn a_plug_short_of_the_paycheck_asks_carries_the_gap_in_the_blocks_footer() {
+        let mut v = view(None, None);
+        let moves = v.plan.lines.goals;
+        v.spread_ask_total = moves + Cents::from_dollars(220);
+        let mut planning = Planning::new();
+        planning.set_view(v).unwrap();
+
+        let footer = row(&planning, "Unmet Asks");
+        assert_eq!(footer.extra, "\u{394} -220");
+        assert_eq!(footer.extra_tone, Tone::Negative);
+        // The line's own amount is untouched -- it is what the payday moves,
+        // and it is not the thing that is wrong.
+        let line = transfer_line(&planning, Line::Goals);
+        assert_eq!(line.value, moves.to_whole_dollars());
+        assert_eq!(line.tone, Tone::Plain);
+        assert_eq!(line.extra, "");
+    }
+
+    /// `transfer::plan` skips a line at zero, so the payday whose plug is
+    /// nothing has no Goals row at all -- and it is the payday whose goals
+    /// are worst served. A gap hung off that row would fade out exactly as
+    /// the condition it reports got worse.
+    #[test]
+    fn a_plug_of_nothing_still_reports_what_its_goals_asked() {
+        let mut v = view(Some(Cents::ZERO), None);
+        assert_eq!(v.plan.lines.goals, Cents::ZERO, "the plug moved something");
+        v.spread_ask_total = Cents::from_dollars(220);
+        v.transfers = Vec::new();
+        v.transfer_error = Some(transfer::NOTHING_TO_TRANSFER.to_string());
+        let mut planning = Planning::new();
+        planning.set_view(v).unwrap();
+
+        assert_eq!(row(&planning, "Unmet Asks").extra, "\u{394} -220");
+    }
+
+    /// The gap sits in a fixed-width, right-aligned cell, so a truncated one
+    /// loses its *leading* characters -- a wrong width reads as a wrong
+    /// number rather than as a visible ellipsis. Every other fixture covers
+    /// its bills, so nothing else draws this cell at all. Drawn at
+    /// `MIN_WIDTH`, where it is narrowest.
+    #[test]
+    fn the_gap_on_a_cut_line_is_whole_at_the_minimum_width() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut planning = Planning::new();
+        planning
+            .set_view(view(Some(Cents::from_dollars(1_000)), None))
+            .unwrap();
+        let gap = transfer_line(&planning, Line::Bills).extra.clone();
+        assert!(!gap.is_empty(), "the fixture covers its bills after all");
+
+        let height = planning.rows().len() as u16 + 5;
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &planning);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let drawn = (0..height)
+            .map(|y| {
+                (0..MIN_WIDTH)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .any(|l| l.contains(&gap));
+
+        assert!(drawn, "{gap:?} truncated on the cut line");
+    }
+
+    /// A gap is what the block reports rather than states, so it is drawn in
+    /// the negative color wherever it lands -- while the figure the plug
+    /// actually *moves*, two rows above it, stays plain: that figure is
+    /// right, and the gap below it is what is not.
+    #[test]
+    fn the_gap_below_the_goals_line_is_drawn_in_the_negative_color() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut v = view(None, None);
+        v.spread_ask_total = v.plan.lines.goals + Cents::from_dollars(220);
+        let mut planning = Planning::new();
+        planning.set_view(v).unwrap();
+
+        let height = planning.rows().len() as u16 + 5;
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &planning);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let drawn = |needle: &str| {
+            (0..height)
+                .map(|y| {
+                    (
+                        y,
+                        (0..MIN_WIDTH)
+                            .map(|x| buffer[(x, y)].symbol())
+                            .collect::<String>(),
+                    )
+                })
+                .find(|(_, line)| line.contains(needle))
+                .unwrap_or_else(|| panic!("{needle:?} was never rendered"))
+        };
+
+        let (y, line) = drawn("\u{394} -220");
+        assert_eq!(
+            buffer[(super::super::column_of(&line, "\u{394} -220"), y)].fg,
+            super::super::style::tone_color(Tone::Negative).expect("negative has a color"),
+            "{line:?}"
+        );
+
+        // The Goals line itself is the first "Goals" the screen draws: the
+        // transfers block heads it, and the Split and Destinations blocks
+        // that repeat the label are both below.
+        let (y, line) = drawn("Goals");
+        assert_eq!(
+            buffer[(super::super::column_of(&line, "Goals"), y)].fg,
+            ratatui::style::Color::Reset,
+            "{line:?}"
+        );
+    }
+
+    /// The transfers never total more than the excess, so the heading has
+    /// nothing left to report and carries nothing in either column -- the
+    /// shortfall it used to hold now sits on the line that took it.
+    #[test]
+    fn the_transfers_heading_is_a_heading_and_nothing_else() {
+        let planning = screen();
+
+        assert_eq!(row(&planning, "Transfers").value, "");
+        assert_eq!(row(&planning, "Transfers").extra, "");
+        assert!(
+            planning.rows().iter().all(|r| r.label.trim() != "Checksum"),
+            "the foot of the screen still carries a Checksum row"
+        );
+    }
+
+    /// A plan with nothing in any line is not a plan that failed to resolve:
+    /// there is nothing to resolve. It says so in its own words rather than
+    /// under a label that reads as a failure and offers an explanation there
+    /// is none of.
+    #[test]
+    fn a_plan_with_nothing_to_transfer_does_not_call_itself_unresolved() {
+        let mut v = view(Some(Cents::ZERO), None);
+        v.transfers = Vec::new();
+        v.transfer_error = Some(transfer::NOTHING_TO_TRANSFER.to_string());
+        let mut planning = Planning::new();
+        planning.set_view(v).unwrap();
+
+        assert!(
+            planning
+                .rows()
+                .iter()
+                .all(|r| r.label.trim() != "unresolved"),
+            "an empty plan called itself unresolved"
+        );
+        assert_eq!(row(&planning, transfer::NOTHING_TO_TRANSFER).value, "");
+    }
+
+    /// A plan that genuinely cannot be resolved keeps the label: the message
+    /// says what went wrong, and `Enter` has the rest of it.
+    #[test]
+    fn a_plan_that_cannot_resolve_still_labels_itself_unresolved() {
+        let mut v = view(None, None);
+        v.transfers = Vec::new();
+        v.transfer_error = Some("the Bills goal is gone".to_string());
+        let mut planning = Planning::new();
+        planning.set_view(v).unwrap();
+
+        assert_eq!(row(&planning, "unresolved").value, "the Bills goal is gone");
+    }
+
+    /// A payday too small for the fixed bills cuts one of them, and the line
+    /// that was cut is where that is said: its own figure is right, and
+    /// nothing else on the screen says it was meant to be larger.
+    #[test]
+    fn a_cut_bills_line_carries_the_gap_in_its_extra_cell() {
+        // 693 of housing and 544 of other bills, against 1,000: housing is
+        // paid in full and Bills takes the 237.
+        let mut planning = Planning::new();
+        planning
+            .set_view(view(Some(Cents::from_dollars(1_000)), None))
+            .unwrap();
+
+        let bills = transfer_line(&planning, Line::Bills);
+        assert_eq!(bills.extra, "\u{394} 237");
+        assert_eq!(bills.extra_tone, Tone::Negative);
+    }
+
+    /// Housing is paid first, so it is whole on the very payday that cuts
+    /// Bills -- and a line that got what it asked for says nothing.
+    #[test]
+    fn the_line_that_was_paid_in_full_carries_no_gap() {
+        let mut planning = Planning::new();
+        planning
+            .set_view(view(Some(Cents::from_dollars(1_000)), None))
+            .unwrap();
+
+        assert_eq!(transfer_line(&planning, Line::CurrentHousing).extra, "");
     }
 
     #[test]
@@ -2061,7 +2530,7 @@ mod tests {
         targets.dedup();
         assert_eq!(targets.len(), before, "two rows write the same setting");
         assert_eq!(
-            before, 10,
+            before, 11,
             "every Target variant but Bill must have a row: {targets:?}"
         );
     }
@@ -2100,7 +2569,8 @@ mod tests {
     /// even if the copy below the split were the one cut short. Each row is
     /// checked against the specific buffer line it rendered on, located by
     /// mapping `planning.rows()`'s index to the buffer through the model's
-    /// own "Checksum" row -- its fixed last entry.
+    /// own "Destinations" heading -- the one label the screen carries exactly
+    /// once, which is what an anchor has to be.
     #[test]
     fn every_row_renders_whole_at_the_minimum_width() {
         use ratatui::Terminal;
@@ -2129,21 +2599,20 @@ mod tests {
             .collect();
 
         let model_rows = planning.rows();
-        let checksum_y = lines
+        let heading_idx = model_rows
             .iter()
-            .position(|l| l.contains("Checksum"))
-            .expect("no Checksum row rendered");
-        let offset = checksum_y - (model_rows.len() - 1);
+            .position(|r| r.label == "Destinations")
+            .expect("no Destinations heading");
+        let heading_y = lines
+            .iter()
+            .position(|l| l.contains("Destinations"))
+            .expect("no Destinations row rendered");
+        let offset = heading_y - heading_idx;
 
-        // The Destinations block sits between the Split section's own
-        // "Goals" row (plus its trailing blank) and the blank row before
-        // Checksum -- the same boundaries `build` draws it with.
-        let goals_idx = model_rows
-            .iter()
-            .position(|r| r.label.trim() == "Goals")
-            .expect("no Goals split row");
-        let block_start = goals_idx + 2;
-        let block_end = model_rows.len() - 2;
+        // The Destinations block runs from its own heading to the foot of
+        // the screen -- the same boundaries `build` draws it with.
+        let block_start = heading_idx + 1;
+        let block_end = model_rows.len();
         assert!(block_start < block_end, "nothing rendered below the split");
 
         let targets = [
@@ -2396,16 +2865,36 @@ mod tests {
     #[test]
     fn each_target_writes_its_own_setting() {
         let db = db::open_in_memory().unwrap();
-        Target::Target.write(&db, "1,000").unwrap();
-        Target::Buffer.write(&db, "$2,000.50").unwrap();
-        Target::PeriodsPerYear.write(&db, "24").unwrap();
-        Target::BillPaymentCap.write(&db, "3000").unwrap();
-        Target::BillPaymentPct.write(&db, "60").unwrap();
-        Target::MomAndDadAnnual.write(&db, "4000").unwrap();
-        Target::GoalsFloor.write(&db, "500").unwrap();
-        Target::FutureHousingPct.write(&db, "30").unwrap();
-        Target::RetirementPct.write(&db, "20").unwrap();
-        Target::InvestmentPct.write(&db, "10").unwrap();
+        Target::Target
+            .write(&db, day(2026, 8, 14), "1,000")
+            .unwrap();
+        Target::Buffer
+            .write(&db, day(2026, 8, 14), "$2,000.50")
+            .unwrap();
+        Target::PeriodsPerYear
+            .write(&db, day(2026, 8, 14), "24")
+            .unwrap();
+        Target::BillPaymentCap
+            .write(&db, day(2026, 8, 14), "3000")
+            .unwrap();
+        Target::BillPaymentPct
+            .write(&db, day(2026, 8, 14), "60")
+            .unwrap();
+        Target::MomAndDadAnnual
+            .write(&db, day(2026, 8, 14), "4000")
+            .unwrap();
+        Target::GoalsFloor
+            .write(&db, day(2026, 8, 14), "500")
+            .unwrap();
+        Target::FutureHousingPct
+            .write(&db, day(2026, 8, 14), "30")
+            .unwrap();
+        Target::RetirementPct
+            .write(&db, day(2026, 8, 14), "20")
+            .unwrap();
+        Target::InvestmentPct
+            .write(&db, day(2026, 8, 14), "10")
+            .unwrap();
 
         let cents = |k| setting::get(&db, k).unwrap().unwrap();
         let pct = |k| setting::get(&db, k).unwrap().unwrap();
@@ -2438,11 +2927,111 @@ mod tests {
         )
         .unwrap();
 
-        Target::Bill(id).write(&db, "3,100").unwrap();
+        Target::Bill(id)
+            .write(&db, day(2026, 8, 14), "3,100")
+            .unwrap();
 
         let found = crate::db::bill::get(&db, id).unwrap();
         assert_eq!(found.cents, Cents::from_dollars(3_100));
         assert_eq!(found.label, "Mortgage");
+    }
+
+    /// The pin is what `Excess (Used)` *is* when the plan is pinned, so the
+    /// row opens on the pin rather than on the live excess behind it.
+    #[test]
+    fn the_excess_used_row_opens_on_the_pin() {
+        let mut planning = Planning::new();
+        planning
+            .set_view(view(Some(Cents::from_dollars(12_000)), None))
+            .unwrap();
+
+        let r = row(&planning, "Excess (Used)");
+        assert_eq!(r.editable, Some(Editable::Constant(Target::PinnedExcess)));
+        assert_eq!(r.edit, "12,000.00");
+    }
+
+    /// Unpinned there is no pin to open on, and `Excess (Used)` is the live
+    /// excess floored. Typing over that figure is what makes the first pin,
+    /// so the figure it starts from is the one already on the row.
+    #[test]
+    fn an_unpinned_excess_used_row_opens_on_the_floored_actual() {
+        let mut planning = Planning::new();
+        planning.set_view(view(None, None)).unwrap();
+
+        let r = row(&planning, "Excess (Used)");
+        assert_eq!(r.editable, Some(Editable::Constant(Target::PinnedExcess)));
+        assert_eq!(r.edit, "17,500.00");
+    }
+
+    /// The sheet's hand-typed `Excess (Fixed)` cell, back as a row. Both pin
+    /// keys move together here for the reason they do under `p`: a date with
+    /// no amount would render a line about a plan that is not pinned.
+    #[test]
+    fn a_typed_excess_pins_the_figure_and_dates_it() {
+        let db = db::open_in_memory().unwrap();
+
+        Target::PinnedExcess
+            .write(&db, day(2026, 8, 14), "12,000")
+            .unwrap();
+
+        assert_eq!(
+            setting::get(&db, key::PINNED_EXCESS).unwrap(),
+            Some(Cents::from_dollars(12_000))
+        );
+        assert_eq!(
+            setting::get(&db, key::PINNED_AT).unwrap(),
+            Some(day(2026, 8, 14))
+        );
+    }
+
+    /// `excess_used` is a whole-dollar figure however it is arrived at: `p`
+    /// floors the actual, and `compute` floors it again when nothing is
+    /// pinned. The drift line reads the cents that floor drops, so a pin
+    /// carrying cents of its own would have it quoting a difference that is
+    /// not one.
+    #[test]
+    fn a_typed_excess_must_land_on_a_whole_dollar() {
+        let db = db::open_in_memory().unwrap();
+
+        let err = Target::PinnedExcess
+            .write(&db, day(2026, 8, 14), "12,000.50")
+            .unwrap_err();
+
+        assert!(err.to_string().contains("whole number of dollars"), "{err}");
+        assert_eq!(setting::get(&db, key::PINNED_EXCESS).unwrap(), None);
+        assert_eq!(setting::get(&db, key::PINNED_AT).unwrap(), None);
+    }
+
+    /// `excess_actual` is clamped at zero and `p` can only ever pin its
+    /// floor, so no other path produces a negative pin -- and one typed here
+    /// would drive every line below it off a figure that means nothing.
+    #[test]
+    fn a_negative_typed_excess_is_refused() {
+        let db = db::open_in_memory().unwrap();
+
+        let err = Target::PinnedExcess
+            .write(&db, day(2026, 8, 14), "-500")
+            .unwrap_err();
+
+        assert!(err.to_string().contains("-500"), "{err}");
+        assert_eq!(setting::get(&db, key::PINNED_EXCESS).unwrap(), None);
+        assert_eq!(setting::get(&db, key::PINNED_AT).unwrap(), None);
+    }
+
+    /// A payday whose excess is nothing is an ordinary payday, and holding
+    /// the waterfall at it is what the pin is for.
+    #[test]
+    fn a_typed_excess_of_zero_is_pinned_like_any_other() {
+        let db = db::open_in_memory().unwrap();
+
+        Target::PinnedExcess
+            .write(&db, day(2026, 8, 14), "0")
+            .unwrap();
+
+        assert_eq!(
+            setting::get(&db, key::PINNED_EXCESS).unwrap(),
+            Some(Cents::ZERO)
+        );
     }
 
     /// `Percent` is whole percent. Accepting `0.35` would silently divide the
@@ -2450,15 +3039,81 @@ mod tests {
     #[test]
     fn a_percentage_takes_a_bare_number_or_a_trailing_sign_and_nothing_else() {
         let db = db::open_in_memory().unwrap();
-        Target::RetirementPct.write(&db, " 15% ").unwrap();
+        Target::RetirementPct
+            .write(&db, day(2026, 8, 14), " 15% ")
+            .unwrap();
         assert_eq!(
             setting::get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(),
             Some(Percent(15))
         );
 
-        let err = Target::RetirementPct.write(&db, "0.35").unwrap_err();
+        let err = Target::RetirementPct
+            .write(&db, day(2026, 8, 14), "0.35")
+            .unwrap_err();
         assert!(err.to_string().contains("0.35"), "{err}");
-        assert!(Target::RetirementPct.write(&db, "fifteen").is_err());
+        assert!(
+            Target::RetirementPct
+                .write(&db, day(2026, 8, 14), "fifteen")
+                .is_err()
+        );
+    }
+
+    /// Goals gets what the other three leave, so a combination over 100%
+    /// leaves it nothing and sends every discretionary dollar elsewhere. The
+    /// three are refused as a set rather than one at a time, which is the
+    /// only place the sum is knowable.
+    #[test]
+    fn a_split_pushing_the_three_over_one_hundred_is_refused() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(30)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(10)).unwrap();
+
+        let err = Target::RetirementPct
+            .write(&db, day(2026, 8, 14), "70")
+            .unwrap_err();
+
+        assert!(err.to_string().contains("60"), "the headroom: {err}");
+        assert_eq!(
+            setting::get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(),
+            None,
+            "the refused write must not have landed"
+        );
+    }
+
+    /// The sum is what is bounded, not the change: landing exactly on 100
+    /// leaves Goals nothing and is a plan the owner may well mean.
+    #[test]
+    fn a_split_landing_exactly_on_one_hundred_is_accepted() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(30)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(10)).unwrap();
+
+        Target::RetirementPct
+            .write(&db, day(2026, 8, 14), "60")
+            .unwrap();
+
+        assert_eq!(
+            setting::get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(),
+            Some(Percent(60))
+        );
+    }
+
+    /// An unset key reads as its default rather than as nothing, so the
+    /// headroom quoted is the headroom the waterfall will actually use.
+    #[test]
+    fn the_headroom_counts_the_defaults_the_unset_keys_stand_for() {
+        let db = db::open_in_memory().unwrap();
+
+        // Nothing is set: Future Housing 30 and Investment 10 by default, so
+        // Retirement may have 60 and no more.
+        assert!(
+            Target::RetirementPct
+                .write(&db, day(2026, 8, 14), "61")
+                .is_err()
+        );
+        Target::RetirementPct
+            .write(&db, day(2026, 8, 14), "60")
+            .unwrap();
     }
 
     /// `Percent::of` does not clamp, so a percentage outside `0..=100` would
@@ -2467,9 +3122,15 @@ mod tests {
     #[test]
     fn a_percentage_outside_zero_to_one_hundred_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let err = Target::RetirementPct.write(&db, "-15").unwrap_err();
+        let err = Target::RetirementPct
+            .write(&db, day(2026, 8, 14), "-15")
+            .unwrap_err();
         assert!(err.to_string().contains("-15"), "{err}");
-        assert!(Target::RetirementPct.write(&db, "101").is_err());
+        assert!(
+            Target::RetirementPct
+                .write(&db, day(2026, 8, 14), "101")
+                .is_err()
+        );
         assert_eq!(setting::get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(), None);
     }
 
@@ -2478,10 +3139,20 @@ mod tests {
     #[test]
     fn a_non_positive_pay_period_count_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let err = Target::PeriodsPerYear.write(&db, "0").unwrap_err();
+        let err = Target::PeriodsPerYear
+            .write(&db, day(2026, 8, 14), "0")
+            .unwrap_err();
         assert!(err.to_string().contains('0'), "{err}");
-        assert!(Target::PeriodsPerYear.write(&db, "-4").is_err());
-        assert!(Target::PeriodsPerYear.write(&db, "26.5").is_err());
+        assert!(
+            Target::PeriodsPerYear
+                .write(&db, day(2026, 8, 14), "-4")
+                .is_err()
+        );
+        assert!(
+            Target::PeriodsPerYear
+                .write(&db, day(2026, 8, 14), "26.5")
+                .is_err()
+        );
         assert_eq!(setting::get(&db, key::PAY_PERIODS_PER_YEAR).unwrap(), None);
     }
 
@@ -2624,6 +3295,7 @@ mod tests {
             Target::BillPaymentCap,
             Target::MomAndDadAnnual,
             Target::GoalsFloor,
+            Target::PinnedExcess,
             Target::Bill(BillId(1)),
         ] {
             assert!(target.is_money(), "{target:?} writes an amount");

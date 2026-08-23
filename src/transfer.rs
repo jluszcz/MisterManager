@@ -90,10 +90,57 @@ fn unclaimed(goals: Vec<Goal>, claimed: &[GoalId]) -> Vec<Goal> {
 /// the whole plug ends up unallocated -- the right answer when everything is
 /// already funded.
 pub fn spread_goals(db: &Db) -> Result<Vec<Goal>> {
-    Ok(shares_of(&unclaimed_with_balances(
-        db,
-        &claimed_goals(db)?,
-    )?))
+    let unclaimed = unclaimed_with_balances(db, &claimed_goals(db)?)?;
+    Ok(cloned(shares_of(&unclaimed)))
+}
+
+/// The plug's set, with what each of its goals asks of this paycheck.
+///
+/// The set and its pricing off one read, because they answer one question:
+/// `calc::fit` divides the plug by these asks, and the Planning screen
+/// reports whether the Goals line covers their sum. Two callers deriving
+/// the pair separately is two chances to disagree about which goals the plug
+/// is even for.
+///
+/// A goal with nothing to ask -- undated, or already at its target -- comes
+/// back at zero rather than dropping out: it is in the set, and `fit` reads
+/// a zero ask as "hand this one nothing".
+pub fn spread_asks(db: &Db, today: NaiveDate, period_days: i64) -> Result<Vec<(Goal, Cents)>> {
+    let unclaimed = unclaimed_with_balances(db, &claimed_goals(db)?)?;
+    let mut priced = Vec::new();
+    for funding in shares_of(&unclaimed) {
+        let ask = crate::savings::paycheck_ask(funding, today, period_days)?;
+        priced.push((funding.goal.clone(), ask.unwrap_or(Cents::ZERO)));
+    }
+    Ok(priced)
+}
+
+/// What a plan with nothing in any line reports.
+///
+/// Named rather than written twice, the same reason `goal::NO_TAX_RATE` is:
+/// the Planning screen has to tell this apart from a plan that *failed* to
+/// resolve. Every line zero is not a failure -- there is nothing to resolve,
+/// no goal in the wrong container and nothing `Enter` could explain -- so the
+/// screen states it plainly instead of under the `unresolved` label it gives
+/// a plan that cannot run.
+pub const NOTHING_TO_TRANSFER: &str = "nothing to transfer";
+
+/// How far the plug falls short of what its goals asked of this paycheck, or
+/// `None` when it covers them.
+///
+/// The plug and not a [`Line`]: only [`Line::Goals`] is ever divided this
+/// way, and its figure is `lines.goals` whether or not `plan` found a
+/// transfer row to carry it. A payday whose plug is nothing has no such row
+/// -- `plan` skips a line at zero -- and that is the payday whose goals are
+/// worst served, so a gap taking the row as its input would fade out exactly
+/// as the condition it reports got worse.
+///
+/// One rule rather than one per sink: the Planning screen draws this in a
+/// table cell and the report in a `<td>`, and two of them deciding
+/// separately when a payday is under-funded is two chances to disagree about
+/// the one thing the owner reads either of them for.
+pub fn unmet_asks(plug: Cents, asked: Cents) -> Option<Cents> {
+    (asked > plug).then(|| plug - asked)
 }
 
 /// The claims, read the way a screen has to read them: a key naming a goal
@@ -118,10 +165,14 @@ fn claimed_goals_tolerant(db: &Db) -> Result<Vec<GoalId>> {
 
 /// [`spread_goals`], read tolerantly. The set a screen shows.
 fn spread_goals_tolerant(db: &Db) -> Result<Vec<Goal>> {
-    Ok(shares_of(&unclaimed_with_balances_tolerant(
-        db,
-        &claimed_goals_tolerant(db)?,
-    )?))
+    let unclaimed = unclaimed_with_balances_tolerant(db, &claimed_goals_tolerant(db)?)?;
+    Ok(cloned(shares_of(&unclaimed)))
+}
+
+/// The goals themselves, for the callers that want the set and not its
+/// funding.
+fn cloned(funding: Vec<&goal_engine::Funding>) -> Vec<Goal> {
+    funding.into_iter().map(|f| f.goal.clone()).collect()
 }
 
 /// Every open goal `claimed` does not name, with its balance and its target.
@@ -170,16 +221,13 @@ fn unclaimed_funding(
 ///
 /// Short means short of the **target**, so a taxed goal sitting at its base is
 /// still in the set: what it needs is the tax.
-fn shares_of(unclaimed: &[goal_engine::Funding]) -> Vec<Goal> {
-    let short: Vec<Goal> = unclaimed
-        .iter()
-        .filter(|f| f.current < f.target)
-        .map(|f| f.goal.clone())
-        .collect();
+fn shares_of(unclaimed: &[goal_engine::Funding]) -> Vec<&goal_engine::Funding> {
+    let short: Vec<&goal_engine::Funding> =
+        unclaimed.iter().filter(|f| f.current < f.target).collect();
     if !short.is_empty() {
         return short;
     }
-    unclaimed.iter().map(|f| f.goal.clone()).collect()
+    unclaimed.iter().collect()
 }
 
 /// The distinct containers the plug's goals sit in, in the order the Savings
@@ -386,7 +434,7 @@ pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
     // failure that costs.
     let with_balances = unclaimed_with_balances_tolerant(db, &claimed_goals_tolerant(db)?)?;
     let unclaimed: Vec<Goal> = with_balances.iter().map(|g| g.goal.clone()).collect();
-    let containers = spread_containers(&shares_of(&with_balances));
+    let containers = spread_containers(&cloned(shares_of(&with_balances)));
     let spread = match containers.len() {
         0 => Landing::Nowhere,
         1 => match container_of(containers[0]) {
@@ -715,7 +763,7 @@ pub fn plan(db: &Db, lines: &Lines) -> Result<Vec<Row>> {
     }
 
     transfers.append(&mut withdrawals);
-    ensure!(!transfers.is_empty(), "nothing to transfer");
+    ensure!(!transfers.is_empty(), "{NOTHING_TO_TRANSFER}");
     Ok(transfers)
 }
 
@@ -959,6 +1007,75 @@ mod tests {
             .into_iter()
             .map(|g| g.name)
             .collect()
+    }
+
+    /// The gap is measured against `lines.goals` itself and not against the
+    /// transfer row carrying it, because a plug of nothing has no such row --
+    /// `plan` skips a line at zero -- and that is the payday whose goals are
+    /// worst served. Taking the row as the input would fade the warning out
+    /// exactly as the condition it reports got worse.
+    #[test]
+    fn a_plug_short_of_the_asks_reports_the_gap_whatever_it_moves() {
+        let asked = Cents::from_dollars(520);
+
+        assert_eq!(
+            unmet_asks(Cents::from_dollars(300), asked),
+            Some(Cents::from_dollars(-220))
+        );
+        assert_eq!(
+            unmet_asks(Cents::ZERO, asked),
+            Some(Cents::from_dollars(-520))
+        );
+    }
+
+    /// Covered is silence, and covered *exactly* is covered: a gap of zero
+    /// is a figure that says nothing, drawn on every payday that balances.
+    #[test]
+    fn a_plug_that_meets_the_asks_reports_no_gap() {
+        let moves = Cents::from_dollars(520);
+
+        assert_eq!(unmet_asks(moves, moves), None);
+        assert_eq!(unmet_asks(moves, Cents::from_dollars(300)), None);
+    }
+
+    /// The set and what each of its goals asks come off one read, so a
+    /// screen quoting the total and a prefill dividing the plug cannot be
+    /// answering two different questions about which goals.
+    #[test]
+    fn every_goal_the_plug_spreads_over_comes_back_with_what_it_asks() {
+        let (db, savings, _) = configured();
+        // Every goal `configured` leaves unclaimed is undated, so it has no
+        // runway to divide and asks for nothing. One with a deadline a
+        // single pay period out asks for the whole of what it lacks.
+        goal::insert(
+            &db,
+            &NewGoal {
+                name: "Bike".to_string(),
+                container_account_id: savings,
+                base_cents: Cents::from_dollars(600),
+                goal_date: Some(day(2026, 9, 5)),
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: false,
+            },
+        )
+        .unwrap();
+
+        let priced: Vec<(String, Cents)> = spread_asks(&db, day(2026, 8, 22), 14)
+            .unwrap()
+            .into_iter()
+            .map(|(g, ask)| (g.name, ask))
+            .collect();
+
+        assert_eq!(
+            priced,
+            vec![
+                ("Lego".to_string(), Cents::ZERO),
+                ("Dropbox".to_string(), Cents::ZERO),
+                ("Bike".to_string(), Cents::from_dollars(600)),
+            ]
+        );
     }
 
     /// The plug funds what still needs funding. A goal sitting at its target
@@ -1570,7 +1687,7 @@ mod tests {
         // Every line zero means every group zero, which is the unconfigured
         // case below -- asserted there. Here, only that it does not silently
         // produce rows.
-        assert!(rows.to_string().contains("nothing to transfer"), "{rows}");
+        assert_eq!(rows.to_string(), NOTHING_TO_TRANSFER, "{rows}");
     }
 
     /// A zero line inside an otherwise non-zero group is dropped before the
