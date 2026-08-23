@@ -86,7 +86,11 @@ pub struct Transfer {
     pub to: Option<Account>,
     pub label: String,
     pub cents: Cents,
-    pub lines: Vec<(&'static str, Cents)>,
+    /// The lines it carries, as [`crate::plan_line::Line`] rather than as
+    /// labels: the Goals line is the one the page annotates, and matching a
+    /// label back to the enum that produced it is a name lookup where an
+    /// identity is already in hand.
+    pub lines: Vec<(crate::plan_line::Line, Cents)>,
 }
 
 /// The Planning screen's figures, or the reason there are none.
@@ -112,6 +116,10 @@ pub struct PlanView {
     /// waterfall above: a dangling destination key stops the money moving
     /// without making any figure above it wrong.
     pub transfers: Result<Vec<Transfer>, String>,
+    /// What the goals the plug spreads over ask of this paycheck, summed.
+    /// The figure the Goals line is measured against, and the same one the
+    /// Planning screen measures it against.
+    pub spread_ask_total: Cents,
 }
 
 /// Everything the report draws, read in one pass.
@@ -180,7 +188,13 @@ fn ledger(db: &Db, accounts: &[account::Account], kind: Kind, today: NaiveDate) 
 /// `adhoc` and not `App::adhoc`: `Excess (Actual)` *is* the checking balance
 /// at that date, so the figure here has to be quoted at the same day the
 /// Overview's Paycheck-Eve column is.
-fn plan_view(db: &Db, accounts: &[account::Account], adhoc: NaiveDate) -> Result<PlanView> {
+fn plan_view(
+    db: &Db,
+    accounts: &[account::Account],
+    today: NaiveDate,
+    adhoc: NaiveDate,
+    period_days: i64,
+) -> Result<PlanView> {
     let settings = plan::settings_from_db(db)?;
     let plan = plan::compute_from_db(db, adhoc)?;
     let periods = settings.periods_per_year;
@@ -197,6 +211,20 @@ fn plan_view(db: &Db, accounts: &[account::Account], adhoc: NaiveDate) -> Result
             .collect()
     };
     let housing = bills(bill::Category::Housing)?;
+    // The asks are read on their own, exactly as `App::planning_view` reads
+    // them and for the reason it does: the payday `Unmet Asks` exists for is
+    // the one where every line is zero, which is the payday `transfer::plan`
+    // refuses outright, so asks chained to that call would go silent on the
+    // one state they are drawn outside the block to reach.
+    //
+    // Not propagated, because a failure here is an annotation that cannot be
+    // made rather than a tab that cannot be drawn: a taxed goal with no rate
+    // on record trips the strict target reader and would take the whole tab
+    // down -- and it is reachable, since `plan` never touches that reader
+    // when the plug is zero and so returns `Ok` where this call does not.
+    let spread_ask_total = transfer::spread_asks(db, today, period_days)
+        .map(|asks| asks.iter().map(|(_, ask)| *ask).sum())
+        .unwrap_or(Cents::ZERO);
     let transfers = match transfer::plan(db, &plan.lines) {
         Ok(rows) => Ok(rows
             .iter()
@@ -211,13 +239,13 @@ fn plan_view(db: &Db, accounts: &[account::Account], adhoc: NaiveDate) -> Result
                     to: Some(Account::named(accounts, *to)),
                     label: name.clone(),
                     cents: *cents,
-                    lines: lines.iter().map(|(l, c)| (l.label(), *c)).collect(),
+                    lines: lines.clone(),
                 },
                 transfer::Row::Withdrawal { line, cents } => Transfer {
                     to: None,
                     label: "Withdrawal".to_string(),
                     cents: *cents,
-                    lines: vec![(line.label(), *cents)],
+                    lines: vec![(*line, *cents)],
                 },
             })
             .collect()),
@@ -230,6 +258,7 @@ fn plan_view(db: &Db, accounts: &[account::Account], adhoc: NaiveDate) -> Result
         settings,
         plan,
         transfers,
+        spread_ask_total,
     })
 }
 
@@ -272,7 +301,7 @@ impl Snapshot {
             cash: ledger(db, &accounts, Kind::Cash, today)?,
             credit: ledger(db, &accounts, Kind::Credit, today)?,
             containers,
-            planning: match plan_view(db, &accounts, dates.adhoc) {
+            planning: match plan_view(db, &accounts, today, dates.adhoc, period_days) {
                 Ok(view) => Planning::Resolved(Box::new(view)),
                 Err(e) => Planning::Unresolvable(format!("{e:#}")),
             },
@@ -477,6 +506,137 @@ mod tests {
             "a past row read as future"
         );
         assert!(ledger.months[1].rows[1].future, "a future row read as past");
+    }
+
+    /// A failure reading the plug's asks costs the annotation and nothing
+    /// else: the transfers still resolve, and every figure in the waterfall
+    /// below them is still right, exactly as `App::planning_view` keeps them
+    /// on the screen. Propagated instead, it would replace the whole tab with
+    /// one sentence over a gap the tab could simply omit.
+    ///
+    /// Reachable because `transfer::plan` reaches the strict target reader
+    /// only through the plug, and skips a line at zero: a payday whose fixed
+    /// bills took the whole excess has a plug of nothing, so `plan` returns
+    /// `Ok` where the asks beside it do not.
+    #[test]
+    fn a_failure_reading_the_plugs_asks_costs_the_annotation_and_nothing_else() {
+        let db = seeded();
+        let account = account::list(&db).unwrap()[0].id;
+        account::set_group(&db, account, account::Group::Checking).unwrap();
+        crate::db::txn::insert(
+            &db,
+            &crate::db::txn::NewTxn {
+                // $100 past the default target and buffer, so the excess
+                // is a hundred dollars and the housing cap takes all of it.
+                date: today(),
+                cents: Cents::from_dollars(15_100),
+                account_id: account,
+                description: "opening".to_string(),
+                recurring_txn_id: None,
+            },
+        )
+        .unwrap();
+        // A housing bill far past that, so the cap leaves the plug nothing
+        // and `Line::CurrentHousing` is the only line with anything in it.
+        crate::db::bill::insert(
+            &db,
+            &crate::db::bill::NewBill {
+                label: "Mortgage".to_string(),
+                cents: Cents::from_dollars(10_000),
+                category: crate::db::bill::Category::Housing,
+                sort: 0,
+            },
+        )
+        .unwrap();
+        let container = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 1).unwrap();
+        crate::db::goal::insert(
+            &db,
+            &crate::db::goal::NewGoal {
+                name: "Couch".to_string(),
+                container_account_id: container,
+                base_cents: Cents::from_dollars(1_000),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: true,
+            },
+        )
+        .unwrap();
+
+        let view = plan_view(&db, &account::list(&db).unwrap(), today(), today(), 14).unwrap();
+
+        assert_eq!(
+            view.plan.lines.goals,
+            Cents::ZERO,
+            "the plug moved something"
+        );
+        // The transfers are unaffected: the housing line is real, resolves,
+        // and is what the owner opens the tab to read.
+        let transfers = view.transfers.as_ref().expect("the transfers failed");
+        assert_eq!(transfers.len(), 1);
+        // Only the gap those asks would have measured is missing, and an
+        // ask of nothing draws no row.
+        assert_eq!(view.spread_ask_total, Cents::ZERO);
+        assert_eq!(
+            crate::transfer::unmet_asks(view.plan.lines.goals, view.spread_ask_total),
+            None
+        );
+        // And the waterfall the failure says nothing about is intact.
+        assert!(view.plan.shortfall.total() > Cents::ZERO);
+        assert_eq!(view.housing.len(), 1);
+    }
+
+    /// The payday `Unmet Asks` exists for is the one where every line is
+    /// zero, and that is the payday `transfer::plan` refuses outright -- so
+    /// the asks the tab measures the plug against cannot be read through that
+    /// call. Asserted on `plan_view` and not on a fixture: a `PlanView` built
+    /// by hand carries whatever total it is given, and `html::planning` draws
+    /// the row off that, so the production read is what this pins.
+    #[test]
+    fn a_payday_with_nothing_to_transfer_still_reports_what_its_goals_asked() {
+        let db = seeded();
+        let account = account::list(&db).unwrap()[0].id;
+        account::set_group(&db, account, account::Group::Checking).unwrap();
+        // An excess of nothing puts every line at zero -- what a payday whose
+        // fixed bills took the whole of it produces, and what `plan` refuses.
+        crate::db::setting::set(&db, crate::db::setting::key::PINNED_EXCESS, Cents::ZERO).unwrap();
+        let container = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 1).unwrap();
+        crate::db::goal::insert(
+            &db,
+            &crate::db::goal::NewGoal {
+                name: "Couch".to_string(),
+                container_account_id: container,
+                base_cents: Cents::from_dollars(1_000),
+                // One pay period out, so it asks for the whole of what it
+                // lacks rather than a fraction of it.
+                goal_date: Some(today() + chrono::Duration::days(14)),
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: false,
+            },
+        )
+        .unwrap();
+
+        let view = plan_view(&db, &account::list(&db).unwrap(), today(), today(), 14).unwrap();
+
+        assert_eq!(
+            view.plan.lines.goals,
+            Cents::ZERO,
+            "the plug moved something"
+        );
+        let Err(message) = &view.transfers else {
+            panic!("a payday with every line at zero resolved to transfers");
+        };
+        assert_eq!(message, transfer::NOTHING_TO_TRANSFER);
+        // And the asks are still read, so the tab still says the plug covers
+        // none of them.
+        assert_eq!(view.spread_ask_total, Cents::from_dollars(1_000));
+        assert_eq!(
+            transfer::unmet_asks(view.plan.lines.goals, view.spread_ask_total),
+            Some(Cents::from_dollars(-1_000))
+        );
     }
 
     /// An unset feature is an off feature -- the rule the `setting` keys and

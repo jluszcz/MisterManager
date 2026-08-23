@@ -76,7 +76,11 @@ and skip everything computed; `e` edits the selected one, `E` opens a bill's
 whole row — label, amount, and category — `a` adds a bill, `d` deletes the
 selected bill, and `p` pins the excess so the plan stops moving underneath a
 payday — pressing it again re-pins at whatever the excess reads now, and `P`
-unpins. The excess is the checking balance at
+unpins. `Excess (Used)` is an editable constant like any other, so a figure
+typed there pins that instead of the one `p` computed. The transfers never
+total more than the excess: on a payday too small for the fixed bills, housing
+is paid first and the line that gave way carries the gap beside it. The excess
+is the checking balance at
 Paycheck-Eve, so the Overview's `←`/`→` move the whole waterfall with it; a
 scrubbed plan names its date beside `Excess (Actual)`, and `t` and `p` act on
 the figures shown rather than on the derived date.

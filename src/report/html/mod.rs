@@ -443,7 +443,7 @@ mod tests {
             "no savings rows"
         );
         assert!(
-            panel(&page, "planning").contains("Checksum"),
+            panel(&page, "planning").contains("Remaining Excess"),
             "no planning rows"
         );
         assert!(panel(&page, "funds").contains("Stocks"), "no fund rows");

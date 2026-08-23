@@ -650,22 +650,12 @@ impl App {
 
     /// What each goal the plug spreads over asks of this paycheck.
     ///
-    /// The same figure the Savings screen shows in `$/Pay` and the same one
-    /// `A` prefills with -- one function prices a goal, so the column and the
-    /// two prefills cannot come to disagree.
+    /// The two dates the figure depends on are `App`'s, which is the whole of
+    /// what this adds to [`transfer::spread_asks`]: the set and its pricing
+    /// are that function's, so the Planning screen's coverage check and the
+    /// prefill `t` writes cannot come to disagree about either.
     fn spread_asks(&self) -> Result<Vec<(goal::Goal, Cents)>> {
-        let rate = setting::get(&self.db, key::TAX_RATE)?;
-        let mut out = Vec::new();
-        for g in transfer::spread_goals(&self.db)? {
-            let funding = goal_engine::Funding {
-                current: goal::balance(&self.db, g.id)?,
-                target: goal_engine::target(&g, rate)?,
-                goal: g,
-            };
-            let ask = crate::savings::paycheck_ask(&funding, self.today, self.period_days)?;
-            out.push((funding.goal, ask.unwrap_or(Cents::ZERO)));
-        }
-        Ok(out)
+        transfer::spread_asks(&self.db, self.today, self.period_days)
     }
 
     /// The goals this line could point at, with the withdrawal among them.
@@ -770,7 +760,7 @@ impl App {
         };
         // Parsed before the modal closes, so a rejected edit keeps the form
         // and everything typed into it.
-        target.write(&self.db, form.value())?;
+        target.write(&self.db, self.today, form.value())?;
         self.status = format!("{} saved", form.label().plain_text().trim());
         self.close_modal();
         self.reload()
@@ -1624,6 +1614,21 @@ impl App {
             Ok(rows) => (rows, None),
             Err(e) => (Vec::new(), Some(format!("{e:#}"))),
         };
+        // The asks are read on their own, never chained to the call above.
+        // The payday `Unmet Asks` exists for is the one where every line is
+        // zero, and that is exactly the payday `transfer::plan` refuses with
+        // `NOTHING_TO_TRANSFER` -- a read sharing its failure would go silent
+        // on the one state it was put outside the block's `match` to reach.
+        //
+        // A failure of *this* read is its own answer, and is why it is not
+        // propagated: the strict target reader is what a taxed goal with no
+        // rate on record trips, and it would take the whole screen down over
+        // an annotation the screen can simply omit. Zero draws no row, which
+        // is what a gap nothing can measure should look like.
+        let spread_ask_total = self
+            .spread_asks()
+            .map(|asks| asks.iter().map(|(_, ask)| *ask).sum())
+            .unwrap_or(Cents::ZERO);
         // Copied out before the struct literal below moves `plan` into it.
         let plan_lines = plan.lines;
         Ok(planning::View {
@@ -1636,6 +1641,7 @@ impl App {
             pinned_at: setting::get(&self.db, key::PINNED_AT)?,
             scrubbed_adhoc: (self.scrubbed_days() != 0).then_some(self.adhoc),
             transfers,
+            spread_ask_total,
             transfer_error,
             transfer_detail: transfer::diagnose(&self.db, &plan_lines)?,
         })
@@ -5432,6 +5438,42 @@ mod tests {
         );
     }
 
+    /// The waterfall's own hand-typed figure: `e` on `Excess (Used)` pins
+    /// what was typed, exactly as `p` pins what was computed, and every line
+    /// below runs off it.
+    #[test]
+    fn e_on_excess_used_pins_the_figure_that_was_typed() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        for _ in 0..40 {
+            if app.planning.selected_target() == Some(Target::PinnedExcess) {
+                break;
+            }
+            press(&mut app, KeyCode::Down);
+        }
+        assert_eq!(app.planning.selected_target(), Some(Target::PinnedExcess));
+        assert!(!app.planning.is_pinned());
+
+        press(&mut app, KeyCode::Char('e'));
+        for _ in 0..16 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_str(&mut app, "1200");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none());
+        assert_eq!(
+            setting::get(&app.db, key::PINNED_EXCESS).unwrap(),
+            Some(Cents::from_dollars(1_200))
+        );
+        assert_eq!(
+            setting::get(&app.db, key::PINNED_AT).unwrap(),
+            Some(app.today)
+        );
+        assert!(app.planning.is_pinned());
+        assert_eq!(planning_row(&app, "Excess (Used)").value, "1,200");
+    }
+
     /// A failed parse must keep the form open with what was typed, not
     /// discard the edit and leave the user guessing.
     #[test]
@@ -6676,11 +6718,119 @@ mod tests {
         );
     }
 
-    /// `spread_asks` builds its `Funding` by hand -- current from
-    /// `goal::balance`, target from `goal_engine::target` -- rather than
-    /// reading it off `goal::list_with_balances`, so it is the one caller
-    /// that could silently regress to pricing the plug against the base. A
-    /// goal funded to its base is still short by the tax, one paycheck away.
+    /// The plug's gap is the one figure on the Planning screen that comes
+    /// from outside the waterfall: `transfer::spread_asks`, over the same
+    /// goals `t`'s own prefill divides that line between. Asserted through
+    /// `App`, because nothing in `tui::planning` reads a database -- a `View`
+    /// left carrying zero would draw a silent footer on every real payday and
+    /// every test in that module would still pass.
+    #[test]
+    fn the_planning_screens_plug_is_measured_against_its_own_goals_asks() {
+        let mut app = planning_app();
+        app.screen = Screen::Planning;
+        let brokerage = account::by_code(&app.db, "BKR", Kind::Cash)
+            .unwrap()
+            .unwrap()
+            .id;
+        // In the container the plug already spreads over, dated one pay
+        // period out -- so it asks for the whole of what it lacks, which is
+        // far past anything this payday moves.
+        goal::insert(
+            &app.db,
+            &goal::NewGoal {
+                name: "Roof".to_string(),
+                container_account_id: brokerage,
+                base_cents: Cents::from_dollars(500_000),
+                goal_date: Some(app.today + chrono::Duration::days(14)),
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: false,
+            },
+        )
+        .unwrap();
+        app.reload().unwrap();
+
+        let start = app
+            .planning
+            .rows()
+            .iter()
+            .position(|r| r.label == "Transfers")
+            .expect("no Transfers heading");
+        let footer = app.planning.rows()[start..]
+            .iter()
+            .take_while(|r| !(r.label.is_empty() && r.value.is_empty()))
+            .find(|r| r.label.trim() == "Unmet Asks")
+            .expect("no Unmet Asks footer among the transfers");
+
+        let plan = plan::compute_from_db(&app.db, app.adhoc).unwrap();
+        let gap = plan.lines.goals - Cents::from_dollars(500_000);
+        assert_eq!(footer.extra, format!("\u{394} {}", gap.to_whole_dollars()));
+    }
+
+    /// The payday `Unmet Asks` exists for is the one where every line is
+    /// zero, and that is the payday `transfer::plan` refuses outright -- so
+    /// the asks the footer measures the plug against cannot be read through
+    /// that call. Asserted through `App` for the reason the test above it is:
+    /// a `View` built by hand carries whatever total it is given, and every
+    /// test in `tui::planning` would still pass over a screen that had gone
+    /// silent on the one payday the footer exists for.
+    #[test]
+    fn a_payday_with_nothing_to_transfer_still_reports_what_its_goals_asked() {
+        let mut app = planning_app();
+        app.screen = Screen::Planning;
+        let brokerage = account::by_code(&app.db, "BKR", Kind::Cash)
+            .unwrap()
+            .unwrap()
+            .id;
+        goal::insert(
+            &app.db,
+            &goal::NewGoal {
+                name: "Roof".to_string(),
+                container_account_id: brokerage,
+                base_cents: Cents::from_dollars(500_000),
+                goal_date: Some(app.today + chrono::Duration::days(14)),
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: false,
+            },
+        )
+        .unwrap();
+        // An excess of nothing puts every line at zero -- what a payday whose
+        // fixed bills took the whole of it produces, and what `plan` refuses.
+        setting::set(&app.db, key::PINNED_EXCESS, Cents::ZERO).unwrap();
+        app.reload().unwrap();
+
+        let rows = app.planning.rows().to_vec();
+        let start = rows
+            .iter()
+            .position(|r| r.label == "Transfers")
+            .expect("no Transfers heading");
+        let block: Vec<_> = rows[start..]
+            .iter()
+            .take_while(|r| !(r.label.is_empty() && r.value.is_empty()))
+            .collect();
+
+        assert!(
+            block
+                .iter()
+                .any(|r| r.label.trim() == transfer::NOTHING_TO_TRANSFER),
+            "the block is not the one this payday produces: {block:?}"
+        );
+        let footer = block
+            .iter()
+            .find(|r| r.label.trim() == "Unmet Asks")
+            .expect("no Unmet Asks footer on a payday with nothing to transfer");
+        let gap = Cents::ZERO - Cents::from_dollars(500_000);
+        assert_eq!(footer.extra, format!("\u{394} {}", gap.to_whole_dollars()));
+    }
+
+    /// The plug is priced against the **target**, so a taxed goal funded to
+    /// its base is still short by the tax and still asks for it. Asserted
+    /// through `App` rather than on `transfer::spread_asks` directly, because
+    /// what this pins is that the two dates the ask divides by are the ones
+    /// the application is running on.
     #[test]
     fn a_taxed_goals_plug_ask_is_measured_against_its_taxed_target() {
         let db = db::open_in_memory().unwrap();

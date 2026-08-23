@@ -484,6 +484,13 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     number belonging to a plan the screen has just said it cannot compute. `P` only clears two
     keys and reads nothing off the view — refusing there would strand a pin behind a footer still
     offering to remove it.
+  - **`e` on `Excess (Used)` pins too, and it is the only way to pin a figure nothing computed.**
+    `p` freezes the floored actual; the row takes an arbitrary one. That is the sheet's hand-typed
+    `Excess (Fixed)` cell, back as a row — the need it answers is the payday whose excess the owner
+    knows better than the balance does. It is a `Target` like every other constant on the screen, so
+    it goes through the one `Target::write`, which is what keeps both pin keys moving together here
+    as well. Whole dollars, refused below zero, and an empty field does not parse — so the row can
+    create or replace a pin and never clear one.
   - **Both keys move together.** `PINNED_EXCESS` and `PINNED_AT` are written and cleared as a
     pair: a date with no amount would render a line about a plan that is not pinned. A re-pin
     therefore advances the date to today, and the drift falls back to the cents the whole-dollar
@@ -495,6 +502,41 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   trusted plan is read without scrolling, and a doubted figure is chased downwards from the total
   that looked wrong. When the plan does not resolve, `unresolved` and its message take the block's
   place at the top rather than sitting where nothing but a scroll would reach them.
+  - **A plan with nothing to transfer is not an unresolved one**, and does not take that label.
+    Every line zero is what a payday whose excess is nothing produces, now that the fixed bills are
+    capped by it — there is no goal in the wrong container, nothing for `Enter` to explain, and
+    `transfer::plan` refuses for a reason that is not a failure. `transfer::NOTHING_TO_TRANSFER` is
+    the named sentence the screen tells the two apart by, the same construction `goal::NO_TAX_RATE`
+    uses and for the same reason: two modules have to agree on one string.
+  - **One thing reaches a transfer line's own cell, and two more foot the block.** The heading is
+    a heading and nothing else: the transfers never total more than the excess, so there is no
+    longer anything for it to say. Every cell is silent unless something is wrong, and all three
+    figures are a `Δ` in the same column and the same red.
+    - **On the line: what the excess cut short of it**, from `Plan::shortfall` — in practice one
+      of the two fixed bills on a payday too small to cover both. The figure the line *moves*
+      stays plain: it is right, and the gap beside it is what is not. A cut line that leaves as a
+      **withdrawal** carries no `Δ` at all — it is one line under a head that repeats its own
+      figure — and `report::html::planning` draws it the same way, for the reason
+      `transfer::unmet_asks` is one statement rather than two: two sinks disagreeing about the one
+      condition the owner reads either of them for is worse than whichever answer they settle on.
+      What that line lost is in `Shortfall` below.
+    - **`Unmet Asks`**, when `transfer::spread_asks` comes to more than the plug: `calc::fit` is
+      about to scale every goal to the same fraction of what it asked, and nothing else on the
+      screen says so — the Goals line's own figure is right either way, and each goal's `$/Pay` is
+      a column on Savings. `transfer::unmet_asks` is the one statement of when that gap exists,
+      because the report draws it too, and it takes **`lines.goals` rather than the transfer row**:
+      `transfer::plan` skips a line at zero, so a plug of nothing has no Goals row for a cell to
+      hang off, and that is the payday whose goals are worst served.
+    - **`Shortfall`**, whenever the excess cut anything at all: `Plan::shortfall`'s whole total,
+      and the sum of every per-line cell above it.
+    - **Both footers are pushed outside the block's own `match`, and that is the point of them.**
+      The payday each exists for is a payday with no transfer row to annotate — a plug of nothing
+      for the first, an excess the fixed bills took whole for the second, which is also the payday
+      `transfer::plan` finds nothing to move at all. Each is absent rather than zero on an
+      ordinary payday, for the reason a silent cell is silent. Which is why `App::planning_view`
+      reads `View::spread_ask_total` on its own rather than through that call: asks chained to it
+      are zero on exactly the payday `Unmet Asks` was put outside the `match` to reach, and the
+      row would be silent there whatever the block did.
 - **The two colors on the Destinations block carry opposite instructions.** Red
   (`style::Tone::Negative`, through `Landing::breaks_the_plan`) means this plan will not run: an
   ambiguous plug, a plug with nowhere to spread, a key naming a row that is gone. Amber
@@ -614,6 +656,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   ambiguous plug spans several containers, a withdrawal leaves the tracked system, and a suggestion
   **displaces** the container so that cell holds a goal's name. The lines *under* a transfer are
   plain too: the account is said once, at the head of the group it heads.
+  - **The extra cell takes a tone of its own, `Row::extra_tone`, and it outranks the tint the same
+    way.** A second field rather than a second reader of `tone`, because the two cells say
+    different things about one row: the Goals line's figure is right while the gap beside it is the
+    problem, and a single tone over both would paint the amount red for the plan's sake. Only ever
+    `Tone::Negative` — the one thing that cell reports rather than states is a gap the money will
+    not cover.
 - **A section of one band draws no band subtotals.** The Overview stacks accounts in bands
   (`account::Group`) inside sections (`account::Kind`): cash breaks into Checking and Savings,
   credit does not break at all. A single band's subtotal and its section's total are the same

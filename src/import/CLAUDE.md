@@ -129,12 +129,12 @@ group carry recurring-goal months two years ahead of their goal dates.
 | Cell | Becomes |
 |---|---|
 | `D1` | `key::PLANNING_TARGET` |
-| `D3` | `key::PINNED_EXCESS` — the sheet's hand-typed `Excess (Fixed)` |
+| `D3` | `key::PINNED_EXCESS` — the sheet's hand-typed `Excess (Fixed)`; refused by `plan::check_pinned_excess` if it is negative or carries cents |
 | `J11` | `key::PLANNING_BUFFER` |
 | `E19` / `F19` | `key::BILL_PAYMENT_CAP` / `key::BILL_PAYMENT_PCT` |
 | `E20` | `key::MOM_AND_DAD_ANNUAL` |
 | `E24` | `key::GOALS_FLOOR` |
-| `F25:F27` | the split percentages |
+| `F25:F27` | the split percentages — refused by `plan::check_splits` if any is outside `0..=100` or the three total over 100% |
 | `C7:D12` | the `bill` table — `C7:C8` Housing, `C9:C12` Other |
 | `I2:M<n>` | the `fund` table — `I` name, `J` the cached target percentage, `M` the value |
 

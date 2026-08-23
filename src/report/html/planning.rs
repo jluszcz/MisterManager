@@ -2,6 +2,7 @@
 //! decided it.
 
 use super::{account, escape, full_width_row, money};
+use crate::calc::planning::Lines;
 use crate::gate::Gate;
 use crate::money::Cents;
 use crate::plan_line::Line;
@@ -75,7 +76,7 @@ fn heading(label: &str) -> String {
 /// there, exactly as the Planning screen tints the label column rather than
 /// the figures. A withdrawal names no account and takes no color: money
 /// leaving the tracked system is a destination, not a failure.
-fn transfer(t: &Transfer) -> String {
+fn transfer(t: &Transfer, shortfall: &Lines) -> String {
     let label = match &t.to {
         Some(a) => account(a),
         None => escape(&t.label),
@@ -88,15 +89,51 @@ fn transfer(t: &Transfer) -> String {
         .lines
         .iter()
         .map(|(line, cents)| {
+            // What the excess cut from this line, in the column the page
+            // keeps for it and the red the screen paints it -- and nothing
+            // where a withdrawal carries it, because a withdrawal is one
+            // line under a head repeating its own figure and the Planning
+            // screen draws it plain. What it lost is in the `Shortfall` row
+            // below, stated once for the whole plan rather than per line.
+            let cut = match t.to.is_some() {
+                true => line.amount(shortfall),
+                false => Cents::ZERO,
+            };
             row(
                 "sub",
-                line,
+                line.label(),
                 money(cents.to_whole_dollars(), *cents),
-                String::new(),
+                match cut > Cents::ZERO {
+                    true => gap(cut),
+                    false => String::new(),
+                },
             )
         })
         .collect();
     format!("{head}{lines}")
+}
+
+/// A gap, in the red every gap on this page is drawn in.
+fn gap(cents: Cents) -> String {
+    format!(
+        "<span style=\"color:{}\">\u{394} {}</span>",
+        crate::palette::hex(crate::palette::NEGATIVE),
+        escape(&cents.to_whole_dollars())
+    )
+}
+
+/// A gap the block foots with rather than hangs off a line.
+///
+/// The column the per-line gaps are drawn in, because these are what those
+/// cells could not carry: each reports a payday with no transfer row to hang
+/// a cell off at all.
+fn footer(label: &str, cents: Cents) -> String {
+    row(
+        "tot",
+        label,
+        "<td class=\"n\"></td>".to_string(),
+        gap(cents),
+    )
 }
 
 fn resolved(view: &PlanView) -> String {
@@ -108,7 +145,17 @@ fn resolved(view: &PlanView) -> String {
         // Every figure below is still right -- a dangling destination key
         // stops the money moving without making the waterfall wrong.
         Err(message) => rows.push_str(&full_width_row("note", COLUMNS, escape(message))),
-        Ok(transfers) => rows.extend(transfers.iter().map(transfer)),
+        Ok(transfers) => rows.extend(transfers.iter().map(|t| transfer(t, &p.shortfall))),
+    }
+    // Both footers sit outside the match on purpose, exactly as they do on
+    // the screen: each reports a payday with no transfer row to hang a
+    // per-line cell off -- a plug of nothing for the first, an excess the
+    // fixed bills took whole for the second.
+    if let Some(unmet) = crate::transfer::unmet_asks(p.lines.goals, view.spread_ask_total) {
+        rows.push_str(&footer("Unmet Asks", unmet));
+    }
+    if p.shortfall.total() > Cents::ZERO {
+        rows.push_str(&footer("Shortfall", p.shortfall.total()));
     }
 
     rows.push_str(&heading("Excess"));
@@ -195,7 +242,6 @@ fn resolved(view: &PlanView) -> String {
     ));
     rows.push_str(&split(Line::Goals.label(), p.goals, s.goals_pct()));
 
-    rows.push_str(&total("Checksum", p.checksum));
     format!("<table>{rows}</table>")
 }
 
@@ -243,7 +289,142 @@ mod tests {
                 .unwrap_or_else(|| panic!("no {heading} block, or it came out of order"));
             at += found;
         }
-        assert!(planning.contains("Checksum"), "no checksum");
+    }
+
+    /// The fixture's snapshot with its plan reshaped. These tests are about
+    /// what the page draws *over* a plan, and computing a second waterfall
+    /// to reach one figure would pin the arithmetic twice over.
+    fn with_plan(edit: impl FnOnce(&mut crate::report::PlanView)) -> String {
+        let mut snapshot = snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000);
+        let Planning::Resolved(view) = &mut snapshot.planning else {
+            panic!("the fixture's plan does not resolve");
+        };
+        edit(view);
+        planning(&snapshot)
+    }
+
+    /// The transfers never total more than the excess, so there is nothing
+    /// for a heading or a foot to report -- and a figure saying nothing is
+    /// wrong on every ordinary payday is a figure nobody reads.
+    #[test]
+    fn a_plan_that_covers_everything_draws_no_gap_anywhere() {
+        let planning = with_plan(|_| {});
+
+        assert!(
+            !planning.contains("Checksum"),
+            "the foot of the tab still carries a checksum"
+        );
+        assert!(
+            !planning.contains('\u{394}'),
+            "a covered plan drew a gap: {planning}"
+        );
+    }
+
+    /// A payday too small for the fixed bills cuts one of them, and the page
+    /// says so where the screen does: in the cut line's own cell, in the
+    /// column the page keeps for it.
+    #[test]
+    fn a_cut_line_carries_its_gap_beside_itself() {
+        let planning = with_plan(|v| {
+            let cents = crate::money::Cents::from_dollars(307);
+            v.plan.shortfall.bills = crate::money::Cents::from_dollars(237);
+            if let Ok(transfers) = &mut v.transfers {
+                transfers[0]
+                    .lines
+                    .push((crate::plan_line::Line::Bills, cents));
+            }
+        });
+
+        // Twice: the cut line's own cell, and the `Shortfall` row that sums
+        // every such cell at the foot of the block.
+        assert_eq!(
+            planning.matches("\u{394} 237").count(),
+            2,
+            "no gap: {planning}"
+        );
+    }
+
+    /// An unset `planning.goal.bill_payments_id` sends the bill line out of
+    /// the tracked system, and the Planning screen draws such a line plain --
+    /// it is one line under a head that repeats its own figure. So does this,
+    /// rather than being the one of the two sinks that annotates it. What the
+    /// excess cut from it is still said, once, in the `Shortfall` row.
+    #[test]
+    fn a_cut_line_leaving_as_a_withdrawal_carries_no_gap_beside_itself() {
+        let planning = with_plan(|v| {
+            v.plan.shortfall.bills = crate::money::Cents::from_dollars(237);
+            if let Ok(transfers) = &mut v.transfers {
+                transfers.retain(|t| t.to.is_none());
+                transfers[0].lines = vec![(
+                    crate::plan_line::Line::Bills,
+                    crate::money::Cents::from_dollars(307),
+                )];
+            }
+        });
+
+        assert_eq!(
+            planning.matches("\u{394} 237").count(),
+            1,
+            "the withdrawal's line drew a gap the screen does not: {planning}"
+        );
+        assert!(planning.contains("Shortfall"), "no shortfall: {planning}");
+    }
+
+    /// The payday where the fixed bills took everything is the one the gap
+    /// exists for, and it is also the one `transfer::plan` refuses: every
+    /// line is zero, so there is not a transfer row in the block for a
+    /// per-line gap to hang off. A block that only ever spoke through its
+    /// lines would go silent exactly there.
+    #[test]
+    fn a_plan_that_moves_nothing_still_reports_what_the_excess_left_unpaid() {
+        let planning = with_plan(|v| {
+            v.plan.shortfall.current_housing = crate::money::Cents::from_dollars(693);
+            v.plan.shortfall.bills = crate::money::Cents::from_dollars(544);
+            v.transfers = Err(crate::transfer::NOTHING_TO_TRANSFER.into());
+        });
+
+        assert!(
+            planning.contains("\u{394} 1,237"),
+            "the whole plan's gap is not on the page: {planning}"
+        );
+    }
+
+    /// The plug is divided by what each goal asks of this paycheck, so the
+    /// page says when it will not stretch -- the same footer the screen says
+    /// it in, and the same silence when it covers them.
+    #[test]
+    fn a_plug_short_of_the_paycheck_asks_carries_the_gap_in_the_blocks_footer() {
+        let planning = with_plan(|v| {
+            v.spread_ask_total = v.plan.lines.goals + crate::money::Cents::from_dollars(220)
+        });
+
+        assert!(planning.contains("Unmet Asks"), "no footer: {planning}");
+        assert!(planning.contains("\u{394} -220"), "no gap: {planning}");
+    }
+
+    #[test]
+    fn a_plug_that_covers_every_ask_says_nothing_below_itself() {
+        let planning = with_plan(|v| v.spread_ask_total = v.plan.lines.goals);
+
+        assert!(
+            !planning.contains('\u{394}'),
+            "a covered plug drew a gap: {planning}"
+        );
+    }
+
+    /// `transfer::plan` skips a line at zero, so the payday whose plug is
+    /// nothing has no Goals row at all -- and it is the payday whose goals
+    /// are worst served. A gap hung off that row would fade out exactly as
+    /// the condition it reports got worse.
+    #[test]
+    fn a_plug_of_nothing_still_reports_what_its_goals_asked() {
+        let planning = with_plan(|v| {
+            v.plan.lines.goals = crate::money::Cents::ZERO;
+            v.spread_ask_total = crate::money::Cents::from_dollars(220);
+            v.transfers = Err(crate::transfer::NOTHING_TO_TRANSFER.into());
+        });
+
+        assert!(planning.contains("\u{394} -220"), "no gap: {planning}");
     }
 
     /// A withdrawal is a destination and not a failure, so it draws as a
@@ -287,6 +468,9 @@ mod tests {
             planning.contains("setting planning.goals = 41 is gone"),
             "the reason is not on the page"
         );
-        assert!(planning.contains("Checksum"), "the waterfall went with it");
+        assert!(
+            planning.contains("Remaining Excess"),
+            "the waterfall went with it"
+        );
     }
 }
