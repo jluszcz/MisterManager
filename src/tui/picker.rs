@@ -12,7 +12,7 @@
 //! listed either way -- so a preselection is a starting point the list can be
 //! scrolled out of rather than a cage.
 
-use super::cursor::{Cursor, Scroll, Viewport};
+use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::{Account, Label};
 use crate::db::recurring_goal::{Cadence, Entry};
 use crate::db::{AccountId, RecurringGoalId};
@@ -137,19 +137,7 @@ impl Picker {
     }
 }
 
-impl Scroll for Picker {
-    fn cursor(&self) -> &Cursor {
-        &self.cursor
-    }
-
-    fn cursor_mut(&mut self) -> &mut Cursor {
-        &mut self.cursor
-    }
-
-    fn row_count(&self) -> usize {
-        self.entries.len()
-    }
-}
+impl_scroll!(Picker, entries);
 
 use super::form::centered;
 use super::{Chrome, amount, label_line, month_name, render_table};
@@ -217,6 +205,7 @@ mod tests {
     use crate::db::account::{self};
     use crate::money::Cents;
     use crate::test_support::{cash, day};
+    use crate::tui::cursor::Scroll;
 
     fn accounts() -> Vec<account::Account> {
         vec![cash(1, "SAV"), cash(2, "NST")]

@@ -5,7 +5,7 @@
 //! and no `Db` on the type. `App` runs the queries and hands the results in.
 
 use super::Label;
-use super::cursor::{Cursor, Scroll, Viewport};
+use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::form::{self, Caret, Field, Focused, FormFields, Step, next_in, step_index};
 use crate::db::FundId;
 use crate::db::fund::{Fund, FundEdit, Target};
@@ -107,19 +107,7 @@ impl Default for Funds {
     }
 }
 
-impl Scroll for Funds {
-    fn cursor(&self) -> &Cursor {
-        &self.cursor
-    }
-
-    fn cursor_mut(&mut self) -> &mut Cursor {
-        &mut self.cursor
-    }
-
-    fn row_count(&self) -> usize {
-        self.rows.len()
-    }
-}
+impl_scroll!(Funds, rows);
 
 /// A share typed as a percentage, into basis points: `40` and `40.00` are
 /// both `BasisPoints(4_000)`.
@@ -269,12 +257,8 @@ impl FundForm {
 }
 
 impl FormFields for FundForm {
-    fn next_field(&mut self) {
-        self.focus = next_in(&self.fields(), self.focus, 1);
-    }
-
-    fn previous_field(&mut self) {
-        self.focus = next_in(&self.fields(), self.focus, -1);
+    fn move_focus(&mut self, step: isize) {
+        self.focus = next_in(&self.fields(), self.focus, step);
     }
 
     fn cycle(&mut self, step: Step) {
@@ -424,6 +408,7 @@ mod tests {
     use super::*;
     use crate::fund::{Allocation, FundRow};
     use crate::tui::MIN_WIDTH;
+    use crate::tui::cursor::Scroll;
     use crate::tui::form::char_key;
 
     fn row(id: i64, name: &str, target: Option<i64>, actual_bp: i64, dollars: i64) -> FundRow {

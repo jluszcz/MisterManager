@@ -1,4 +1,4 @@
-use super::cursor::{Cursor, Scroll, Viewport};
+use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::search::{Search, SearchBox};
 use crate::db::AccountId;
 use crate::db::account::{self, Account, Kind};
@@ -419,19 +419,7 @@ impl Search for Ledger {
     }
 }
 
-impl Scroll for Ledger {
-    fn cursor(&self) -> &Cursor {
-        &self.cursor
-    }
-
-    fn cursor_mut(&mut self) -> &mut Cursor {
-        &mut self.cursor
-    }
-
-    fn row_count(&self) -> usize {
-        self.visible.len()
-    }
-}
+impl_scroll!(Ledger, visible);
 
 use super::{
     Chrome, Label, account_cell, amount, label_line, money_span, money_text, render_table,
@@ -551,6 +539,7 @@ mod tests {
     use crate::money::Cents;
     use crate::test_support::{cash, day};
     use crate::tui::MIN_WIDTH;
+    use crate::tui::cursor::Scroll;
     use chrono::NaiveDate;
 
     fn accounts() -> Vec<Account> {

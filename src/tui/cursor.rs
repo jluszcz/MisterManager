@@ -222,8 +222,11 @@ pub(super) trait Scroll {
     fn cursor(&self) -> &Cursor;
     fn cursor_mut(&mut self) -> &mut Cursor;
 
-    /// How many rows the cursor may move over. The *visible* count where a
-    /// screen filters: Savings and the worksheet both narrow under the cursor.
+    /// How many rows the cursor may move over. The *visible* count wherever a
+    /// screen filters — the ledgers, Savings, Recurring Goals, the worksheet
+    /// and the destination chooser all narrow the list under the cursor, and
+    /// counting every row a screen holds would offer the cursor rows that
+    /// were never drawn.
     fn row_count(&self) -> usize;
 
     fn selected_index(&self) -> usize {
@@ -278,6 +281,34 @@ pub(super) trait Scroll {
         self.cursor_mut().record_viewport(viewport);
     }
 }
+
+/// The whole of a list screen's [`Scroll`] impl: the `cursor` field it holds,
+/// and `$rows`, the field whose length the cursor travels over.
+///
+/// Nine screens write exactly this and differ in nothing but that field name,
+/// so they say it in one line each. Planning is the one screen that still
+/// writes the impl out, because it overrides [`Scroll::context_row`] and
+/// [`Scroll::tail_row`] as well, and a macro emitting the whole `impl` has
+/// nowhere to put them.
+macro_rules! impl_scroll {
+    ($screen:ty, $rows:ident) => {
+        impl $crate::tui::cursor::Scroll for $screen {
+            fn cursor(&self) -> &$crate::tui::cursor::Cursor {
+                &self.cursor
+            }
+
+            fn cursor_mut(&mut self) -> &mut $crate::tui::cursor::Cursor {
+                &mut self.cursor
+            }
+
+            fn row_count(&self) -> usize {
+                self.$rows.len()
+            }
+        }
+    };
+}
+
+pub(super) use impl_scroll;
 
 /// Dispatch the six list-navigation keys, reporting whether one was consumed.
 ///

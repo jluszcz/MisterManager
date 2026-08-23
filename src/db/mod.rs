@@ -160,6 +160,18 @@ pub fn clear_imported_data(db: &Db) -> Result<()> {
     Ok(())
 }
 
+/// Drain a `query_map` into a `Vec`, turning the first row that fails to read
+/// into this crate's error type.
+///
+/// Every list query in this directory ends this way, and writing it out means
+/// naming `rusqlite::Result` at each of them purely to tell the collect which
+/// of the two `Result`s to gather into. Private rather than `pub`, so the
+/// submodules reach it and nothing outside `db` learns that a query is an
+/// iterator at all.
+fn collect_rows<T>(rows: impl Iterator<Item = rusqlite::Result<T>>) -> Result<Vec<T>> {
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 fn prepare(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;

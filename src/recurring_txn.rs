@@ -12,6 +12,7 @@ use crate::db::{Db, RecurringTxnId, txn};
 use anyhow::{Context, Result};
 use chrono::{Months, NaiveDate};
 use std::collections::HashSet;
+use std::fmt;
 
 /// What one regeneration did.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -24,6 +25,20 @@ pub struct Regenerated {
     pub released: usize,
     pub adopted: usize,
     pub inserted: usize,
+}
+
+/// The four counts as a status line reads them, in the order regeneration
+/// does them. On the type rather than beside a screen, so the three keys that
+/// report a regeneration -- `g`, `G` and `x` -- cannot come to count the same
+/// work in three wordings.
+impl fmt::Display for Regenerated {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "removed {} · released {} · adopted {} · inserted {}",
+            self.removed, self.released, self.adopted, self.inserted
+        )
+    }
 }
 
 impl Regenerated {

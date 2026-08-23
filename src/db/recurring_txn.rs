@@ -145,7 +145,7 @@ pub fn insert(db: &Db, recurring_txn: &NewRecurringTxn) -> Result<RecurringTxnId
 pub fn list(db: &Db) -> Result<Vec<RecurringTxn>> {
     let mut stmt = db.conn.prepare(select_recurring_txn!("ORDER BY id"))?;
     let rows = stmt.query_map([], from_row)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 /// One recurring transaction by id. A missing one is an error, not `None` --
@@ -386,7 +386,7 @@ pub fn owned_dates(db: &Db, id: RecurringTxnId, from: NaiveDate) -> Result<Vec<N
         let raw: String = row.get(0)?;
         date::parse(&raw, 0)
     })?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 #[cfg(test)]

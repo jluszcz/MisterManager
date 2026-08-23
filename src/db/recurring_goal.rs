@@ -105,7 +105,7 @@ pub fn insert(db: &Db, entry: &NewEntry) -> Result<RecurringGoalId> {
 pub fn list(db: &Db) -> Result<Vec<Entry>> {
     let mut stmt = db.conn.prepare(select_recurring_goal!("ORDER BY id"))?;
     let rows = stmt.query_map([], from_row)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 /// How many *open* goals each recurring goal entry currently has.

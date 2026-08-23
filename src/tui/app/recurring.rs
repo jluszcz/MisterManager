@@ -105,19 +105,13 @@ impl App {
         };
         let (id, description) = (row.recurring_txn_id, row.description.clone());
         let report = recurring_engine::regenerate(&self.db, id, self.today)?;
-        self.status = format!(
-            "{description}: removed {} · released {} · adopted {} · inserted {}",
-            report.removed, report.released, report.adopted, report.inserted
-        );
+        self.status = format!("{description}: {report}");
         self.reload()
     }
 
     fn regenerate_every(&mut self) -> Result<()> {
         let report = recurring_engine::regenerate_all(&self.db, self.today)?;
-        self.status = format!(
-            "every recurring transaction: removed {} · released {} · adopted {} · inserted {}",
-            report.removed, report.released, report.adopted, report.inserted
-        );
+        self.status = format!("every recurring transaction: {report}");
         self.reload()
     }
 
@@ -132,10 +126,9 @@ impl App {
         };
         let (id, description) = (row.recurring_txn_id, row.description.clone());
         self.status = match recurring_engine::extend(&self.db, id, self.today)? {
-            Extended::Through { through, report } => format!(
-                "{description} extended through {through}: removed {} · released {} · adopted {} · inserted {}",
-                report.removed, report.released, report.adopted, report.inserted
-            ),
+            Extended::Through { through, report } => {
+                format!("{description} extended through {through}: {report}")
+            }
             Extended::Ends(end) => {
                 format!("{description} ends {end} — change that with e")
             }

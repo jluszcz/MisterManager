@@ -7,7 +7,7 @@
 //! transfers. It is also what makes the remaining counter meaningful, since it
 //! reconciles against that one container's excess.
 
-use super::cursor::{Cursor, Scroll, Viewport};
+use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::form::{Caret, DateField, Step, value_spans};
 use super::search::{Search, SearchBox};
 use super::text::Edit;
@@ -547,20 +547,7 @@ impl Search for Worksheet {
     }
 }
 
-impl Scroll for Worksheet {
-    fn cursor(&self) -> &Cursor {
-        &self.cursor
-    }
-
-    fn cursor_mut(&mut self) -> &mut Cursor {
-        &mut self.cursor
-    }
-
-    /// The lines the name filter left, not every goal in the container.
-    fn row_count(&self) -> usize {
-        self.visible.len()
-    }
-}
+impl_scroll!(Worksheet, visible);
 
 use super::form::centered;
 use super::{amount, label_line, table_state};
@@ -683,6 +670,7 @@ mod tests {
     use super::*;
     use crate::db::account::{self};
     use crate::test_support::{cash, day};
+    use crate::tui::cursor::Scroll;
 
     fn accounts() -> Vec<account::Account> {
         vec![cash(1, "SAV"), cash(2, "BKR"), cash(3, "NST")]
