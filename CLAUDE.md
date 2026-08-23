@@ -227,6 +227,18 @@ matches, since nothing but a test ties them together.
   all. The Accounts screen is where all four are then set, and `account` is **not** in
   `IMPORTED_TABLES`, so what is set there outlives every `mm import --replace`. A code the sheet grows later is not an error: it
   arrives the same way, named after itself, and sorts past the accounts already placed.
+  **An account the sheet never names arrives the same way too**: `a` on the Accounts screen asks
+  the code, the kind and a name, and writes exactly that row — default band, no color, appended
+  last — so an account the owner creates is indistinguishable from one the import wrote, and
+  `PRESERVED_TABLES` keeps it across a `--replace` for the same reason it keeps the naming. The
+  code is asked there and nowhere else, because it is what the next import matches the row
+  against: a hand-created account whose code the workbook later grows is *adopted* by that import
+  rather than duplicated, since `import::constants` skips a code the kind already holds.
+  `account::insert` refuses one it does not skip, naming the code as the database holds it — the
+  schema's `account_code_kind` is the backstop, and per kind, so one code may still name both a
+  cash account and the card drawn on it. **The match folds case**, in `account::by_code` and in
+  the index under it: a code typed `chk` against a sheet that later spells it `CHK` would
+  otherwise miss the skip and split one real account across two rows.
   `account::reorder` takes a *position* rather than a raw `sort` and renumbers the whole kind,
   because `sort` is only ever read through an `ORDER BY` that breaks ties by code — "put it third"
   is an instruction whose result does not depend on rows the caller never saw, and "set sort to 2"

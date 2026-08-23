@@ -186,6 +186,13 @@ set on screen `9`, and no import touches them again: `account` is deliberately
 outside the tables a `--replace` clears. Neither is `recurring_txn` — the
 rules you typed, and the paycheck flag among them, survive a re-import.
 
+An account the workbook does not name is yours to create there too: `a` asks a
+code, a kind and a name, and writes the same row an import would — default
+band, no color, last among its kind. The code is asked there and nowhere else,
+because it is what the next import matches the row against, so giving one the
+code the sheet later grows means that import adopts the row rather than writing
+a second.
+
 Import refuses to run against a database that already holds transactions or
 goals -- re-running an import is not additive, so doing so unconditionally
 would silently double every row on a second run. Pass `--replace` to clear
@@ -387,7 +394,7 @@ read a backup, delete one, or list the prefix.
 | `src/backup/` | The schedule, the snapshot, and the S3 upload. `aws-config`, `aws-sdk-s3` and `tokio` are named only in `src/backup/s3.rs`. |
 | `src/tui/` | The terminal UI: screens, forms, key handling. |
 | `src/tui/fund.rs` | The Funds screen and its form. |
-| `src/tui/accounts.rs` | The Accounts screen — the six things the workbook does not say about an account. |
+| `src/tui/accounts.rs` | The Accounts screen — creating an account the workbook does not name, and the six things it does not say about one. |
 
 `ratatui` (which re-exports `crossterm`) is named only inside `src/tui/`, the
 same discipline that confines `rusqlite` to `src/db/`, `calamine` to

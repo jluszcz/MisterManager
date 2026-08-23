@@ -389,14 +389,22 @@ const FUNDS: [Entry; 4] = [
     },
 ];
 
-/// One key, because an account exists because the workbook names it: there
-/// is nothing to add and nothing to delete, only what to call the one the
-/// sheet already gave you.
-const ACCOUNTS: [Entry; 1] = [Entry {
-    key: "e",
-    label: Label::Own("edit"),
-    detail: "Edit the selected account: what it is called, which Overview band it sits in, where it sits among the accounts of its kind, and -- for a cash account -- how an interest posting against it is divided and which block of the Savings sheet it is the container for. That last one is what mm import waits on: the sheet names its two blocks by position and carries no account code, so the first import writes the accounts and stops until both blocks have been pointed at a container here. The code and the kind are not editable: both come from the workbook, and they are what the next import matches this row against. Nothing here is imported, so all of it survives mm import --replace.",
-}];
+/// Two keys, and no `d`. An account is created here or by the workbook
+/// naming it, and deleting one would orphan every transaction, goal and
+/// recurring rule pointing at it -- and the next import would put a sheet's
+/// account straight back.
+const ACCOUNTS: [Entry; 2] = [
+    Entry {
+        key: "a",
+        label: Label::Own("add"),
+        detail: "Add an account the workbook does not name: a code, a kind, and what to call it. The code and the kind are asked here and nowhere else -- they are what the next import matches this row against, so e cannot change either, and a code the same kind already holds is refused. The new account takes its kind's default band, no color, and the last place among the accounts of its kind; e is where it is placed. One code may name both a cash account and the card drawn on it, since the two are told apart by kind.",
+    },
+    Entry {
+        key: "e",
+        label: Label::Own("edit"),
+        detail: "Edit the selected account: what it is called, which Overview band it sits in, where it sits among the accounts of its kind, and -- for a cash account -- how an interest posting against it is divided and which block of the Savings sheet it is the container for. That last one is what mm import waits on: the sheet names its two blocks by position and carries no account code, so the first import writes the accounts and stops until both blocks have been pointed at a container here. The code and the kind are not editable: they are what the next import matches this row against, so editing either would orphan the account from the sheet that names it -- a is where both are chosen. Nothing here is imported, so all of it survives mm import --replace.",
+    },
+];
 
 const RECURRING_TXNS: [Entry; 7] = [
     Entry {
@@ -1364,7 +1372,7 @@ mod tests {
             Topic::RecurringGoals.footer(),
             "[ ] month · Esc clear · a add · e edit · d delete · s savings"
         );
-        assert_eq!(Topic::Accounts.footer(), "e edit");
+        assert_eq!(Topic::Accounts.footer(), "a add · e edit");
     }
 
     #[test]

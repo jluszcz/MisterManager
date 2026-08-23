@@ -913,6 +913,26 @@ impl App {
         self.reload()
     }
 
+    /// Insert the account `a` describes, appended to whatever its kind
+    /// already holds.
+    ///
+    /// The sort is computed the way `import::constants` computes it, and for
+    /// the same reason: `sort` is only ever read through an `ORDER BY` that
+    /// breaks ties by code, so "after the ones already there" is the only
+    /// placement that does not depend on rows nobody has seen. Moving it
+    /// anywhere else is `e`'s `Order` selector, which renumbers the kind.
+    fn commit_new_account(&mut self) -> Result<()> {
+        let Some(Modal::Account(form)) = &self.modal else {
+            return Ok(());
+        };
+        let new = form.commit_new()?;
+        let sort = account::list_by_kind(&self.db, new.kind)?.len() as i64;
+        account::insert(&self.db, &new.code, &new.name, new.kind, sort)?;
+        self.status = format!("{} added", new.name);
+        self.close_modal();
+        self.reload()
+    }
+
     fn commit_fund_value(&mut self) -> Result<()> {
         let Some(Modal::FundValue(id, form)) = &self.modal else {
             return Ok(());
@@ -1432,8 +1452,10 @@ impl App {
         if cursor::scroll_key(&mut self.accounts, key.code) {
             return Ok(());
         }
-        if key.code == KeyCode::Char('e') {
-            self.open_account_edit()?;
+        match key.code {
+            KeyCode::Char('a') => self.modal = Some(Modal::Account(AccountForm::add())),
+            KeyCode::Char('e') => self.open_account_edit()?,
+            _ => {}
         }
         Ok(())
     }
@@ -1472,14 +1494,20 @@ impl App {
         Ok(None)
     }
 
-    /// The five writes `e` stands for, in an order that makes the last one
-    /// mean what it says: `reorder` renumbers by position, so it goes after
-    /// the band change rather than before one that could move the row.
+    /// `a`'s one write, or the five `e` stands for.
+    ///
+    /// The five are ordered so the last one means what it says: `reorder`
+    /// renumbers by position, so it goes after the band change rather than
+    /// before one that could move the row. `a` writes none of them -- a new
+    /// account takes its kind's default band, no color, no interest policy
+    /// and no `Savings` block, and `e` is where it is placed.
     fn commit_account(&mut self) -> Result<()> {
         let Some(Modal::Account(form)) = &self.modal else {
             return Ok(());
         };
-        let id = form.account_id;
+        let Some(id) = form.editing else {
+            return self.commit_new_account();
+        };
         let edit = form.commit()?;
         account::set_name(&self.db, id, &edit.name)?;
         account::set_color(&self.db, id, edit.color)?;
@@ -8153,7 +8181,7 @@ mod tests {
             (Topic::Funds, &["a", "e", "E", "d"]),
             (Topic::RecurringTxns, &["a", "e", "d", "g", "G", "x", "P"]),
             (Topic::RecurringGoals, &["[ ]", "Esc", "a", "e", "d", "s"]),
-            (Topic::Accounts, &["e"]),
+            (Topic::Accounts, &["a", "e"]),
         ];
         assert_documented(&handlers);
     }
@@ -9197,6 +9225,132 @@ mod tests {
                 .collect::<Vec<_>>(),
             cards,
             "reordering one kind moved the other"
+        );
+    }
+
+    /// `a` writes the one row the workbook cannot: an account the sheet does
+    /// not name. It lands last among its own kind, in that kind's default
+    /// band and with no color, because everything else about an account is a
+    /// placement and `e` is where an account is placed.
+    #[test]
+    fn a_creates_an_account_at_the_end_of_its_own_kind() {
+        let mut app = app();
+        let before = account::list_by_kind(&app.db, Kind::Cash).unwrap().len();
+
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, "NST");
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        type_str(&mut app, "Nest Egg");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none());
+        let cash = account::list_by_kind(&app.db, Kind::Cash).unwrap();
+        assert_eq!(cash.len(), before + 1);
+        let added = cash.last().unwrap();
+        assert_eq!(added.code, "NST");
+        assert_eq!(added.name, "Nest Egg");
+        assert_eq!(added.group, Group::Savings);
+        assert_eq!(added.color, None);
+    }
+
+    /// The kind selector is what puts a new account on the Credit ledger
+    /// rather than the Cash one, and it is asked here because `e` cannot
+    /// change it afterwards.
+    #[test]
+    fn a_creates_a_card_when_the_kind_selector_says_credit() {
+        let mut app = app();
+        let before = account::list_by_kind(&app.db, Kind::Credit).unwrap().len();
+
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, "CC3");
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Tab);
+        type_str(&mut app, "Card Three");
+        press(&mut app, KeyCode::Enter);
+
+        let cards = account::list_by_kind(&app.db, Kind::Credit).unwrap();
+        assert_eq!(cards.len(), before + 1);
+        let added = cards.last().unwrap();
+        assert_eq!(added.name, "Card Three");
+        assert_eq!(added.group, Group::Credit);
+    }
+
+    /// A code the kind already holds is what the next import would match two
+    /// rows against. The modal stays open with the message on it, rather than
+    /// a `UNIQUE constraint failed` naming an index the owner never typed.
+    #[test]
+    fn a_refuses_a_code_the_kind_already_holds() {
+        let mut app = app();
+        let before = account::list_by_kind(&app.db, Kind::Cash).unwrap().len();
+
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, "SAV");
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        type_str(&mut app, "Second Rainy Day");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.status.contains("SAV"), "{}", app.status);
+        assert!(app.modal.is_some(), "the form closed over a refused write");
+        assert_eq!(
+            account::list_by_kind(&app.db, Kind::Cash).unwrap().len(),
+            before
+        );
+    }
+
+    /// The refusal is per kind, because `UNIQUE (code, kind)` is: one code
+    /// naming both a cash account and the card drawn on it is the shape the
+    /// constraint exists for.
+    #[test]
+    fn a_accepts_a_code_that_only_the_other_kind_holds() {
+        let mut app = app();
+
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, "SAV");
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Tab);
+        type_str(&mut app, "Rainy Day Card");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        assert_eq!(
+            account::by_code(&app.db, "SAV", Kind::Credit)
+                .unwrap()
+                .unwrap()
+                .name,
+            "Rainy Day Card"
+        );
+    }
+
+    /// A new account has to reach the screens that hold their own account
+    /// list, the way a rename does: a card nobody can filter the Credit
+    /// ledger to is a card that exists on one screen only.
+    #[test]
+    fn an_added_account_reaches_the_screens_that_cache_the_account_list() {
+        let mut app = app();
+
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, "NST");
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        type_str(&mut app, "Nest Egg");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(
+            app.accounts.rows().iter().any(|r| r.code == "NST"),
+            "the Accounts screen does not show it"
+        );
+        assert!(
+            app.cash.accounts().iter().any(|a| a.name == "Nest Egg"),
+            "the cash ledger cannot be filtered to it"
         );
     }
 
