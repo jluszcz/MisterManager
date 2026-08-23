@@ -145,6 +145,20 @@ impl Worksheet {
         today: NaiveDate,
         prefill: Vec<(GoalId, String, Cents)>,
     ) -> Worksheet {
+        Worksheet::on(kind, container, DateField::today(today), prefill)
+    }
+
+    /// The same sheet opened on `date` rather than on today, for the payday
+    /// whose money moves on a day of its own: the allocation is that
+    /// transfer seen from the container's side, so it carries the transfer's
+    /// date. Already a `DateField`, so the day it opens on and the day its
+    /// `M/D` shorthand resolves against cannot be handed over transposed.
+    pub(super) fn on(
+        kind: BatchKind,
+        container: Account,
+        date: DateField,
+        prefill: Vec<(GoalId, String, Cents)>,
+    ) -> Worksheet {
         let lines: Vec<WorksheetLine> = prefill
             .into_iter()
             .map(|(goal_id, name, amount)| WorksheetLine {
@@ -163,7 +177,7 @@ impl Worksheet {
             container,
             amount,
             amount_typed: false,
-            date: DateField::today(today),
+            date,
             lines,
             visible,
             cursor: Cursor::new(),
