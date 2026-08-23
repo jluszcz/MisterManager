@@ -155,10 +155,12 @@ the same few days; today, until a row is added, and restarting returns them
 there. A new goal's opens on the first of the next month, since a goal date is
 a deadline. `t`'s confirmation opens two business days out, dated for when the
 transfers land rather than for when the plan was read — weekends skipped,
-holidays not, which is part of why that date is editable. A recurring
-transaction's horizon and the Funds birth-date prompt open blank, because
-blank means something in both — a rule that does not end, and a date not on
-record.
+holidays not, which is part of why that date is editable. The worksheets it
+queues behind that confirmation open on the date it wrote, whatever the owner
+confirmed there: an allocation is the transfer read from the container's side,
+so both carry the one date. A recurring transaction's horizon and the Funds
+birth-date prompt open blank, because blank means something in both — a rule
+that does not end, and a date not on record.
 
 Each goal is dated for the year ahead: a year past the next occurrence of the
 entry's month, so a September entry created in August 2026 is dated September
