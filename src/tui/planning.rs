@@ -1430,6 +1430,7 @@ mod tests {
     use crate::calc::planning::{PlanInputs, compute};
     use crate::db;
     use crate::db::bill::Category;
+    use crate::test_support::day;
     use crate::tui::MIN_WIDTH;
     use crate::tui::form::char_key;
     // `setting`, `key`, and `Line` already come in through `super::*`.
@@ -1451,10 +1452,6 @@ mod tests {
             Tone::Plain
         );
         assert_eq!(Row::heading("Gates").tone, Tone::Plain);
-    }
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
 
     fn settings() -> PlanSettings {

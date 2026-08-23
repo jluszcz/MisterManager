@@ -81,11 +81,7 @@ impl ContextDate for Option<NaiveDate> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).expect("valid date")
-    }
+    use crate::test_support::day;
 
     /// The window a duplicate check scans: business days either side, with
     /// the date itself between them and the weekend skipped in both

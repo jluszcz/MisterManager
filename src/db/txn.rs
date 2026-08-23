@@ -420,11 +420,8 @@ mod tests {
     use crate::db;
     use crate::db::account::{self, Kind};
     use crate::money::Cents;
+    use crate::test_support::day;
     use chrono::NaiveDate;
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
 
     fn fixture() -> (Db, AccountId, AccountId, AccountId) {
         let db = db::open_in_memory().unwrap();

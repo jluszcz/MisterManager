@@ -180,10 +180,7 @@ mod tests {
     use super::*;
     use crate::db::txn::NewTxn;
     use crate::db::{self, account};
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use crate::test_support::day;
 
     fn dates() -> Dates {
         Dates {

@@ -49,27 +49,18 @@ pub(super) fn label_line(label: &Label) -> TextLine<'static> {
 mod tests {
     use super::*;
     use crate::db::AccountId;
-    use crate::db::account::{self, AccountColor, Group, Kind};
+    use crate::db::account::{self, AccountColor, Group};
+    use crate::test_support::cash;
 
     fn accounts() -> Vec<account::Account> {
         vec![
             account::Account {
-                id: AccountId(1),
-                code: "CHK".into(),
-                name: "Everyday".into(),
-                kind: Kind::Cash,
-                sort: 0,
                 group: Group::Checking,
-                color: None,
+                ..cash(1, "CHK")
             },
             account::Account {
-                id: AccountId(2),
-                code: "NST".into(),
-                name: "Nest Egg".into(),
-                kind: Kind::Cash,
-                sort: 1,
-                group: Group::Savings,
                 color: Some(AccountColor::Teal),
+                ..cash(2, "NST")
             },
         ]
     }

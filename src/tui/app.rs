@@ -2868,14 +2868,11 @@ mod tests {
     use crate::money::Cents;
     use crate::plan_line::Line;
     use crate::rate::{BasisPoints, Percent};
+    use crate::test_support::day;
     use crate::tui::MIN_WIDTH;
     use crate::tui::form::{TransferField, TxnField};
     use crate::tui::goal_form;
     use crate::tui::worksheet::Worksheet;
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
 
     fn today() -> NaiveDate {
         day(2026, 8, 15)
@@ -3287,12 +3284,47 @@ mod tests {
         );
     }
 
-    fn form(app: &App) -> &TxnForm {
-        match &app.modal {
-            Some(Modal::Txn(form)) => form,
-            _ => panic!("no transaction form is open"),
-        }
+    /// The open modal, as the variant a test expects it to be.
+    ///
+    /// One accessor per variant a test reaches for, rather than a `let else`
+    /// at each site: what a failure says is then the same sentence wherever it
+    /// fires, and it names the modal that *is* open -- which is what a test
+    /// pressing the wrong key needs told, and what twenty hand-written
+    /// panics each phrased differently were not saying.
+    macro_rules! open_modal {
+        ($name:ident, $variant:ident, $ty:ty, $what:literal) => {
+            fn $name(app: &App) -> &$ty {
+                match &app.modal {
+                    Some(Modal::$variant(it)) => it,
+                    other => panic!(
+                        "no {} is open: {}, with {:?} on the status line",
+                        $what,
+                        match other {
+                            Some(_) => "another modal is",
+                            None => "nothing is",
+                        },
+                        app.status
+                    ),
+                }
+            }
+        };
     }
+
+    open_modal!(form, Txn, TxnForm, "transaction form");
+    open_modal!(worksheet, Worksheet, Worksheet, "worksheet");
+    open_modal!(
+        plan_transfers,
+        PlanTransfers,
+        TransferConfirm,
+        "transfer confirmation"
+    );
+    open_modal!(picker, Picker, Picker, "picker");
+    open_modal!(
+        destination,
+        Destination,
+        destination::Chooser,
+        "destination chooser"
+    );
 
     /// Add a row through the keyboard, stepping the date `days` from wherever
     /// the form opens. The description must match nothing already written, or
@@ -4546,13 +4578,6 @@ mod tests {
         assert_eq!(app.savings.excess()[0].1, before);
     }
 
-    fn worksheet(app: &App) -> &Worksheet {
-        match &app.modal {
-            Some(Modal::Worksheet(sheet)) => sheet,
-            _ => panic!("no worksheet is open"),
-        }
-    }
-
     /// The payday worksheet opens on the Tab container with `per_paycheck`
     /// down every line, so it starts at zero remaining.
     #[test]
@@ -5378,9 +5403,7 @@ mod tests {
         press(&mut app, KeyCode::Char('5'));
         press(&mut app, KeyCode::Char('t'));
 
-        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
-            panic!("no transfer confirmation is open");
-        };
+        let confirm = plan_transfers(&app);
         assert_eq!(confirm.date_value(), "2026-08-18");
         assert_eq!(confirm.commit().unwrap(), day(2026, 8, 18));
     }
@@ -5396,17 +5419,13 @@ mod tests {
         ctrl_press(&mut app, 'u');
         type_str(&mut app, "2026-09-01");
 
-        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
-            panic!("no transfer confirmation is open");
-        };
+        let confirm = plan_transfers(&app);
         assert_eq!(confirm.commit().unwrap(), day(2026, 9, 1));
     }
 
     /// What `t`'s confirmation modal says it will move for one line.
     fn modal_transfer_amount(app: &App, wanted: Line) -> Cents {
-        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
-            panic!("no transfer confirmation is open");
-        };
+        let confirm = plan_transfers(app);
         confirm
             .rows()
             .iter()
@@ -6257,9 +6276,7 @@ mod tests {
 
         press(&mut app, KeyCode::PageDown);
 
-        let Some(Modal::Destination(chooser)) = &app.modal else {
-            panic!("the list closed");
-        };
+        let chooser = destination(&app);
         assert!(
             chooser.selected_index() > 1,
             "PageDown moved {} row(s) -- the viewport height never reached the cursor",
@@ -6398,9 +6415,7 @@ mod tests {
         press(&mut app, KeyCode::Char('?'));
 
         assert!(app.help.is_none(), "the panel opened over the search box");
-        let Some(Modal::Destination(chooser)) = &app.modal else {
-            panic!("the list closed");
-        };
+        let chooser = destination(&app);
         let title: String = chooser
             .title()
             .spans
@@ -6527,31 +6542,23 @@ mod tests {
         let mut app = planning_app();
         app.screen = Screen::Planning;
         press(&mut app, KeyCode::Char('t'));
-        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
-            panic!("no transfer confirmation is open");
-        };
+        let confirm = plan_transfers(&app);
         let default = confirm.commit().unwrap();
 
         // Stepped off the two-business-day default, so a sheet that reached
         // for either that default or today fails this.
         press(&mut app, KeyCode::Right);
-        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
-            panic!("no transfer confirmation is open");
-        };
+        let confirm = plan_transfers(&app);
         let date = confirm.commit().unwrap();
         assert_eq!(date, default + chrono::TimeDelta::days(1));
         assert_ne!(date, app.today);
 
         press(&mut app, KeyCode::Enter);
 
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("no worksheet opened");
-        };
+        let sheet = worksheet(&app);
         assert_eq!(sheet.date_text(), date.to_string());
         press(&mut app, KeyCode::Esc);
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("the second worksheet did not open");
-        };
+        let sheet = worksheet(&app);
         assert_eq!(sheet.date_text(), date.to_string());
     }
 
@@ -6578,9 +6585,7 @@ mod tests {
         press(&mut app, KeyCode::Char('t'));
         press(&mut app, KeyCode::Enter);
 
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("no worksheet opened");
-        };
+        let sheet = worksheet(&app);
         assert_eq!(
             sheet.remaining(),
             Cents::ZERO,
@@ -6651,9 +6656,7 @@ mod tests {
         press(&mut app, KeyCode::Char('t'));
         press(&mut app, KeyCode::Enter);
 
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("no worksheet opened");
-        };
+        let sheet = worksheet(&app);
         let line = sheet
             .lines()
             .into_iter()
@@ -6779,9 +6782,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Esc);
 
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("the second worksheet did not open");
-        };
+        let sheet = worksheet(&app);
         assert_eq!(
             sheet.amount(),
             plan.lines.future_housing + plan.lines.mom_and_dad + plan.lines.goals
@@ -6970,9 +6971,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Esc);
 
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("the second worksheet did not open");
-        };
+        let sheet = worksheet(&app);
         assert_eq!(sheet.remaining(), plan.lines.goals);
     }
 
@@ -7764,9 +7763,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
 
         press(&mut app, KeyCode::Esc);
-        let Some(Modal::Destination(chooser)) = &app.modal else {
-            panic!("the list closed");
-        };
+        let chooser = destination(&app);
         assert_eq!(chooser.search(), "");
 
         press(&mut app, KeyCode::Esc);
@@ -8334,9 +8331,7 @@ mod tests {
             app.help.is_none(),
             "? opened the panel instead of filtering"
         );
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("no worksheet is open");
-        };
+        let sheet = worksheet(&app);
         assert_eq!(sheet.search(), "?");
     }
 
@@ -8970,17 +8965,13 @@ mod tests {
         press(&mut app, KeyCode::Tab);
 
         press(&mut app, KeyCode::Right);
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("no worksheet is open");
-        };
+        let sheet = worksheet(&app);
         assert_eq!(sheet.focus(), worksheet::Focus::Date);
         assert_eq!(sheet.date_text(), "2026-08-16");
 
         press(&mut app, KeyCode::Left);
         press(&mut app, KeyCode::Left);
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("no worksheet is open");
-        };
+        let sheet = worksheet(&app);
         assert_eq!(sheet.date_text(), "2026-08-14");
     }
 
@@ -8993,16 +8984,12 @@ mod tests {
         press(&mut app, KeyCode::Char('t'));
 
         press(&mut app, KeyCode::Right);
-        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
-            panic!("no transfer confirmation is open");
-        };
+        let confirm = plan_transfers(&app);
         let stepped = confirm.commit().unwrap();
 
         press(&mut app, KeyCode::Left);
         press(&mut app, KeyCode::Left);
-        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
-            panic!("no transfer confirmation is open");
-        };
+        let confirm = plan_transfers(&app);
         assert_eq!(
             confirm.commit().unwrap(),
             stepped - chrono::TimeDelta::days(2)
@@ -9063,16 +9050,12 @@ mod tests {
         press(&mut app, KeyCode::Tab);
 
         shift_press(&mut app, KeyCode::Right);
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("no worksheet is open");
-        };
+        let sheet = worksheet(&app);
         assert_eq!(sheet.date_text(), "2026-08-22");
 
         shift_press(&mut app, KeyCode::Left);
         shift_press(&mut app, KeyCode::Left);
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("no worksheet is open");
-        };
+        let sheet = worksheet(&app);
         assert_eq!(sheet.date_text(), "2026-08-08");
     }
 
@@ -9084,15 +9067,11 @@ mod tests {
         press(&mut app, KeyCode::Char('5'));
         press(&mut app, KeyCode::Char('t'));
 
-        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
-            panic!("no transfer confirmation is open");
-        };
+        let confirm = plan_transfers(&app);
         let opened = confirm.commit().unwrap();
 
         shift_press(&mut app, KeyCode::Right);
-        let Some(Modal::PlanTransfers(confirm)) = &app.modal else {
-            panic!("no transfer confirmation is open");
-        };
+        let confirm = plan_transfers(&app);
         assert_eq!(
             confirm.commit().unwrap(),
             opened + chrono::TimeDelta::days(7)
@@ -9112,15 +9091,11 @@ mod tests {
         press(&mut app, KeyCode::Tab);
 
         press(&mut app, KeyCode::End);
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("no worksheet is open");
-        };
+        let sheet = worksheet(&app);
         let last = sheet.selected_index();
 
         press(&mut app, KeyCode::Home);
-        let Some(Modal::Worksheet(sheet)) = &app.modal else {
-            panic!("no worksheet is open");
-        };
+        let sheet = worksheet(&app);
         assert_eq!(sheet.selected_index(), 0);
         assert!(last > 0, "End does not reach the last line");
     }
@@ -9148,16 +9123,14 @@ mod tests {
         press(&mut app, KeyCode::Char('s'));
 
         press(&mut app, KeyCode::End);
-        let Some(Modal::Picker(picker)) = &app.modal else {
-            panic!("no picker is open");
-        };
-        assert_eq!(picker.selected_index(), 1, "End must reach the last entry");
+        assert_eq!(
+            picker(&app).selected_index(),
+            1,
+            "End must reach the last entry"
+        );
 
         press(&mut app, KeyCode::Home);
-        let Some(Modal::Picker(picker)) = &app.modal else {
-            panic!("no picker is open");
-        };
-        assert_eq!(picker.selected_index(), 0);
+        assert_eq!(picker(&app).selected_index(), 0);
     }
 
     /// `n` is a free-form goal: a name, a target and a date, in the container
@@ -9275,16 +9248,12 @@ mod tests {
     }
 
     fn entries(app: &App) -> Vec<String> {
-        let Some(Modal::Picker(picker)) = &app.modal else {
-            panic!("no picker is open");
-        };
+        let picker = picker(app);
         picker.entries().iter().map(|e| e.name.clone()).collect()
     }
 
     fn chosen(app: &App) -> Vec<String> {
-        let Some(Modal::Picker(picker)) = &app.modal else {
-            panic!("no picker is open");
-        };
+        let picker = picker(app);
         picker.chosen().iter().map(|e| e.name.clone()).collect()
     }
 
@@ -9314,9 +9283,7 @@ mod tests {
         let mut app = app_with_recurring_goals();
         open_september_picker(&mut app);
 
-        let Some(Modal::Picker(picker)) = &app.modal else {
-            panic!("no picker is open");
-        };
+        let picker = picker(&app);
         let names: Vec<&str> = picker.entries().iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names.len(), 3, "{names:?}");
     }

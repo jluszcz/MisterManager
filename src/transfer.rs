@@ -870,11 +870,7 @@ mod tests {
     use crate::db::{self, GoalId, account, goal, setting};
     use crate::gate::Gate;
     use crate::rate::BasisPoints;
-    use chrono::NaiveDate;
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use crate::test_support::day;
 
     /// A database shaped like the imported workbook: Everyday checking, Rainy Day and
     /// Brokerage containers, and one goal behind each configured line.

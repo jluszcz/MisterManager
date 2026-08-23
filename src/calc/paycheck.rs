@@ -90,7 +90,7 @@ pub fn month_end_projection(today: NaiveDate) -> NaiveDate {
 mod tests {
     use super::*;
     use crate::money::Cents;
-    use chrono::NaiveDate;
+    use crate::test_support::day;
 
     fn asks(v: &[(i64, i64)]) -> Vec<(i64, Cents)> {
         v.iter()
@@ -148,10 +148,6 @@ mod tests {
     #[test]
     fn an_empty_set_of_asks_allocates_nothing() {
         assert!(fit(Cents::from_dollars(1_000), &[]).unwrap().is_empty());
-    }
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
 
     /// A monthly bill spread over 26 pay periods, rounded up: the exact

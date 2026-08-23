@@ -93,6 +93,12 @@ Invented fixtures use one vocabulary, so a new test copies it rather than invent
 | Cash | `CHK`, `SAV`, `BKR`, `NST` | `Everyday`, `Rainy Day`, `Brokerage`, `Nest Egg` |
 | Credit | `CC1`, `CC2`, `CC3`, and `CHK` again | `Card One`, `Card Two`, `Card Three`, `Everyday Card` |
 
+**The table is code, in `src/test_support::{cash, credit}`**, so a fixture takes a code and gets the
+name rather than restating the pairing — and a code outside it panics rather than being quietly
+named something new. Those builders are also the only thing shared across `mod tests` blocks
+besides `day`: what a module *chose* stays in the module, which is why each `today()` is still
+local, naming the day that module's schedules and deadlines turn on.
+
 `CHK` appears under both kinds deliberately: one code naming two accounts is exactly what
 `UNIQUE (code, kind)` exists for, and a fixture set without that property would stop exercising it.
 No name here is `Checking`, `Savings`, `Cash` or `Credit`, which are what `Group::label` and

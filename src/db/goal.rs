@@ -649,11 +649,7 @@ mod tests {
     use crate::db::account::{self, Kind};
     use crate::db::txn::{self, NewTxn};
     use crate::money::Cents;
-    use chrono::NaiveDate;
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use crate::test_support::day;
 
     fn new_goal(name: &str, container: AccountId, goal: i64) -> NewGoal {
         NewGoal {

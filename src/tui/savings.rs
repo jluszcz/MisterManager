@@ -422,41 +422,18 @@ pub(super) fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> Viewpo
 mod tests {
     use super::*;
     use crate::db::GoalId;
-    use crate::db::account::{Group, Kind};
     use crate::db::goal::Goal;
     use crate::goal::Funding;
+    use crate::test_support::{cash, day};
     use crate::tui::MIN_WIDTH;
     use crate::tui::form::backspace_key;
-
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
 
     fn today() -> NaiveDate {
         day(2026, 8, 12)
     }
 
     fn accounts() -> Vec<Account> {
-        vec![
-            Account {
-                id: AccountId(1),
-                code: "SAV".into(),
-                name: "Rainy Day".into(),
-                kind: Kind::Cash,
-                sort: 0,
-                group: Group::Savings,
-                color: None,
-            },
-            Account {
-                id: AccountId(2),
-                code: "BKR".into(),
-                name: "Brokerage".into(),
-                kind: Kind::Cash,
-                sort: 1,
-                group: Group::Savings,
-                color: None,
-            },
-        ]
+        vec![cash(1, "SAV"), cash(2, "BKR")]
     }
 
     /// `id` doubles as the sort key, so goals arrive in the order

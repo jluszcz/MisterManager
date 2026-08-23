@@ -16,21 +16,14 @@ use crate::rate::{BasisPoints, Percent};
 use crate::report::{
     BillRow, Container, Ledger, LedgerMonth, LedgerRow, PlanView, Planning, Snapshot, Transfer,
 };
+use crate::test_support::day;
 use chrono::{Local, NaiveDate, TimeZone};
-
-pub(super) fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-    NaiveDate::from_ymd_opt(y, m, d).unwrap()
-}
 
 pub(super) fn accounts() -> Vec<Account> {
     vec![Account {
-        id: AccountId(1),
-        code: "SAV".into(),
-        name: "Rainy Day".into(),
-        kind: Kind::Cash,
-        sort: 0,
         group: Group::Checking,
         color: Some(AccountColor::Teal),
+        ..crate::test_support::cash(1, "SAV")
     }]
 }
 
