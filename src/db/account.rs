@@ -60,6 +60,13 @@ pub enum Group {
 }
 
 impl Group {
+    /// Every band, in the order the Overview stacks them.
+    ///
+    /// Fixed here rather than taken from the order accounts happen to come
+    /// back in: an account the layout table does not place sorts last, and
+    /// taking the scan order would let it split its own band in two.
+    pub const ALL: [Group; 3] = [Group::Checking, Group::Savings, Group::Credit];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Group::Checking => "checking",
@@ -662,10 +669,25 @@ mod tests {
 
     #[test]
     fn group_as_str_and_from_str_round_trip() {
-        for group in [Group::Checking, Group::Savings, Group::Credit] {
+        for group in Group::ALL {
             assert_eq!(group.as_str().parse::<Group>().unwrap(), group);
         }
         assert!("chequing".parse::<Group>().is_err());
+    }
+
+    /// `ALL` is written out by hand, so a band added to the enum without
+    /// being added here would drop out of the Overview and out of the two
+    /// tests below that iterate it looking for exactly that mistake.
+    #[test]
+    fn all_covers_every_variant() {
+        // The match is exhaustive, so a fourth variant stops this compiling
+        // until it is added to `ALL` and counted here too.
+        for group in Group::ALL {
+            match group {
+                Group::Checking | Group::Savings | Group::Credit => {}
+            }
+        }
+        assert_eq!(Group::ALL.len(), 3);
     }
 
     /// The enum and the schema's `CHECK (grp IN (...))` are two independent
@@ -674,7 +696,7 @@ mod tests {
     #[test]
     fn every_group_satisfies_the_schema_constraint() {
         let db = db::open_in_memory().unwrap();
-        for group in [Group::Checking, Group::Savings, Group::Credit] {
+        for group in Group::ALL {
             let id = insert(&db, "X", "X", group.kind(), 0).unwrap();
             set_group(&db, id, group)
                 .unwrap_or_else(|e| panic!("{group:?} is not in the schema's CHECK list: {e}"));
@@ -720,7 +742,7 @@ mod tests {
         }
         // And every band is offered by the kind it subdivides -- a variant
         // missing from `bands` would be unreachable from the screen.
-        for band in [Group::Checking, Group::Savings, Group::Credit] {
+        for band in Group::ALL {
             assert!(
                 Group::bands(band.kind()).contains(&band),
                 "{band:?} is offered by no kind"
