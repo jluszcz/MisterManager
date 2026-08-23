@@ -1,4 +1,4 @@
-use super::cursor::{Cursor, Scroll};
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::search::{Search, SearchBox};
 use crate::db::AccountId;
 use crate::db::account::{self, Account, Kind};
@@ -489,9 +489,10 @@ fn delta_span(delta: Cents) -> Span<'static> {
 ///
 /// Rows dated after today render dim — the projection model made visible.
 ///
-/// Returns the viewport height in rows, which `App` records on the `Ledger`
-/// for `PageUp` and `PageDown` to move by.
-pub fn render(frame: &mut Frame, area: Rect, ledger: &Ledger, today: NaiveDate) -> usize {
+/// Returns the [`Viewport`] it drew — the height `PageUp` and `PageDown` move
+/// by, and the row the next draw starts from — which `App` records on the
+/// `Ledger`.
+pub(super) fn render(frame: &mut Frame, area: Rect, ledger: &Ledger, today: NaiveDate) -> Viewport {
     let future = Style::default().add_modifier(Modifier::DIM);
     let rows: Vec<Row> = ledger
         .rows()
@@ -538,10 +539,11 @@ pub fn render(frame: &mut Frame, area: Rect, ledger: &Ledger, today: NaiveDate) 
     let height = usize::from(area.height).saturating_sub(3);
 
     // The selection lives in `Ledger`, which holds no ratatui state; the
-    // widget's scroll offset is derived from it each frame.
-    let mut state = table_state(ledger.selected_index(), ledger.rows().len(), height);
+    // widget's scroll offset is resolved from it and from where the last draw
+    // left the list.
+    let (mut state, viewport) = table_state(ledger, ledger.rows().len(), height);
     frame.render_stateful_widget(table, area, &mut state);
-    height
+    viewport
 }
 
 #[cfg(test)]
@@ -1069,7 +1071,7 @@ mod tests {
     fn paging_moves_the_cursor_by_one_viewport() {
         let mut ledger = ledger(day(2026, 8, 15));
         ledger.set_rows((1..=50).map(row).collect());
-        ledger.set_page_height(10);
+        ledger.record_viewport(Viewport::of_height(10));
 
         ledger.page_down();
         assert_eq!(ledger.selected_index(), 10);
@@ -1083,7 +1085,7 @@ mod tests {
     fn paging_past_either_end_stops_on_the_last_row() {
         let mut ledger = ledger(day(2026, 8, 15));
         ledger.set_rows((1..=15).map(row).collect());
-        ledger.set_page_height(10);
+        ledger.record_viewport(Viewport::of_height(10));
 
         ledger.page_down();
         ledger.page_down();
@@ -1096,7 +1098,7 @@ mod tests {
     #[test]
     fn paging_an_empty_list_selects_nothing() {
         let mut ledger = ledger(day(2026, 8, 15));
-        ledger.set_page_height(10);
+        ledger.record_viewport(Viewport::of_height(10));
 
         ledger.page_down();
         ledger.select_last();

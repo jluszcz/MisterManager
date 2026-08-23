@@ -5,7 +5,7 @@
 //! no `Db` on the type. `App` runs the queries and hands the results in.
 
 use super::Label;
-use super::cursor::{Cursor, Scroll};
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::form::{
     Caret, Field, Focused, FormFields, Step, field_line_noted, next_in, parse_whole_amount,
     step_index, tax_note,
@@ -347,9 +347,9 @@ pub fn render_form(frame: &mut Frame, form: &RecurringGoalForm) {
     render_fields(frame, form.title(), lines);
 }
 
-/// One row per recurring goal entry. Returns the viewport's height, for
-/// `PageUp`/`PageDown`.
-pub fn render(frame: &mut Frame, area: Rect, recurring_goal: &RecurringGoals) -> usize {
+/// One row per recurring goal entry. Returns the [`Viewport`] it drew: the
+/// height `PageUp`/`PageDown` move by, and the row the next draw starts from.
+pub(super) fn render(frame: &mut Frame, area: Rect, recurring_goal: &RecurringGoals) -> Viewport {
     let rows: Vec<TableRow> = recurring_goal
         .rows()
         .iter()
@@ -385,11 +385,7 @@ pub fn render(frame: &mut Frame, area: Rect, recurring_goal: &RecurringGoals) ->
 
     // Two borders and the header row are not available to data rows.
     let height = usize::from(area.height).saturating_sub(3);
-    let mut state = table_state(
-        recurring_goal.selected_index(),
-        recurring_goal.rows().len(),
-        height,
-    );
+    let (mut state, viewport) = table_state(recurring_goal, recurring_goal.rows().len(), height);
     frame.render_stateful_widget(
         Table::new(rows, widths)
             .header(header)
@@ -400,7 +396,7 @@ pub fn render(frame: &mut Frame, area: Rect, recurring_goal: &RecurringGoals) ->
         &mut state,
     );
 
-    height
+    viewport
 }
 
 #[cfg(test)]

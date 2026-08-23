@@ -5,7 +5,7 @@
 //! exists, and typing its name would put name matching back where the whole
 //! design keeps it out of -- what gets stored is the id under the cursor.
 
-use super::cursor::{Cursor, Scroll};
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::search::{Search, SearchBox};
 use crate::db::GoalId;
 use crate::plan_line::Line;
@@ -224,8 +224,9 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Cell, Clear, Row, Table};
 
 /// One row per goal, its container beside it, and the withdrawal among them.
-/// Returns the viewport's height, for `PageUp`/`PageDown`.
-pub fn render(frame: &mut Frame, chooser: &Chooser) -> usize {
+/// Returns the [`Viewport`] it drew: the height `PageUp`/`PageDown` move by,
+/// and the row the next draw starts from.
+pub(super) fn render(frame: &mut Frame, chooser: &Chooser) -> Viewport {
     let area = centered(
         frame.area(),
         76,
@@ -276,7 +277,7 @@ pub fn render(frame: &mut Frame, chooser: &Chooser) -> usize {
         Constraint::Length(10),
     ];
     let height = usize::from(inner.height);
-    let mut state = table_state(chooser.selected_index(), choices.len(), height);
+    let (mut state, viewport) = table_state(chooser, choices.len(), height);
     frame.render_stateful_widget(
         Table::new(rows, widths)
             .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
@@ -284,7 +285,7 @@ pub fn render(frame: &mut Frame, chooser: &Chooser) -> usize {
         inner,
         &mut state,
     );
-    height
+    viewport
 }
 
 #[cfg(test)]
