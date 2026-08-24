@@ -740,8 +740,8 @@ pub fn plan(db: &Db, lines: &Lines) -> Result<Vec<Row>> {
 /// Atomic because a half-written payday is worse than none -- the balances it
 /// leaves are wrong, and nothing on the ledger marks them as incomplete.
 /// `txn::write_transfer` is what makes that possible: it does the sign-by-kind
-/// work without opening a transaction of its own, since `Db::transaction` is
-/// not reentrant.
+/// work without opening a transaction of its own, since [`Db::transaction`]
+/// is not reentrant.
 ///
 /// Expects `rows` to be [`plan`]'s output. An empty slice commits an empty
 /// transaction rather than erroring, and a hand-built zero-cent `Row` would

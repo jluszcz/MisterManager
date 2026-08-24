@@ -146,11 +146,11 @@ pub fn has_imported_data(db: &Db) -> Result<bool> {
     Ok(txn::count(db)? > 0 || goal::count(db)? > 0)
 }
 
-/// Empty every table an import writes to, leaving [`PRESERVED_TABLES`]
+/// Empty every table an import writes to, leaving `PRESERVED_TABLES`
 /// exactly as they were.
 ///
 /// Not wrapped in its own transaction: the only caller runs it inside the
-/// import's, and `Db::transaction` is not reentrant.
+/// import's, and [`Db::transaction`] is not reentrant.
 pub fn clear_imported_data(db: &Db) -> Result<()> {
     for table in IMPORTED_TABLES {
         db.conn

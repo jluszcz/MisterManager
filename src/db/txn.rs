@@ -58,8 +58,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Txn> {
 }
 
 /// A `SELECT` of the columns [`from_row`] reads, in the order it reads them,
-/// with `$tail` appended. One list per table -- see [`crate::db`] for the
-/// idiom.
+/// with `$tail` appended. See [`crate::db`] for the idiom.
 macro_rules! select_txn {
     ($tail:literal) => {
         concat!(
@@ -303,7 +302,7 @@ pub fn insert_transfer(
 
 /// Both legs of a transfer, without a transaction around them.
 ///
-/// **Must be called inside a `Db::transaction`, and never opens one.** That
+/// **Must be called inside a [`Db::transaction`], and never opens one.** That
 /// is what lets a payday write several transfers and several withdrawals
 /// atomically: `Db::transaction` is not reentrant, so a batch cannot be built
 /// out of calls that each open their own. `db::clear_imported_data` carries

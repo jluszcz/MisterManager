@@ -62,14 +62,12 @@ fn money(text: String, cents: Cents) -> String {
     format!("<td class=\"n\"{color}>{}</td>", escape(&text))
 }
 
-/// The same cell with the cents dropped -- see [`Cents::to_whole_dollars`].
+/// The same cell with the cents dropped before the color is chosen -- see
+/// [`Cents::trunc_to_dollar`].
 ///
 /// Most of the page's figures are targets and balances in the thousands,
-/// where two decimal places are two digits of noise on every row. The cents
-/// go before the color is chosen, not after: a figure shown as nothing must
-/// not be painted as a debt, so a row a few cents below zero draws a plain
-/// `0` rather than a red `-0`. `tui::whole_amount` is the screens' half of
-/// the same rule.
+/// where two decimal places are two digits of noise on every row.
+/// `tui::whole_amount` is the screens' half of the same rule.
 fn whole_money(cents: Cents) -> String {
     let whole = cents.trunc_to_dollar();
     money(whole.to_whole_dollars(), whole)

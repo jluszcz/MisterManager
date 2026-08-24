@@ -566,14 +566,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
       hang off, and that is the payday whose goals are worst served.
     - **`Shortfall`**, whenever the excess cut anything at all: `Plan::shortfall`'s whole total,
       and the sum of every per-line cell above it.
-    - **Both footers are pushed outside the block's own `match`, and that is the point of them.**
-      The payday each exists for is a payday with no transfer row to annotate — a plug of nothing
-      for the first, an excess the fixed bills took whole for the second, which is also the payday
-      `transfer::plan` finds nothing to move at all. Each is absent rather than zero on an
-      ordinary payday, for the reason a silent cell is silent. Which is why `App::planning_view`
-      reads `View::spread_ask_total` on its own rather than through that call: asks chained to it
-      are zero on exactly the payday `Unmet Asks` was put outside the `match` to reach, and the
-      row would be silent there whatever the block did.
+    - **Both footers are pushed outside the block's own `match`, and that is the point of them** —
+      `plan_rows::rows` is where that happens and says which payday each exists for. Each is
+      absent rather than zero on an ordinary payday, for the reason a silent cell is silent. And
+      it is why `App::planning_view` reads `View::spread_ask_total` on its own rather than through
+      `transfer::plan`: asks chained to that call are zero on exactly the payday `Unmet Asks` was
+      put outside the `match` to reach, and the row would be silent there whatever the block did.
 - **The two colors on the Destinations block carry opposite instructions.** Red
   (`style::Tone::Negative`, through `Landing::breaks_the_plan`) means this plan will not run: an
   ambiguous plug, a plug with nowhere to spread, a key naming a row that is gone. Amber
