@@ -12,7 +12,7 @@ use crate::money::Cents;
 use crate::tui::autocomplete::Autocomplete;
 use crate::tui::cursor;
 use crate::tui::form::{self, DateField, TransferForm, TxnForm, ValueForm};
-use crate::tui::ledger::{Ledger, Window};
+use crate::tui::ledger::Ledger;
 use crate::tui::modal::{Confirm, Modal};
 use crate::tui::search::{self, Search};
 use anyhow::Result;
@@ -54,15 +54,15 @@ impl App {
                 self.ledger_mut().next_month();
                 self.sync_month()?;
             }
-            // The ledgers have no All to clear to: the window bounds the
-            // query itself, so "no filter" would be every transaction ever.
-            // Clearing it means the window the screen opens on -- but only
-            // once a kept needle is gone, and only on this ledger: the window
-            // is shared with the other one and the needle is not.
+            // Both filters at once, once a kept needle is gone: the account
+            // back to All, and the window -- which has no All to reach, since
+            // it bounds the query itself -- back to the month the screen
+            // opens on. Only the window crosses to the other ledger; the
+            // account and the needle belong to this one.
             KeyCode::Esc => {
                 if !search::escape_kept_filter(self.ledger_mut()) {
-                    let opening = Window::containing(self.today);
-                    self.ledger_mut().set_window(opening);
+                    let today = self.today;
+                    self.ledger_mut().clear_filters(today);
                     self.sync_month()?;
                 }
             }
@@ -479,6 +479,72 @@ mod tests {
 
         assert_ne!(app.credit.window(), august, "[ must move the active ledger");
         assert_eq!(app.cash.window(), app.credit.window());
+    }
+
+    /// The ledger narrows two ways as well, and `Esc` is the one key out of
+    /// either: an owner who has tabbed to an account and stepped the month
+    /// should not have to work out which of the two is hiding the row they
+    /// are looking for.
+    #[test]
+    fn esc_clears_the_account_filter_as_well_as_the_window() {
+        let mut app = app_spanning_three_months();
+        let august = app.cash.window();
+
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char(']'));
+        assert!(app.cash.selected_account().is_some());
+        assert_ne!(app.cash.window(), august);
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.cash.selected_account(), None);
+        assert_eq!(app.cash.window(), august);
+    }
+
+    /// The account filter belongs to one ledger the way the needle does --
+    /// the two hold different accounts -- where the window belongs to both.
+    #[test]
+    fn clearing_the_account_filter_on_one_ledger_leaves_the_other_alone() {
+        let mut app = app_spanning_three_months();
+
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Tab);
+        let card = app.credit.selected_account();
+        assert!(card.is_some());
+
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Esc);
+
+        assert_eq!(app.cash.selected_account(), None);
+        assert_eq!(app.credit.selected_account(), card);
+    }
+
+    /// The innermost thing first: a kept needle goes before the two filters
+    /// under it, exactly as it goes before the window on its own.
+    #[test]
+    fn esc_clears_a_kept_needle_before_the_account_filter() {
+        let mut app = app_spanning_three_months();
+
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Tab);
+        let checking = app.cash.selected_account();
+        assert!(checking.is_some());
+
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "aug");
+        press(&mut app, KeyCode::Enter);
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.cash.search(), "");
+        assert_eq!(
+            app.cash.selected_account(),
+            checking,
+            "the account filter is the next thing out"
+        );
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.cash.selected_account(), None);
     }
 
     /// The ledgers have no All to clear to -- their window is pushed down
