@@ -179,6 +179,7 @@ mod tests {
     use crate::db::account::{self, Group, Kind};
     use crate::db::{AccountId, setting};
     use crate::savings_block::Block as SavingsBlock;
+    use crate::test_support::walk_until;
     use crate::tui::accounts as accounts_screen;
     use crate::tui::app::test_support::*;
     use crate::tui::modal::Modal;
@@ -264,10 +265,10 @@ mod tests {
         );
         press(&mut app, KeyCode::Char('e'));
         // Tab to Order, then step it to the front.
-        while !matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Order)
-        {
-            press(&mut app, KeyCode::Tab);
-        }
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Order),
+            press(&mut app, KeyCode::Tab)
+        );
         press(&mut app, KeyCode::Right);
         press(&mut app, KeyCode::Enter);
 
@@ -430,10 +431,10 @@ mod tests {
 
         press(&mut app, KeyCode::Char('9'));
         press(&mut app, KeyCode::Char('e'));
-        while !matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Interest)
-        {
-            press(&mut app, KeyCode::Tab);
-        }
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Interest),
+            press(&mut app, KeyCode::Tab)
+        );
         press(&mut app, KeyCode::Right);
         press(&mut app, KeyCode::Enter);
 
@@ -559,9 +560,10 @@ mod tests {
     fn a_card_gets_a_shorter_account_form() {
         let mut app = app();
         press(&mut app, KeyCode::Char('9'));
-        while app.accounts.selected().unwrap().kind != Kind::Credit {
-            press(&mut app, KeyCode::Down);
-        }
+        walk_until!(
+            app.accounts.selected().unwrap().kind == Kind::Credit,
+            press(&mut app, KeyCode::Down)
+        );
         press(&mut app, KeyCode::Char('e'));
 
         let Some(Modal::Account(form)) = &app.modal else {
@@ -598,10 +600,10 @@ mod tests {
         let pick_block = |app: &mut App, steps: usize| {
             press(app, KeyCode::Char('9'));
             press(app, KeyCode::Char('e'));
-            while !matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Savings)
-            {
-                press(app, KeyCode::Tab);
-            }
+            walk_until!(
+                matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Savings),
+                press(app, KeyCode::Tab)
+            );
             for _ in 0..steps {
                 press(app, KeyCode::Right);
             }

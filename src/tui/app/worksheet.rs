@@ -261,7 +261,7 @@ mod tests {
     use crate::db::account::{self, Kind};
     use crate::db::{GoalId, goal};
     use crate::money::Cents;
-    use crate::test_support::day;
+    use crate::test_support::{day, walk_until};
     use crate::tui::app::test_support::*;
     use crate::tui::cursor::Scroll;
     use crate::tui::modal::Modal;
@@ -514,10 +514,10 @@ mod tests {
         );
         // Walked to rather than counted to: the form grows fields, and a
         // count would send the `Right` below into whichever one it grew.
-        while !matches!(&app.modal, Some(Modal::Goal(form)) if form.focus == goal_form::GoalField::Interest)
-        {
-            press(&mut app, KeyCode::Tab);
-        }
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Goal(form)) if form.focus == goal_form::GoalField::Interest),
+            press(&mut app, KeyCode::Tab)
+        );
         press(&mut app, KeyCode::Right);
         press(&mut app, KeyCode::Enter);
 

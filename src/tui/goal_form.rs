@@ -622,7 +622,7 @@ pub fn render_close(frame: &mut Frame, form: &CloseForm) {
 mod tests {
     use super::*;
     use crate::db::account::{self};
-    use crate::test_support::{cash, day};
+    use crate::test_support::{cash, day, walk_until};
     use crate::tui::form::{backspace_key, char_key};
 
     fn today() -> NaiveDate {
@@ -640,9 +640,7 @@ mod tests {
     }
 
     fn typed(form: &mut AllocationForm, field: AllocField, text: &str) {
-        while form.focus != field {
-            form.next_field();
-        }
+        walk_until!(form.focus == field, form.next_field());
         for c in text.chars() {
             form.edit(char_key(c));
         }
@@ -703,9 +701,7 @@ mod tests {
     fn an_allocations_date_must_be_yyyy_mm_dd() {
         let mut form = alloc("Dropbox");
         typed(&mut form, AllocField::Amount, "64");
-        while form.focus != AllocField::Date {
-            form.next_field();
-        }
+        walk_until!(form.focus == AllocField::Date, form.next_field());
         for _ in 0..10 {
             form.edit(backspace_key());
         }
@@ -874,9 +870,7 @@ mod tests {
     }
 
     fn typed_goal(form: &mut GoalForm, field: GoalField, text: &str) {
-        while form.focus != field {
-            form.next_field();
-        }
+        walk_until!(form.focus == field, form.next_field());
         for c in text.chars() {
             form.edit(char_key(c));
         }
@@ -925,9 +919,7 @@ mod tests {
         let err = form.commit().unwrap_err().to_string();
         assert!(err.contains("1,000.50"), "{err}");
 
-        while form.focus != GoalField::Target {
-            form.next_field();
-        }
+        walk_until!(form.focus == GoalField::Target, form.next_field());
         for _ in 0.."1,000.50".len() {
             form.edit(backspace_key());
         }
@@ -951,9 +943,7 @@ mod tests {
             None,
             today(),
         );
-        while form.focus != GoalField::Date {
-            form.next_field();
-        }
+        walk_until!(form.focus == GoalField::Date, form.next_field());
         for _ in 0..10 {
             form.edit(backspace_key());
         }
@@ -992,9 +982,7 @@ mod tests {
         );
         assert_eq!(form.display(GoalField::Interest).plain_text(), "no");
 
-        while form.focus != GoalField::Interest {
-            form.next_field();
-        }
+        walk_until!(form.focus == GoalField::Interest, form.next_field());
         form.choice(Step::NEXT);
 
         assert_eq!(form.display(GoalField::Interest).plain_text(), "yes");
@@ -1061,9 +1049,7 @@ mod tests {
         let mut form = GoalForm::add(Account::named(&accounts(), AccountId(1)), None, today());
         typed_goal(&mut form, GoalField::Name, "Couch");
         typed_goal(&mut form, GoalField::Target, "1000");
-        while form.focus != GoalField::Date {
-            form.next_field();
-        }
+        walk_until!(form.focus == GoalField::Date, form.next_field());
         for _ in 0.."2026-09-01".len() {
             form.edit(backspace_key());
         }
@@ -1120,9 +1106,7 @@ mod tests {
             None,
             today(),
         );
-        while form.focus != GoalField::Name {
-            form.next_field();
-        }
+        walk_until!(form.focus == GoalField::Name, form.next_field());
         for _ in 0..10 {
             form.edit(backspace_key());
         }
@@ -1136,9 +1120,7 @@ mod tests {
     #[test]
     fn a_taxed_goal_commits_its_base_and_the_flag() {
         let mut form = taxable("Couch", Cents(100_000));
-        while form.focus != GoalField::Taxed {
-            form.next_field();
-        }
+        walk_until!(form.focus == GoalField::Taxed, form.next_field());
         form.choice(Step::NEXT);
 
         assert_eq!(form.display(GoalField::Taxed).plain_text(), "yes");
@@ -1191,9 +1173,7 @@ mod tests {
         let mut form = taxable("Couch", Cents(100_000));
         assert_eq!(form.tax_note(), "", "nothing to say while the flag is off");
 
-        while form.focus != GoalField::Taxed {
-            form.next_field();
-        }
+        walk_until!(form.focus == GoalField::Taxed, form.next_field());
         form.choice(Step::NEXT);
 
         assert_eq!(form.tax_note(), "(1,065 w/ tax)");
@@ -1209,9 +1189,7 @@ mod tests {
     #[test]
     fn the_note_stays_empty_until_the_target_is_a_whole_figure() {
         let mut form = taxable("Couch", Cents(100_000));
-        while form.focus != GoalField::Target {
-            form.next_field();
-        }
+        walk_until!(form.focus == GoalField::Target, form.next_field());
         for _ in 0.."1,000.00".len() {
             form.edit(backspace_key());
         }
@@ -1236,9 +1214,7 @@ mod tests {
             None,
             today(),
         );
-        while form.focus != GoalField::Taxed {
-            form.next_field();
-        }
+        walk_until!(form.focus == GoalField::Taxed, form.next_field());
         form.choice(Step::NEXT);
 
         assert_eq!(form.tax_note(), "");
@@ -1250,9 +1226,7 @@ mod tests {
     #[test]
     fn the_choice_keys_flip_the_tax_selector_both_ways() {
         let mut form = taxable("Couch", Cents(100_000));
-        while form.focus != GoalField::Taxed {
-            form.next_field();
-        }
+        walk_until!(form.focus == GoalField::Taxed, form.next_field());
         form.choice(Step::NEXT);
         assert_eq!(form.display(GoalField::Taxed).plain_text(), "yes");
         form.choice(Step::PREVIOUS);
@@ -1305,9 +1279,7 @@ mod tests {
         );
         assert_eq!(form.commit().unwrap().to, None, "the default is abandon");
 
-        while form.focus != CloseField::Destination {
-            form.next_field();
-        }
+        walk_until!(form.focus == CloseField::Destination, form.next_field());
         form.choice(Step::NEXT);
         assert_eq!(form.display(CloseField::Destination).plain_text(), "Rug");
         assert_eq!(form.commit().unwrap().to, Some(GoalId(8)));
@@ -1371,9 +1343,7 @@ mod tests {
     #[test]
     fn the_arrows_leave_a_half_typed_allocation_date_alone() {
         let mut form = alloc("Apple Watch");
-        while form.focus != AllocField::Date {
-            form.next_field();
-        }
+        walk_until!(form.focus == AllocField::Date, form.next_field());
         for _ in 0..10 {
             form.edit(backspace_key());
         }
@@ -1415,9 +1385,7 @@ mod tests {
             "the name field is focused, and the arrows must stay off the date"
         );
 
-        while form.focus != GoalField::Date {
-            form.next_field();
-        }
+        walk_until!(form.focus == GoalField::Date, form.next_field());
         form.choice(Step::NEXT);
         assert_eq!(form.display(GoalField::Date).plain_text(), "2027-01-01");
     }
@@ -1436,9 +1404,7 @@ mod tests {
             None,
             today(),
         );
-        while form.focus != GoalField::Date {
-            form.next_field();
-        }
+        walk_until!(form.focus == GoalField::Date, form.next_field());
         form.choice(Step::NEXT);
         form.choice(Step::PREVIOUS);
         assert_eq!(form.display(GoalField::Date).plain_text(), "");
@@ -1473,9 +1439,7 @@ mod tests {
             Vec::new(),
             day(2026, 8, 16),
         );
-        while form.focus != CloseField::Destination {
-            form.next_field();
-        }
+        walk_until!(form.focus == CloseField::Destination, form.next_field());
         form.choice(Step::NEXT);
         assert_eq!(
             form.display(CloseField::Destination).plain_text(),
