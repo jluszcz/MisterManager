@@ -42,9 +42,17 @@ one, `E` edits the selected bill in full where `e` edits just the figure on its 
 
 A new screen takes what it needs from that list before inventing a letter, and invents one only for
 an action with no relative anywhere else — or when the obvious key is already spoken for on that
-screen by something older. Either way the divergence is worth a sentence in that key's
-`help::Entry` detail. That is what the Help panel is for: the footer has room for the word, and the
-panel has room for the reason.
+screen by something older. Either way the divergence is written down *here*, not in that key's
+`help::Entry` detail. The panel answers "what does this key do", in the fewest sentences that
+answer it; "why is it this key" is a maintainer's question, and this file is where a maintainer
+looks. `help::tests::no_panel_entry_runs_longer_than_a_glance` is what holds the split up — an
+entry that outgrows eight wrapped lines has started answering the second question.
+
+**A `detail` quotes a single-character key it names** — `'a'`, `'s'`, `'y'` — because a bare one
+reads as the word it also is ("opening on the same date a does") or as a stray letter where it is
+not ("are s on screen 7"). `Tab`, `Esc` and `Enter` are unambiguous already and stay bare. Nothing
+enforces this: the article "a" and the key `a` are the same character, so no test can tell them
+apart.
 
 `Enter` is the one entry above that a screen answers rather than a modal. On Planning it opens the
 full account of an unresolved plan — a screen key, not a row key, because that cursor only ever
@@ -508,8 +516,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   - **Unpinning is a real operation, not an undo**, and it is why `P` earns a key rather than
     being dropped. It puts the waterfall back on the live balance; without it a pin is permanent
     and `excess_used` runs off a frozen figure that never tracks reality again. The capital is not
-    the usual "same verb, wider object" — it is the *inverse* of `p` — and that divergence is
-    stated in its `help::Entry` detail, which is what the rule asks for. It is named on the footer
+    the usual "same verb, wider object" — it is the *inverse* of `p`. It is named on the footer
     only while something is pinned, through `footer_without`, though the key is live either way
     and says "nothing pinned" rather than failing silently.
   - **`p` is refused with no live view and `P` is not.** `set_unavailable` leaves `excess_actual`

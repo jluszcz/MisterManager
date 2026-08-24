@@ -1,4 +1,19 @@
-//! What every key does, in longer form than a footer has room for.
+//! What every key does, in longer form than a footer has room for -- and no
+//! longer than that.
+//!
+//! A `detail` answers "what does this key do", in the fewest sentences that
+//! answer it. "Why is it this key" is a maintainer's question and belongs in
+//! `src/tui/CLAUDE.md`, which is where a maintainer looks for it; an owner
+//! pressing `?` wants the first answer and has to read past the second to
+//! reach it. [`tests::no_panel_entry_runs_longer_than_a_glance`] is what
+//! keeps the two apart.
+//!
+//! **A single-character key is quoted where a `detail` names it** -- `'a'`,
+//! `'s'`, `'y'`. Bare, it reads as the word it also is ("opening on the same
+//! date a does"), or as a stray letter where it is not a word at all ("are s
+//! on screen 7"), and either way the sentence has to be read twice. The
+//! multi-character names -- `Tab`, `Esc`, `Enter`, `Shift` -- are already
+//! unambiguous and take no quotes.
 //!
 //! One module owns this for the same reason `style` owns color: so no screen
 //! grows its own opinion about what its keys are called. The screen
@@ -189,12 +204,12 @@ const OVERVIEW: [Entry; 2] = [
     Entry {
         key: "←/→",
         label: Label::Own("scrub"),
-        detail: "Move the Paycheck-Eve column a day at a time. View state only: the baseline is derived from the paycheck recurring transaction, so nothing here is saved and restarting discards it.",
+        detail: "Move the Paycheck-Eve column a day at a time. View state only: nothing is saved, and restarting discards it.",
     },
     Entry {
         key: "Shift+←/→",
         label: Label::Own("week"),
-        detail: "The same scrub, a week at a time, as Shift does on every date in the app. The paycheck runs on a fortnightly cadence, so a week is the step that reaches the middle of the next cycle in one press and the one after in two. Shift rather than Ctrl because macOS claims Ctrl and the arrows for its own spaces, and a key the terminal never receives is a key that does nothing with nothing on screen to say why.",
+        detail: "The same scrub, a week at a time, as Shift does on every date in the app.",
     },
 ];
 
@@ -203,39 +218,39 @@ const LEDGER: [Entry; 11] = [
     Entry {
         key: "BackTab",
         label: Label::Hidden,
-        detail: "Cycle the account filter the other way. Unlabelled: it is Tab read backwards, and a footer word of its own would say the same thing twice.",
+        detail: "Cycle the account filter the other way.",
     },
     Entry::filter(
         MONTH_FILTER,
-        "Step the month shown. Cash and Credit share one window, so both ledgers move together and always compare the same weeks.",
+        "Step the month shown. Cash and Credit share one window, so both ledgers move together.",
     ),
     Entry::filter(
         CLEAR_FILTER,
-        "Clear a kept search if one is narrowing the rows; otherwise return the account filter to All and the window to the month containing today, in one press -- the screen narrows two ways and this is the way out of either. The window has no All to clear to -- it bounds the query itself, so \"no filter\" would be every transaction ever -- so clearing it can only mean the month the screen opens on, which is why the shared word is clear rather than all. Cash and Credit share one window, so that half re-syncs both ledgers, the same as [ ]; the account filter and the search belong to one ledger and are cleared on its own.",
+        "Clear a kept search if one is narrowing the rows; otherwise return the account filter to All and the window to the month containing today. Both ledgers share the window, so that half moves them together.",
     ),
     Entry::filter(
         SEARCH_FILTER,
-        "Filter rows by description or amount as you type -- 1234 finds a row of $1,234.56, with the separators left out. Enter keeps the filter and leaves the box; Esc clears it.",
+        "Filter rows by description or amount as you type -- 1234 finds a row of $1,234.56. Enter keeps the filter and leaves the box; Esc clears it.",
     ),
     Entry {
         key: "r",
         label: Label::Own("target"),
-        detail: "Reconcile the filtered account against a statement: type the balance it should hold, and the border carries it beside today's figure with the difference after it -- green above the target, red below it, a dash when they match. Needs an account filter, since under All the border quotes the whole kind's balance and no statement names that. An empty field clears it; Esc leaves it alone. Session state: nothing is written, and quitting forgets every target.",
+        detail: "Reconcile the filtered account against a statement: type the balance it should hold, and the border carries it beside today's figure with the difference after it. Needs an account filter. An empty field clears it, Esc leaves it alone, and nothing is saved.",
     },
     Entry {
         key: "a",
         label: Label::Shared("money"),
-        detail: "Add a transaction, opening on the account the ledger is filtered to, or the first when the filter is All, and on the date the last row added this session was written for -- today, until a row is added. Entering a statement is a run of rows landing on the same few days, and moving off today is how you say which days those are. Correcting a row with e is not that statement and leaves the date alone. Grouped with t and p under one footer word: all three write new rows, where e and d act on the one selected -- and the ledgers' footer is the widest in the app, so the verbs are spent here and read back in this panel.",
+        detail: "Add a transaction, opening on the account the ledger is filtered to, or the first when the filter is All, and on the date the last row added this session was written for -- today, until a row is added.",
     },
     Entry {
         key: "t",
         label: Label::Shared("money"),
-        detail: "Move money between two cash accounts, opening on the same date a does -- the day the last row added this session was written for. Cash ledger only: a transfer leaves an account you hold, so there is nothing on a card for it to start from.",
+        detail: "Move money between two cash accounts, opening on the same date 'a' does. Cash ledger only.",
     },
     Entry {
         key: "p",
         label: Label::Shared("money"),
-        detail: "Pay a credit card from a cash account, writing both sides. Opens on the same date a does: the payment at the bottom of a statement belongs to the sitting the rows above it were entered in.",
+        detail: "Pay a credit card from a cash account, writing both sides. Opens on the same date 'a' does.",
     },
     Entry {
         key: "e",
@@ -252,24 +267,24 @@ const LEDGER: [Entry; 11] = [
 const SAVINGS: [Entry; 15] = [
     Entry::filter(
         ACCOUNT_FILTER,
-        "Cycle the container filter: All, then one entry per account that holds goals. The footer word is the shared one -- a filter over the same accounts should not be called two things by two screens -- and the goals themselves are what make that account a container.",
+        "Cycle the container filter: All, then one entry per account that holds goals.",
     ),
     Entry {
         key: "BackTab",
         label: Label::Hidden,
-        detail: "Cycle the container filter the other way. Unlabelled: it is Tab read backwards, and a footer word of its own would say the same thing twice.",
+        detail: "Cycle the container filter the other way.",
     },
     Entry::filter(
         MONTH_FILTER,
-        "Step the goal-date filter, wrapping at either end. Pure view state, unlike the ledgers': every goal is already loaded for the reconciliation line, so there is nothing to re-query.",
+        "Step the goal-date filter, wrapping at either end.",
     ),
     Entry::filter(
         CLEAR_FILTER,
-        "Clear a kept search if one is narrowing the list; otherwise clear both filters at once -- the container and the month, whichever of them is set -- showing every goal again, undated ones included. The next month step re-enters at today's month, or at the nearer end of the dated span when today falls outside it -- never the month you left, so no state crosses the All filter.",
+        "Clear a kept search if one is narrowing the list; otherwise clear both filters at once, showing every goal again, undated ones included. The next month step re-enters at today's month rather than the one you left.",
     ),
     Entry::filter(
         SEARCH_FILTER,
-        "Filter goals by name, balance or target as you type -- 1234 finds a goal at $1,234.56, with the separators left out. The % and $/Pay columns are derived from the two figures beside them and are not searched. Enter keeps the filter and leaves the box, so a, c and e stay usable on the narrowed list; Esc clears it.",
+        "Filter goals by name, balance or target as you type -- 1234 finds a goal at $1,234.56. The % and $/Pay columns are derived and are not searched. Enter keeps the filter and leaves the box; Esc clears it.",
     ),
     Entry {
         key: "a",
@@ -279,17 +294,17 @@ const SAVINGS: [Entry; 15] = [
     Entry {
         key: "A",
         label: Label::Shared("allocate"),
-        detail: "Open a payday worksheet for the container, prefilled from per-paycheck. One commit is one batch, so a fumbled payday is one undo rather than dozens of deletions. Payday means running it once per container.",
+        detail: "Open a payday worksheet for the container, prefilled from per-paycheck. One commit is one batch, so a fumbled payday is one undo. Payday means running it once per container.",
     },
     Entry {
         key: "i",
         label: Label::Shared("allocate"),
-        detail: "Open an interest worksheet. Brokerage prefills pro rata; Rainy Day rescales its previous Interest batch, falling back to pro rata when there is none.",
+        detail: "Open an interest worksheet. The container's interest policy decides the prefill: pro rata, or a rescale of its previous Interest batch.",
     },
     Entry {
         key: "n",
         label: Label::Shared("goal"),
-        detail: "Create a goal from scratch -- a name, a target and a date -- in the container Tab names. Not a, which is taken here by the allocation this screen is mostly used for. Goals created from recurring goal entries are s on screen 7, over on the table those entries live in.",
+        detail: "Create a goal from scratch -- a name, a target and a date -- in the container Tab names. Goals created from recurring goal entries are 's' on screen 7.",
     },
     Entry {
         key: "e",
@@ -299,22 +314,22 @@ const SAVINGS: [Entry; 15] = [
     Entry {
         key: "c",
         label: Label::Shared("goal"),
-        detail: "End the selected goal: return its value to unallocated, or move it to another goal in the same container. Crossing containers is refused, since no cash moved between the accounts.",
+        detail: "End the selected goal: return its value to unallocated, or move it to another goal in the same container. Crossing containers is refused.",
     },
     Entry {
         key: "K",
         label: Label::Shared("goal"),
-        detail: "Move the selected goal up one place in its container's manual order. Only the undated goals are ordered by hand -- a dated goal takes its place from its date, and pressing this on one says so. Refused while a search is narrowing the list, since the block being reordered would be half hidden. Grouped under goal rather than given a word of its own: this footer has no room for another item, and what the key acts on is the same thing n, e and c act on.",
+        detail: "Move the selected goal up one place in its container's manual order. Only the undated goals are ordered by hand -- a dated goal takes its place from its date. Refused while a search is narrowing the list.",
     },
     Entry {
         key: "J",
         label: Label::Shared("goal"),
-        detail: "Move the selected goal down one place, the mirror of K. It stops at the last undated goal: the dated block below is ordered by date, so there is nowhere in it for a goal with no date to land.",
+        detail: "Move the selected goal down one place, the mirror of 'K'. It stops at the last undated goal.",
     },
     Entry {
         key: "f",
         label: Label::Own("fave"),
-        detail: "Mark the selected goal, or take the mark back. A marked goal's row is drawn as a band so it stands out among the rest, and that is the whole of what it does: it does not sort the goal up and it does not survive a filter the goal itself would not. Its own letter because nothing else in the app marks a row for the owner's own attention -- and the mark is stored on the goal, so mm import --replace loses it along with the goals it belongs to.",
+        detail: "Mark the selected goal, or take the mark back. A marked goal's row is drawn as a band, and that is the whole of what it does: it does not sort the goal up and it does not survive a filter the goal itself would not.",
     },
     Entry {
         key: "U",
@@ -327,7 +342,7 @@ const PLANNING: [Entry; 8] = [
     Entry {
         key: "e",
         label: Label::Own("edit"),
-        detail: "Edit the selected row: a constant is typed into a field, a destination is chosen from a list of goals. Barely a third of the rows are editable, and the cursor settles on the nearest one that is after every move. Roth and Emergency Fund are read-only among the destinations: they share their setting key with the gate of the same name, so pointing one somewhere else would decide whether that gate fires rather than where a transfer lands. Excess (Used) is a constant like any other here, and typing a figure into it pins that figure -- whole dollars, since the waterfall's excess is a whole-dollar figure whether it is pinned or floored. The three split percentages are bounded as a set: Goals takes what they leave, so a combination over 100 between them is refused with the headroom named.",
+        detail: "Edit the selected row: a constant is typed into a field, a destination is chosen from a list of goals. The cursor settles on the nearest editable row after every move. Roth and Emergency Fund are read-only among the destinations. A figure typed into Excess (Used) pins it, in whole dollars. The three split percentages are bounded as a set: Goals takes what they leave, so a combination over 100 is refused.",
     },
     Entry {
         key: "E",
@@ -342,27 +357,27 @@ const PLANNING: [Entry; 8] = [
     Entry {
         key: "d",
         label: Label::Shared("bill"),
-        detail: "Delete the selected bill, after a confirmation. A dropped bill inflates the excess the waterfall has left to allocate, which moves every line below it.",
+        detail: "Delete the selected bill, after a confirmation. A dropped bill inflates the excess the waterfall has left, which moves every line below it.",
     },
     Entry {
         key: "t",
         label: Label::Own("transfers"),
-        detail: "Confirm the computed plan: writes its payday transfers, then opens the allocation worksheets prefilled. The ledger's t moves money between two accounts one row at a time; this one writes every row the plan calls for in a single transaction.",
+        detail: "Confirm the computed plan: writes its payday transfers, then opens the allocation worksheets prefilled.",
     },
     Entry {
         key: "Enter",
         label: Label::Own("why"),
-        detail: "Explain why the transfers could not be resolved, in full. The screen reports the failure in a cell about fifty columns wide, which is not enough to name the goal in the wrong container -- the one thing needed to act on it. Nothing to open when the transfers resolve.",
+        detail: "Explain in full why the transfers could not be resolved -- more than the screen's one cell has room for. Nothing to open when they resolve.",
     },
     Entry {
         key: "p",
         label: Label::Own("pin"),
-        detail: "Freeze Excess (Actual) at its whole-dollar floor, so the waterfall holds still while a payday's legs are entered -- transfers land before the ad-hoc date, so each leg entered would otherwise collapse the excess under you with the rest still to go. Always pins, and replaces a pin already there rather than clearing it: the press after a forgotten pin is the next payday's, and the drift line under the plan exists to say a pin has gone stale, which a fresh pin is the answer to. The date moves with the figure, so the drift starts again from zero. This pins the figure it computed; e on the Excess (Used) row pins whatever is typed there instead.",
+        detail: "Freeze Excess (Actual) at its whole-dollar floor, so the waterfall holds still while a payday's legs are entered. Always pins, and replaces a pin already there rather than clearing it; the drift line under the plan is what says a pin has gone stale. This pins the figure it computed, where 'e' on the Excess (Used) row pins whatever is typed there.",
     },
     Entry {
         key: "P",
         label: Label::Own("unpin"),
-        detail: "Put the waterfall back on the live balance -- the other half of the payday p covers, and the only way out of a pin. A capital here is not the usual \"same verb, wider object\": it is the inverse of p, which earns its own key because p always pins, and it sits beside p so the pair reads as one. Nothing else clears a pin: typing over Excess (Used) replaces one rather than removing it. Named on the footer only while something is pinned, though the key is live either way.",
+        detail: "Put the waterfall back on the live balance -- the only way out of a pin, since typing over Excess (Used) replaces one rather than removing it. Named on the footer only while something is pinned, though the key is live either way.",
     },
 ];
 
@@ -380,12 +395,12 @@ const FUNDS: [Entry; 4] = [
     Entry {
         key: "E",
         label: Label::Own("edit"),
-        detail: "Edit the selected row in full: the same form a adds with.",
+        detail: "Edit the selected row in full: the same form 'a' adds with.",
     },
     Entry {
         key: "d",
         label: Label::Own("delete"),
-        detail: "Delete the selected row, after a confirmation. Nothing here holds money -- the values are typed or imported, and no balance moves.",
+        detail: "Delete the selected row, after a confirmation. Nothing here holds money, so no balance moves.",
     },
 ];
 
@@ -397,12 +412,12 @@ const ACCOUNTS: [Entry; 2] = [
     Entry {
         key: "a",
         label: Label::Own("add"),
-        detail: "Add an account the workbook does not name: a code, a kind, and what to call it. The code and the kind are asked here and nowhere else -- they are what the next import matches this row against, so e cannot change either, and a code the same kind already holds is refused. The new account takes its kind's default band, no color, and the last place among the accounts of its kind; e is where it is placed. One code may name both a cash account and the card drawn on it, since the two are told apart by kind.",
+        detail: "Add an account the workbook does not name: a code, a kind, and what to call it. The code and the kind are asked here and nowhere else -- they are what the next import matches this row against -- and a code the same kind already holds is refused. The account takes its kind's default band, no color, and the last place among its kind.",
     },
     Entry {
         key: "e",
         label: Label::Own("edit"),
-        detail: "Edit the selected account: what it is called, which Overview band it sits in, where it sits among the accounts of its kind, and -- for a cash account -- how an interest posting against it is divided and which block of the Savings sheet it is the container for. That last one is what mm import waits on: the sheet names its two blocks by position and carries no account code, so the first import writes the accounts and stops until both blocks have been pointed at a container here. The code and the kind are not editable: they are what the next import matches this row against, so editing either would orphan the account from the sheet that names it -- a is where both are chosen. Nothing here is imported, so all of it survives mm import --replace.",
+        detail: "Edit the selected account: its name, its Overview band, its place among the accounts of its kind, and -- for a cash account -- how an interest posting is divided and which block of the Savings sheet it is the container for, which is what the first mm import waits on. The code and the kind are set by 'a', not here. Nothing here is imported, so all of it survives mm import --replace.",
     },
 ];
 
@@ -451,7 +466,7 @@ const RECURRING_GOALS: [Entry; 6] = [
     ),
     Entry::filter(
         CLEAR_FILTER,
-        "Return to All. The next step re-enters at this month rather than the one you left, so no state crosses the All filter.",
+        "Return to All. The next step re-enters at this month rather than the one you left.",
     ),
     Entry {
         key: "a",
@@ -471,7 +486,7 @@ const RECURRING_GOALS: [Entry; 6] = [
     Entry {
         key: "s",
         label: Label::Own("savings"),
-        detail: "Open the picker: goals created from these entries, in the container the Savings screen's Tab names. Its own letter because nothing else in the app creates one kind of row out of another. The month filter opens it with those entries ticked and sorted to the top, so the ones about to be created are the ones the list opens on -- every entry is still listed below them, so the filter is a starting point rather than a cage. An entry that already has an open goal is left unticked, and sinks with the rest, since the annual reseed is what the ticks are for. A reseed is for the year ahead, so each goal is dated a year past its month's next occurrence -- a month already gone this year is next-occurring in the next one, and so lands the year after that. A biennial entry that has already had this year's round steps two years instead, skipping the year between rather than filling it.",
+        detail: "Open the picker: goals created from these entries, in the container the Savings screen's Tab names. The month filter opens it with those entries ticked and sorted to the top, every other entry still listed below. An entry that already has an open goal is left unticked. Each goal is dated a year past its month's next occurrence; a biennial entry that has had this year's round steps two.",
     },
 ];
 
@@ -485,7 +500,18 @@ const EDITING_KEYS: &str = "Ctrl+A/E/B/F/W/U/K/D";
 /// the eight keys in its own words.
 macro_rules! editing_detail {
     () => {
-        "Edit the text under the caret: A to the start of the line, E to the end, B and F one character back or forward, W deletes the word before the caret, U deletes back to the start, K forward to the end, D the character the caret is on -- as Delete does. Ctrl is the one modifier that means editing text, and a combination with no binding is dropped rather than typed as its letter. Alt is deliberately unused: macOS sends Option as Meta only if you have turned that on, and a key the terminal never delivers is a key that does nothing with nothing on screen to say why."
+        "Edit the text under the caret: 'A' to the start of the line, 'E' to the end, 'B' and 'F' one character back or forward, 'W' deletes the word before the caret, 'U' deletes back to the start, 'K' forward to the end, 'D' the character the caret is on."
+    };
+}
+
+/// How a date field is typed, for the four entries whose `Enter` parses one.
+///
+/// A macro for the reason [`editing_detail`] is one: `form::DateField::parse`
+/// answers all four, so a copy of the rule per table is a copy free to drift
+/// from what the parser does.
+macro_rules! date_detail {
+    () => {
+        " A date is typed as YYYY-MM-DD, or as M/D for the next year that month comes round -- in August, 9/10 is this September and 3/4 is next March."
     };
 }
 
@@ -559,7 +585,7 @@ const WORKSHEET: [Entry; 14] = [
     Entry {
         key: "←/→",
         label: Label::Hidden,
-        detail: "Step the date back or forward a day, while the date has focus. It stays typeable; this is the nudge. On the amount and the line list there is no date to move, so they do nothing.",
+        detail: "Step the date back or forward a day, while the date has focus. It stays typeable; this is the nudge.",
     },
     Entry {
         key: "Shift+←/→",
@@ -569,7 +595,7 @@ const WORKSHEET: [Entry; 14] = [
     Entry {
         key: "Space",
         label: Label::Hidden,
-        detail: "Select or deselect the line under the cursor. The selection is what s and /N operate on.",
+        detail: "Select or deselect the line under the cursor. The selection is what 's' and /N operate on.",
     },
     Entry {
         key: "*",
@@ -594,7 +620,7 @@ const WORKSHEET: [Entry; 14] = [
     Entry {
         key: "w",
         label: Label::Hidden,
-        detail: "Spread what is left across the selected lines in the proportions they were prefilled with -- an interest posting's policy split, or what each goal asks of a paycheck.",
+        detail: "Spread what is left across the selected lines in the proportions they were prefilled with.",
     },
     Entry {
         key: "/N",
@@ -604,7 +630,10 @@ const WORKSHEET: [Entry; 14] = [
     Entry {
         key: "Enter",
         label: Label::Hidden,
-        detail: "Commit every line as one batch, so a fumbled payday is one undo rather than dozens of deletions. A date is typed as YYYY-MM-DD, or as M/D for the next year that month comes round -- so in August 9/10 is this September and 3/4 is next March. It shows as typed while the caret is in it and as the date it means once focus leaves.",
+        detail: concat!(
+            "Commit every line as one batch, so a fumbled payday is one undo.",
+            date_detail!()
+        ),
     },
     Entry {
         key: "Esc",
@@ -617,7 +646,7 @@ const PICKER: [Entry; 3] = [
     Entry {
         key: "Space",
         label: Label::Hidden,
-        detail: "Select or deselect the entry under the cursor. The Open? column flags entries that already have an open goal -- a hint, not a refusal, since a second goal against one entry is legitimate.",
+        detail: "Select or deselect the entry under the cursor. The Open? column flags entries that already have an open goal -- a hint, not a refusal.",
     },
     Entry {
         key: "Enter",
@@ -635,12 +664,12 @@ const DESTINATION: [Entry; 3] = [
     Entry {
         key: "/",
         label: Label::Hidden,
-        detail: "Filter the goals by name as you type. Eighty-three open goals is a long way to scroll for a name three keystrokes would find, and it is the same key the ledgers and Savings filter with. The withdrawal row survives every search: clearing a line's destination must not depend on what the goals are called.",
+        detail: "Filter the goals by name as you type. The withdrawal row survives every search, so clearing a line's destination never depends on what the goals are called.",
     },
     Entry {
         key: "Enter",
         label: Label::Hidden,
-        detail: "Point this line at the goal under the cursor, storing its id -- never its name, which three goals in this database share. The list opens on the suggested goal when there is one, and otherwise on the goal the line already names, so Enter straight away is either agreement or a no-op.",
+        detail: "Point this line at the goal under the cursor, storing its id rather than its name. The list opens on the suggested goal when there is one, and otherwise on the goal the line already names.",
     },
     Entry {
         key: "Esc",
@@ -669,7 +698,7 @@ const CONFIRM: [Entry; 3] = [
     Entry {
         key: "?",
         label: Label::Hidden,
-        detail: "Open this panel: the one key besides y that does not cancel. A question mark that silently threw away a pending delete would be a worse surprise than this exception.",
+        detail: "Open this panel: the one key besides 'y' that does not cancel.",
     },
 ];
 
@@ -688,7 +717,7 @@ const FORM: [Entry; 9] = [
     Entry {
         key: "←/→",
         label: Label::Hidden,
-        detail: "The field under the caret decides: a text field moves the caret one character, a date field steps back or forward a day, and a choice field -- a bill's category, a close-out's destination -- cycles. A date stays typeable; the step is the nudge, and a field holding no date, such as an undated goal's, has nothing to step.",
+        detail: "The field under the caret decides: a text field moves the caret one character, a date field steps back or forward a day, and a choice field -- a bill's category, a close-out's destination -- cycles. A date stays typeable; the step is the nudge.",
     },
     Entry {
         key: "Shift+←/→",
@@ -703,7 +732,11 @@ const FORM: [Entry; 9] = [
     Entry {
         key: "Enter",
         label: Label::Hidden,
-        detail: "Save. A value that will not parse reports itself in the status line and the form stays open. A date is typed as YYYY-MM-DD, or as M/D for the next year that month comes round -- so in August 9/10 is this September and 3/4 is next March. It shows as typed while the caret is in it and as the date it means once focus leaves. The birth-date prompt is the exception and takes YYYY-MM-DD alone: every M/D reading is present or future, and a birth date is neither.",
+        detail: concat!(
+            "Save. A value that will not parse reports itself in the status line and the form stays open.",
+            date_detail!(),
+            " The birth-date prompt is the exception and takes YYYY-MM-DD alone: every M/D reading is present or future."
+        ),
     },
     Entry {
         key: "Esc",
@@ -752,7 +785,10 @@ const SUGGEST_FORM: [Entry; 10] = [
     Entry {
         key: "Enter",
         label: Label::Hidden,
-        detail: "Accept the highlighted suggestion if any are on screen, otherwise save the form. A date is typed as YYYY-MM-DD, or as M/D for the next year that month comes round -- so in August 9/10 is this September and 3/4 is next March. It shows as typed while the caret is in it and as the date it means once focus leaves.",
+        detail: concat!(
+            "Accept the highlighted suggestion if any are on screen, otherwise save the form.",
+            date_detail!()
+        ),
     },
     Entry {
         key: "Esc",
@@ -791,7 +827,10 @@ const PLAN_TRANSFERS: [Entry; 6] = [
     Entry {
         key: "Enter",
         label: Label::Hidden,
-        detail: "Parse the date and commit: writes the payday transfers, then opens the allocation worksheets prefilled. A date that will not parse reports itself in the status line and leaves the dialog open. A date is typed as YYYY-MM-DD, or as M/D for the next year that month comes round -- so in August 9/10 is this September and 3/4 is next March. It shows as typed while the caret is in it and as the date it means once focus leaves.",
+        detail: concat!(
+            "Parse the date and commit: writes the payday transfers, then opens the allocation worksheets prefilled. A date that will not parse leaves the dialog open.",
+            date_detail!()
+        ),
     },
     Entry {
         key: "Backspace",
@@ -1692,5 +1731,23 @@ mod tests {
         help.set_extent(6, 20);
         help.bottom();
         assert_eq!(help.offset(), 0);
+    }
+    /// The panel is a reference, not an essay: no key gets more than a
+    /// glance's worth of it.
+    ///
+    /// Eight lines is what the tallest entry -- Planning's `e`, which
+    /// answers for four different kinds of editable row -- comes to. An
+    /// entry that outgrows that is one explaining *why* the key is the key
+    /// it is, and that reason belongs in `src/tui/CLAUDE.md`, where a
+    /// maintainer looks for it, rather than in front of an owner who pressed
+    /// `?` to find out what a key does.
+    #[test]
+    fn no_panel_entry_runs_longer_than_a_glance() {
+        for topic in ALL {
+            for entry in topic.keys() {
+                let lines = wrap(std::slice::from_ref(entry), WIDTH - 2).len();
+                assert!(lines <= 8, "{topic:?} {} takes {lines} lines", entry.key);
+            }
+        }
     }
 }
