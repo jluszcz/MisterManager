@@ -240,7 +240,7 @@ const LEDGER: [Entry; 11] = [
     Entry {
         key: "a",
         label: Label::Shared("money"),
-        detail: "Add a transaction, opening on the account the ledger is filtered to and on the date the last row added this session was written for -- today, until a row is added.",
+        detail: "Add a transaction, opening on the account the ledger is filtered to, or the first when the filter is All, and on the date the last row added this session was written for -- today, until a row is added.",
     },
     Entry {
         key: "t",
@@ -506,7 +506,7 @@ macro_rules! editing_detail {
 
 /// How a date field is typed, for the four entries whose `Enter` parses one.
 ///
-/// A macro for the reason [`editing_detail`] is one: `form::parse_date`
+/// A macro for the reason [`editing_detail`] is one: `form::DateField::parse`
 /// answers all four, so a copy of the rule per table is a copy free to drift
 /// from what the parser does.
 macro_rules! date_detail {
