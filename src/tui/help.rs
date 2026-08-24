@@ -211,7 +211,7 @@ const LEDGER: [Entry; 11] = [
     ),
     Entry::filter(
         CLEAR_FILTER,
-        "Clear a kept search if one is narrowing the rows; otherwise return the window to the month containing today. The ledgers have no All to clear to -- the window bounds the query itself, so \"no filter\" would be every transaction ever -- so clearing it can only mean the window the screen opens on, which is why the shared word is clear rather than all. Cash and Credit share one window, so that half re-syncs both ledgers, the same as [ ]; a search belongs to one ledger and is cleared on its own.",
+        "Clear a kept search if one is narrowing the rows; otherwise return the account filter to All and the window to the month containing today, in one press -- the screen narrows two ways and this is the way out of either. The window has no All to clear to -- it bounds the query itself, so \"no filter\" would be every transaction ever -- so clearing it can only mean the month the screen opens on, which is why the shared word is clear rather than all. Cash and Credit share one window, so that half re-syncs both ledgers, the same as [ ]; the account filter and the search belong to one ledger and are cleared on its own.",
     ),
     Entry::filter(
         SEARCH_FILTER,

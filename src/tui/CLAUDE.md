@@ -83,8 +83,8 @@ status message withholds the chrome for an unrelated reason: it borrows the whol
 `Tab acct`, `[ ] month`, `Esc clear`, `/ search` — `help::FILTERS` states the order and the four
 words, and a table reaches them through `Entry::filter` rather than writing a `Label::Own` of its
 own, so a filter over the same thing cannot be called two names by two screens. What a screen still
-writes is the `detail`: `Esc` genuinely clears to different places — today's window on the ledgers,
-All on Savings and Recurring Goals — and the panel is where that difference belongs, which is why
+writes is the `detail`: `Esc` genuinely clears to different places — All and today's window on the
+ledgers, All on Savings and Recurring Goals — and the panel is where that difference belongs, which is why
 the shared word is `clear` rather than one screen's answer imposed on the others. Two tests hold it
 up: `every_filter_key_is_labelled_with_its_shared_word` over every topic there is, and
 `the_shared_filters_lead_every_screen_footer_in_one_order` over the eight with footers.
@@ -1122,16 +1122,23 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   everywhere else — leave the figure alone. With no target the border is exactly what it always was.
 - **Cash and Credit share one month, and it is a window, not a `MonthCycle`.** The ledgers' window
   is a one-or-two month span clamped to the data's range and pushed down into the SQL, so they have
-  no All to clear to: "no filter" there would be every transaction ever. `Esc` therefore means the
-  window the screen opens on, `Window::containing(today)` — which is why the footer word shared with the
-  other two screens is `clear` rather than `all`, a state these two have no way to reach; what `Esc`
-  clears *to* is the panel's to say. `[`, `]`, and `Esc` all step the active ledger and then go through
+  no All to clear to: "no filter" there would be every transaction ever. `Esc` therefore returns the
+  window to the one the screen opens on, `Window::containing(today)` — which is why the footer word
+  shared with the other two screens is `clear` rather than `all`, a state the window has no way to
+  reach; what `Esc` clears *to* is the panel's to say. `[`, `]`, and `Esc` all step the active ledger and then go through
   `App::sync_month`, which copies the resulting window onto the other and re-anchors both cursors —
   so `2` and `3` always compare the same weeks. It re-queries both ledgers, because a synced window
   over stale rows shows one month's rows under another's heading. Purely view state: nothing
   persists it, and both ledgers reopen on the window around today. Anything that must reach both
   goes through `App::ledgers_mut`, which iterates the pair rather than naming `cash` and `credit`
   in two lines one of which is later forgotten.
+  - **`Esc` clears the account filter too**, in the same press, for the reason it does on Savings:
+    the screen narrows two ways and shows both in one title, so clearing only the window would
+    leave the owner to work out which of the two is still hiding the row they are looking for.
+    `Ledger::clear_filters` is the pair, so a screen cannot come to clear one of them and not the
+    other. **Only the window crosses to the other ledger.** The account belongs to one of them the
+    way the needle does — Cash's accounts are not Credit's — so it is cleared on its own, and
+    `sync_month` copies nothing but the window across.
 - **The `/` box is one box, and `refilter` is where a screen says what narrowing means.** A screen
   implements `search::Search` by handing over its `SearchBox`; the methods over it and the keys
   `search::search_key` answers are written once, so `Esc` abandons a filter and `Enter` keeps it
@@ -1144,8 +1151,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   in each of the four screens' own `Esc` arms. `Enter` leaves the box and keeps the needle, so
   without this the only way back to the whole list is to open the box again and close it the other
   way -- the one route nothing on screen suggests. It is the vocabulary's "innermost thing" read
-  literally: the needle first, then the screen's own filter (a ledger's window, Savings' container
-  and month together) or, on a modal, the modal itself. A kept filter is therefore two `Esc` presses away from discarding a
+  literally: the needle first, then the screen's own filter (a ledger's account and window, Savings'
+  container and month together) or, on a modal, the modal itself. A kept filter is therefore two `Esc` presses away from discarding a
   worksheet rather than one. The needle belongs to one screen where a ledger window belongs to
   both, so clearing Cash's filter leaves Credit's alone — `sync_month` is only on the other half of
   the branch.

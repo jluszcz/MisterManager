@@ -246,6 +246,21 @@ impl Ledger {
         };
     }
 
+    /// `Esc`: back out of both filters at once -- to All, and to the window
+    /// the screen opens on.
+    ///
+    /// The screen narrows two ways and shows both in one title, so clearing
+    /// only one of them would leave the owner to work out which of the two is
+    /// still hiding the row they are looking for. Savings clears its
+    /// container and its month together for the same reason.
+    ///
+    /// The window is *reset* rather than dropped: it bounds the query itself,
+    /// so there is no All for it to reach.
+    pub fn clear_filters(&mut self, today: NaiveDate) {
+        self.account = None;
+        self.window = self.clamped(Window::containing(today));
+    }
+
     /// The account the `Tab` filter is narrowed to, or `None` for All.
     ///
     /// `a` opens its form on this account: adding a row while looking at one
@@ -865,6 +880,21 @@ mod tests {
         assert_eq!(ledger.filter().account_id, Some(AccountId(2)));
         ledger.next_account();
         assert_eq!(ledger.filter().account_id, None, "Tab must return to All");
+    }
+
+    /// `Esc`: the screen narrows two ways and the key is the one way out of
+    /// either.
+    #[test]
+    fn clearing_the_filters_returns_to_all_and_to_the_window_around_today() {
+        let mut ledger = ledger(day(2026, 8, 15));
+        ledger.next_account();
+        ledger.next_month();
+        assert_eq!(ledger.filter().account_id, Some(AccountId(1)));
+        assert_eq!(bounds(ledger.window()), (day(2026, 9, 1), day(2026, 9, 30)));
+
+        ledger.clear_filters(day(2026, 8, 15));
+        assert_eq!(ledger.filter().account_id, None);
+        assert_eq!(bounds(ledger.window()), (day(2026, 8, 1), day(2026, 8, 31)));
     }
 
     #[test]

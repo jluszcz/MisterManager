@@ -24,7 +24,9 @@ from the paycheck transaction — `Shift+←`/`Shift+→` move it a week, as the
 every date in the app — and
 Planning quotes its excess at whatever that scrub leaves it at. Cash and Credit share one month: `[` and `]`
 step both so the two always compare the same weeks, and `Esc` returns them to
-the month around today. Each title ends with the balance of whatever `Tab`
+the month around today — and the account filter to All with them, since the
+screen narrows two ways and the key is the one way out of either. Each title
+ends with the balance of whatever `Tab`
 narrows the screen to — `Cash · Aug 2026 · All · Today $42,000.00` — which is
 the same to-date figure the Overview quotes, so neither the month on show nor a
 `/` search moves it. A search matches a row's description or its amount, typed
