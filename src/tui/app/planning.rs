@@ -47,7 +47,8 @@ impl App {
     /// and the allocation worksheets opened on top of them -- is said in its
     /// Help detail, where a reader who wants it will be.
     fn open_plan_transfers(&mut self) -> Result<()> {
-        let plan = plan::compute_from_db(&self.db, self.adhoc)?;
+        let settings = plan::settings_from_db(&self.db)?;
+        let plan = plan::compute_from_db(&self.db, &settings, self.adhoc)?;
         let rows = match transfer::plan(&self.db, &plan.lines) {
             Ok(rows) => rows,
             Err(e) => {
@@ -470,7 +471,8 @@ impl App {
     }
 
     fn planning_view(&self) -> Result<planning_screen::View> {
-        let plan = plan::compute_from_db(&self.db, self.adhoc)?;
+        let settings = plan::settings_from_db(&self.db)?;
+        let plan = plan::compute_from_db(&self.db, &settings, self.adhoc)?;
         // A misconfigured destination is reported on the screen, not thrown:
         // every figure above the transfer block is still right.
         let (transfers, transfer_error) = match transfer::plan(&self.db, &plan.lines) {
@@ -496,7 +498,7 @@ impl App {
         let plan_lines = plan.lines;
         Ok(planning_screen::View {
             plan,
-            settings: plan::settings_from_db(&self.db)?,
+            settings,
             wiring: transfer::wiring(&self.db)?,
             housing: bill::list(&self.db, bill::Category::Housing)?,
             other_bills: bill::list(&self.db, bill::Category::Other)?,
@@ -532,6 +534,12 @@ mod tests {
     use crate::{db, plan, transfer};
     use chrono::{Datelike, NaiveDate};
     use ratatui::crossterm::event::KeyCode;
+
+    /// The waterfall the screen is showing, run the way the screen runs it:
+    /// the settings read once and handed to it, quoted at `app.adhoc`.
+    fn computed_plan(app: &App, adhoc: NaiveDate) -> crate::calc::planning::Plan {
+        plan::compute_from_db(&app.db, &plan::settings_from_db(&app.db).unwrap(), adhoc).unwrap()
+    }
 
     fn planning_row<'a>(app: &'a App, label: &str) -> &'a crate::tui::planning::Row {
         app.planning
@@ -571,10 +579,7 @@ mod tests {
     fn t_builds_its_transfers_from_the_scrubbed_plan() {
         let mut app = planning_app_with_a_row_after_today();
         scrub_past_the_rent(&mut app);
-        let expected = plan::compute_from_db(&app.db, app.adhoc)
-            .unwrap()
-            .lines
-            .future_housing;
+        let expected = computed_plan(&app, app.adhoc).lines.future_housing;
 
         press(&mut app, KeyCode::Char('5'));
         press(&mut app, KeyCode::Char('t'));
@@ -642,8 +647,7 @@ mod tests {
         scrub_past_the_rent(&mut app);
         // Computed here rather than read off the screen: reading the screen
         // would agree with itself whichever date it had used.
-        let expected = plan::compute_from_db(&app.db, app.adhoc)
-            .unwrap()
+        let expected = computed_plan(&app, app.adhoc)
             .excess_actual
             .floor_to_dollar();
 
@@ -1577,7 +1581,7 @@ mod tests {
         app.screen = Screen::Planning;
         // The plan behind this payday, read fresh: the same figures `t`
         // itself just used to build the confirm modal and the prefill.
-        let plan = plan::compute_from_db(&app.db, app.adhoc).unwrap();
+        let plan = computed_plan(&app, app.adhoc);
         let Destination::Goal(bills_key) = Line::Bills.destination() else {
             panic!("Bills is goal-backed");
         };
@@ -1656,7 +1660,7 @@ mod tests {
         };
         setting::set(&app.db, housing_key, bill_payments).unwrap();
         app.reload().unwrap();
-        let plan = plan::compute_from_db(&app.db, app.adhoc).unwrap();
+        let plan = computed_plan(&app, app.adhoc);
 
         press(&mut app, KeyCode::Char('t'));
         press(&mut app, KeyCode::Enter);
@@ -1680,7 +1684,7 @@ mod tests {
     /// `date` -- a first run, so a later `t` has something to clash with.
     fn payday_landed_on(app: &App, date: NaiveDate) {
         let from = transfer::source(&app.db).unwrap();
-        let plan = plan::compute_from_db(&app.db, app.adhoc).unwrap();
+        let plan = computed_plan(app, app.adhoc);
         let rows = transfer::plan(&app.db, &plan.lines).unwrap();
         transfer::execute(&app.db, from, date, &rows).unwrap();
     }
@@ -1749,7 +1753,7 @@ mod tests {
     fn the_second_worksheet_prefills_the_plugs_goals_with_what_they_ask() {
         let mut app = planning_app();
         app.screen = Screen::Planning;
-        let plan = plan::compute_from_db(&app.db, app.adhoc).unwrap();
+        let plan = computed_plan(&app, app.adhoc);
         let brokerage = account::by_code(&app.db, "BKR", Kind::Cash)
             .unwrap()
             .unwrap()
@@ -1859,7 +1863,7 @@ mod tests {
             .find(|r| r.label.trim() == "Unmet Asks")
             .expect("no Unmet Asks footer among the transfers");
 
-        let plan = plan::compute_from_db(&app.db, app.adhoc).unwrap();
+        let plan = computed_plan(&app, app.adhoc);
         let gap = plan.lines.goals - Cents::from_dollars(500_000);
         assert_eq!(footer.extra, format!("\u{394} {}", gap.to_whole_dollars()));
     }
@@ -1970,7 +1974,7 @@ mod tests {
     fn a_plug_whose_goals_ask_for_nothing_is_left_unallocated() {
         let mut app = planning_app();
         app.screen = Screen::Planning;
-        let plan = plan::compute_from_db(&app.db, app.today).unwrap();
+        let plan = computed_plan(&app, app.today);
 
         press(&mut app, KeyCode::Char('t'));
         press(&mut app, KeyCode::Enter);
@@ -2041,7 +2045,7 @@ mod tests {
 
         let mut app = App::new(db, today()).unwrap();
         app.screen = Screen::Planning;
-        let plan = plan::compute_from_db(&app.db, app.adhoc).unwrap();
+        let plan = computed_plan(&app, app.adhoc);
         assert_eq!(
             plan.lines.goals,
             Cents::ZERO,
