@@ -1,4 +1,5 @@
 use chrono::NaiveDate;
+use mistermanager::calc::planning;
 use mistermanager::db::bill;
 use mistermanager::db::setting::{Key, key};
 use mistermanager::db::{goal, txn};
@@ -16,6 +17,12 @@ use common::{sheet_cents, workbook};
 /// next paycheck, the same figure the workbook's own `Overview!E2` held.
 fn adhoc(db: &db::Db, today: NaiveDate) -> NaiveDate {
     projection::dates(db, today).unwrap().adhoc
+}
+
+/// The waterfall, run the way both sinks run it: the settings read once and
+/// handed to it, quoted at the day before the next paycheck.
+fn computed_plan(db: &db::Db, today: NaiveDate) -> planning::Plan {
+    plan::compute_from_db(db, &plan::settings_from_db(db).unwrap(), adhoc(db, today)).unwrap()
 }
 
 /// Import the whole workbook into `db`, doing the first import's two steps
@@ -108,7 +115,7 @@ fn the_waterfall_reproduces_the_workbooks_transfer_instructions() {
         return;
     }
     add_paycheck_rule(&db, &path);
-    let computed = plan::compute_from_db(&db, adhoc(&db, today)).unwrap();
+    let computed = computed_plan(&db, today);
 
     let planning = import::sheet(&mut sheets, "Planning").unwrap();
     // The first group's sub-lines, each against its own cell. Without these,
@@ -224,7 +231,7 @@ fn importing_twice_into_fresh_databases_gives_the_same_plan() {
         let db = db::open_in_memory().unwrap();
         import_all(&db, &path, today).expect("the roles were checked above");
         add_paycheck_rule(&db, &path);
-        plan::compute_from_db(&db, adhoc(&db, today)).unwrap()
+        computed_plan(&db, today)
     };
     assert_eq!(run(), run());
 }
@@ -247,13 +254,13 @@ fn importing_twice_into_the_same_connection_is_idempotent() {
     add_paycheck_rule(&db, &path);
     let txns_once = txn::count(&db).unwrap();
     let goals_once = goal::count(&db).unwrap();
-    let plan_once = plan::compute_from_db(&db, adhoc(&db, today)).unwrap();
+    let plan_once = computed_plan(&db, today);
 
     import::import_all(&db, &path, today, true).unwrap();
     add_paycheck_rule(&db, &path);
     let txns_twice = txn::count(&db).unwrap();
     let goals_twice = goal::count(&db).unwrap();
-    let plan_twice = plan::compute_from_db(&db, adhoc(&db, today)).unwrap();
+    let plan_twice = computed_plan(&db, today);
 
     assert_eq!(txns_once, txns_twice, "transaction count must not double");
     assert_eq!(goals_once, goals_twice, "goal count must not double");
@@ -419,7 +426,7 @@ fn the_transfer_rows_sum_to_the_excess_used() {
     let today = mistermanager::db::setting::get(&db, key::WORKBOOK_TODAY)
         .unwrap()
         .expect("the workbook carries its own today");
-    let computed = plan::compute_from_db(&db, adhoc(&db, today)).unwrap();
+    let computed = computed_plan(&db, today);
     let rows = transfer::plan(&db, &computed.lines).unwrap();
     let total: Cents = rows.iter().map(|r| r.cents()).sum();
     assert_eq!(total, computed.excess_used);

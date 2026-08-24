@@ -380,21 +380,29 @@ impl App {
         Ok(())
     }
 
-    /// Drop a status message that has outlived [`STATUS_TTL`].
+    /// Drop a status message that has outlived [`STATUS_TTL`], and say
+    /// whether one was dropped.
     ///
     /// Called by the event loop rather than by `footer`, which only reads:
     /// the message is gone from the app, not merely hidden, so the next thing
     /// to consult `status` sees what the footer shows. A key press clears it
     /// sooner -- this is only what happens when none arrives.
-    pub fn expire_status(&mut self) {
-        self.expire_status_at(Instant::now());
+    ///
+    /// The answer is what the loop redraws on: an expiry is the one thing
+    /// that changes the footer with no event behind it, so a loop that drew
+    /// only on events would leave a faded message on screen until the next
+    /// keystroke.
+    pub fn expire_status(&mut self) -> bool {
+        self.expire_status_at(Instant::now())
     }
 
-    fn expire_status_at(&mut self, now: Instant) {
-        if self.status_until.is_some_and(|until| now >= until) {
+    fn expire_status_at(&mut self, now: Instant) -> bool {
+        let expired = self.status_until.is_some_and(|until| now >= until);
+        if expired {
             self.status.clear();
             self.status_until = None;
         }
+        expired
     }
 
     fn dispatch(&mut self, key: KeyEvent) -> Result<()> {
@@ -1045,6 +1053,27 @@ mod tests {
         app.expire_status_at(Instant::now());
 
         assert!(app.status.contains("nothing to undo"), "{}", app.status);
+    }
+
+    /// The event loop redraws on this answer and on nothing else the clock
+    /// can offer, so an expiry that reported nothing would leave a faded
+    /// message on the footer until the next keystroke -- and an idle app
+    /// reporting one every tick would be the unconditional draw back again.
+    #[test]
+    fn only_the_tick_that_drops_a_message_reports_a_change() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('U'));
+
+        assert!(!app.expire_status_at(Instant::now()), "not up yet");
+        assert!(
+            app.expire_status_at(Instant::now() + STATUS_TTL),
+            "the message was dropped"
+        );
+        assert!(
+            !app.expire_status_at(Instant::now() + STATUS_TTL),
+            "nothing left to drop"
+        );
     }
 
     /// A form's refusal is the only account of why it stayed open -- the

@@ -121,8 +121,20 @@ that faded would leave the question to be answered without it, and under a modal
 is the very thing being waited for. `App::expire_status` is what
 drops an expired one, called by the event loop before the draw rather than by `footer`, which only
 reads: the message leaves the app rather than being hidden inside the one function that shows it.
-Expiry is therefore only as prompt as `tui::TICK`, which is a quarter second and already what a
-resize waits for.
+Expiry is therefore only as prompt as `tui::TICK`, which is a quarter second.
+
+**The draw is owed rather than unconditional**, and an expiry is one of the three things that owe
+one. A frame rebuilds every visible row's strings, so an idle app drawing four times a second is
+work for a buffer ratatui is about to find unchanged. What earns a frame is a key press, a resize,
+and `expire_status` reporting that it dropped a message — which is why that function answers `bool`,
+and why the tick goes on firing whether or not anything is drawn. `tui::redraws` is the one place
+an *event* is asked, and it answers for a key press without asking what the app did with it:
+`on_key` clears the status message before it dispatches, so even a key nothing is bound to takes the
+footer back, and a list kept per handler would be a list to keep in step with every screen. A missed
+frame is a stale screen, which is worse than the wasted one this avoids — so the over-approximation
+is the safe side to err on and the direction to keep erring in. Which is also why `tui::is_press` is
+one predicate rather than the same comparison written at both sites: the redraw decision and the
+dispatch beneath it have to widen together, or a key the app answers earns no frame.
 
 ## Which module is which screen
 

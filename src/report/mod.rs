@@ -167,7 +167,7 @@ fn ledger(db: &Db, accounts: &[account::Account], kind: Kind, today: NaiveDate) 
 /// Overview's Paycheck-Eve column is.
 fn plan_view(db: &Db, today: NaiveDate, adhoc: NaiveDate, period_days: i64) -> Result<PlanView> {
     let settings = plan::settings_from_db(db)?;
-    let plan = plan::compute_from_db(db, adhoc)?;
+    let plan = plan::compute_from_db(db, &settings, adhoc)?;
     let periods = settings.periods_per_year;
     let bills = |category| -> Result<Vec<plan_rows::Bill>> {
         bill::list(db, category)?

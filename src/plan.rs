@@ -28,9 +28,11 @@ fn remaining(db: &Db, gate: Gate) -> Result<Cents> {
 /// The tuned constants, as stored -- each with the default the waterfall has
 /// always used when its key is unset.
 ///
-/// Split out of [`compute_from_db`] because the Planning screen renders these
-/// beside the figures they produce, and a second copy of the defaults in the
-/// UI would be a second place for them to be wrong.
+/// Read here rather than inside [`compute_from_db`] because both sinks that
+/// draw the waterfall render these beside the figures they produce: one read
+/// per sink, handed on to the waterfall, so a second copy of the defaults in
+/// the UI cannot be a second place for them to be wrong and neither key is
+/// read twice to draw one screen.
 pub fn settings_from_db(db: &Db) -> Result<PlanSettings> {
     let dollars = Cents::from_dollars;
     Ok(PlanSettings {
@@ -139,10 +141,16 @@ pub fn check_pinned_excess(db: &Db) -> Result<()> {
 /// as derived, or wherever the Overview's scrub has moved it to. The caller
 /// supplies it rather than the waterfall re-deriving it, so a scrubbed screen
 /// and the payday it writes cannot disagree about which day they mean.
-pub fn compute_from_db(db: &Db, adhoc: NaiveDate) -> Result<planning::Plan> {
+///
+/// `settings` is supplied too, for a plainer reason: both sinks that draw the
+/// plan draw the constants beside it, so a waterfall reading them itself
+/// would read every key twice per screen.
+pub fn compute_from_db(
+    db: &Db,
+    settings: &PlanSettings,
+    adhoc: NaiveDate,
+) -> Result<planning::Plan> {
     let checking = account::checking(db)?.id;
-
-    let settings = settings_from_db(db)?;
 
     let inputs = PlanInputs {
         checking_at_adhoc: txn::balance_at(db, checking, adhoc)?,
@@ -155,7 +163,7 @@ pub fn compute_from_db(db: &Db, adhoc: NaiveDate) -> Result<planning::Plan> {
         remaining_roth: remaining(db, Gate::Roth)?,
     };
 
-    planning::compute(&settings, &inputs)
+    planning::compute(settings, &inputs)
 }
 
 #[cfg(test)]
@@ -378,7 +386,7 @@ mod tests {
         setting::set(&db, Gate::Roth.key(), roth).unwrap();
 
         let settings = settings_from_db(&db).unwrap();
-        let plan = compute_from_db(&db, today).unwrap();
+        let plan = compute_from_db(&db, &settings, today).unwrap();
 
         assert!(!plan.need_emergency);
         assert!(plan.need_roth);
@@ -432,7 +440,7 @@ mod tests {
         bill::insert(&db, &bill("HOA", 300, Category::Housing, 1)).unwrap();
         bill::insert(&db, &bill("Coworking", 1_000, Category::Other, 0)).unwrap();
 
-        let plan = compute_from_db(&db, today).unwrap();
+        let plan = compute_from_db(&db, &settings_from_db(&db).unwrap(), today).unwrap();
 
         // 1,200 and 300 monthly over 26 periods: 554 + 139. `calc::biweekly`
         // rounds each up to a whole dollar before summing.

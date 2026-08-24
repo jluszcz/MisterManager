@@ -13,6 +13,9 @@ use crate::tui::modal::Modal;
 use anyhow::{Context, Result};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
+/// The account each `Savings` block names, one entry per `Block::ALL` entry.
+type Containers = [Option<AccountId>; SavingsBlock::ALL.len()];
+
 impl App {
     /// Insert the account `a` describes, appended to whatever its kind
     /// already holds.
@@ -41,6 +44,7 @@ impl App {
     /// otherwise not reach the Overview's neighbours until a restart.
     pub(super) fn reload_accounts(&mut self) -> Result<()> {
         let accounts = account::list(&self.db)?;
+        let containers = self.savings_containers()?;
         let mut rows = Vec::with_capacity(accounts.len());
         for account in &accounts {
             rows.push(accounts_screen::Row {
@@ -49,7 +53,7 @@ impl App {
                 kind: account.kind,
                 group: account.group,
                 policy: account::interest_policy(&self.db, account.id)?,
-                block: self.savings_block_of(account.id)?,
+                block: block_of(&containers, account.id),
             });
         }
         self.accounts.set_rows(rows);
@@ -106,27 +110,30 @@ impl App {
             .context("the selected account is not in the list it came from")?;
         let account = account::get(&self.db, id)?;
         let policy = account::interest_policy(&self.db, id)?;
-        let block = self.savings_block_of(id)?;
+        let block = block_of(&self.savings_containers()?, id);
         self.modal = Some(Modal::Account(AccountForm::edit(
             &account, policy, position, of_kind, block,
         )));
         Ok(())
     }
 
-    /// Which `Savings` block this account is the container for, if either.
+    /// The account each `Savings` block names, in `Block::ALL`'s order.
     ///
     /// Read from the keys rather than from a column: the mapping is a fact
     /// about the *workbook*, not about the account, and `savings_block::Block`
-    /// is what pairs each key with the block it names. A key naming another
-    /// account simply does not match -- this is a lookup, not a resolution,
-    /// so a dangling one is `import::savings::containers`' error to raise.
-    fn savings_block_of(&self, id: AccountId) -> Result<Option<SavingsBlock>> {
-        for block in SavingsBlock::ALL {
-            if setting::get(&self.db, block.key())? == Some(id) {
-                return Ok(Some(block));
-            }
+    /// is what pairs each key with the block it names. A key naming an account
+    /// that is gone simply matches nothing -- this is a lookup, not a
+    /// resolution, so a dangling one is `import::savings::containers`' error
+    /// to raise.
+    ///
+    /// The mapping is the same whichever account is being asked about, which
+    /// is why it is read once and `block_of` then answers per row.
+    fn savings_containers(&self) -> Result<Containers> {
+        let mut containers: Containers = [None; SavingsBlock::ALL.len()];
+        for (container, block) in containers.iter_mut().zip(SavingsBlock::ALL) {
+            *container = setting::get(&self.db, block.key())?;
         }
-        Ok(None)
+        Ok(containers)
     }
 
     /// `a`'s one write, or the five `e` stands for.
@@ -154,6 +161,16 @@ impl App {
         self.close_modal();
         self.reload()
     }
+}
+
+/// Which `Savings` block `id` is the container for, if either, against a
+/// mapping `savings_containers` has already read.
+fn block_of(containers: &Containers, id: AccountId) -> Option<SavingsBlock> {
+    SavingsBlock::ALL
+        .into_iter()
+        .zip(containers)
+        .find(|(_, container)| **container == Some(id))
+        .map(|(block, _)| block)
 }
 
 #[cfg(test)]

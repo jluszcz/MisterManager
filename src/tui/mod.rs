@@ -43,7 +43,7 @@ use chrono::NaiveDate;
 use cursor::{Scroll, Viewport};
 use ratatui::DefaultTerminal;
 use ratatui::Frame;
-use ratatui::crossterm::event::{self, Event, KeyEventKind};
+use ratatui::crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
@@ -51,9 +51,10 @@ use ratatui::widgets::{Block, Cell, Row as TableRow, Table, TableState};
 use std::time::Duration;
 use style::Color;
 
-/// How long a draw waits for input before looping. Nothing animates, so this
-/// decides how quickly a resize is picked up, and how closely a status
-/// message's expiry follows [`app::STATUS_TTL`].
+/// How long the loop waits for an event before looking at the clock again.
+/// Nothing animates and every other change arrives as an event, so this
+/// decides one thing: how closely a status message's expiry follows
+/// [`app::STATUS_TTL`].
 const TICK: Duration = Duration::from_millis(250);
 
 /// The narrowest terminal the screens are laid out for.
@@ -441,19 +442,63 @@ pub fn run(db: Db, today: NaiveDate, demo: bool) -> Result<Db> {
     Ok(app.into_db())
 }
 
+/// Whether an event leaves the screen owing a redraw.
+///
+/// A key press always does, and deliberately without asking what the app did
+/// with it: [`App::on_key`] clears the status message before it dispatches, so
+/// even a key nothing is bound to takes the footer back. Answering per handler
+/// would be a list to keep in step with every screen, and the cost of the
+/// over-approximation is one wasted frame per unbound keystroke.
+///
+/// A resize does because every screen's layout is computed per frame.
+/// Everything else -- a key release, a mouse event, focus crossing the
+/// window -- reaches no handler here, so the frame it would earn would be the
+/// frame already on screen.
+fn redraws(event: &Event) -> bool {
+    match event {
+        Event::Key(key) => is_press(key),
+        Event::Resize(..) => true,
+        _ => false,
+    }
+}
+
+/// Whether this is a key arriving rather than leaving.
+///
+/// Windows reports press and release both; acting on each would run every key
+/// twice. Written once because [`redraws`] and the dispatch in the loop must
+/// widen together: a key the app answers and the loop draws no frame for is a
+/// stale screen, which is the failure the owed draw is not worth risking.
+fn is_press(key: &KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press
+}
+
+/// The loop that draws and reads keys, in that order.
+///
+/// The draw is owed rather than unconditional: at four frames a second an
+/// idle app rebuilds every visible row's strings for a buffer ratatui is
+/// about to find unchanged. What owes one is a key press, a resize, and a
+/// status message reaching its expiry -- which is why the tick goes on firing
+/// whether or not anything is drawn.
 fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
+    // The first frame is owed to nothing in particular: there is no screen yet.
+    let mut dirty = true;
     while !app.should_quit() {
         // Before the draw, so a message that has run out of time is gone from
-        // the frame it would otherwise appear in for one more tick.
-        app.expire_status();
-        terminal.draw(|frame| app.render(frame))?;
+        // the frame it would otherwise appear in for one more tick. It is the
+        // one thing that changes the screen with no event behind it, which is
+        // why it reports whether it did.
+        dirty |= app.expire_status();
+        if dirty {
+            terminal.draw(|frame| app.render(frame))?;
+            dirty = false;
+        }
         if !event::poll(TICK)? {
             continue;
         }
-        if let Event::Key(key) = event::read()?
-            // Windows reports press and release both; acting on each would
-            // run every key twice.
-            && key.kind == KeyEventKind::Press
+        let event = event::read()?;
+        dirty |= redraws(&event);
+        if let Event::Key(key) = event
+            && is_press(&key)
         {
             app.on_key(key);
         }
@@ -534,6 +579,42 @@ mod tests {
         let list = List(cursor::Cursor::new());
         assert_eq!(table_state(&list, 0, 10).0.selected(), None);
         assert_eq!(table_state(&list, 1, 10).0.selected(), Some(0));
+    }
+
+    /// The draw is owed rather than unconditional, so a missed redraw is a
+    /// stale screen -- which is worse than the wasted one this exists to
+    /// avoid. A key press earns a frame whatever it turns out to mean,
+    /// because `on_key` clears the footer's message before it dispatches.
+    #[test]
+    fn a_key_press_and_a_resize_owe_a_frame_and_nothing_else_does() {
+        use ratatui::crossterm::event::{
+            KeyCode, KeyEventState, KeyModifiers, MouseEvent, MouseEventKind,
+        };
+
+        let key = |kind| {
+            Event::Key(KeyEvent {
+                // A letter no screen binds: an unanswered key still takes the
+                // status message away, so it still owes a frame.
+                code: KeyCode::Char('~'),
+                modifiers: KeyModifiers::NONE,
+                kind,
+                state: KeyEventState::NONE,
+            })
+        };
+        assert!(redraws(&key(KeyEventKind::Press)));
+        assert!(redraws(&Event::Resize(80, 24)));
+
+        assert!(!redraws(&key(KeyEventKind::Release)));
+        assert!(!redraws(&key(KeyEventKind::Repeat)));
+        assert!(!redraws(&Event::FocusGained));
+        assert!(!redraws(&Event::FocusLost));
+        assert!(!redraws(&Event::Paste("pasted".to_string())));
+        assert!(!redraws(&Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })));
     }
 
     /// The offset a draw resolves is the one it reports back, so the next
