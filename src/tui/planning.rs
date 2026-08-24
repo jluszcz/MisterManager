@@ -247,7 +247,8 @@ pub struct Row {
     ///
     /// A tone rather than the `Cents` themselves because this column is
     /// heterogeneous -- a figure, a count, a gate's verdict, a destination --
-    /// so there is no amount to hand [`super::amount`]. Only [`Row::figure`]
+    /// so there is no amount to hand [`super::amount`]. Only
+    /// [`crate::plan_rows::Row::figure`]
     /// reads it off money, which is why a count can never render red.
     pub tone: Tone,
     /// What `extra` means, as far as color goes. Only ever [`Tone::Negative`]:

@@ -156,7 +156,7 @@ pub enum Extended {
 /// The write and the regeneration share a transaction, so a failed
 /// regeneration cannot leave the row claiming a reach its ledger has not got.
 ///
-/// **Must be called at top level, not nested inside another transaction.**
+/// **Must be called at top level, not inside another [`Db::transaction`].**
 pub fn extend(db: &Db, id: RecurringTxnId, today: NaiveDate) -> Result<Extended> {
     let recurring_txn = recurring_txn::get(db, id)?;
     let reach = reach(db, &recurring_txn, today)?;
@@ -188,7 +188,7 @@ pub fn extend(db: &Db, id: RecurringTxnId, today: NaiveDate) -> Result<Extended>
 
 /// Regenerate one recurring transaction's rows, inside one transaction.
 ///
-/// **Must be called at top level, not nested inside another transaction.**
+/// **Must be called at top level, not inside another [`Db::transaction`].**
 pub fn regenerate(db: &Db, id: RecurringTxnId, today: NaiveDate) -> Result<Regenerated> {
     let recurring_txn = recurring_txn::get(db, id)?;
     db.transaction(|db| regenerate_within(db, &recurring_txn, today))
@@ -196,10 +196,9 @@ pub fn regenerate(db: &Db, id: RecurringTxnId, today: NaiveDate) -> Result<Regen
 
 /// Regenerate every recurring transaction, inside one transaction.
 ///
-/// **Must be called at top level, not nested inside another transaction.**
-/// It cannot delegate to [`regenerate`], which opens one of its own --
-/// `Db::transaction` is not reentrant, the same shape
-/// `db::clear_imported_data` already relies on.
+/// **Must be called at top level, not inside another [`Db::transaction`].**
+/// It cannot delegate to [`regenerate`], which opens one of its own -- the
+/// same shape `db::clear_imported_data` already relies on.
 pub fn regenerate_all(db: &Db, today: NaiveDate) -> Result<Regenerated> {
     let recurring_txn = recurring_txn::list(db)?;
     db.transaction(|db| {

@@ -29,10 +29,12 @@ impl Cents {
     /// [`Cents::floor_to_dollar`], which steps a negative down to the next
     /// whole dollar.
     ///
-    /// For a figure whose *color* is decided after its cents are gone: a
-    /// remainder of `-0.23` truncates to zero here and draws as the plain
-    /// `0` it now reads as, where `to_whole_dollars` alone would leave a
-    /// `-0` painted red over a figure that says nothing is owed.
+    /// **The cents go before the color is chosen, not after** -- which is why
+    /// a whole-dollar figure whose color is chosen from its own cents comes
+    /// through here rather than through [`Cents::to_whole_dollars`] alone: a
+    /// remainder of `-0.23` truncates to zero and draws as the plain `0` it
+    /// now reads as, where the string on its own would leave a `-0` painted
+    /// red over a figure that says nothing is owed.
     pub fn trunc_to_dollar(self) -> Cents {
         Cents(self.0 / 100 * 100)
     }

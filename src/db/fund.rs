@@ -113,8 +113,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Fund> {
 }
 
 /// A `SELECT` of the columns [`from_row`] reads, in the order it reads them,
-/// with `$tail` appended. One list per table -- see [`crate::db`] for the
-/// idiom.
+/// with `$tail` appended. See [`crate::db`] for the idiom.
 macro_rules! select_fund {
     ($tail:literal) => {
         concat!(

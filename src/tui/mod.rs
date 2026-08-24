@@ -104,7 +104,8 @@ fn amount(cents: Cents) -> Cell<'static> {
     money_cell(cents, crate::demo::figure(cents))
 }
 
-/// The same cell with the cents dropped — see [`Cents::to_whole_dollars`].
+/// The same cell with the cents dropped before the color is chosen — see
+/// [`Cents::trunc_to_dollar`].
 ///
 /// The Savings screen's figures are targets and balances in the thousands,
 /// where two decimal places are two digits of noise on every row. Its
@@ -112,10 +113,6 @@ fn amount(cents: Cents) -> Cell<'static> {
 /// [`crate::savings::unallocated`]: the $0.23 a container can sit at is
 /// exactly the noise, and a line that reads `0` is the line saying there is
 /// nothing there to place.
-///
-/// The cents go before the color is chosen, not after: a figure shown as
-/// nothing must not be painted as a debt, so a row a few cents below zero
-/// draws a plain `0` rather than a red `-0`.
 fn whole_amount(cents: Cents) -> Cell<'static> {
     let whole = cents.trunc_to_dollar();
     money_cell(whole, crate::demo::whole_figure(whole))

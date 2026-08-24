@@ -85,8 +85,7 @@ pub fn percent_complete(current: Cents, goal: Cents) -> Option<Percent> {
 /// One function so the two sinks cannot drift: the Savings screen's
 /// `Unallocated` footer and the report's `Unallocated` row show the same
 /// remainder, and each decides its color from what this leaves rather than
-/// from the cents behind it -- so a container sitting at `-0.23` draws a
-/// plain `0` rather than a red `-0`.
+/// from the cents behind it -- see [`Cents::trunc_to_dollar`].
 pub fn unallocated(excess: Cents) -> Cents {
     excess.trunc_to_dollar()
 }

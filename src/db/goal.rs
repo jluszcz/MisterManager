@@ -112,8 +112,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Goal> {
 }
 
 /// A `SELECT` of the columns [`from_row`] reads, in the order it reads them,
-/// with `$tail` appended. One list per table -- see [`crate::db`] for the
-/// idiom.
+/// with `$tail` appended. See [`crate::db`] for the idiom.
 ///
 /// The `with_balance` arm is those same columns qualified with the `g` alias
 /// a join needs, followed by the goal's allocation sum as column index 11 --
@@ -220,7 +219,7 @@ pub fn reorder(db: &Db, id: GoalId, position: usize) -> Result<()> {
 /// dozens of them at once, and a partial one would leave the list
 /// half-populated with nothing to say which half.
 ///
-/// **Must be called at top level, not nested inside another transaction.**
+/// **Must be called at top level, not inside another [`Db::transaction`].**
 pub fn insert_all(db: &Db, goals: &[NewGoal]) -> Result<Vec<GoalId>> {
     db.transaction(|db| goals.iter().map(|g| insert(db, g)).collect())
 }
@@ -363,11 +362,10 @@ pub fn insert_batch(db: &Db, kind: BatchKind, date: NaiveDate) -> Result<BatchId
     Ok(BatchId(db.conn.last_insert_rowid()))
 }
 
-/// **Must be called at top level, not nested inside another transaction.**
-/// `Db::transaction` is not reentrant. Not currently reachable from
-/// `import::import_all`, which wraps the whole import in its own transaction
-/// -- keep it that way, or thread a shared transaction through instead of
-/// calling this from inside one.
+/// **Must be called at top level, not inside another [`Db::transaction`].**
+/// Not currently reachable from `import::import_all`, which wraps the whole
+/// import in its own transaction -- keep it that way, or thread a shared
+/// transaction through instead of calling this from inside one.
 pub fn delete_batch(db: &Db, batch_id: BatchId) -> Result<()> {
     db.transaction(|db| {
         db.conn.execute(
@@ -421,8 +419,7 @@ fn batch_from_row(row: &Row<'_>) -> rusqlite::Result<Batch> {
 /// half-written payday would leave the container's reconciliation wrong with
 /// nothing on screen to say so.
 ///
-/// **Must be called at top level, not nested inside another transaction.**
-/// `Db::transaction` is not reentrant.
+/// **Must be called at top level, not inside another [`Db::transaction`].**
 pub fn insert_allocations(
     db: &Db,
     kind: BatchKind,
@@ -567,9 +564,8 @@ pub fn set_favorite(db: &Db, id: GoalId, favorite: bool) -> Result<()> {
 /// Both goals must be open. A goal ends once, and value moved into a closed
 /// goal would be money hidden from every listing.
 ///
-/// **Must be called at top level, not nested inside another transaction.**
-/// `Db::transaction` is not reentrant, and this is not reachable from
-/// `import::import_all`.
+/// **Must be called at top level, not inside another [`Db::transaction`].**
+/// Nothing calls it from inside `import::import_all`'s transaction.
 pub fn move_value(db: &Db, from: GoalId, to: Option<GoalId>, date: NaiveDate) -> Result<()> {
     let source = get(db, from)?.with_context(|| format!("no goal with id {from}"))?;
     ensure!(!source.closed, "{:?} is already closed", source.name);

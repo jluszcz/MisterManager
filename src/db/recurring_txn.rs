@@ -113,8 +113,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<RecurringTxn> {
 }
 
 /// A `SELECT` of the columns [`from_row`] reads, in the order it reads them,
-/// with `$tail` appended. One list per table -- see [`crate::db`] for the
-/// idiom.
+/// with `$tail` appended. See [`crate::db`] for the idiom.
 macro_rules! select_recurring_txn {
     ($tail:literal) => {
         concat!(
@@ -197,8 +196,7 @@ pub fn update(db: &Db, id: RecurringTxnId, recurring_txn: &NewRecurringTxn) -> R
 ///
 /// Returns how many rows were released, for the confirmation's status line.
 ///
-/// **Must be called at top level, not nested inside another transaction.**
-/// `Db::transaction` is not reentrant.
+/// **Must be called at top level, not inside another [`Db::transaction`].**
 pub fn delete(db: &Db, id: RecurringTxnId) -> Result<usize> {
     // Read for the check alone: the release below matches on
     // `recurring_txn_id`, so an unknown id would release nothing, delete
@@ -222,7 +220,7 @@ pub fn delete(db: &Db, id: RecurringTxnId) -> Result<usize> {
 /// transaction, so two paycheck recurring transactions are unreachable through
 /// this API.
 ///
-/// **Must be called at top level, not nested inside another transaction.**
+/// **Must be called at top level, not inside another [`Db::transaction`].**
 pub fn set_paycheck(db: &Db, id: RecurringTxnId) -> Result<()> {
     // Read for the check alone: without it an unknown id would clear the flag
     // from every row and set it on none, leaving no paycheck at all.
