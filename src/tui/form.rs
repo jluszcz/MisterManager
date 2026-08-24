@@ -1498,7 +1498,7 @@ mod tests {
     use super::*;
     use crate::db::account::Group;
     use crate::db::{AccountId, RecurringTxnId};
-    use crate::test_support::{cash, day};
+    use crate::test_support::{cash, day, walk_until};
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::style::Modifier;
 
@@ -1867,9 +1867,7 @@ mod tests {
     /// other field says which one it means rather than relying on where the
     /// caret happens to start.
     fn focused(form: &mut TxnForm, field: TxnField) {
-        while form.focus != field {
-            form.next_field();
-        }
+        walk_until!(form.focus == field, form.next_field());
     }
 
     fn typed(form: &mut TxnForm, field: TxnField, text: &str) {
@@ -1880,9 +1878,7 @@ mod tests {
     }
 
     fn typed_transfer(form: &mut TransferForm, field: TransferField, text: &str) {
-        while form.focus != field {
-            form.next_field();
-        }
+        walk_until!(form.focus == field, form.next_field());
         for c in text.chars() {
             form.edit(char_key(c));
         }
@@ -2127,9 +2123,7 @@ mod tests {
             "Transfer"
         );
 
-        while form.focus != TransferField::To {
-            form.next_field();
-        }
+        walk_until!(form.focus == TransferField::To, form.next_field());
         form.choice(Step::NEXT);
         typed_transfer(&mut form, TransferField::Amount, "3,291.00");
 
@@ -2148,9 +2142,7 @@ mod tests {
     fn a_transfer_of_a_non_positive_amount_is_refused_in_the_form() {
         let mut form =
             TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
-        while form.focus != TransferField::To {
-            form.next_field();
-        }
+        walk_until!(form.focus == TransferField::To, form.next_field());
         form.choice(Step::NEXT);
         typed_transfer(&mut form, TransferField::Amount, "-100");
 
@@ -2181,9 +2173,7 @@ mod tests {
         );
 
         let mut form = form;
-        while form.focus != TransferField::To {
-            form.next_field();
-        }
+        walk_until!(form.focus == TransferField::To, form.next_field());
         form.choice(Step::NEXT);
         assert_eq!(
             form.display(TransferField::To).plain_text(),
@@ -2205,9 +2195,7 @@ mod tests {
     fn a_transfer_offers_only_cash_sources() {
         let mut form =
             TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
-        while form.focus != TransferField::From {
-            form.next_field();
-        }
+        walk_until!(form.focus == TransferField::From, form.next_field());
         let mut seen = Vec::new();
         for _ in 0..all_accounts().len() {
             seen.push(form.display(TransferField::From).plain_text());
@@ -2232,9 +2220,7 @@ mod tests {
         let form =
             TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
         let mut form = form;
-        while form.focus != TransferField::To {
-            form.next_field();
-        }
+        walk_until!(form.focus == TransferField::To, form.next_field());
         let mut seen = Vec::new();
         for _ in 0..all_accounts().len() {
             seen.push(form.display(TransferField::To).plain_text());
@@ -2256,9 +2242,7 @@ mod tests {
         let mut form =
             TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
         typed_transfer(&mut form, TransferField::Amount, "10");
-        while form.focus != TransferField::To {
-            form.next_field();
-        }
+        walk_until!(form.focus == TransferField::To, form.next_field());
         form.choice(Step::NEXT);
         // moves the focus without changing the field
         typed_transfer(&mut form, TransferField::Description, "");
@@ -2290,9 +2274,7 @@ mod tests {
             form.display(TransferField::From).plain_text(),
             "CHK — Everyday"
         );
-        while form.focus != TransferField::From {
-            form.next_field();
-        }
+        walk_until!(form.focus == TransferField::From, form.next_field());
         form.choice(Step::NEXT);
         assert_eq!(
             form.display(TransferField::From).plain_text(),
@@ -2314,9 +2296,7 @@ mod tests {
             "CC1 Payment"
         );
 
-        while form.focus != TransferField::To {
-            form.next_field();
-        }
+        walk_until!(form.focus == TransferField::To, form.next_field());
         form.choice(Step::NEXT);
         assert_eq!(
             form.display(TransferField::Description).plain_text(),
@@ -2329,9 +2309,7 @@ mod tests {
             "CC2 Payment!"
         );
 
-        while form.focus != TransferField::To {
-            form.next_field();
-        }
+        walk_until!(form.focus == TransferField::To, form.next_field());
         form.choice(Step::NEXT);
         assert_eq!(
             form.display(TransferField::Description).plain_text(),
@@ -2344,9 +2322,7 @@ mod tests {
     fn a_payment_commits_both_legs_worth_of_detail() {
         let mut form =
             TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8))).unwrap();
-        while form.focus != TransferField::From {
-            form.next_field();
-        }
+        walk_until!(form.focus == TransferField::From, form.next_field());
         form.choice(Step::NEXT);
         typed_transfer(&mut form, TransferField::Amount, "450.85");
 
@@ -2460,9 +2436,7 @@ mod tests {
         crate::demo::install(true);
         let mut form =
             TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
-        while form.focus != TransferField::To {
-            form.next_field();
-        }
+        walk_until!(form.focus == TransferField::To, form.next_field());
         form.choice(Step::NEXT);
         typed_transfer(&mut form, TransferField::Amount, "-500");
         let err = form.commit().unwrap_err().to_string();
@@ -2885,9 +2859,7 @@ mod tests {
     fn the_transfer_description_comes_before_its_amount_too() {
         let mut form =
             TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
-        while form.focus != TransferField::Description {
-            form.next_field();
-        }
+        walk_until!(form.focus == TransferField::Description, form.next_field());
         form.next_field();
         assert_eq!(form.focus, TransferField::Amount);
     }

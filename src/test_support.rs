@@ -1,11 +1,15 @@
-//! Fixtures every module's `mod tests` builds from.
+//! Fixtures every module's `mod tests` builds from, and the one loop they all
+//! walk.
 //!
-//! Two things live here, and they are here for the same reason: both were
+//! The fixtures are here for the reason they were always here: both were
 //! written out once per test module, so a change to either meant finding
-//! twenty copies. What does *not* live here is anything a module chose --
-//! each `today()` names a different day, picked for the schedule or the
-//! deadline that module's tests turn on, and a shared one would be a fixture
-//! nobody selected.
+//! twenty copies. [`walk_until`] is here for a different one -- it is a
+//! *mechanism* rather than a fixture, the bound that keeps a test walk from
+//! becoming a hang, and a per-module copy of a safety rule is a rule half the
+//! modules will be missing. What does *not* live here is anything a module
+//! chose -- each `today()` names a different day, picked for the schedule or
+//! the deadline that module's tests turn on, and a shared one would be a
+//! fixture nobody selected.
 //!
 //! Every figure reachable from here is invented; see the no-real-data rule in
 //! `CLAUDE.md`.
@@ -85,6 +89,43 @@ pub fn credit(id: i64, code: &str) -> Account {
     account(id, code, Kind::Credit)
 }
 
+/// How many steps [`walk_until`] takes before it calls a state unreachable.
+///
+/// Far past the longest walk any fixture has -- the longest of them is a
+/// screen's rows, and no screen has two hundred. What the bound catches is
+/// "never", not "slowly".
+pub const WALK_LIMIT: usize = 200;
+
+/// Step a fixture until it reaches the state a test is about, or panic naming
+/// what never happened: `walk_until!(form.focus == field, form.next_field())`
+/// is the state first, then the step meant to reach it.
+///
+/// What makes the bound worth its line is that the step at the end of a list
+/// is a *no-op* rather than an error: `next_field` past the last field and
+/// `select_next` on the last row both leave the fixture exactly where it was.
+/// So a state a regression has made unreachable does not fail the test --
+/// nothing moves, the condition stays false, and the loop spins at full speed
+/// for as long as the machine is on. The bound is what turns that hang back
+/// into a red test.
+macro_rules! walk_until {
+    ($reached:expr, $step:expr $(,)?) => {{
+        let mut steps = 0;
+        while !$reached {
+            assert!(
+                steps < $crate::test_support::WALK_LIMIT,
+                "`{}` never held: {} x `{}` did not reach it",
+                stringify!($reached),
+                $crate::test_support::WALK_LIMIT,
+                stringify!($step),
+            );
+            $step;
+            steps += 1;
+        }
+    }};
+}
+
+pub(crate) use walk_until;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,5 +164,22 @@ mod tests {
     #[should_panic(expected = "XYZ is not a cash code")]
     fn a_code_outside_the_vocabulary_panics() {
         cash(1, "XYZ");
+    }
+
+    #[test]
+    fn a_walk_stops_the_moment_it_reaches_the_state() {
+        let mut at = 0;
+        walk_until!(at == 3, at += 1);
+        assert_eq!(at, 3);
+    }
+
+    /// The whole reason for the bound. A step at the end of a list moves
+    /// nothing, so a state it can no longer reach leaves the condition false
+    /// forever -- and a test that spins is a test that never goes red.
+    #[test]
+    #[should_panic(expected = "never held")]
+    fn a_state_the_step_cannot_reach_fails_rather_than_spinning() {
+        let mut at = 0;
+        walk_until!(at == 4, at = (at + 1).min(3));
     }
 }

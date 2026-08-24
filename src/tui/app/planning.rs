@@ -522,7 +522,7 @@ mod tests {
     use crate::money::Cents;
     use crate::plan_line::{Destination, Line};
     use crate::rate::{BasisPoints, Percent};
-    use crate::test_support::day;
+    use crate::test_support::{day, walk_until};
     use crate::tui::MIN_WIDTH;
     use crate::tui::app::Screen;
     use crate::tui::app::test_support::*;
@@ -791,9 +791,10 @@ mod tests {
     fn d_then_y_deletes_the_selected_bill() {
         let mut app = planning_app();
         press(&mut app, KeyCode::Char('5'));
-        while !matches!(app.planning.selected_target(), Some(Target::Bill(_))) {
-            press(&mut app, KeyCode::Down);
-        }
+        walk_until!(
+            matches!(app.planning.selected_target(), Some(Target::Bill(_))),
+            press(&mut app, KeyCode::Down)
+        );
 
         press(&mut app, KeyCode::Char('d'));
         press(&mut app, KeyCode::Char('y'));

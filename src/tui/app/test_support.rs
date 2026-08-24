@@ -13,7 +13,7 @@ use crate::db::txn::NewTxn;
 use crate::gate::Gate;
 use crate::money::Cents;
 use crate::plan_line::{Destination, Line};
-use crate::test_support::day;
+use crate::test_support::{day, walk_until};
 use crate::tui::MIN_WIDTH;
 use crate::tui::form::{TxnField, TxnForm};
 use crate::tui::picker::Picker;
@@ -323,9 +323,10 @@ pub(super) fn planning_app_with_a_row_after_today() -> App {
 /// Moves the Planning cursor onto the first bill row and answers which one
 /// it landed on.
 pub(super) fn select_first_bill(app: &mut App) -> crate::db::bill::Bill {
-    while !matches!(app.planning.selected_target(), Some(Target::Bill(_))) {
-        press(app, KeyCode::Down);
-    }
+    walk_until!(
+        matches!(app.planning.selected_target(), Some(Target::Bill(_))),
+        press(app, KeyCode::Down)
+    );
     let Some(Target::Bill(id)) = app.planning.selected_target() else {
         unreachable!()
     };

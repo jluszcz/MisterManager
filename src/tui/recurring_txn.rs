@@ -416,7 +416,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> Vie
 mod tests {
     use super::*;
     use crate::db::AccountId;
-    use crate::test_support::{cash, day};
+    use crate::test_support::{cash, day, walk_until};
     use crate::tui::MIN_WIDTH;
     use crate::tui::cursor::Scroll;
     use crate::tui::form::{backspace_key, char_key};
@@ -712,9 +712,7 @@ mod tests {
         for c in "100".chars() {
             form.edit(char_key(c));
         }
-        while form.focus != RecurringTxnField::Horizon {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringTxnField::Horizon, form.next_field());
         for c in "12/01/2026".chars() {
             form.edit(char_key(c));
         }
@@ -760,9 +758,7 @@ mod tests {
     }
 
     fn typed(form: &mut RecurringTxnForm, field: RecurringTxnField, text: &str) {
-        while form.focus != field {
-            form.next_field();
-        }
+        walk_until!(form.focus == field, form.next_field());
         for c in text.chars() {
             form.edit(char_key(c));
         }
@@ -816,9 +812,7 @@ mod tests {
     #[test]
     fn accepting_a_suggestion_leaves_a_chosen_account_alone() {
         let mut form = RecurringTxnForm::add(accounts(), day(2026, 8, 16)).unwrap();
-        while form.focus != RecurringTxnField::Account {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringTxnField::Account, form.next_field());
         form.choice(Step::NEXT);
         typed(&mut form, RecurringTxnField::Description, "Mort");
 
@@ -869,9 +863,7 @@ mod tests {
     #[test]
     fn the_account_selector_cycles_both_ways() {
         let mut form = RecurringTxnForm::add(accounts(), day(2026, 8, 16)).unwrap();
-        while form.focus != RecurringTxnField::Account {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringTxnField::Account, form.next_field());
         assert_eq!(
             form.display(RecurringTxnField::Account).plain_text(),
             "CHK — Everyday"
@@ -901,9 +893,7 @@ mod tests {
     #[test]
     fn the_cadence_selector_cycles_both_ways() {
         let mut form = RecurringTxnForm::add(accounts(), day(2026, 8, 16)).unwrap();
-        while form.focus != RecurringTxnField::Cadence {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringTxnField::Cadence, form.next_field());
         assert_eq!(
             form.display(RecurringTxnField::Cadence).plain_text(),
             "biweekly"
@@ -941,9 +931,7 @@ mod tests {
         )
         .unwrap();
 
-        while form.focus != RecurringTxnField::Anchor {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringTxnField::Anchor, form.next_field());
         form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringTxnField::Anchor).plain_text(),
@@ -956,9 +944,7 @@ mod tests {
             "2026-08-27"
         );
 
-        while form.focus != RecurringTxnField::Horizon {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringTxnField::Horizon, form.next_field());
         form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringTxnField::Horizon).plain_text(),
@@ -971,9 +957,7 @@ mod tests {
     #[test]
     fn the_arrows_leave_an_empty_horizon_empty() {
         let mut form = RecurringTxnForm::add(accounts(), day(2026, 8, 16)).unwrap();
-        while form.focus != RecurringTxnField::Horizon {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringTxnField::Horizon, form.next_field());
         form.choice(Step::NEXT);
         form.choice(Step::PREVIOUS);
         assert_eq!(form.display(RecurringTxnField::Horizon).plain_text(), "");

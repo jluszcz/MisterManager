@@ -1231,7 +1231,7 @@ mod tests {
     use crate::calc::planning::{PlanInputs, compute};
     use crate::db;
     use crate::db::bill::Category;
-    use crate::test_support::day;
+    use crate::test_support::{day, walk_until};
     use crate::tui::MIN_WIDTH;
     use crate::tui::form::char_key;
     // `setting`, `key`, and `Line` already come in through `super::*`.
@@ -2576,9 +2576,10 @@ mod tests {
     #[test]
     fn a_cursor_on_a_deleted_bill_falls_back_to_the_first_editable_row() {
         let mut planning = screen();
-        while planning.selected_target() != Some(Target::Bill(BillId(6))) {
-            planning.select_next();
-        }
+        walk_until!(
+            planning.selected_target() == Some(Target::Bill(BillId(6))),
+            planning.select_next()
+        );
 
         let mut without_wework = view(Some(Cents::from_dollars(17_500)), None);
         without_wework.other_bills.pop();
@@ -3386,10 +3387,13 @@ mod tests {
 
         planning.select_first();
         let mut drawn = draw(&mut planning);
-        while planning.rows()[planning.selected_index()].label.trim() != "Excess (Used)" {
-            planning.select_next();
-            drawn = draw(&mut planning);
-        }
+        walk_until!(
+            planning.rows()[planning.selected_index()].label.trim() == "Excess (Used)",
+            {
+                planning.select_next();
+                drawn = draw(&mut planning);
+            }
+        );
 
         assert!(drawn.contains("Transfers"), "{drawn}");
         assert!(drawn.contains("Excess (Used)"), "{drawn}");
@@ -3432,11 +3436,11 @@ mod tests {
         // Up until the cursor has nowhere left to go, which is the first
         // editable row rather than the first row.
         let mut previous = usize::MAX;
-        while planning.selected_index() != previous {
+        walk_until!(planning.selected_index() == previous, {
             previous = planning.selected_index();
             planning.select_previous();
             drawn = draw(&mut planning);
-        }
+        });
 
         assert_eq!(
             planning.rows()[planning.selected_index()].label.trim(),
@@ -3483,11 +3487,11 @@ mod tests {
         planning.select_first();
         let mut drawn = draw(&mut planning);
         let mut previous = usize::MAX;
-        while planning.selected_index() != previous {
+        walk_until!(planning.selected_index() == previous, {
             previous = planning.selected_index();
             planning.select_next();
             drawn = draw(&mut planning);
-        }
+        });
 
         assert_eq!(
             planning.rows()[planning.selected_index()].label.trim(),
