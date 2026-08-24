@@ -48,6 +48,12 @@ answer it; "why is it this key" is a maintainer's question, and this file is whe
 looks. `help::tests::no_panel_entry_runs_longer_than_a_glance` is what holds the split up — an
 entry that outgrows eight wrapped lines has started answering the second question.
 
+**A `detail` quotes a single-character key it names** — `'a'`, `'s'`, `'y'` — because a bare one
+reads as the word it also is ("opening on the same date a does") or as a stray letter where it is
+not ("are s on screen 7"). `Tab`, `Esc` and `Enter` are unambiguous already and stay bare. Nothing
+enforces this: the article "a" and the key `a` are the same character, so no test can tell them
+apart.
+
 `Enter` is the one entry above that a screen answers rather than a modal. On Planning it opens the
 full account of an unresolved plan — a screen key, not a row key, because that cursor only ever
 lands on rows `e` acts on, and making the `unresolved` row selectable would park the cursor

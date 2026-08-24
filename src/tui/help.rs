@@ -8,6 +8,13 @@
 //! reach it. [`tests::no_panel_entry_runs_longer_than_a_glance`] is what
 //! keeps the two apart.
 //!
+//! **A single-character key is quoted where a `detail` names it** -- `'a'`,
+//! `'s'`, `'y'`. Bare, it reads as the word it also is ("opening on the same
+//! date a does"), or as a stray letter where it is not a word at all ("are s
+//! on screen 7"), and either way the sentence has to be read twice. The
+//! multi-character names -- `Tab`, `Esc`, `Enter`, `Shift` -- are already
+//! unambiguous and take no quotes.
+//!
 //! One module owns this for the same reason `style` owns color: so no screen
 //! grows its own opinion about what its keys are called. The screen
 //! footers are joined from these tables, so a footer cannot drift from the
@@ -238,12 +245,12 @@ const LEDGER: [Entry; 11] = [
     Entry {
         key: "t",
         label: Label::Shared("money"),
-        detail: "Move money between two cash accounts, opening on the same date a does. Cash ledger only.",
+        detail: "Move money between two cash accounts, opening on the same date 'a' does. Cash ledger only.",
     },
     Entry {
         key: "p",
         label: Label::Shared("money"),
-        detail: "Pay a credit card from a cash account, writing both sides. Opens on the same date a does.",
+        detail: "Pay a credit card from a cash account, writing both sides. Opens on the same date 'a' does.",
     },
     Entry {
         key: "e",
@@ -297,7 +304,7 @@ const SAVINGS: [Entry; 15] = [
     Entry {
         key: "n",
         label: Label::Shared("goal"),
-        detail: "Create a goal from scratch -- a name, a target and a date -- in the container Tab names. Goals created from recurring goal entries are s on screen 7.",
+        detail: "Create a goal from scratch -- a name, a target and a date -- in the container Tab names. Goals created from recurring goal entries are 's' on screen 7.",
     },
     Entry {
         key: "e",
@@ -317,7 +324,7 @@ const SAVINGS: [Entry; 15] = [
     Entry {
         key: "J",
         label: Label::Shared("goal"),
-        detail: "Move the selected goal down one place, the mirror of K. It stops at the last undated goal.",
+        detail: "Move the selected goal down one place, the mirror of 'K'. It stops at the last undated goal.",
     },
     Entry {
         key: "f",
@@ -365,7 +372,7 @@ const PLANNING: [Entry; 8] = [
     Entry {
         key: "p",
         label: Label::Own("pin"),
-        detail: "Freeze Excess (Actual) at its whole-dollar floor, so the waterfall holds still while a payday's legs are entered. Always pins, and replaces a pin already there rather than clearing it; the drift line under the plan is what says a pin has gone stale. This pins the figure it computed, where e on the Excess (Used) row pins whatever is typed there.",
+        detail: "Freeze Excess (Actual) at its whole-dollar floor, so the waterfall holds still while a payday's legs are entered. Always pins, and replaces a pin already there rather than clearing it; the drift line under the plan is what says a pin has gone stale. This pins the figure it computed, where 'e' on the Excess (Used) row pins whatever is typed there.",
     },
     Entry {
         key: "P",
@@ -388,7 +395,7 @@ const FUNDS: [Entry; 4] = [
     Entry {
         key: "E",
         label: Label::Own("edit"),
-        detail: "Edit the selected row in full: the same form a adds with.",
+        detail: "Edit the selected row in full: the same form 'a' adds with.",
     },
     Entry {
         key: "d",
@@ -410,7 +417,7 @@ const ACCOUNTS: [Entry; 2] = [
     Entry {
         key: "e",
         label: Label::Own("edit"),
-        detail: "Edit the selected account: its name, its Overview band, its place among the accounts of its kind, and -- for a cash account -- how an interest posting is divided and which block of the Savings sheet it is the container for, which is what the first mm import waits on. The code and the kind are a's to set. Nothing here is imported, so all of it survives mm import --replace.",
+        detail: "Edit the selected account: its name, its Overview band, its place among the accounts of its kind, and -- for a cash account -- how an interest posting is divided and which block of the Savings sheet it is the container for, which is what the first mm import waits on. The code and the kind are set by 'a', not here. Nothing here is imported, so all of it survives mm import --replace.",
     },
 ];
 
@@ -493,7 +500,7 @@ const EDITING_KEYS: &str = "Ctrl+A/E/B/F/W/U/K/D";
 /// the eight keys in its own words.
 macro_rules! editing_detail {
     () => {
-        "Edit the text under the caret: A to the start of the line, E to the end, B and F one character back or forward, W deletes the word before the caret, U deletes back to the start, K forward to the end, D the character the caret is on."
+        "Edit the text under the caret: 'A' to the start of the line, 'E' to the end, 'B' and 'F' one character back or forward, 'W' deletes the word before the caret, 'U' deletes back to the start, 'K' forward to the end, 'D' the character the caret is on."
     };
 }
 
@@ -588,7 +595,7 @@ const WORKSHEET: [Entry; 14] = [
     Entry {
         key: "Space",
         label: Label::Hidden,
-        detail: "Select or deselect the line under the cursor. The selection is what s and /N operate on.",
+        detail: "Select or deselect the line under the cursor. The selection is what 's' and /N operate on.",
     },
     Entry {
         key: "*",
@@ -691,7 +698,7 @@ const CONFIRM: [Entry; 3] = [
     Entry {
         key: "?",
         label: Label::Hidden,
-        detail: "Open this panel: the one key besides y that does not cancel.",
+        detail: "Open this panel: the one key besides 'y' that does not cancel.",
     },
 ];
 
