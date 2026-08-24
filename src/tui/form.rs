@@ -556,8 +556,20 @@ impl TxnField {
 /// transfer forms have a description field, and a form without one must never
 /// open the suggestion popup.
 pub(super) trait FormFields {
-    fn next_field(&mut self);
-    fn previous_field(&mut self);
+    /// Step the focus `step` places along this form's tab order, wrapping —
+    /// which for every form but the one-field [`ValueForm`] is [`next_in`]
+    /// over its own `ORDER`. One method rather than a `Tab` half and a
+    /// `BackTab` half, because a form that wrote the two separately would be
+    /// writing one order twice.
+    fn move_focus(&mut self, step: isize);
+
+    fn next_field(&mut self) {
+        self.move_focus(1);
+    }
+
+    fn previous_field(&mut self) {
+        self.move_focus(-1);
+    }
 
     /// The field under the caret. One method, because what a keystroke means
     /// depends on which of the three kinds has the focus and a form that
@@ -727,12 +739,8 @@ impl TxnForm {
 }
 
 impl FormFields for TxnForm {
-    fn next_field(&mut self) {
-        self.focus = next_in(&TxnField::ORDER, self.focus, 1);
-    }
-
-    fn previous_field(&mut self) {
-        self.focus = next_in(&TxnField::ORDER, self.focus, -1);
+    fn move_focus(&mut self, step: isize) {
+        self.focus = next_in(&TxnField::ORDER, self.focus, step);
     }
 
     fn focused(&mut self) -> Focused<'_> {
@@ -891,8 +899,7 @@ impl ValueForm {
 
 impl FormFields for ValueForm {
     // One field, so there is nowhere to tab to.
-    fn next_field(&mut self) {}
-    fn previous_field(&mut self) {}
+    fn move_focus(&mut self, _step: isize) {}
 
     // Nothing to cycle either: the one field is a buffer, and a date among
     // them steps on the arrows like every other date in the app.
@@ -1125,12 +1132,8 @@ impl TransferForm {
 }
 
 impl FormFields for TransferForm {
-    fn next_field(&mut self) {
-        self.focus = next_in(&TransferField::ORDER, self.focus, 1);
-    }
-
-    fn previous_field(&mut self) {
-        self.focus = next_in(&TransferField::ORDER, self.focus, -1);
+    fn move_focus(&mut self, step: isize) {
+        self.focus = next_in(&TransferField::ORDER, self.focus, step);
     }
 
     fn focused(&mut self) -> Focused<'_> {

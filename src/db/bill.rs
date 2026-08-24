@@ -112,7 +112,7 @@ pub fn list(db: &Db, category: Category) -> Result<Vec<Bill>> {
         .conn
         .prepare(select_bill!("WHERE category = ?1 ORDER BY sort, id"))?;
     let rows = stmt.query_map(params![category.as_str()], from_row)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 /// Just the amounts, in the same order -- what `PlanInputs` takes.

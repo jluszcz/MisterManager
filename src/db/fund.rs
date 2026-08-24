@@ -142,7 +142,7 @@ pub fn insert(db: &Db, fund: &NewFund) -> Result<FundId> {
 pub fn list(db: &Db) -> Result<Vec<Fund>> {
     let mut stmt = db.conn.prepare(select_fund!("ORDER BY ord, id"))?;
     let rows = stmt.query_map([], from_row)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 /// One fund by id. A missing fund is an error, not `None` -- the same

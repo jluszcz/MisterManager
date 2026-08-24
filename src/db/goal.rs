@@ -292,7 +292,7 @@ pub fn list(db: &Db, container_account_id: AccountId) -> Result<Vec<Goal>> {
           ORDER BY goal_date IS NULL DESC, goal_date, sort, id"
     ))?;
     let rows = stmt.query_map(params![container_account_id], from_row)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 /// How many goals exist, closed ones included.
@@ -326,7 +326,7 @@ pub fn list_with_balances(
             current: Cents(row.get(11)?),
         })
     })?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 /// Every open goal in every container, with its balance.
@@ -352,7 +352,7 @@ pub fn all_with_balances(db: &Db) -> Result<Vec<GoalWithBalance>> {
             current: Cents(row.get(11)?),
         })
     })?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 pub fn insert_batch(db: &Db, kind: BatchKind, date: NaiveDate) -> Result<BatchId> {
@@ -487,7 +487,7 @@ pub fn batch_shares(db: &Db, batch: BatchId) -> Result<Vec<(GoalId, Cents)>> {
           WHERE batch_id = ?1 GROUP BY goal_id ORDER BY goal_id",
     )?;
     let rows = stmt.query_map(params![batch], |r| Ok((r.get(0)?, Cents(r.get(1)?))))?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 /// The editable half of a goal. Its container and its recurring goal entry
@@ -639,7 +639,7 @@ pub fn containers(db: &Db) -> Result<Vec<AccountId>> {
           ORDER BY a.kind, a.sort, a.code",
     )?;
     let rows = stmt.query_map([], |r| r.get(0))?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 #[cfg(test)]

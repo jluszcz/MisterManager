@@ -979,12 +979,8 @@ impl BillForm {
 }
 
 impl FormFields for BillForm {
-    fn next_field(&mut self) {
-        self.focus = next_in(&BillField::ORDER, self.focus, 1);
-    }
-
-    fn previous_field(&mut self) {
-        self.focus = next_in(&BillField::ORDER, self.focus, -1);
+    fn move_focus(&mut self, step: isize) {
+        self.focus = next_in(&BillField::ORDER, self.focus, step);
     }
 
     fn cycle(&mut self, step: Step) {

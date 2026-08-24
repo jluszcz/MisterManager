@@ -5,7 +5,7 @@
 //! exists, and typing its name would put name matching back where the whole
 //! design keeps it out of -- what gets stored is the id under the cursor.
 
-use super::cursor::{Cursor, Scroll, Viewport};
+use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::search::{Search, SearchBox};
 use crate::db::GoalId;
 use crate::plan_line::Line;
@@ -202,19 +202,7 @@ impl Search for Chooser {
     }
 }
 
-impl Scroll for Chooser {
-    fn cursor(&self) -> &Cursor {
-        &self.cursor
-    }
-
-    fn cursor_mut(&mut self) -> &mut Cursor {
-        &mut self.cursor
-    }
-
-    fn row_count(&self) -> usize {
-        self.visible.len()
-    }
-}
+impl_scroll!(Chooser, visible);
 
 use super::form::centered;
 use super::{Chrome, render_table};
@@ -290,6 +278,7 @@ pub(super) fn render(frame: &mut Frame, chooser: &Chooser) -> Viewport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::cursor::Scroll;
     use crate::tui::form::backspace_key;
 
     fn offered() -> Vec<Offered> {

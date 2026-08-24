@@ -108,7 +108,7 @@ pub fn list(db: &Db, filter: &Filter) -> Result<Vec<Txn>> {
         ],
         from_row,
     )?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 /// The oldest and newest dates any row carries, across both kinds.
@@ -202,7 +202,7 @@ pub fn balances_at(db: &Db, date: NaiveDate) -> Result<Vec<(AccountId, Cents)>> 
           ORDER BY a.kind, a.sort, a.code",
     )?;
     let rows = stmt.query_map(params![iso(date)], |r| Ok((r.get(0)?, Cents(r.get(1)?))))?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 pub fn insert(db: &Db, txn: &NewTxn) -> Result<TxnId> {
@@ -247,7 +247,7 @@ pub fn on_date(db: &Db, account_id: AccountId, date: NaiveDate) -> Result<Vec<Tx
         "WHERE t.account_id = ?1 AND t.date = ?2 ORDER BY t.id"
     ))?;
     let rows = stmt.query_map(params![account_id, iso(date)], from_row)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 pub fn balance_at_by_kind(db: &Db, kind: Kind, date: NaiveDate) -> Result<Cents> {
@@ -411,7 +411,7 @@ pub fn autocomplete(db: &Db, prefix: &str, limit: i64) -> Result<Vec<Suggestion>
             uses: r.get(3)?,
         })
     })?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 #[cfg(test)]

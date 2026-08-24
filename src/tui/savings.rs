@@ -1,4 +1,4 @@
-use super::cursor::{Cursor, Scroll, Viewport};
+use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::month::{MonthCycle, YearMonth};
 use super::search::{Search, SearchBox};
 use crate::db::account::Account;
@@ -267,20 +267,7 @@ impl Search for Savings {
     }
 }
 
-impl Scroll for Savings {
-    fn cursor(&self) -> &Cursor {
-        &self.cursor
-    }
-
-    fn cursor_mut(&mut self) -> &mut Cursor {
-        &mut self.cursor
-    }
-
-    /// The rows the container filter and the search left, not every goal.
-    fn row_count(&self) -> usize {
-        self.visible.len()
-    }
-}
+impl_scroll!(Savings, visible);
 
 use super::{Chrome, Label, account_cell, label_line, render_table, right_header, whole_amount};
 use ratatui::Frame;
@@ -425,6 +412,7 @@ mod tests {
     use crate::goal::Funding;
     use crate::test_support::{cash, day};
     use crate::tui::MIN_WIDTH;
+    use crate::tui::cursor::Scroll;
     use crate::tui::form::backspace_key;
 
     fn today() -> NaiveDate {

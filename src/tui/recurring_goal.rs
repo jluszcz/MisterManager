@@ -5,7 +5,7 @@
 //! no `Db` on the type. `App` runs the queries and hands the results in.
 
 use super::Label;
-use super::cursor::{Cursor, Scroll, Viewport};
+use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::form::{
     Caret, Field, Focused, FormFields, Step, field_line_noted, next_in, parse_whole_amount,
     step_index, tax_note,
@@ -126,20 +126,7 @@ impl RecurringGoals {
     }
 }
 
-impl Scroll for RecurringGoals {
-    fn cursor(&self) -> &Cursor {
-        &self.cursor
-    }
-
-    fn cursor_mut(&mut self) -> &mut Cursor {
-        &mut self.cursor
-    }
-
-    /// The rows the month filter left, not every entry.
-    fn row_count(&self) -> usize {
-        self.visible.len()
-    }
-}
+impl_scroll!(RecurringGoals, visible);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RecurringGoalField {
@@ -275,12 +262,8 @@ impl RecurringGoalForm {
 }
 
 impl FormFields for RecurringGoalForm {
-    fn next_field(&mut self) {
-        self.focus = next_in(&RecurringGoalField::ORDER, self.focus, 1);
-    }
-
-    fn previous_field(&mut self) {
-        self.focus = next_in(&RecurringGoalField::ORDER, self.focus, -1);
+    fn move_focus(&mut self, step: isize) {
+        self.focus = next_in(&RecurringGoalField::ORDER, self.focus, step);
     }
 
     fn cycle(&mut self, step: Step) {
@@ -398,6 +381,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, recurring_goal: &RecurringGo
 mod tests {
     use super::*;
     use crate::tui::MIN_WIDTH;
+    use crate::tui::cursor::Scroll;
     use crate::tui::form::{backspace_key, char_key};
 
     fn entry(id: i64, name: &str, month: i64, cadence: Cadence) -> Entry {

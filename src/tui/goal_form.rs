@@ -157,12 +157,8 @@ impl AllocationForm {
 }
 
 impl FormFields for AllocationForm {
-    fn next_field(&mut self) {
-        self.focus = next_in(&AllocField::ORDER, self.focus, 1);
-    }
-
-    fn previous_field(&mut self) {
-        self.focus = next_in(&AllocField::ORDER, self.focus, -1);
+    fn move_focus(&mut self, step: isize) {
+        self.focus = next_in(&AllocField::ORDER, self.focus, step);
     }
 
     // No selector: `←`/`→` step the date and move the caret in the other two.
@@ -392,12 +388,8 @@ impl GoalForm {
 }
 
 impl FormFields for GoalForm {
-    fn next_field(&mut self) {
-        self.focus = next_in(&GoalField::ORDER, self.focus, 1);
-    }
-
-    fn previous_field(&mut self) {
-        self.focus = next_in(&GoalField::ORDER, self.focus, -1);
+    fn move_focus(&mut self, step: isize) {
+        self.focus = next_in(&GoalField::ORDER, self.focus, step);
     }
 
     // Both selectors here hold two values, so both directions are the same
@@ -530,12 +522,8 @@ impl CloseForm {
 }
 
 impl FormFields for CloseForm {
-    fn next_field(&mut self) {
-        self.focus = next_in(&CloseField::ORDER, self.focus, 1);
-    }
-
-    fn previous_field(&mut self) {
-        self.focus = next_in(&CloseField::ORDER, self.focus, -1);
+    fn move_focus(&mut self, step: isize) {
+        self.focus = next_in(&CloseField::ORDER, self.focus, step);
     }
 
     // `←`/`→` step the date on one field and cycle the destination on the

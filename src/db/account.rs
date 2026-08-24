@@ -482,7 +482,7 @@ pub fn list(db: &Db) -> Result<Vec<Account>> {
         .conn
         .prepare(select_account!("ORDER BY kind, sort, code"))?;
     let rows = stmt.query_map([], from_row)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 pub fn list_by_kind(db: &Db, kind: Kind) -> Result<Vec<Account>> {
@@ -490,7 +490,7 @@ pub fn list_by_kind(db: &Db, kind: Kind) -> Result<Vec<Account>> {
         .conn
         .prepare(select_account!("WHERE kind = ?1 ORDER BY sort, code"))?;
     let rows = stmt.query_map(params![kind.as_str()], from_row)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    super::collect_rows(rows)
 }
 
 /// One account by id. A missing account is an error, not `None`: an id read
