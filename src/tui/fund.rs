@@ -407,6 +407,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
 mod tests {
     use super::*;
     use crate::fund::{Allocation, FundRow};
+    use crate::test_support::walk_until;
     use crate::tui::MIN_WIDTH;
     use crate::tui::cursor::Scroll;
     use crate::tui::form::char_key;
@@ -541,9 +542,10 @@ mod tests {
             vec![FundField::Name, FundField::Kind, FundField::Actual]
         );
 
-        while !matches!(form.target_kind(), Target::RemainderShare(_)) {
-            form.next_choice_on(FundField::Kind);
-        }
+        walk_until!(
+            matches!(form.target_kind(), Target::RemainderShare(_)),
+            form.next_choice_on(FundField::Kind)
+        );
         assert_eq!(
             form.fields(),
             vec![
@@ -580,9 +582,10 @@ mod tests {
             form.edit(char_key(c));
         }
         form.next_field();
-        while !matches!(form.target_kind(), Target::RemainderShare(_)) {
-            form.choice(Step::NEXT);
-        }
+        walk_until!(
+            matches!(form.target_kind(), Target::RemainderShare(_)),
+            form.choice(Step::NEXT)
+        );
         form.next_field();
         for c in "40".chars() {
             form.edit(char_key(c));

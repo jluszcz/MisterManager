@@ -610,6 +610,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::walk_until;
     use crate::tui::MIN_WIDTH;
     use crate::tui::cursor::Scroll;
     use crate::tui::form::{backspace_key, char_key};
@@ -1031,9 +1032,10 @@ mod tests {
             3,
             None,
         );
-        while form.color_choice().is_some() {
-            form.next_choice_on(AccountField::Color);
-        }
+        walk_until!(
+            form.color_choice().is_none(),
+            form.next_choice_on(AccountField::Color)
+        );
         assert_eq!(form.display(AccountField::Color).plain_text(), "—");
         assert_eq!(
             crate::tui::style::account_color(AccountId(2), form.color_choice()),

@@ -95,8 +95,8 @@ Invented fixtures use one vocabulary, so a new test copies it rather than invent
 
 **The table is code, in `src/test_support::{cash, credit}`**, so a fixture takes a code and gets the
 name rather than restating the pairing — and a code outside it panics rather than being quietly
-named something new. Those builders are also the only thing shared across `mod tests` blocks
-besides `day`: what a module *chose* stays in the module, which is why each `today()` is still
+named something new. Those builders, `day`, and `walk_until!` are the whole of what `mod tests`
+blocks share: what a module *chose* stays in the module, which is why each `today()` is still
 local, naming the day that module's schedules and deadlines turn on.
 
 The one exception is `src/tui/app/`, and it is a *family* rather than a second crate-wide seam:
@@ -629,3 +629,14 @@ Test names are full sentences describing the scenario
 (`shortfall_of_an_overfunded_goal_is_zero_not_negative`, not `test_shortfall_3`). Unit tests live in
 `mod tests` at the bottom of the file under test and run against in-memory SQLite
 (`db::open_in_memory`); tests that need the real workbook live in `tests/`.
+
+**A test that walks a fixture to a state uses `test_support::walk_until!`, never a bare `while`.**
+The state comes first and the step meant to reach it second —
+`walk_until!(form.focus == field, form.next_field())` — and after `WALK_LIMIT` steps it panics
+naming both. The bound is the whole point: a step at the end of a list is a *no-op* rather than an
+error, since `next_field` past the last field and `select_next` on the last row each leave the
+fixture exactly where it was. So a state a regression has made unreachable never arrives, the
+condition never holds, and a bare `while` spins at full speed instead of going red — a hung test
+reports nothing, and its process outlives the run that abandoned it. A loop that terminates on its
+own arithmetic is a different thing and stays a `while`: `calc::business_day` counts a decreasing
+`left` down, and `calc::schedule` walks until the calendar runs out.

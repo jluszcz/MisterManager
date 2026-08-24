@@ -380,6 +380,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, recurring_goal: &RecurringGo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::walk_until;
     use crate::tui::MIN_WIDTH;
     use crate::tui::cursor::Scroll;
     use crate::tui::form::{backspace_key, char_key};
@@ -616,15 +617,11 @@ mod tests {
         let mut form = RecurringGoalForm::add(Some(BasisPoints(625)));
         assert_eq!(form.tax_note(), "", "nothing to say while the flag is off");
 
-        while form.focus != RecurringGoalField::Amount {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringGoalField::Amount, form.next_field());
         for c in "1000".chars() {
             form.edit(char_key(c));
         }
-        while form.focus != RecurringGoalField::Taxed {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringGoalField::Taxed, form.next_field());
         form.choice(Step::NEXT);
 
         assert_eq!(form.tax_note(), "(1,065 w/ tax)");
@@ -641,15 +638,11 @@ mod tests {
     #[test]
     fn the_note_is_empty_with_no_rate_on_record() {
         let mut form = RecurringGoalForm::add(None);
-        while form.focus != RecurringGoalField::Amount {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringGoalField::Amount, form.next_field());
         for c in "1000".chars() {
             form.edit(char_key(c));
         }
-        while form.focus != RecurringGoalField::Taxed {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringGoalField::Taxed, form.next_field());
         form.choice(Step::NEXT);
 
         assert_eq!(form.tax_note(), "");
@@ -660,15 +653,11 @@ mod tests {
     #[test]
     fn the_note_stays_empty_until_the_base_is_a_whole_figure() {
         let mut form = RecurringGoalForm::add(Some(BasisPoints(625)));
-        while form.focus != RecurringGoalField::Amount {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringGoalField::Amount, form.next_field());
         for c in "1000.5".chars() {
             form.edit(char_key(c));
         }
-        while form.focus != RecurringGoalField::Taxed {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringGoalField::Taxed, form.next_field());
         form.choice(Step::NEXT);
 
         assert_eq!(form.tax_note(), "");
@@ -800,9 +789,7 @@ mod tests {
     #[test]
     fn the_month_selector_names_the_month_and_wraps_at_both_ends() {
         let mut form = RecurringGoalForm::add(None);
-        while form.focus != RecurringGoalField::Month {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringGoalField::Month, form.next_field());
         assert_eq!(
             form.display(RecurringGoalField::Month).plain_text(),
             "January"
@@ -854,9 +841,7 @@ mod tests {
     #[test]
     fn the_taxed_selector_cycles_both_ways() {
         let mut form = RecurringGoalForm::add(None);
-        while form.focus != RecurringGoalField::Taxed {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringGoalField::Taxed, form.next_field());
         assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "no");
         form.choice(Step::NEXT);
         assert_eq!(form.display(RecurringGoalField::Taxed).plain_text(), "yes");
@@ -871,9 +856,7 @@ mod tests {
     #[test]
     fn the_cadence_selector_cycles_both_ways() {
         let mut form = RecurringGoalForm::add(None);
-        while form.focus != RecurringGoalField::Cadence {
-            form.next_field();
-        }
+        walk_until!(form.focus == RecurringGoalField::Cadence, form.next_field());
         assert_eq!(
             form.display(RecurringGoalField::Cadence).plain_text(),
             "annual"
