@@ -236,8 +236,18 @@ total, and a sign flip means the caller picked up a withdrawal rather than an in
 
 ## Settings reach divisors
 
-`periods_per_year` (`Constants!G2`) and `period_days` (`Constants!H2`) are user-editable and land in
-denominators. Call sites clamp with `.max(1)` where a nonsense value should not take down a whole
-screen; `div_ceil` returns an error for a non-positive divisor in *every* build, release included.
-A `debug_assert!` would compile out of the one build where dividing by zero actually matters. Don't
-reintroduce a bare divide.
+`periods_per_year` (`Constants!G2`) is user-editable — on the Planning screen as well as by import —
+and lands in denominators. Call sites clamp with `.max(1)` where a nonsense value should not take
+down a whole screen; `div_ceil` returns an error for a non-positive divisor in *every* build,
+release included. A `debug_assert!` would compile out of the one build where dividing by zero
+actually matters. Don't reintroduce a bare divide.
+
+**The days between two paydays are `period_days` of that same count, never a setting of their
+own.** The sheet carries both (`G2` and `H2`) and the two can disagree; one setting has nothing to
+reconcile, and it means `per_paycheck`, which counts a deadline's runway in days, and `biweekly`
+and `per_paycheck_over_years`, which spread a cost over the count, cannot come to describe
+different pay cadences. `period_days` divides `WEEKS_PER_YEAR * DAYS_PER_WEEK` by the count and
+clamps at both ends, so it is also where the clamp for `per_paycheck`'s divide now lives. A year of
+whole weeks rather than the calendar's 365 days, because a pay cadence counts in weeks: `364`
+divides exactly by every whole-week cadence, so the floor bites only on the semi-monthly and
+monthly counts, whose paydays are not a fixed number of days apart to begin with.

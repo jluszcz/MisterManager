@@ -47,9 +47,6 @@ pub fn import(db: &Db, sheets: &mut Sheets) -> Result<()> {
     let periods = as_i64(&at(1, 6)).context("Constants!G2 is not an integer")?;
     setting::set(db, key::PAY_PERIODS_PER_YEAR, periods)?;
 
-    let period_days = as_i64(&at(1, 7)).context("Constants!H2 is not an integer")?;
-    setting::set(db, key::PAY_PERIOD_DAYS, period_days)?;
-
     if let Some(today) = as_date(&at(1, 9)) {
         setting::set(db, key::WORKBOOK_TODAY, today)?;
     }

@@ -32,11 +32,10 @@ pub struct Savings {
     search: SearchBox,
     cursor: Cursor,
     today: NaiveDate,
-    period_days: i64,
 }
 
 impl Savings {
-    pub fn new(accounts: Vec<Account>, today: NaiveDate, period_days: i64) -> Savings {
+    pub fn new(accounts: Vec<Account>, today: NaiveDate) -> Savings {
         Savings {
             accounts,
             containers: Vec::new(),
@@ -48,7 +47,6 @@ impl Savings {
             search: SearchBox::new(),
             cursor: Cursor::new(),
             today,
-            period_days,
         }
     }
 
@@ -57,8 +55,14 @@ impl Savings {
     ///
     /// Every column that asks "how far along is this goal" reads `target`, so
     /// a taxed goal is measured against what the item costs at the register.
-    pub fn set_goals(&mut self, goals: Vec<Funding>) -> Result<()> {
-        self.all = crate::savings::rows(goals, &self.accounts, self.today, self.period_days)?;
+    ///
+    /// `periods_per_year` arrives with the goals rather than being held on the
+    /// type, the way it reaches `RecurringGoals::set_entries`: it is the
+    /// owner's setting, editable on the Planning screen, and a copy taken at
+    /// startup would leave `$/Pay` dividing by a cadence the rest of the app
+    /// had moved off.
+    pub fn set_goals(&mut self, goals: Vec<Funding>, periods_per_year: i64) -> Result<()> {
+        self.all = crate::savings::rows(goals, &self.accounts, self.today, periods_per_year)?;
         self.rebuild_months();
         self.refilter();
         Ok(())
@@ -477,15 +481,18 @@ mod tests {
 
     /// The four rows of the design's screen mock, at its own today.
     fn savings() -> Savings {
-        let mut savings = Savings::new(accounts(), today(), 14);
+        let mut savings = Savings::new(accounts(), today());
         savings.set_containers(vec![AccountId(1), AccountId(2)]);
         savings
-            .set_goals(vec![
-                goal(1, 1, "Bill Payments", 1_300_000, 1_500_000, None),
-                goal(2, 1, "Apple Watch", 48_500, 50_000, Some(day(2026, 9, 1))),
-                goal(3, 1, "Dropbox", 0, 15_000, Some(day(2026, 9, 1))),
-                goal(4, 2, "Emergency Savings", 10_600_195, 10_000_000, None),
-            ])
+            .set_goals(
+                vec![
+                    goal(1, 1, "Bill Payments", 1_300_000, 1_500_000, None),
+                    goal(2, 1, "Apple Watch", 48_500, 50_000, Some(day(2026, 9, 1))),
+                    goal(3, 1, "Dropbox", 0, 15_000, Some(day(2026, 9, 1))),
+                    goal(4, 2, "Emergency Savings", 10_600_195, 10_000_000, None),
+                ],
+                26,
+            )
             .unwrap();
         savings.set_excess(vec![(AccountId(1), Cents(23)), (AccountId(2), Cents::ZERO)]);
         savings
@@ -498,23 +505,26 @@ mod tests {
     /// Goals whose dates span August to October 2026, with today inside the
     /// span and one undated goal in each container.
     fn dated() -> Savings {
-        let mut savings = Savings::new(accounts(), today(), 14);
+        let mut savings = Savings::new(accounts(), today());
         savings.set_containers(vec![AccountId(1), AccountId(2)]);
         savings
-            .set_goals(vec![
-                goal(1, 1, "Bill Payments", 1_200_000, 1_500_000, None),
-                goal(2, 1, "Apple Watch", 49_100, 50_500, Some(day(2026, 8, 20))),
-                goal(3, 1, "Dropbox", 0, 12_800, Some(day(2026, 9, 1))),
-                goal(
-                    4,
-                    2,
-                    "Emergency Savings",
-                    10_600_195,
-                    10_000_000,
-                    Some(day(2026, 10, 15)),
-                ),
-                goal(5, 2, "Lego", 5_000, 20_000, Some(day(2026, 8, 3))),
-            ])
+            .set_goals(
+                vec![
+                    goal(1, 1, "Bill Payments", 1_200_000, 1_500_000, None),
+                    goal(2, 1, "Apple Watch", 49_100, 50_500, Some(day(2026, 8, 20))),
+                    goal(3, 1, "Dropbox", 0, 12_800, Some(day(2026, 9, 1))),
+                    goal(
+                        4,
+                        2,
+                        "Emergency Savings",
+                        10_600_195,
+                        10_000_000,
+                        Some(day(2026, 10, 15)),
+                    ),
+                    goal(5, 2, "Lego", 5_000, 20_000, Some(day(2026, 8, 3))),
+                ],
+                26,
+            )
             .unwrap();
         savings
     }
@@ -651,17 +661,13 @@ mod tests {
 
     #[test]
     fn with_no_dated_goals_the_month_never_leaves_all() {
-        let mut savings = Savings::new(accounts(), today(), 14);
+        let mut savings = Savings::new(accounts(), today());
         savings.set_containers(vec![AccountId(1)]);
         savings
-            .set_goals(vec![goal(
-                1,
-                1,
-                "Bill Payments",
-                1_200_000,
-                1_500_000,
-                None,
-            )])
+            .set_goals(
+                vec![goal(1, 1, "Bill Payments", 1_200_000, 1_500_000, None)],
+                26,
+            )
             .unwrap();
         savings.next_month();
         assert_eq!(savings.selected_month(), None);
@@ -986,13 +992,16 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let mut savings = Savings::new(accounts(), today(), 14);
+        let mut savings = Savings::new(accounts(), today());
         savings.set_containers(vec![AccountId(1)]);
         savings
-            .set_goals(vec![
-                goal(1, 1, "Future", 0, 10_000, Some(day(2026, 11, 27))),
-                goal(2, 1, "Late", 5_000, 10_000, Some(day(2026, 7, 1))),
-            ])
+            .set_goals(
+                vec![
+                    goal(1, 1, "Future", 0, 10_000, Some(day(2026, 11, 27))),
+                    goal(2, 1, "Late", 5_000, 10_000, Some(day(2026, 7, 1))),
+                ],
+                26,
+            )
             .unwrap();
 
         let backend = TestBackend::new(MIN_WIDTH, 12);
@@ -1023,13 +1032,16 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let mut savings = Savings::new(accounts(), today(), 14);
+        let mut savings = Savings::new(accounts(), today());
         savings.set_containers(vec![AccountId(1), AccountId(2)]);
         savings
-            .set_goals(vec![
-                goal(7, 1, "Lego", 0, 10_000, None),
-                goal(8, 2, "Emergency", 0, 10_000, None),
-            ])
+            .set_goals(
+                vec![
+                    goal(7, 1, "Lego", 0, 10_000, None),
+                    goal(8, 2, "Emergency", 0, 10_000, None),
+                ],
+                26,
+            )
             .unwrap();
 
         let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
@@ -1063,14 +1075,17 @@ mod tests {
         use ratatui::backend::TestBackend;
         use ratatui::style::Color;
 
-        let mut savings = Savings::new(accounts(), today(), 14);
+        let mut savings = Savings::new(accounts(), today());
         savings.set_containers(vec![AccountId(1)]);
         savings
-            .set_goals(vec![
-                goal(1, 1, "Empty", 0, 10_000, None),
-                goal(2, 1, "Funded", 10_000, 10_000, None),
-                goal(3, 1, "No target", 5_000, 0, None),
-            ])
+            .set_goals(
+                vec![
+                    goal(1, 1, "Empty", 0, 10_000, None),
+                    goal(2, 1, "Funded", 10_000, 10_000, None),
+                    goal(3, 1, "No target", 5_000, 0, None),
+                ],
+                26,
+            )
             .unwrap();
 
         let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 9)).unwrap();
@@ -1115,22 +1130,25 @@ mod tests {
     /// and it does not survive a filter the goal itself would not.
     #[test]
     fn favoriting_a_goal_moves_it_nowhere() {
-        let mut savings = Savings::new(accounts(), today(), 14);
+        let mut savings = Savings::new(accounts(), today());
         savings.set_containers(vec![AccountId(1), AccountId(2)]);
         savings
-            .set_goals(vec![
-                goal(1, 1, "Bill Payments", 1_300_000, 1_500_000, None),
-                goal(2, 1, "Apple Watch", 48_500, 50_000, Some(day(2026, 9, 1))),
-                favorited(goal(3, 1, "Dropbox", 0, 15_000, Some(day(2026, 9, 1)))),
-                favorited(goal(
-                    4,
-                    2,
-                    "Emergency Savings",
-                    10_600_195,
-                    10_000_000,
-                    None,
-                )),
-            ])
+            .set_goals(
+                vec![
+                    goal(1, 1, "Bill Payments", 1_300_000, 1_500_000, None),
+                    goal(2, 1, "Apple Watch", 48_500, 50_000, Some(day(2026, 9, 1))),
+                    favorited(goal(3, 1, "Dropbox", 0, 15_000, Some(day(2026, 9, 1)))),
+                    favorited(goal(
+                        4,
+                        2,
+                        "Emergency Savings",
+                        10_600_195,
+                        10_000_000,
+                        None,
+                    )),
+                ],
+                26,
+            )
             .unwrap();
 
         assert_eq!(
@@ -1154,14 +1172,17 @@ mod tests {
     /// The four-goal fixture with the third goal marked, drawn at
     /// `MIN_WIDTH`. Rows sit at `y = 2..6`, under the border and the header.
     fn banded() -> Savings {
-        let mut savings = Savings::new(accounts(), today(), 14);
+        let mut savings = Savings::new(accounts(), today());
         savings.set_containers(vec![AccountId(1)]);
         savings
-            .set_goals(vec![
-                goal(1, 1, "Bill Payments", 1_300_000, 1_500_000, None),
-                goal(2, 1, "Apple Watch", 48_500, 50_000, Some(day(2026, 9, 1))),
-                favorited(goal(3, 1, "Dropbox", 0, 15_000, Some(day(2026, 9, 1)))),
-            ])
+            .set_goals(
+                vec![
+                    goal(1, 1, "Bill Payments", 1_300_000, 1_500_000, None),
+                    goal(2, 1, "Apple Watch", 48_500, 50_000, Some(day(2026, 9, 1))),
+                    favorited(goal(3, 1, "Dropbox", 0, 15_000, Some(day(2026, 9, 1)))),
+                ],
+                26,
+            )
             .unwrap();
         savings
     }
@@ -1453,7 +1474,7 @@ mod tests {
     fn a_sub_dollar_negative_balance_is_neither_signed_nor_red() {
         let mut savings = savings();
         savings
-            .set_goals(vec![goal(3, 1, "Dropbox", -23, 15_000, None)])
+            .set_goals(vec![goal(3, 1, "Dropbox", -23, 15_000, None)], 26)
             .unwrap();
         let buffer = band_buffer(&savings);
         // The `Current` column's figure: the first `0` past a name holding
@@ -1572,7 +1593,7 @@ mod tests {
     /// looks to find out which container they are in.
     #[test]
     fn the_savings_title_names_its_container_as_an_account() {
-        let mut savings = Savings::new(accounts(), today(), 14);
+        let mut savings = Savings::new(accounts(), today());
         savings.set_containers(vec![AccountId(1), AccountId(2)]);
         savings.next_container();
         let title = savings.title();
@@ -1585,7 +1606,7 @@ mod tests {
     /// unfiltered screen look like it was filtered to something.
     #[test]
     fn the_unfiltered_savings_title_names_no_account() {
-        let savings = Savings::new(accounts(), today(), 14);
+        let savings = Savings::new(accounts(), today());
         assert_eq!(savings.title().plain_text(), "Savings · All");
         assert!(savings.title().accounts().is_empty());
     }

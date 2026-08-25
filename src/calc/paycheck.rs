@@ -20,6 +20,40 @@ pub fn biweekly(monthly: Cents, periods_per_year: i64) -> Result<Cents> {
     Ok(Cents(super::div_ceil(num, step)? * 100))
 }
 
+/// A year, in the whole weeks a pay cadence divides it into.
+///
+/// Weeks rather than the calendar's 365 days, because a pay cadence counts in
+/// weeks. `52 * 7` is 364, which divides exactly by every whole-week cadence
+/// there is -- weekly, biweekly, four-weekly -- so the floor in
+/// [`period_days`] is an approximation only for the cadences that were never
+/// whole weeks to begin with. The 365th day belongs to no pay period, and all
+/// it can ever do is round one of them up.
+const WEEKS_PER_YEAR: i64 = 52;
+
+/// The other half of that year, so neither number is a bare `7` in a divide.
+const DAYS_PER_WEEK: i64 = 7;
+
+/// How many days apart two paydays fall, for a cadence of `periods_per_year`.
+///
+/// Derived rather than stored. The workbook carried it as a cell of its own
+/// (`Constants!H2`) beside the count (`Constants!G2`), and two cells for one
+/// fact can disagree: 26 periods and 15 days is a pay cadence that exists
+/// nowhere, and a database holding it would count every deadline's runway in
+/// one cadence while spreading every annual cost in the other. One setting,
+/// so there is nothing to reconcile.
+///
+/// Exact for every whole-week cadence -- 52 -> 7, 26 -> 14, 13 -> 28 -- and
+/// floored for the ones that are not: 24 -> 15, 12 -> 30. A semi-monthly or
+/// monthly payday does not fall a fixed number of days apart at all, so there
+/// is no exact answer to floor away.
+///
+/// Clamped at both ends, because `periods_per_year` is the owner's setting
+/// and reaches a divide: a count at zero or below would divide by it, and one
+/// above the days in a year of weeks would floor to a period no days long.
+pub fn period_days(periods_per_year: i64) -> i64 {
+    (WEEKS_PER_YEAR * DAYS_PER_WEEK / periods_per_year.max(1)).max(1)
+}
+
 /// The workbook's `PerPaycheck()` lambda: what to set aside each payday to
 /// reach `goal` by `by`, rounded up to a whole dollar.
 ///
@@ -35,15 +69,16 @@ pub fn per_paycheck(
     goal: Cents,
     by: Option<NaiveDate>,
     today: NaiveDate,
-    period_days: i64,
+    periods_per_year: i64,
 ) -> Result<Option<Cents>> {
     let Some(by) = by else { return Ok(None) };
     if current >= goal {
         return Ok(None);
     }
-    // `period_days` comes straight from `Constants!H2`; a zero there must not
-    // reach `div_ceil`'s divide, matching `biweekly`'s clamp above.
-    let period_days = period_days.max(1);
+    // The cadence in days, which is where `period_days`'s clamp keeps a
+    // nonsense setting off `div_ceil`'s divide -- the same call `biweekly`
+    // makes above for the same reason.
+    let period_days = period_days(periods_per_year);
     let days = (by - today).num_days();
     let periods = super::div_ceil(days, period_days)?.max(1);
     let remaining = goal.0 - current.0;
@@ -187,7 +222,7 @@ mod tests {
     fn per_paycheck_divides_the_remainder_over_the_paychecks_left() {
         let d = Cents::from_dollars;
         let today = day(2026, 8, 12);
-        let case = |cur, goal, by| per_paycheck(d(cur), d(goal), Some(by), today, 14).unwrap();
+        let case = |cur, goal, by| per_paycheck(d(cur), d(goal), Some(by), today, 26).unwrap();
 
         // 20 days out -> 2 paychecks, 20/2
         assert_eq!(case(480, 500, day(2026, 9, 1)), Some(d(10)));
@@ -205,16 +240,16 @@ mod tests {
         let today = day(2026, 8, 12);
         // An undated goal has no per-paycheck figure: nothing says by when.
         assert_eq!(
-            per_paycheck(d(4_000), d(7_000), None, today, 14).unwrap(),
+            per_paycheck(d(4_000), d(7_000), None, today, 26).unwrap(),
             None
         );
         // A goal sitting at or past its target asks for nothing.
         assert_eq!(
-            per_paycheck(d(7_500), d(7_500), Some(day(2026, 12, 1)), today, 14).unwrap(),
+            per_paycheck(d(7_500), d(7_500), Some(day(2026, 12, 1)), today, 26).unwrap(),
             None
         );
         assert_eq!(
-            per_paycheck(d(8_000), d(7_500), Some(day(2026, 12, 1)), today, 14).unwrap(),
+            per_paycheck(d(8_000), d(7_500), Some(day(2026, 12, 1)), today, 26).unwrap(),
             None
         );
     }
@@ -225,14 +260,15 @@ mod tests {
         let today = day(2026, 8, 12);
         // A goal whose date has passed still owes the full remainder now.
         assert_eq!(
-            per_paycheck(d(100), d(250), Some(day(2026, 7, 1)), today, 14).unwrap(),
+            per_paycheck(d(100), d(250), Some(day(2026, 7, 1)), today, 26).unwrap(),
             Some(d(150))
         );
     }
 
-    /// `period_days` comes straight from a workbook cell (`Constants!H2`), so
-    /// a `0` there is reachable. The clamp absorbs it: this must compute a
-    /// figure, not surface `div_ceil`'s non-positive-divisor error.
+    /// `periods_per_year` comes straight from a workbook cell
+    /// (`Constants!G2`), so a `0` there is reachable. `period_days`'s clamp
+    /// absorbs it: this must compute a figure, not surface `div_ceil`'s
+    /// non-positive-divisor error.
     #[test]
     fn per_paycheck_tolerates_a_zero_period() {
         let d = Cents::from_dollars;
@@ -246,6 +282,34 @@ mod tests {
     #[test]
     fn biweekly_tolerates_zero_periods_per_year() {
         assert!(biweekly(Cents::from_dollars(100), 0).is_ok());
+    }
+
+    /// The cadences the setting is ever plausibly set to. The workbook
+    /// carried this in `Constants!H2` beside the count in `G2`, and the two
+    /// agreeing is what makes deriving it safe rather than a second answer to
+    /// the same question.
+    ///
+    /// A year of whole weeks divides exactly by every whole-week cadence, so
+    /// only the two that are not whole weeks are floored at all.
+    #[test]
+    fn period_days_divides_a_year_of_weeks_by_the_pay_cadence() {
+        assert_eq!(period_days(52), 7);
+        assert_eq!(period_days(26), 14);
+        assert_eq!(period_days(13), 28);
+        // Neither of these falls a fixed number of days apart to begin with.
+        assert_eq!(period_days(24), 15);
+        assert_eq!(period_days(12), 30);
+    }
+
+    /// Clamped at both ends, for the reason every other divisor off this
+    /// setting is: it is the owner's, it reaches a divide, and neither a
+    /// count at zero nor one finer than a day should take a screen down.
+    #[test]
+    fn period_days_is_never_less_than_a_day_whatever_the_setting_says() {
+        assert_eq!(period_days(0), 364);
+        assert_eq!(period_days(-4), 364);
+        assert_eq!(period_days(364), 1);
+        assert_eq!(period_days(10_000), 1);
     }
 
     /// An annual cost is spread over one year's paychecks and a biennial one

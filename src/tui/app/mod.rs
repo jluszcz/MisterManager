@@ -251,9 +251,6 @@ pub struct App {
     recurring_txn: RecurringTxns,
     recurring_goal: RecurringGoals,
     accounts: Accounts,
-    /// `Constants!H2` in the workbook — the number of days between paychecks,
-    /// what `calc::per_paycheck` divides the runway into.
-    period_days: i64,
     /// The suggestion list under whichever form is open. Lives on `App`
     /// rather than on the forms because `App` owns the `Db` the query needs.
     popup: Autocomplete,
@@ -315,11 +312,24 @@ fn search_footer(target: &impl Search) -> TextLine<'static> {
 }
 
 impl App {
+    /// The pay cadence, read rather than held.
+    ///
+    /// Every per-paycheck figure in the app divides by it -- the Savings
+    /// screen's `$/Pay`, the Recurring Goals title, both payday prefills --
+    /// and it is editable on the Planning screen, whose commit reloads all of
+    /// them. A copy on `App` would be a copy taken at startup, and the screens
+    /// reading it would go on quoting the old cadence for the rest of the
+    /// session while the waterfall used the new one.
+    ///
+    /// `crate::calc::period_days` is the other half of the same setting: this
+    /// is the count, and that is the days between two of them.
+    pub(super) fn periods_per_year(&self) -> Result<i64> {
+        setting::get_or(&self.db, key::PAY_PERIODS_PER_YEAR, 26)
+    }
+
     pub fn new(db: Db, today: NaiveDate) -> Result<App> {
         let dates = projection::dates(&db, today)?;
         let range = txn::date_range(&db)?;
-        let period_days = setting::get_or(&db, key::PAY_PERIOD_DAYS, 14)?;
-        let periods_per_year = setting::get_or(&db, key::PAY_PERIODS_PER_YEAR, 26)?;
         let mut app = App {
             overview: Overview::load(&db, dates)?,
             cash: Ledger::new(
@@ -334,13 +344,12 @@ impl App {
                 range,
                 today,
             ),
-            savings: Savings::new(account::list(&db)?, today, period_days),
+            savings: Savings::new(account::list(&db)?, today),
             planning: Planning::new(),
             funds: Funds::new(),
             recurring_txn: RecurringTxns::new(account::list(&db)?),
-            recurring_goal: RecurringGoals::new(i64::from(today.month()), periods_per_year),
+            recurring_goal: RecurringGoals::new(i64::from(today.month())),
             accounts: Accounts::new(),
-            period_days,
             db,
             today,
             dates,

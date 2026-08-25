@@ -141,7 +141,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/config.rs` | The TOML config file. `serde` and `toml` are named here, and both again in `src/backup/state.rs`, whose `State` derives `Serialize` as well as `Deserialize`. |
 | `src/plan_line.rs` | Every Planning line: its label, the amount it moves, and the setting key that says where it lands. |
 | `src/plan_rows.rs` | The Planning waterfall as an ordered list of rows, in neither medium -- a peer of `overview` and `savings`. The order, the labels, the grouping, the two footers outside the transfers block, and `Target`, the constant a row *is*. The Planning screen and the report's Planning tab both read it, and each spends `Row::depth` in its own units. |
-| `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `per_paycheck_over_years`, `pro_rata`, the Planning waterfall, `fund` (the target/actual/delta derivation), `schedule` (when a recurring thing happens). No database. |
+| `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `per_paycheck_over_years`, `period_days`, `pro_rata`, the Planning waterfall, `fund` (the target/actual/delta derivation), `schedule` (when a recurring thing happens). No database. |
 | `src/description.rs` | What a transaction's description reads as, in any medium: the stored text, or `—` when there is none. One rule rather than one per sink, the same split `palette` makes for color — `tui`'s ledger, status line and delete confirmation read it, and so does `report::html::ledger`. |
 | `src/demo/` | `mm --demo`: the mask every absolute figure and owner-entered name is drawn through, and the once-per-run salt that turns it on. `mask` is the pure scrambling and pseudoword rules; `mod.rs` is the API every layer that puts a figure or a name in front of a human calls — `tui`, `transfer`'s prose, and the refusals `goal` and `db` build for a screen to print verbatim. Compiles only under the `demo` Cargo feature. |
 | `src/db/` | Schema and queries — one module per aggregate. |
@@ -335,6 +335,23 @@ matches, since nothing but a test ties them together.
   divide is `10,000 bp` minus every age row's target, clamped at zero; an age row with **no birth
   date on record** claims nothing, so the share rows divide the whole 100% rather than being told a
   zero that is really a question.
+- **The pay cadence is one setting, and the days between paydays are derived from it.**
+  `key::PAY_PERIODS_PER_YEAR` is the count; `calc::period_days` divides a year of whole weeks
+  (`52 × 7`) by it, clamped at both ends, and that is what `calc::per_paycheck` counts a deadline's
+  runway in. Weeks rather than the calendar's 365 days because a pay cadence counts in weeks — `364`
+  divides exactly by every whole-week cadence, and the 365th day belongs to no pay period. The workbook states the
+  cadence twice — `Constants!G2` and `Constants!H2` — and only `G2` is imported, because two cells
+  for one fact can disagree: `26` beside `15` is a pay cadence nobody works, and it would have every
+  goal's `$/Pay` divided by one cadence while every annual cost was spread over the other.
+  `tests/import_constants.rs` still asserts the derivation against `H2`, which is what would catch a
+  workbook where the pair has come apart.
+- **Nothing holds the pay cadence across a reload.** It is editable on the Planning screen —
+  `Target::PeriodsPerYear` — and that commit calls `App::reload`, so a copy taken at startup is a
+  screen quoting a cadence the rest of the app has moved off. `App::periods_per_year` reads it, and
+  the two screens that divide by it take it as an argument per reload rather than as a field:
+  `savings::Savings::set_goals` beside its goals, `recurring_goal::RecurringGoals::set_entries`
+  beside its tax rate, exactly as that rate already arrived. Both writers are pinned by an
+  `editing_the_pay_period_count_moves_…` test.
 - **The Planning waterfall is one ordered list, read twice.** `plan_rows::rows` is the sequence —
   which blocks there are, what they are headed, what each row is called, and which of them the two
   footers sit under. `tui::planning::build` maps it into a terminal `Row` and `report::html::planning`

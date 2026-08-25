@@ -262,6 +262,7 @@ impl App {
             recurring_goal::list(&self.db)?,
             recurring_goal::open_goal_counts(&self.db)?,
             setting::get(&self.db, key::TAX_RATE)?,
+            self.periods_per_year()?,
         )
     }
 
@@ -395,6 +396,7 @@ mod tests {
     use crate::tui::app::test_support::*;
     use crate::tui::cursor::Scroll;
     use crate::tui::modal::{Confirm, Modal};
+    use crate::tui::planning::Target;
     use crate::{db, goal as goal_engine};
     use chrono::NaiveDate;
     use ratatui::crossterm::event::KeyCode;
@@ -434,6 +436,41 @@ mod tests {
             "a reseed is for the year ahead"
         );
         assert_eq!(created.current, Cents::ZERO);
+    }
+
+    /// `PAY_PERIODS_PER_YEAR` is editable on the Planning screen, and that
+    /// commit reloads every screen -- so the Recurring Goals title divides by
+    /// the count the database now holds rather than the one the app opened
+    /// with, which is what every other per-paycheck figure in the app just
+    /// moved to.
+    #[test]
+    fn editing_the_pay_period_count_moves_the_recurring_goals_title() {
+        let mut app = app();
+        recurring_goal::insert(
+            &app.db,
+            &recurring_goal::NewEntry {
+                name: "Dropbox".to_string(),
+                month: 9,
+                base_cents: Cents::from_dollars(1_300),
+                taxed: false,
+                cadence: recurring_goal::Cadence::Annual,
+            },
+        )
+        .unwrap();
+        app.reload().unwrap();
+        assert_eq!(
+            app.recurring_goal.title(),
+            "Recurring Goals · All · $1,300 Annually ($50/paycheck)"
+        );
+
+        Target::PeriodsPerYear
+            .write(&app.db, today(), "24")
+            .unwrap();
+        app.reload().unwrap();
+        assert_eq!(
+            app.recurring_goal.title(),
+            "Recurring Goals · All · $1,300 Annually ($55/paycheck)"
+        );
     }
 
     /// The wiring rather than the rule, which `picker`'s own tests pin:

@@ -165,7 +165,7 @@ fn ledger(db: &Db, accounts: &[account::Account], kind: Kind, today: NaiveDate) 
 /// `adhoc` and not `App::adhoc`: `Excess (Actual)` *is* the checking balance
 /// at that date, so the figure here has to be quoted at the same day the
 /// Overview's Paycheck-Eve column is.
-fn plan_view(db: &Db, today: NaiveDate, adhoc: NaiveDate, period_days: i64) -> Result<PlanView> {
+fn plan_view(db: &Db, today: NaiveDate, adhoc: NaiveDate) -> Result<PlanView> {
     let settings = plan::settings_from_db(db)?;
     let plan = plan::compute_from_db(db, &settings, adhoc)?;
     let periods = settings.periods_per_year;
@@ -193,7 +193,7 @@ fn plan_view(db: &Db, today: NaiveDate, adhoc: NaiveDate, period_days: i64) -> R
     // on record trips the strict target reader and would take the whole tab
     // down -- and it is reachable, since `plan` never touches that reader
     // when the plug is zero and so returns `Ok` where this call does not.
-    let spread_ask_total = transfer::spread_asks(db, today, period_days)
+    let spread_ask_total = transfer::spread_asks(db, today, periods)
         .map(|asks| asks.iter().map(|(_, ask)| *ask).sum())
         .unwrap_or(Cents::ZERO);
     let transfers = match transfer::plan(db, &plan.lines) {
@@ -217,8 +217,8 @@ impl Snapshot {
         // inherited it would quote a day nobody asked about.
         let dates = projection::dates(db, today)?;
         let accounts = account::list(db)?;
-        let period_days =
-            crate::db::setting::get_or(db, crate::db::setting::key::PAY_PERIOD_DAYS, 14)?;
+        let periods_per_year =
+            crate::db::setting::get_or(db, crate::db::setting::key::PAY_PERIODS_PER_YEAR, 26)?;
         // `Reading::Tolerant`, for the reason the plan section below catches
         // `transfer::plan`'s error rather than propagating it: a page cannot
         // decline to draw itself, and a report is the copy read on a phone
@@ -227,7 +227,7 @@ impl Snapshot {
             goal_engine::all_with_balances(db, Reading::Tolerant)?,
             &accounts,
             today,
-            period_days,
+            periods_per_year,
         )?;
 
         let containers = savings::containers_with_excess(db)?
@@ -249,7 +249,7 @@ impl Snapshot {
             cash: ledger(db, &accounts, Kind::Cash, today)?,
             credit: ledger(db, &accounts, Kind::Credit, today)?,
             containers,
-            planning: match plan_view(db, today, dates.adhoc, period_days) {
+            planning: match plan_view(db, today, dates.adhoc) {
                 Ok(view) => Planning::Resolved(Box::new(view)),
                 Err(e) => Planning::Unresolvable(format!("{e:#}")),
             },
@@ -518,7 +518,7 @@ mod tests {
         )
         .unwrap();
 
-        let view = plan_view(&db, today(), today(), 14).unwrap();
+        let view = plan_view(&db, today(), today()).unwrap();
 
         assert_eq!(
             view.plan.lines.goals,
@@ -573,7 +573,7 @@ mod tests {
         )
         .unwrap();
 
-        let view = plan_view(&db, today(), today(), 14).unwrap();
+        let view = plan_view(&db, today(), today()).unwrap();
 
         assert_eq!(
             view.plan.lines.goals,

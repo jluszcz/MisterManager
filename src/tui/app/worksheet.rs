@@ -163,7 +163,7 @@ impl App {
         };
         let mut prefill = Vec::new();
         for g in goal_engine::list_with_balances(&self.db, container)? {
-            let ask = crate::savings::paycheck_ask(&g, self.today, self.period_days)?;
+            let ask = crate::savings::paycheck_ask(&g, self.today, self.periods_per_year()?)?;
             prefill.push((g.goal.id, g.goal.name, ask.unwrap_or(Cents::ZERO)));
         }
         let account = account::get(&self.db, container)?;
