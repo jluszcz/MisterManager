@@ -1275,41 +1275,157 @@ mod tests {
     /// The fixture is the one with rows on every list, because an absence
     /// check over an empty table passes for free: `app()` has no funds, no
     /// recurring goals and no recurring transactions, which left three of the
-    /// nine screens drawing nothing to catch. Asserting that a mask *appears*
-    /// is what holds that shut from here on. Accounts is the one screen
-    /// exempt -- it draws a name, a band and a position, and no figure at all.
+    /// nine screens drawing nothing to catch. What holds that shut is the
+    /// guard beside it, and it is asked of the **real** draw: a screen must be
+    /// shown to have drawn one of these figures before being asked not to draw
+    /// it scrambled. Asking it of the scrambled draw instead -- that the two
+    /// differ -- says nothing, because every screen also masks the names on
+    /// it, so the two would differ on a screen whose figures had stopped being
+    /// masked entirely. Accounts is the one screen exempt: it draws a name, a
+    /// band and a position, and no figure at all.
+    #[cfg(feature = "demo")]
     #[test]
     fn a_demo_leaves_no_figure_on_any_screen() {
-        crate::demo::install(true);
+        // A row's text is built once, when the screen loads, not redrawn per
+        // frame -- so the two apps below have to load every screen under
+        // their own demo state rather than sharing one app and flipping the
+        // salt between draws of it.
+        crate::demo::install(false);
+        let mut real_app = app_with_two_rows_on_every_list();
+        let reals: Vec<String> = "123456789"
+            .chars()
+            .map(|screen| {
+                press(&mut real_app, KeyCode::Char(screen));
+                drawn(&mut real_app)
+            })
+            .collect();
+
+        crate::demo::install_with_salt(7);
         let mut app = app_with_two_rows_on_every_list();
-        for screen in "123456789".chars() {
+        for (screen, real) in "123456789".chars().zip(reals) {
             press(&mut app, KeyCode::Char(screen));
-            let drawn = drawn(&mut app);
+            let scrambled = drawn(&mut app);
             for figure in DEMO_FIXTURE_FIGURES {
                 assert!(
-                    !drawn.contains(figure),
-                    "{figure} survived on screen {screen}:\n{drawn}"
+                    !scrambled.contains(figure),
+                    "{figure} survived on screen {screen}:\n{scrambled}"
                 );
             }
             assert!(
-                screen == '9' || drawn.contains("██████"),
-                "screen {screen} drew no masked figure, so the check above passed for free:\n{drawn}"
+                screen == '9' || DEMO_FIXTURE_FIGURES.iter().any(|f| real.contains(f)),
+                "screen {screen} drew none of the fixture's figures, so the check above passed for free:\n{real}"
             );
         }
     }
 
     /// Every figure `app_with_two_rows_on_every_list` puts in the database, as
-    /// the screens would print it unmasked. One list rather than one per
+    /// the screens would print it unscrambled. One list rather than one per
     /// sweep, so a row added to that fixture is covered by both.
+    #[cfg(feature = "demo")]
     const DEMO_FIXTURE_FIGURES: [&str; 10] = [
         "1,000", "1,200", "14.99", "25.99", "15,000", "10,000", "100.00", "128", "30,000", "90,000",
     ];
 
-    /// A write reports what it wrote on the status line, which sits in the
-    /// footer of whatever screen is open.
+    /// Every name and description `app_with_two_rows_on_every_list` puts in the
+    /// database, as an ordinary run would print it.
+    ///
+    /// `Paycheck` and `Transfer` are deliberately absent: each is also one of
+    /// the app's own words -- a Planning row, a form title -- so an absence
+    /// check on either would fail on vocabulary rather than on a leak.
+    #[cfg(feature = "demo")]
+    const DEMO_FIXTURE_NAMES: [&str; 18] = [
+        "Everyday",
+        "Rainy Day",
+        "Card One",
+        "Card Two",
+        "CHK",
+        "SAV",
+        "CC1",
+        "CC2",
+        "Whole Foods",
+        "Rent",
+        "Movies",
+        "Batteries",
+        "Vacation 2027",
+        "Couch",
+        "Utilities",
+        "Gym",
+        "Bonds",
+        "Domestic",
+    ];
+
+    /// The net for names, and the Accounts screen is in it: it draws no figure
+    /// at all, which is exactly why the figure sweep exempts it and this one
+    /// must not.
+    ///
+    /// A fixed salt rather than a drawn one, so a failure is reproducible and a
+    /// pseudonym cannot collide its way to a pass on one run in a thousand.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_amount_a_written_row_reports() {
-        crate::demo::install(true);
+    fn a_demo_leaves_no_name_on_any_screen() {
+        crate::demo::install_with_salt(7);
+        let mut app = app_with_two_rows_on_every_list();
+        for screen in "123456789".chars() {
+            press(&mut app, KeyCode::Char(screen));
+            let drawn = drawn(&mut app);
+            for name in DEMO_FIXTURE_NAMES {
+                assert!(
+                    !drawn.contains(name),
+                    "{name} survived on screen {screen}:\n{drawn}"
+                );
+            }
+        }
+    }
+
+    /// The other half of the sweep above: an absence check passes for free over
+    /// a screen that drew nothing, so every screen must be shown to have drawn
+    /// a pseudonym for an account it holds.
+    ///
+    /// Screen 7, Recurring Goals, is not in the sweep: a recurring goal has no
+    /// account column at all, so no account name, real or masked, is ever on
+    /// that screen -- an absence check there would pass on the strength of a
+    /// screen that never had anything to hide. And the set checked against is
+    /// every one of the fixture's four cash/credit accounts, in the name a
+    /// screen names it under and the code one names it under -- Credit never
+    /// draws the checking account and Savings never draws either card, so a
+    /// check pinned to one account would fail on a screen that is masking
+    /// correctly, and Recurring Transactions draws a code where the rest draw
+    /// a name.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn every_screen_draws_the_pseudonym_of_an_account_it_holds() {
+        crate::demo::install_with_salt(7);
+        let mut app = app_with_two_rows_on_every_list();
+        let pseudonyms: Vec<String> = [
+            "Everyday",
+            "Rainy Day",
+            "Card One",
+            "Card Two",
+            "CHK",
+            "SAV",
+            "CC1",
+            "CC2",
+        ]
+        .into_iter()
+        .map(|name| crate::demo::text(name).to_string())
+        .collect();
+        for screen in "123489".chars() {
+            press(&mut app, KeyCode::Char(screen));
+            let drawn = drawn(&mut app);
+            assert!(
+                pseudonyms.iter().any(|p| drawn.contains(p)),
+                "screen {screen} named no account, so the sweep passed for free:\n{drawn}"
+            );
+        }
+    }
+
+    /// A write reports what it wrote on the status line, which sits in the
+    /// footer of whatever screen is open -- both the amount and the
+    /// description it landed under.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_the_amount_a_written_row_reports() {
+        crate::demo::install_with_salt(7);
         let mut app = app();
         press(&mut app, KeyCode::Char('2'));
         press(&mut app, KeyCode::Char('a'));
@@ -1320,31 +1436,77 @@ mod tests {
         press(&mut app, KeyCode::Enter);
 
         assert!(!app.status.contains("76.54"), "{}", app.status);
-        assert!(app.status.contains("██████"), "{}", app.status);
-        assert!(app.status.contains("Hardware"), "{}", app.status);
+        assert!(
+            app.status.contains(&crate::demo::figure(Cents(7_654))),
+            "{}",
+            app.status
+        );
+        assert!(!app.status.contains("Hardware"), "{}", app.status);
+        assert!(
+            app.status
+                .contains(&crate::demo::text("Hardware").to_string()),
+            "{}",
+            app.status
+        );
+    }
+
+    /// The transfer form's write reports through the same seam
+    /// `commit_txn_form`'s does: a transfer's description lands in the same
+    /// `txn.description` column as an ordinary row's, and it is owner-typed
+    /// rather than fixed to the `Transfer` prefill.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_a_transfers_own_description_on_the_status_line() {
+        crate::demo::install_with_salt(7);
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('t'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Tab);
+        ctrl_press(&mut app, 'a');
+        ctrl_press(&mut app, 'k');
+        type_str(&mut app, "Nest Egg");
+        press(&mut app, KeyCode::Tab);
+        type_str(&mut app, "50");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(!app.status.contains("Nest Egg"), "{}", app.status);
+        assert!(
+            app.status
+                .contains(&crate::demo::text("Nest Egg").to_string()),
+            "{}",
+            app.status
+        );
     }
 
     /// A confirmation names the row it is about to delete, and what makes a
     /// ledger row recognisable is its amount. The modal is drawn over the
     /// screen, so a figure that survives here survives in the middle of the
     /// terminal.
+    ///
+    /// A fixed salt rather than a drawn one, for the reason the name sweeps
+    /// use one: a scrambled figure can land on `200.00` by chance, and a test
+    /// whose answer changes run to run is one nobody can reproduce.
+    #[cfg(feature = "demo")]
     #[test]
     fn a_demo_leaves_no_figure_on_a_delete_confirmation() {
-        crate::demo::install(true);
+        crate::demo::install_with_salt(7);
         let mut app = app();
         press(&mut app, KeyCode::Char('2'));
         press(&mut app, KeyCode::Char('d'));
 
         let drawn = drawn(&mut app);
         assert!(drawn.contains("Delete"), "no confirmation opened:\n{drawn}");
-        // Every ledger row behind the modal is blocked already, so the only
+        // Every ledger row behind the modal is scrambled already, so the only
         // thing that can put this figure on screen is the label itself.
         assert!(!drawn.contains("200.00"), "the amount survived:\n{drawn}");
         assert!(drawn.contains("2026-08-12"), "the date must stay:\n{drawn}");
     }
 
     /// The same net one layer in: every key that opens a form or a worksheet
-    /// over a row that carries a figure, with the mask on and none of the
+    /// over a row that carries a figure, with the scramble on and none of the
     /// fixture's figures reaching the buffer.
     ///
     /// The screen sweep above cannot see any of this -- it only ever draws
@@ -1357,9 +1519,21 @@ mod tests {
     /// nothing to open on leaves the screen as it was and passes an absence
     /// check without ever drawing a form -- which is what `('2', 'r')` did,
     /// silently, until it was given the account filter `r` needs.
+    ///
+    /// The list is the name sweep's, pair for pair. Every modal that can
+    /// draw one of the owner's words can draw one of the owner's figures
+    /// beside it, and two lists free to drift apart are two chances for a
+    /// modal to be opened by one sweep and not the other -- which is how the
+    /// payday confirmation, `('5', 't')`, went unswept by either.
+    ///
+    /// A fixed salt rather than a drawn one, for the reason the name sweeps
+    /// use one: a scrambled figure can land on `1,000` as easily as a
+    /// pseudonym can land on a name, and a sweep whose answer changes run to
+    /// run is one nobody can reproduce.
+    #[cfg(feature = "demo")]
     #[test]
     fn a_demo_leaves_no_figure_on_any_form_a_row_opens() {
-        crate::demo::install(true);
+        crate::demo::install_with_salt(7);
         for (screen, key) in [
             ('2', 'a'),
             ('2', 'e'),
@@ -1369,24 +1543,31 @@ mod tests {
             ('4', 'a'),
             ('4', 'A'),
             ('4', 'n'),
+            ('4', 'c'),
             ('5', 'e'),
             ('5', 'E'),
             ('5', 'a'),
+            ('5', 't'),
             ('6', 'e'),
             ('6', 'E'),
             ('7', 'a'),
+            ('7', 's'),
             ('8', 'a'),
             ('9', 'e'),
         ] {
-            // Screen 6 draws off the `fund` table, which `planning_app` has no
-            // rows in; every other screen here has one on the fixture that
-            // carries the bills screen 5 needs.
-            let mut app = match screen {
-                '6' => app_with_two_rows_on_every_list(),
+            // Screen 6 draws off the `fund` table and `s` on screen 7 off
+            // `recurring_goal`; `planning_app` fills neither. Every other
+            // screen here has its rows on the fixture that carries the bills
+            // screen 5 needs.
+            let mut app = match (screen, key) {
+                ('6', _) | ('7', 's') => app_with_two_rows_on_every_list(),
                 _ => planning_app(),
             };
             press(&mut app, KeyCode::Char(screen));
             match (screen, key) {
+                // The bill rows are where the other keys on this screen
+                // open; `t` needs no row under the cursor and is unharmed by
+                // the cursor landing there.
                 ('5', _) => {
                     select_first_bill(&mut app);
                 }
@@ -1404,8 +1585,8 @@ mod tests {
                 app.status
             );
             let drawn = drawn(&mut app);
-            let figures: &[&str] = match screen {
-                '6' => &DEMO_FIXTURE_FIGURES,
+            let figures: &[&str] = match (screen, key) {
+                ('6', _) | ('7', 's') => &DEMO_FIXTURE_FIGURES,
                 _ => &["1,200", "300.00", "1,000", "50,000", "5,000"],
             };
             for figure in figures {
@@ -1417,11 +1598,152 @@ mod tests {
         }
     }
 
-    /// A status line is on screen as surely as a column is, and this one
-    /// quotes the figure that was just typed back at the owner.
+    /// The one thing a demo must never do: reach a write.
+    ///
+    /// `App::open_goal_edit` prefills the form from the *row the screen is
+    /// holding*, so a pseudonym written into view state is a pseudonym `Enter`
+    /// commits. The field draws one and the buffer holds the name.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_target_a_reconciliation_reports() {
-        crate::demo::install(true);
+    fn a_demo_draws_a_pseudonym_in_a_name_field_and_commits_the_name() {
+        use crate::tui::goal_form::GoalField;
+
+        crate::demo::install_with_salt(7);
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        // The undated goal, `Couch`, leads the container; `Vacation 2027` is
+        // dated and follows it.
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('e'));
+        let Some(Modal::Goal(form)) = &app.modal else {
+            panic!("e opened nothing: {}", app.status);
+        };
+        let drawn = form.display(GoalField::Name).plain_text();
+        assert_ne!(drawn, "Vacation 2027");
+        assert_eq!(drawn.chars().count(), "Vacation 2027".chars().count());
+        assert_eq!(form.commit().unwrap().name, "Vacation 2027");
+    }
+
+    /// The name sweep one layer in. A form prefills from the row it opens on,
+    /// so a form is where a real name is most likely to reach the screen, not
+    /// least -- which is how `BillField::Amount` came to be the one amount
+    /// field the figures first missed.
+    ///
+    /// `Mortgage` and `HOA` are dropped from `planning_app`'s list of names to
+    /// check for: screen 5 draws the app's own heading `Mortgage + HOA`
+    /// (`src/plan_rows.rs`, a literal, never masked) behind the modal, so an
+    /// absence check on either would fail on vocabulary rather than on a
+    /// leak -- the same reason `Paycheck` and `Transfer` are absent from
+    /// `DEMO_FIXTURE_NAMES`. `Coworking`, the fixture's third bill, stays on
+    /// the list: `select_first_bill` always lands on `Mortgage`, so no
+    /// iteration here ever opens a form on `Coworking` -- what actually
+    /// covers it is `tui::planning::build`'s `bills` closure, which masks
+    /// every bill's label before the table behind the modal is ever drawn,
+    /// `Coworking` included. `BillField::Label`'s own form-field masking is
+    /// covered by `a_demo_scrambles_the_amount_capital_e_opens_a_bill_on` and
+    /// `a_demo_scrambles_the_label_lowercase_e_opens_a_bill_on`
+    /// (`src/tui/app/planning.rs`), both against `Mortgage`.
+    ///
+    /// Two pairs open a modal that is not a form, and both are here because a
+    /// modal is a modal to a viewer: `('5', 't')` is the payday confirmation,
+    /// which names the destination account every transfer lands in and is the
+    /// last thing drawn before real money moves, and `('7', 's')` is the
+    /// recurring-goal picker, which lists the catalog by name.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_leaves_no_name_on_any_form_a_row_opens() {
+        crate::demo::install_with_salt(7);
+        for (screen, key) in [
+            ('2', 'a'),
+            ('2', 'e'),
+            ('2', 'r'),
+            ('2', 't'),
+            ('4', 'e'),
+            ('4', 'a'),
+            ('4', 'A'),
+            ('4', 'n'),
+            ('4', 'c'),
+            ('5', 'e'),
+            ('5', 'E'),
+            ('5', 'a'),
+            ('5', 't'),
+            ('6', 'e'),
+            ('6', 'E'),
+            ('7', 'a'),
+            ('7', 's'),
+            ('8', 'a'),
+            ('9', 'e'),
+        ] {
+            // Screen 6 draws off the `fund` table and `s` on screen 7 off
+            // `recurring_goal`; `planning_app` fills neither.
+            let mut app = match (screen, key) {
+                ('6', _) | ('7', 's') => app_with_two_rows_on_every_list(),
+                _ => planning_app(),
+            };
+            press(&mut app, KeyCode::Char(screen));
+            match (screen, key) {
+                // The bill rows are where the other keys on this screen
+                // open; `t` needs no row under the cursor and is unharmed by
+                // the cursor landing there.
+                ('5', _) => {
+                    select_first_bill(&mut app);
+                }
+                ('2', 'r') => press(&mut app, KeyCode::Tab),
+                _ => {}
+            }
+            press(&mut app, KeyCode::Char(key));
+            assert!(
+                app.modal.is_some(),
+                "{key} opened nothing on screen {screen}, so the check below \
+                 would pass without a form ever being drawn: {}",
+                app.status
+            );
+            let drawn = drawn(&mut app);
+            // `planning_app`'s own names, and the fixture names for screen 6.
+            //
+            // `Housing` and `Mom & Dad` are goals in the fixture too, and are
+            // deliberately absent for the same reason `Mortgage`/`HOA` are:
+            // each is also a Planning line's own word --
+            // `Line::CurrentHousing.label()` is `"Housing"`
+            // (`src/plan_line.rs`) and `Line::MomAndDad.label()` is
+            // `"Mom & Dad"`, drawn literally by `plan_rows::rows` -- so an
+            // absence check on either would fail on vocabulary rather than on
+            // a leak. `Roth IRA` has no such collision: the gate's own word
+            // is the shorter `Gate::Roth.label()`, `"Roth"`
+            // (`src/gate.rs`), which does not contain the goal's full name,
+            // so it is checked here rather than excluded.
+            let names: &[&str] = match (screen, key) {
+                ('6', _) | ('7', 's') => &DEMO_FIXTURE_NAMES,
+                _ => &[
+                    "Everyday",
+                    "Rainy Day",
+                    "Brokerage",
+                    "Coworking",
+                    "Bill Payments",
+                    "Roth IRA",
+                    "Home Down Payment",
+                    "Emergency Savings",
+                    "Dropbox",
+                ],
+            };
+            for name in names {
+                assert!(
+                    !drawn.contains(name),
+                    "{name} survived {key} on screen {screen}:\n{drawn}"
+                );
+            }
+        }
+    }
+
+    /// A status line is on screen as surely as a column is, and this one
+    /// quotes the figure that was just typed back at the owner -- and names
+    /// the account it was typed for, bypassing `Account`, so the mask has to
+    /// be applied at the call site rather than inherited from a colored
+    /// display.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_the_target_a_reconciliation_reports() {
+        crate::demo::install_with_salt(7);
         let mut app = app();
         press(&mut app, KeyCode::Char('2'));
         press(&mut app, KeyCode::Tab);
@@ -1430,10 +1752,22 @@ mod tests {
         press(&mut app, KeyCode::Enter);
 
         assert!(!app.status.contains("1,200"), "{}", app.status);
-        assert!(app.status.contains("██████"), "{}", app.status);
+        assert!(
+            app.status
+                .contains(&crate::demo::figure(Cents::from_dollars(1_200))),
+            "{}",
+            app.status
+        );
+        assert!(!app.status.contains("Everyday"), "{}", app.status);
+        assert!(
+            app.status
+                .contains(&crate::demo::text("Everyday").to_string()),
+            "{}",
+            app.status
+        );
 
         // The buffer still holds the real figure: reopening and pressing
-        // Enter must not write the mask back.
+        // Enter must not write the scrambled one back.
         press(&mut app, KeyCode::Char('r'));
         let Some(Modal::Reconcile(_, form)) = &app.modal else {
             panic!("r must reopen the form: {:?}", app.status);
@@ -2366,7 +2700,7 @@ mod tests {
     fn app_with_two_rows_on_every_list() -> App {
         let mut app = app();
         let checking = account::list(&app.db).unwrap()[0].id;
-        for (name, day_of_month) in [("Mortgage", 1), ("Gym", 15)] {
+        for (name, day_of_month) in [("Utilities", 1), ("Gym", 15)] {
             recurring_txn::insert(
                 &app.db,
                 &recurring_txn::NewRecurringTxn {

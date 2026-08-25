@@ -26,5 +26,12 @@ jobs:
       runs-on: ubuntu-24.04-arm
       target: aarch64-unknown-linux-musl
 
+  ci-all-features:
+    uses: jluszcz/github-utils/.github/workflows/rust-ci.yml@v2
+    with:
+      runs-on: ubuntu-24.04-arm
+      target: aarch64-unknown-linux-musl
+      all-features: true
+
   terraform:
     uses: jluszcz/github-utils/.github/workflows/terraform-ci.yml@v2

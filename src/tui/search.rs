@@ -266,9 +266,10 @@ mod tests {
     /// key into the mask and quietly leave the owner unable to find anything
     /// while demonstrating the app. The needle stays visible for the same
     /// reason: it is a query the owner is typing, not a figure off a row.
+    #[cfg(feature = "demo")]
     #[test]
     fn a_demo_still_finds_a_row_by_its_amount() {
-        crate::demo::install(true);
+        crate::demo::install_with_salt(7);
         assert_eq!(searchable_amount(Cents(123_456)), "1234.56");
         assert!(Matcher::new("1234").matches("Lego", &amounts()));
         assert!(!Matcher::new("9999").matches("Lego", &amounts()));

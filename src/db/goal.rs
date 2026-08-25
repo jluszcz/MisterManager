@@ -193,7 +193,10 @@ pub fn reorder(db: &Db, id: GoalId, position: usize) -> Result<()> {
         ensure!(
             goal.goal_date.is_none(),
             "{} has a goal date, so its place comes from that date rather than by hand",
-            goal.name
+            // Reached by pressing a move key on a dated goal on Savings, and
+            // put on the status line verbatim -- prose a viewer reads, masked
+            // for the reason `move_value`'s three refusals are.
+            crate::demo::text(&goal.name)
         );
         let mut undated: Vec<Goal> = list(db, goal.container_account_id)?
             .into_iter()
@@ -568,7 +571,14 @@ pub fn set_favorite(db: &Db, id: GoalId, favorite: bool) -> Result<()> {
 /// Nothing calls it from inside `import::import_all`'s transaction.
 pub fn move_value(db: &Db, from: GoalId, to: Option<GoalId>, date: NaiveDate) -> Result<()> {
     let source = get(db, from)?.with_context(|| format!("no goal with id {from}"))?;
-    ensure!(!source.closed, "{:?} is already closed", source.name);
+    // Each of these three refusals lands on the status line verbatim, so the
+    // goal names in them are prose a viewer reads. Masked where the message
+    // is built, the way `account::checking`'s ambiguity error is.
+    ensure!(
+        !source.closed,
+        "{:?} is already closed",
+        crate::demo::text(&source.name)
+    );
     if let Some(to) = to {
         ensure!(from != to, "a close-out needs two different goals");
         let destination = get(db, to)?.with_context(|| format!("no goal with id {to}"))?;
@@ -578,7 +588,7 @@ pub fn move_value(db: &Db, from: GoalId, to: Option<GoalId>, date: NaiveDate) ->
         ensure!(
             !destination.closed,
             "{:?} is closed; pick an open goal or return the value to unallocated",
-            destination.name
+            crate::demo::text(&destination.name)
         );
         // No cash crosses between containers here, so allowing it would break
         // both reconciliations at once. Getting money from Rainy Day to Brokerage
@@ -586,14 +596,16 @@ pub fn move_value(db: &Db, from: GoalId, to: Option<GoalId>, date: NaiveDate) ->
         ensure!(
             destination.container_account_id == source.container_account_id,
             "{:?} and {:?} are in different containers; transfer the cash first",
-            source.name,
-            destination.name
+            crate::demo::text(&source.name),
+            crate::demo::text(&destination.name)
         );
     }
     let moved = balance(db, from)?;
     // Plain text: a note is read by a person, like the ones typed by hand.
     // The quoting above is for error messages, where it disambiguates a name
-    // with a trailing space or none at all.
+    // with a trailing space or none at all. Unmasked for a sharper reason
+    // than the quoting: this string is written to the row, and a pseudonym
+    // reaching a write is the one thing a demo must never do.
     let note = format!("closed out of {}", source.name);
     db.transaction(|db| {
         insert_allocation(db, from, date, -moved, Some("closed out"), None)?;

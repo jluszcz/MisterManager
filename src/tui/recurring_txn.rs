@@ -221,7 +221,9 @@ impl RecurringTxnForm {
 
     pub fn display(&self, field: RecurringTxnField) -> Label {
         match field {
-            RecurringTxnField::Description => Label::from(self.description.value()),
+            RecurringTxnField::Description => {
+                Label::from(crate::demo::text(self.description.value()).into_owned())
+            }
             RecurringTxnField::Amount => Label::from(crate::demo::typed(self.amount.value())),
             RecurringTxnField::Anchor => {
                 Label::from(self.anchor.display(self.focus == RecurringTxnField::Anchor))
@@ -366,7 +368,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> Vie
         .map(|r| {
             TableRow::new(vec![
                 Cell::from(if r.is_paycheck { "$" } else { " " }),
-                Cell::from(r.description.clone()),
+                Cell::from(crate::demo::text(&r.description).into_owned()),
                 account_cell(&r.account),
                 amount(r.cents),
                 Cell::from(r.cadence.as_str()),
@@ -631,25 +633,25 @@ mod tests {
         assert_eq!(form.commit().unwrap().horizon, None);
     }
 
-    /// The amount is money; the description, account, cadence and anchor
-    /// date are the rule it repeats on.
+    /// The amount is money and the description is the owner's own word for
+    /// the rule, so a demo hides both; the account, cadence and anchor date
+    /// are the rule itself.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_amount_and_keeps_the_rule() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_amount_and_the_description_and_keeps_the_rule() {
+        crate::demo::install_with_salt(7);
         let form = RecurringTxnForm::edit(
             accounts(),
             today(),
             &recurring_txn(2, "Mortgage", -120_000, Cadence::Monthly, false),
         )
         .unwrap();
-        assert_eq!(
-            form.display(RecurringTxnField::Amount).plain_text(),
-            "██████"
-        );
-        assert_eq!(
-            form.display(RecurringTxnField::Description).plain_text(),
-            "Mortgage"
-        );
+        let drawn = form.display(RecurringTxnField::Amount).plain_text();
+        assert_ne!(drawn, "-1,200.00");
+        assert_eq!(drawn.len(), "-1,200.00".len());
+        let drawn_description = form.display(RecurringTxnField::Description).plain_text();
+        assert_ne!(drawn_description, "Mortgage");
+        assert_eq!(drawn_description, crate::demo::text("Mortgage"));
         assert_eq!(
             form.display(RecurringTxnField::Anchor).plain_text(),
             "2026-08-28"

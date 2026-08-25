@@ -189,6 +189,13 @@ impl App {
             Some((Some(planning_screen::Editable::Constant(target)), label, prefill)) => {
                 // A percentage and a count of pay periods open the same
                 // modal a target does, and only one of the three is money.
+                // A bill's label arrives already masked: `tui::planning::build`'s
+                // `bills` closure masks `plan_rows::Bill.label` before this row
+                // is ever built, so a second mask here would scramble the
+                // pseudonym itself rather than the name -- the double-mask
+                // `src/transfer.rs`'s own `diagnose`/`spread_container` split
+                // exists to avoid. Every other constant's label is the app's
+                // own word for it and was never masked at all.
                 let label = label.trim().to_string();
                 let form = if target.is_money() {
                     ValueForm::money(label, &prefill)
@@ -317,7 +324,7 @@ impl App {
             }
             Some(destination::Choice::Goal { id, name, .. }) => {
                 setting::set(&self.db, key, id)?;
-                format!("{} → {name}", line.label())
+                format!("{} → {}", line.label(), crate::demo::text(&name))
             }
         };
         self.close_modal();
@@ -357,7 +364,11 @@ impl App {
                 )?;
             }
         }
-        self.status = format!("{} {}", edit.label, crate::demo::figure(edit.cents));
+        self.status = format!(
+            "{} {}",
+            crate::demo::text(&edit.label),
+            crate::demo::figure(edit.cents)
+        );
         self.close_modal();
         self.reload()
     }
@@ -384,7 +395,11 @@ impl App {
             return Ok(());
         };
         let found = bill::get(&self.db, id)?;
-        let label = format!("{}  {}", found.label, crate::demo::figure(found.cents));
+        let label = format!(
+            "{}  {}",
+            crate::demo::text(&found.label),
+            crate::demo::figure(found.cents)
+        );
         self.modal = Some(Modal::Confirm {
             action: Confirm::DeleteBill(id),
             label,
@@ -833,27 +848,70 @@ mod tests {
         }
     }
 
-    /// `E` prefills the bill's own figure, so the form is where that figure
-    /// would otherwise be published to whoever is watching -- the same rule
-    /// every other amount field follows.
+    /// `E` prefills the bill's own figure and its own label, so the form is
+    /// where both would otherwise be published to whoever is watching -- the
+    /// same rule every other amount and name field follows.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_amount_capital_e_opens_a_bill_on() {
+    fn a_demo_scrambles_the_amount_capital_e_opens_a_bill_on() {
         use crate::tui::planning::BillField;
 
-        crate::demo::install(true);
+        crate::demo::install_with_salt(7);
         let mut app = planning_app();
         press(&mut app, KeyCode::Char('5'));
         let bill = select_first_bill(&mut app);
+        let real = bill.cents.to_string();
 
         press(&mut app, KeyCode::Char('E'));
 
         let Some(Modal::Bill(form)) = &app.modal else {
             panic!("no bill form is open");
         };
-        assert_eq!(form.display(BillField::Amount).plain_text(), "██████");
-        assert_eq!(form.display(BillField::Label).plain_text(), bill.label);
-        // The buffer is untouched, so Enter still rewrites the real figure.
-        assert_eq!(form.commit().unwrap().cents, bill.cents);
+        let drawn = form.display(BillField::Amount).plain_text();
+        assert_ne!(drawn, real);
+        assert_eq!(drawn, crate::demo::typed(&real));
+        let drawn_label = form.display(BillField::Label).plain_text();
+        assert_ne!(drawn_label, bill.label);
+        assert_eq!(drawn_label, crate::demo::text(&bill.label));
+        // The buffer is untouched, so Enter still rewrites the real figure
+        // and the real label.
+        let committed = form.commit().unwrap();
+        assert_eq!(committed.cents, bill.cents);
+        assert_eq!(committed.label, bill.label);
+    }
+
+    /// `e` opens the same bill through a different path -- `open_value_edit`,
+    /// which reads the row `tui::planning::build` already produced. Its
+    /// `bills` closure masks `plan_rows::Bill.label` before `Row::bill` ever
+    /// sees it, so `open_value_edit` must not mask a second time -- doing so
+    /// would scramble the pseudonym instead of the name. The sweep cannot
+    /// hold this shut on its own: `select_first_bill` always lands on
+    /// `Mortgage`, which is excluded from the sweep's own check list as a
+    /// heading collision, so only a direct assertion here does.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_the_label_lowercase_e_opens_a_bill_on() {
+        crate::demo::install_with_salt(7);
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        let bill = select_first_bill(&mut app);
+        assert_eq!(bill.label, "Mortgage");
+
+        press(&mut app, KeyCode::Char('e'));
+
+        let Some(Modal::Value(target, form)) = &app.modal else {
+            panic!("no value form is open");
+        };
+        assert_eq!(*target, Target::Bill(bill.id));
+        let drawn = form.label().plain_text();
+        assert_ne!(drawn, "Mortgage");
+        assert_eq!(drawn, crate::demo::text("Mortgage"));
+        // The real label is untouched on record: this form only ever writes
+        // the figure back, through `Target::write`.
+        assert_eq!(
+            crate::db::bill::get(&app.db, bill.id).unwrap().label,
+            "Mortgage"
+        );
     }
 
     /// `E` is the whole row, so committing it must rewrite the bill it opened

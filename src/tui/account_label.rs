@@ -193,6 +193,12 @@ mod tests {
             // tinting the code too would say it twice. The last entry in the
             // residual list in `src/tui/CLAUDE.md`'s account-color section.
             ("tui/app/accounts.rs", "code: account.code.as_str()"),
+            // The two status lines reporting a write, transient prose like
+            // every other status message sanctioned above -- masked through
+            // `crate::demo::text` rather than colored, since the status line
+            // is uncolored regardless of a demo.
+            ("tui/app/accounts.rs", "new.name.as_str()"),
+            ("tui/app/accounts.rs", "edit.name.as_str()"),
             // Prefills a description with the card's code. Not a display of an
             // account: it seeds an editable field the owner then owns.
             ("tui/form.rs", "{} Payment"),
@@ -209,6 +215,18 @@ mod tests {
             // Unallocated footer used to read through here too and now draws
             // its containers through `Savings::container_account`.
             ("tui/savings.rs", "map_or(\"?\", |a| a.name.as_str())"),
+            // `account::checking`'s ambiguity error, which the Planning
+            // screen draws in place of the plan. Prose rather than a cell, so
+            // it carries no color anywhere -- but it is read by a viewer, so
+            // it masks through `crate::demo::text` on the same line.
+            (
+                "db/account.rs",
+                "crate::demo::text(a.name.as_str()).into_owned()",
+            ),
+            // `insert`'s duplicate-code refusal, which `App::on_key` puts on
+            // the status line verbatim. Prose for the same reason, masked the
+            // same way.
+            ("db/account.rs", "crate::demo::text(existing.code.as_str())"),
         ];
 
         let mut found: Vec<String> = Vec::new();
@@ -296,18 +314,23 @@ mod tests {
     /// Every file the scan reads, as (path below `src/`, the file's production
     /// code).
     ///
-    /// Four roots, because the guarantee has four parts:
+    /// Five roots, because the guarantee has five parts:
     /// `src/account_label.rs`, which owns [`crate::account_label::Account`]
     /// and is the one place its text is meant to be read; `src/tui/`, the
-    /// terminal sink; `src/report/`, the html one; and `src/transfer.rs`,
-    /// which is neither sink but builds display rows both of them draw. A
-    /// scan of the screens alone would have gone on passing while a
-    /// `format!("{}", a.name.as_str())` in `report::html` flattened an
-    /// account's color away -- the exact bug this exists to make unwritable.
-    /// `transfer.rs` is the same argument one layer further out: a policy
-    /// module that hands a name downstream is as able to drop the color as
-    /// the screen that draws it, and `Wiring` and `Row::Transfer` both carry
-    /// the name and the color as separate fields.
+    /// terminal sink; `src/report/`, the html one; `src/transfer.rs`,
+    /// which is neither sink but builds display rows both of them draw; and
+    /// `src/db/`, where a query module's own refusals name accounts in prose
+    /// a screen prints verbatim. A scan of the screens alone would have gone
+    /// on passing while a `format!("{}", a.name.as_str())` in `report::html`
+    /// flattened an account's color away -- the exact bug this exists to make
+    /// unwritable. `transfer.rs` is the same argument one layer further out:
+    /// a policy module that hands a name downstream is as able to drop the
+    /// color as the screen that draws it, and `Wiring` and `Row::Transfer`
+    /// both carry the name and the color as separate fields. `src/db/` is
+    /// that argument at its limit: `account::checking`'s ambiguity error is
+    /// drawn by the Planning screen in place of the plan, so a name read
+    /// there reaches a viewer with no color and, until it was masked, with no
+    /// pseudonym either.
     ///
     /// The key is the path below `src/` rather than the file name, since
     /// `tui/ledger.rs` and `report/html/ledger.rs` are two different files and
@@ -335,6 +358,7 @@ mod tests {
             src.join("transfer.rs"),
             src.join("tui"),
             src.join("report"),
+            src.join("db"),
         ];
         while let Some(path) = pending.pop() {
             if path.is_dir() {

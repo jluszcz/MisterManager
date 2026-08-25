@@ -107,9 +107,15 @@ impl Account {
     /// [`AccountColor::derived`] when there is none. An unset color is a
     /// supported state rather than a gap, so a sink handed the raw `Option`
     /// would be a sink that could forget the fallback.
+    ///
+    /// This is also the one place a demo has to reach to cover every account
+    /// display in the app: `crate::demo::text` stands between the stored text
+    /// and every sink, so a screen or the report drawing an account through
+    /// here draws its pseudonym without asking.
     pub fn render_with<T>(&self, f: impl FnOnce(&str, AccountColor) -> T) -> T {
+        let text = crate::demo::text(&self.text);
         f(
-            &self.text,
+            &text,
             self.color.unwrap_or_else(|| AccountColor::derived(self.id)),
         )
     }

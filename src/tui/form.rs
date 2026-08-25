@@ -327,12 +327,13 @@ impl Caret {
     /// Where to draw the caret in the line `drawn`.
     ///
     /// The offset is honoured only when the text on screen **is** the buffer.
-    /// A figure `--demo` has blocked is a fixed run of blocks whatever was
-    /// typed, and a caret sitting inside that run would count the digits back
-    /// out -- the mask is six characters wide, so `123.45` is a figure it
-    /// would otherwise count exactly. A selector is not a buffer at all. Both
-    /// draw at the end, which is where every caret in the app was drawn
-    /// before there was one to place.
+    /// A figure `--demo` has scrambled draws at the same width as what was
+    /// typed, so a caret sitting inside it would count the digits back out
+    /// even though the count would land in bounds; a name it has replaced
+    /// with a pseudonym is the same case, since a pseudonym is as long as the
+    /// name. A selector is not a buffer at all. All three draw at the end,
+    /// which is where every caret in the app was drawn before there was one
+    /// to place.
     fn offset(&self, drawn: &str) -> usize {
         match self {
             Caret::In { at, text } if text == drawn => *at,
@@ -443,11 +444,11 @@ pub(super) fn parse_amount(raw: &str) -> Result<Cents> {
 /// quietly booking $1,800 for it hides the slip in a figure that looks
 /// deliberate. The forms surface the error on the status line.
 ///
-/// What it quotes back is masked, because this is the one refusal in the crate
-/// whose subject is *guaranteed* to be a real figure: it fires only on text
-/// that already parsed as money, and a form's amount field is prefilled from
-/// the row it opened on. [`parse_amount`]'s own error cannot leak the same way
-/// -- it fires only on text no reading of which is a figure.
+/// What it quotes back is scrambled, because this is the one refusal in the
+/// crate whose subject is *guaranteed* to be a real figure: it fires only on
+/// text that already parsed as money, and a form's amount field is prefilled
+/// from the row it opened on. [`parse_amount`]'s own error cannot leak the
+/// same way -- it fires only on text no reading of which is a figure.
 pub(super) fn parse_whole_amount(raw: &str) -> Result<Cents> {
     let cents = parse_amount(raw)?;
     ensure!(
@@ -464,8 +465,8 @@ pub(super) fn parse_whole_amount(raw: &str) -> Result<Cents> {
 ///
 /// Empty whenever there is nothing to say, rather than a guess at one of the
 /// three: the flag is off, `typed` is not a whole figure yet, or no rate is
-/// on record. Drawn through `demo::whole_figure`, so `--demo` blocks it like
-/// every other absolute figure on a form.
+/// on record. Drawn through `demo::whole_figure`, so `--demo` scrambles it
+/// like every other absolute figure on a form.
 pub(super) fn tax_note(taxed: bool, typed: &str, rate: Option<BasisPoints>) -> String {
     if !taxed {
         return String::new();
@@ -483,8 +484,8 @@ pub(super) fn tax_note(taxed: bool, typed: &str, rate: Option<BasisPoints>) -> S
 ///
 /// Beside [`parse_share`], which is what decides it: the allocation form asks
 /// twice over -- once to resolve the fraction for the line under the field,
-/// and once to keep the mask off a divisor -- and a second spelling of the
-/// same prefix test is how those two would come to disagree.
+/// and once to keep the scramble off a divisor -- and a second spelling of
+/// the same prefix test is how those two would come to disagree.
 pub(super) fn is_share(raw: &str) -> bool {
     raw.trim().starts_with('/')
 }
@@ -707,7 +708,9 @@ impl TxnForm {
         match field {
             TxnField::Date => Label::from(self.date.display(self.focus == TxnField::Date)),
             TxnField::Amount => Label::from(crate::demo::typed(self.amount.value())),
-            TxnField::Description => Label::from(self.description.value()),
+            TxnField::Description => {
+                Label::from(crate::demo::text(self.description.value()).into_owned())
+            }
             TxnField::Account => match self.accounts.get(self.account) {
                 Some(a) => Label::default().account(Account::labelled(a)),
                 None => Label::default(),
@@ -814,7 +817,7 @@ enum Entry {
     /// can see. Nothing here takes suggestions, but the distinction is the
     /// one `Field` exists to make.
     Figure(Field),
-    /// A figure in dollars, which a demo blocks out.
+    /// A figure in dollars, whose digits a demo scrambles.
     ///
     /// A third reading rather than a flag beside `Figure`, for the reason
     /// this is an enum at all: which reading the caller opened the form on is
@@ -846,7 +849,7 @@ impl ValueForm {
 
     /// The same form over an amount -- a Planning constant, a bill, a fund's
     /// value, a reconciliation target. What separates it from [`ValueForm::new`]
-    /// is only that a demo blocks what it shows.
+    /// is only that a demo scrambles the digits of what it shows.
     pub fn money(label: impl Into<Label>, prefill: &str) -> ValueForm {
         ValueForm {
             label: label.into(),
@@ -1090,7 +1093,9 @@ impl TransferForm {
                 Label::from(self.date.display(self.focus == TransferField::Date))
             }
             TransferField::Amount => Label::from(crate::demo::typed(self.amount.value())),
-            TransferField::Description => Label::from(self.description.value()),
+            TransferField::Description => {
+                Label::from(crate::demo::text(self.description.value()).into_owned())
+            }
             TransferField::From => account(&self.from_accounts, self.from),
             TransferField::To => account(&self.to_accounts, self.to),
         }
@@ -1109,7 +1114,7 @@ impl TransferForm {
             from.id != to.id,
             "a transfer needs two different accounts, not {} twice",
             // names the source in an error about a transfer to itself
-            from.code.as_str()
+            crate::demo::text(from.code.as_str())
         );
         let cents = parse_amount(self.amount.value())?;
         // `insert_transfer` applies the sign per the destination's kind, so a
@@ -1478,7 +1483,7 @@ pub(super) fn render_popup(frame: &mut Frame, form_area: Rect, popup: &Autocompl
             };
             TextLine::from(format!(
                 "{marker} {}   {}   ×{}",
-                s.description,
+                crate::demo::text(&s.description),
                 crate::demo::figure(s.cents),
                 s.uses
             ))
@@ -2160,6 +2165,24 @@ mod tests {
         assert!(err.to_string().contains("two different accounts"), "{err}");
     }
 
+    /// The refusal quotes the account's own code back, and a demo has to
+    /// hide it exactly as it hides one drawn anywhere else in the app.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_the_code_a_same_account_transfer_refusal_quotes() {
+        crate::demo::install_with_salt(7);
+        let mut form =
+            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+        typed_transfer(&mut form, TransferField::Amount, "100");
+
+        let err = form.commit().unwrap_err().to_string();
+        assert!(!err.contains("CHK"), "the code survived: {err}");
+        assert!(
+            err.contains(&crate::demo::text("CHK").to_string()),
+            "no scrambled code found: {err}"
+        );
+    }
+
     /// `insert_transfer` already handles the sign — a credit destination
     /// sheds debt, so both legs come out negative — but the form must not
     /// offer a destination that would make that wrong.
@@ -2358,14 +2381,16 @@ mod tests {
     }
 
     /// The autocomplete list is a window onto rows already written: each
-    /// suggestion carries the amount it would fill in, which is a real figure
-    /// off a real transaction.
+    /// suggestion carries the amount it would fill in and the description off
+    /// the same real transaction, and a demo hides both -- the buffer a `Tab`
+    /// accepts one into is untouched either way.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_amounts_the_autocomplete_list_offers() {
+    fn a_demo_scrambles_the_amounts_and_descriptions_the_autocomplete_list_offers() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        crate::demo::install(true);
+        crate::demo::install_with_salt(7);
         let mut popup = Autocomplete::default();
         popup.set(vec![suggestion("Whole Foods", AccountId(1), 12_345)]);
 
@@ -2390,17 +2415,28 @@ mod tests {
             .collect();
 
         assert!(!text.contains("123.45"), "the amount survived: {text}");
-        assert!(text.contains("██████"), "nothing was blocked: {text}");
-        assert!(text.contains("Whole Foods"), "the description must stay");
+        assert!(
+            text.contains(&crate::demo::figure(Cents(12_345))),
+            "no scrambled amount found: {text}"
+        );
+        assert!(
+            !text.contains("Whole Foods"),
+            "the description survived: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::text("Whole Foods").to_string()),
+            "no scrambled description found: {text}"
+        );
     }
 
     /// A form opens prefilled on an edit, so the field is where the row's own
-    /// amount would otherwise be published to whoever is watching. What is in
-    /// the buffer is untouched -- the form still commits the real figure --
-    /// and the description and date beside it are not money.
+    /// amount and description would otherwise be published to whoever is
+    /// watching. What is in the buffer is untouched -- the form still commits
+    /// the real figure and the real text -- and the date beside them is not.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_amount_a_transaction_form_shows_without_touching_it() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_amount_and_description_a_transaction_form_shows() {
+        crate::demo::install_with_salt(7);
         let txn = Txn {
             id: TxnId(1),
             date: day(2026, 8, 15),
@@ -2412,28 +2448,52 @@ mod tests {
         };
         let form = TxnForm::edit(accounts(), day(2026, 8, 15), &txn).unwrap();
 
-        assert_eq!(form.display(TxnField::Amount).plain_text(), "██████");
-        assert_eq!(
-            form.display(TxnField::Description).plain_text(),
-            "Groceries"
-        );
-        assert_eq!(form.commit().unwrap().cents, Cents(123_456));
+        let drawn = form.display(TxnField::Amount).plain_text();
+        assert_ne!(drawn, "1,234.56");
+        assert_eq!(drawn.len(), "1,234.56".len());
+        let drawn_description = form.display(TxnField::Description).plain_text();
+        assert_ne!(drawn_description, "Groceries");
+        assert_eq!(drawn_description, crate::demo::text("Groceries"));
+        let committed = form.commit().unwrap();
+        assert_eq!(committed.cents, Cents(123_456));
+        assert_eq!(committed.description, "Groceries");
     }
 
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_amount_a_transfer_form_shows() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_amount_a_transfer_form_shows() {
+        crate::demo::install_with_salt(7);
         let mut form =
             TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
         typed_transfer(&mut form, TransferField::Amount, "3,291.00");
-        assert_eq!(form.display(TransferField::Amount).plain_text(), "██████");
+        let drawn = form.display(TransferField::Amount).plain_text();
+        assert_ne!(drawn, "3,291.00");
+        assert_eq!(drawn.len(), "3,291.00".len());
+    }
+
+    /// A payment's description is prefilled from the card's own code --
+    /// `CC1 Payment` -- which is an account code, one of the four categories
+    /// banned outright, so a demo has to hide it exactly as it hides a code
+    /// drawn anywhere else.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_the_cards_code_in_a_payments_description() {
+        crate::demo::install_with_salt(7);
+        let form =
+            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8))).unwrap();
+        let drawn = form.display(TransferField::Description).plain_text();
+        assert_ne!(drawn, "CC1 Payment");
+        assert_eq!(drawn, crate::demo::text("CC1 Payment"));
+        // The buffer is untouched: Enter still writes the real description.
+        assert_eq!(form.description(), "CC1 Payment");
     }
 
     /// The refusal quotes the amount back, and a status line is on screen as
     /// surely as a column is.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_figure_a_refused_amount_quotes() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_figure_a_refused_amount_quotes() {
+        crate::demo::install_with_salt(7);
         let mut form =
             TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
         walk_until!(form.focus == TransferField::To, form.next_field());
@@ -2441,19 +2501,26 @@ mod tests {
         typed_transfer(&mut form, TransferField::Amount, "-500");
         let err = form.commit().unwrap_err().to_string();
         assert!(!err.contains("500"), "the amount survived: {err}");
-        assert!(err.contains("██████"), "nothing was blocked: {err}");
+        assert!(
+            err.contains(&crate::demo::figure(Cents::from_dollars(-500))),
+            "no scrambled amount found: {err}"
+        );
     }
 
     /// The sibling refusal, and the sharper one: this error fires only on
     /// text that *already parsed* as money, so what it quotes back is a real
     /// figure every time. `e` on a fund row prefills the stored cents, which
     /// is exactly the input that trips it.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_figure_a_refused_whole_amount_quotes() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_figure_a_refused_whole_amount_quotes() {
+        crate::demo::install_with_salt(7);
         let err = parse_whole_amount("60,000.23").unwrap_err().to_string();
         assert!(!err.contains("60,000"), "the amount survived: {err}");
-        assert!(err.contains("██████"), "nothing was blocked: {err}");
+        assert!(
+            err.contains(&crate::demo::typed("60,000.23")),
+            "no scrambled amount found: {err}"
+        );
     }
 
     /// The same refusal outside a demo still names what was typed rather than
@@ -2469,10 +2536,13 @@ mod tests {
     /// does -- so money and a plain figure are two constructors. The Planning
     /// screen edits a paycheck period and a split percentage through the same
     /// modal it edits a target through, and neither of those is money.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_a_money_value_form_and_leaves_a_plain_figure_alone() {
-        crate::demo::install(true);
-        assert_eq!(ValueForm::money("Target", "13,500.00").display(), "██████");
+    fn a_demo_scrambles_a_money_value_form_and_leaves_a_plain_figure_alone() {
+        crate::demo::install_with_salt(7);
+        let drawn = ValueForm::money("Target", "13,500.00").display();
+        assert_ne!(drawn, "13,500.00");
+        assert_eq!(drawn.len(), "13,500.00".len());
         assert_eq!(ValueForm::new("Paycheck Period", "14").display(), "14");
         assert_eq!(ValueForm::money("Target", "13,500.00").value(), "13,500.00");
     }
@@ -2627,16 +2697,25 @@ mod tests {
         assert_eq!(reversed(&line), " ");
     }
 
-    /// The one figure the mask and the buffer are the same length for.
-    /// A caret drawn inside the blocks would count the digits back out.
+    /// A caret drawn inside a scrambled figure would count the digits back
+    /// out, and it stays out even though a scrambled figure is exactly as
+    /// wide as the one it replaces: it is a different string, not merely a
+    /// shorter one.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_caret_in_a_blocked_figure_goes_to_the_end_of_the_mask() {
-        crate::demo::install(true);
+    fn a_caret_in_a_scrambled_figure_goes_to_the_end_of_it() {
+        crate::demo::install_with_salt(7);
         let mut form = ValueForm::money("Amount", "123.45");
         form.edit(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
 
-        let line = field_line("Amount", Label::from(form.display()), Some(form.caret()));
-        assert!(joined(&line).ends_with("██████ "), "{}", joined(&line));
+        let drawn = form.display();
+        assert_ne!(drawn, "123.45");
+        let line = field_line("Amount", Label::from(drawn.clone()), Some(form.caret()));
+        assert!(
+            joined(&line).ends_with(&format!("{drawn} ")),
+            "{}",
+            joined(&line)
+        );
         assert_eq!(reversed(&line), " ");
     }
 

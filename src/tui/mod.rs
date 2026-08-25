@@ -113,9 +113,16 @@ fn amount(cents: Cents) -> Cell<'static> {
 /// [`crate::savings::unallocated`]: the $0.23 a container can sit at is
 /// exactly the noise, and a line that reads `0` is the line saying there is
 /// nothing there to place.
+///
+/// The color is chosen from the truncated figure and the text drawn through
+/// [`crate::demo::truncated_figure`], which truncates past the key a demo
+/// scrambles on: a cell truncating on its own way in would draw whole dollars
+/// no other screen quoting that amount draws.
 fn whole_amount(cents: Cents) -> Cell<'static> {
-    let whole = cents.trunc_to_dollar();
-    money_cell(whole, crate::demo::whole_figure(whole))
+    money_cell(
+        cents.trunc_to_dollar(),
+        crate::demo::truncated_figure(cents),
+    )
 }
 
 /// A header cell over a right-aligned column.
@@ -422,8 +429,8 @@ fn column_of(line: &str, needle: &str) -> u16 {
 /// decision about what happens after a quit stays in one place, and `tui`
 /// never learns that `config` exists.
 ///
-/// `demo` blocks every absolute figure the screens draw -- see
-/// [`crate::demo`]. Installed here, before the first frame, because it is a
+/// `demo` scrambles the digits of every absolute figure the screens draw --
+/// see [`crate::demo`]. Installed here, before the first frame, because it is a
 /// constant of the run rather than state a screen can reach: nothing after
 /// this point can turn it on or off.
 pub fn run(db: Db, today: NaiveDate, demo: bool) -> Result<Db> {

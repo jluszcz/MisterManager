@@ -6,7 +6,7 @@ A terminal application for tracking money, replacing a per-year spreadsheet.
 
 ```bash
 mm            # launch the application
-mm --demo     # the same, with every dollar figure blocked out
+mm --demo     # the same, with figures and names disguised (needs --features demo)
 mm report     # write the HTML report without opening the application
 ```
 
@@ -231,16 +231,34 @@ to re-enter.
 mm --demo
 ```
 
-Draws the application exactly as an ordinary run does, with every absolute
-dollar figure replaced by a run of blocks — for a screenshot, or for showing
-the app to someone across a table. The same run of blocks whatever the figure:
-the number of digits is itself a figure, so a mask that kept the shape of
-`1,234.56` would hide the balance and publish its order of magnitude.
+Demo mode is a build-time feature, off by default:
 
-Percentages, dates, counts, and the names of accounts and goals are left alone
-— a percentage is the shape of a plan rather than a sum, and a demonstration
-with the Planning splits and the fund allocation blocked out would have nothing
-left to show. Negatives keep their sign and their red.
+```bash
+cargo install --path . --features demo
+```
+
+A default build has no `--demo` flag, because it carries none of the code
+behind it.
+
+Draws the application exactly as an ordinary run does, with every absolute
+dollar figure's digits replaced by another figure's digits, and every account
+name and code, goal name, recurring-goal name, bill label, fund name and
+transaction description replaced by a same-length pronounceable pseudoword — both keyed on a salt drawn once
+per run, so one amount draws the same everywhere it appears, one word reads
+the same wherever it appears, and whole dollars agree with the figure they
+came from.
+
+That costs what a fixed-width mask would have hidden: a figure's order of
+magnitude and a name's length are both now visible, and a derived figure no
+longer reconciles with the ones under it — a scrambled Net is not the sum of
+the scrambled bands above it. It is obfuscation for a demonstration, not a
+security control: the salt lives only in the process for the run, and
+nothing should be built on it.
+
+Percentages, dates, counts, and the app's own words are left alone — a
+percentage is the shape of a plan rather than a sum, a scrambled date is not
+a date, and a count over rows the reader can see would read as a rendering
+fault. Negatives keep their sign and their red.
 
 Only the drawing changes. What is typed into a form still parses, so the app
 can be driven rather than only watched, and the figures behind the mask are the

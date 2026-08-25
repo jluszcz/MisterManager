@@ -330,7 +330,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> Viewpo
         .map(|r| {
             TableRow::new(vec![
                 account_cell(&r.container),
-                Cell::from(r.name.clone()),
+                Cell::from(crate::demo::text(&r.name).into_owned()),
                 whole_amount(r.current),
                 whole_amount(r.goal),
                 percent(r.percent),
@@ -382,15 +382,18 @@ pub(super) fn render(frame: &mut Frame, area: Rect, savings: &Savings) -> Viewpo
         if !spans.is_empty() {
             spans.push(Span::raw(" · "));
         }
-        // The figure is truncated before it is colored, so the sign the color
-        // reads and the sign the reader reads are the same one: a container
-        // sitting at -$0.23 shows a plain `0`, not a red `-0`.
-        let excess = crate::savings::unallocated(*excess);
+        // The color is chosen from the truncated figure, so the sign it reads
+        // and the sign the reader reads are the same one: a container sitting
+        // at -$0.23 shows a plain `0`, not a red `-0`. The figure itself keeps
+        // its cents until `truncated_figure`, which drops them past the key a
+        // demo scrambles on -- truncating first would draw a remainder
+        // unrelated to the one the same figure draws in full.
+        let whole = crate::savings::unallocated(*excess);
         spans.extend(label_line(&Label::default().account(savings.container_account(*id))).spans);
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
-            crate::demo::whole_figure(excess),
-            match super::style::amount_color(excess) {
+            crate::demo::truncated_figure(*excess),
+            match super::style::amount_color(whole) {
                 Some(color) => Style::default().fg(color),
                 None => Style::default(),
             },
@@ -827,20 +830,21 @@ mod tests {
     /// right-aligned cell that gets truncated loses its *leading* characters,
     /// so a shortfall here silently turns `2026-11-27` into a wrong year
     /// rather than an obviously-broken string.
-    /// A demo blocks the money and nothing else: the `%` column is a shape
-    /// rather than a sum, and a goal's name, date and container are already
-    /// the owner's own words.
+    /// A demo scrambles the money and the goal name, and nothing else: the
+    /// `%` column is a shape rather than a sum, and a goal's date is already
+    /// the owner's own word for it.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_figures_and_keeps_the_percentages() {
+    fn a_demo_scrambles_the_figures_and_keeps_the_percentages() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        crate::demo::install(true);
+        crate::demo::install_with_salt(7);
         let mut savings = savings();
         // A whole-dollar remainder, since the fixture's sub-dollar one is
-        // truncated to `0` before the mask ever sees it -- a footer showing
-        // the fixture's own drift would pass this test by arithmetic rather
-        // than by being masked.
+        // truncated to `0` before the scramble ever sees it -- a footer
+        // showing the fixture's own drift would pass this test by arithmetic
+        // rather than by being scrambled.
         savings.set_excess(vec![(AccountId(1), Cents(250_000))]);
         let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
         terminal
@@ -862,16 +866,96 @@ mod tests {
             !text.contains("2,500"),
             "the unallocated footer survived: {text}"
         );
-        assert!(text.contains("██████"), "nothing was blocked: {text}");
+        assert!(
+            text.contains(&crate::demo::whole_figure(Cents(1_300_000))),
+            "no scrambled balance found: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::whole_figure(Cents(1_500_000))),
+            "no scrambled target found: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::whole_figure(Cents(250_000))),
+            "no scrambled footer found: {text}"
+        );
         assert!(text.contains("106%"), "the percentages must stay: {text}");
         assert!(
-            text.contains("Apple Watch"),
-            "the goal names must stay: {text}"
+            !text.contains("Apple Watch"),
+            "a goal name survived: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::text("Apple Watch").to_string()),
+            "no scrambled goal name found: {text}"
         );
         assert!(
             text.contains("2026-09-01"),
             "the goal dates must stay: {text}"
         );
+    }
+
+    /// One amount is one scrambled amount whatever precision it is drawn at.
+    /// This screen drops the cents from every figure on it, and the cents are
+    /// dropped *past* the key a demo scrambles on -- so a balance carrying
+    /// them draws the dollars the ledger's own full figure draws, not a
+    /// second figure keyed on the truncation. Asserted against
+    /// `demo::figure`, the sink that keeps them, rather than against
+    /// `whole_figure`, which would agree with itself however it was keyed.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_draws_whole_dollars_as_the_full_figures_own_dollars() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        crate::demo::install_with_salt(7);
+        let mut savings = savings();
+        savings.set_excess(vec![(AccountId(1), Cents(250_017))]);
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &savings);
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+
+        // The fixture's Emergency Savings sits at $106,001.95.
+        let dollars = |cents| {
+            crate::demo::figure(cents)
+                .split('.')
+                .next()
+                .unwrap()
+                .to_string()
+        };
+        let balance = dollars(Cents(10_600_195));
+        assert!(
+            text.contains(&balance),
+            "the balance column drew something other than {balance}: {text}"
+        );
+        let excess = dollars(Cents(250_017));
+        assert!(
+            text.contains(&excess),
+            "the unallocated footer drew something other than {excess}: {text}"
+        );
+    }
+
+    /// A needle is matched against the stored text, not against what the
+    /// screen drew: a demo narrows a list by the owner's own vocabulary,
+    /// exactly as it does by a real amount.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_still_finds_a_goal_by_its_real_name() {
+        crate::demo::install_with_salt(7);
+        let mut savings = savings();
+        savings.begin_search();
+        for c in "Apple".chars() {
+            savings.push_search(c);
+        }
+        assert_eq!(names(&savings), ["Apple Watch"]);
     }
 
     #[test]

@@ -241,8 +241,8 @@ pub(super) fn render(frame: &mut Frame, chooser: &Chooser) -> Viewport {
                 ..
             } => {
                 let row = Row::new(vec![
-                    Cell::from(name.clone()),
-                    Cell::from(container.clone()),
+                    Cell::from(crate::demo::text(name).into_owned()),
+                    Cell::from(crate::demo::text(container).into_owned()),
                     Cell::from(match lifted {
                         Some(Lifted::Suggested) => "suggested",
                         Some(Lifted::Current) => "current",
@@ -318,6 +318,49 @@ mod tests {
             Some(Choice::Unset) => "<unset>".to_string(),
             Some(Choice::Goal { name, .. }) => name.clone(),
         }
+    }
+
+    /// A goal's name is the owner's own word for it, drawn beside its
+    /// container, which already masks -- the same rule every other list in
+    /// the app follows, and the one this list had missed.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_a_goals_name_in_the_destination_list() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        crate::demo::install_with_salt(7);
+        let chooser = chooser(None, None);
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, &chooser);
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+
+        assert!(
+            !text.contains("Bill Payments"),
+            "the goal name survived: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::text("Bill Payments").to_string()),
+            "no scrambled goal name found: {text}"
+        );
+        assert!(
+            !text.contains("Rainy Day"),
+            "the container survived: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::text("Rainy Day").to_string()),
+            "no scrambled container found: {text}"
+        );
     }
 
     /// The whole point of the suggestion: the line that brought the owner

@@ -25,6 +25,11 @@ thiserror = "2.0"
 tokio = { version = "1.53", features = ["rt", "net", "time"] }
 toml = "1.1"
 
+[features]
+# Demo mode: `mm --demo`, and the obfuscation behind it. Off by default so a
+# shipped binary carries neither the flag nor the code it installs.
+demo = []
+
 [[bin]]
 name = "mm"
 path = "src/bin/mm.rs"

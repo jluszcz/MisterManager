@@ -186,8 +186,8 @@ impl Target {
     /// for that reason: a target is money exactly when its `write` arm parses
     /// with [`parse_amount`]. What reads it is the edit modal, which has one
     /// field and no idea what is in it -- a percentage and a count of pay
-    /// periods go through the same form, and a demo must block the target
-    /// without blocking those.
+    /// periods go through the same form, and a demo must scramble the target's
+    /// digits without scrambling those.
     pub fn is_money(self) -> bool {
         match self {
             Target::Target
@@ -436,15 +436,21 @@ impl Row {
         let (value, mut extra) = match &w.landing {
             Landing::Goal { goal, container } => {
                 tint = Some(Tint::of(container, Column::Extra));
-                (goal.clone(), container.name.clone())
+                (
+                    crate::demo::text(goal).into_owned(),
+                    crate::demo::text(&container.name).into_owned(),
+                )
             }
             Landing::Account { account } => {
                 tint = Some(Tint::of(account, Column::Value));
-                (account.name.clone(), String::new())
+                (crate::demo::text(&account.name).into_owned(), String::new())
             }
             Landing::Spread { container } => {
                 tint = Some(Tint::of(container, Column::Extra));
-                ("spread".to_string(), container.name.clone())
+                (
+                    "spread".to_string(),
+                    crate::demo::text(&container.name).into_owned(),
+                )
             }
             // Named while they fit and counted past that: the cell is
             // right-aligned, so an overflowing list would lose its *leading*
@@ -453,7 +459,11 @@ impl Row {
             Landing::Ambiguous { containers } => (
                 "ambiguous".to_string(),
                 match containers.len() {
-                    0..=2 => containers.join(", "),
+                    0..=2 => containers
+                        .iter()
+                        .map(|c| crate::demo::text(c).into_owned())
+                        .collect::<Vec<_>>()
+                        .join(", "),
                     n => format!("{n} containers"),
                 },
             ),
@@ -465,7 +475,7 @@ impl Row {
             },
         };
         if let Some(goal) = &w.suggestion {
-            extra = format!("{}?", goal.name);
+            extra = format!("{}?", crate::demo::text(&goal.name));
             // The cell is a goal's name now, not a container's.
             if matches!(
                 tint,
@@ -567,7 +577,7 @@ fn build(view: &View) -> Result<Vec<Row>> {
             .map(|b| {
                 Ok(plan_rows::Bill {
                     id: b.id,
-                    label: b.label.clone(),
+                    label: crate::demo::text(&b.label).into_owned(),
                     monthly: b.cents,
                     biweekly: calc::biweekly(b.cents, periods)?,
                 })
@@ -962,7 +972,7 @@ impl BillForm {
 
     pub fn display(&self, field: BillField) -> Label {
         Label::plain(match field {
-            BillField::Label => self.label.value().to_string(),
+            BillField::Label => crate::demo::text(self.label.value()).into_owned(),
             BillField::Amount => crate::demo::typed(self.amount.value()),
             BillField::Category => self.category().as_str().to_string(),
         })
@@ -1092,14 +1102,26 @@ pub fn render_bill(frame: &mut Frame, form: &BillForm) {
 /// The confirm modal behind `t`: what will be written, and when. The strings
 /// on screen are the strings that land in the ledger -- a transfer's own
 /// name, a withdrawal's line label -- so this is a preview of the ledger
-/// rows, not a summary of them.
+/// rows, not a summary of them. It is the last thing drawn before real money
+/// moves, which is why the owner-typed half of it goes through the mask a
+/// demo installs.
 pub fn render_transfers(frame: &mut Frame, confirm: &TransferConfirm) {
     let rows = confirm.rows();
     let mut lines: Vec<TextLine> = rows
         .iter()
         .map(|row| {
             let (label, cents) = match row {
-                transfer::Row::Transfer { name, cents, .. } => (name.clone(), *cents),
+                // The account's own name, which `transfer::plan` carries
+                // unmasked because it is also the description the ledger row
+                // is written under. The transfers block on the screen behind
+                // this modal reaches the same name through
+                // `plan_rows::RowLabel::Account`, which masks; this is the
+                // other consumer, and it has no `Account` to inherit that
+                // from.
+                transfer::Row::Transfer { name, cents, .. } => {
+                    (crate::demo::text(name).into_owned(), *cents)
+                }
+                // The app's own vocabulary, never masked.
                 transfer::Row::Withdrawal { line, cents } => (line.label().to_string(), *cents),
             };
             TextLine::from(format!(
@@ -1921,6 +1943,21 @@ mod tests {
         assert_eq!(row.extra, "Brokerage");
     }
 
+    /// The same row, under a demo: `wiring` hands `Landing::Goal` a real
+    /// goal name, and it reached this cell unmasked while the container
+    /// beside it did not.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_the_goal_a_configured_destination_names() {
+        crate::demo::install_with_salt(7);
+        let planning = screen();
+        let row = destination(&planning, Line::EmergencyFund);
+        assert_ne!(row.value, "Emergency Savings");
+        assert_eq!(row.value, crate::demo::text("Emergency Savings"));
+        assert_ne!(row.extra, "Brokerage");
+        assert_eq!(row.extra, crate::demo::text("Brokerage"));
+    }
+
     /// Unset means the money leaves the tracked system, which is what two of
     /// the nine lines are supposed to do -- so the state is named for what it
     /// does rather than for the key being empty.
@@ -1976,6 +2013,33 @@ mod tests {
         assert_eq!(row.value, "ambiguous");
         assert_eq!(row.extra, "Rainy Day, Brokerage");
         assert_eq!(row.tone, Tone::Negative);
+    }
+
+    /// Every sibling landing that names an account here -- `Goal`, `Account`,
+    /// `Spread` -- masks it, and an ambiguous plug is not an exception:
+    /// `diagnose`'s panel shows the same two containers as pseudonyms, and a
+    /// screen showing the real names beside it would hand a viewer the
+    /// mapping.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_the_containers_an_ambiguous_plug_names() {
+        crate::demo::install_with_salt(7);
+        let planning = screen_with(
+            Line::Goals,
+            Landing::Ambiguous {
+                containers: vec!["Rainy Day".to_string(), "Brokerage".to_string()],
+            },
+        );
+        let row = destination(&planning, Line::Goals);
+        assert_ne!(row.extra, "Rainy Day, Brokerage");
+        assert_eq!(
+            row.extra,
+            format!(
+                "{}, {}",
+                crate::demo::text("Rainy Day"),
+                crate::demo::text("Brokerage")
+            )
+        );
     }
 
     /// Two container names fill the cell exactly; a third would overflow it,
@@ -2197,6 +2261,23 @@ mod tests {
         let row = destination(&planning, Line::FutureHousing);
         assert_eq!(row.extra, "Home Down Payment?");
         assert_eq!(row.account, None);
+    }
+
+    /// The suggestion keeps its `?`, and the goal name ahead of it is
+    /// masked -- the same rule the configured destinations follow, so a
+    /// prompt does not publish the one goal name a resolved line would
+    /// have hidden.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_the_goal_a_suggestion_names_but_keeps_its_question_mark() {
+        crate::demo::install_with_salt(7);
+        let planning = screen();
+        let row = destination(&planning, Line::FutureHousing);
+        assert_ne!(row.extra, "Home Down Payment?");
+        assert_eq!(
+            row.extra,
+            format!("{}?", crate::demo::text("Home Down Payment"))
+        );
     }
 
     /// Nothing single is named, so there is nothing to tint: an ambiguous
@@ -2647,9 +2728,11 @@ mod tests {
         );
     }
 
-    /// Dropping the digits leaves a sub-dollar negative as `-0`. Shared with
-    /// the Savings screen, which renders the same way -- worth knowing before
-    /// reading a `-0` as a bug in the waterfall rather than in the format.
+    /// Dropping the digits leaves a sub-dollar negative as `-0` -- worth
+    /// knowing before reading one as a bug in the waterfall rather than in
+    /// the format. This screen renders its figures itself, through
+    /// `demo::whole_figure`; Savings goes through `whole_amount`, which
+    /// truncates the `Cents` and so draws the same remainder as a plain `0`.
     #[test]
     fn a_negative_under_a_dollar_keeps_its_sign_over_a_zero() {
         assert_eq!(
@@ -2676,9 +2759,10 @@ mod tests {
 
     /// The pin line is two figures in prose rather than a column, and both
     /// of them are money. The date it was pinned on is not.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_pin_and_the_drift_it_has_moved_by() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_pin_and_the_drift_it_has_moved_by() {
+        crate::demo::install_with_salt(7);
         let mut planning = Planning::new();
         planning
             .set_view(view(
@@ -2686,9 +2770,18 @@ mod tests {
                 Some(day(2026, 8, 14)),
             ))
             .unwrap();
-        assert_eq!(
-            planning.pin_line().unwrap(),
-            "pinned ██████ on 2026-08-14 · excess has since moved ██████"
+        let line = planning.pin_line().unwrap();
+        assert!(line.starts_with("pinned "));
+        assert!(line.contains(" on 2026-08-14 · excess has since moved "));
+        assert!(!line.contains("17,500"), "the pin survived: {line}");
+        assert!(!line.contains("0.75"), "the drift survived: {line}");
+        assert!(
+            line.contains(&crate::demo::figure(Cents::from_dollars(17_500))),
+            "no scrambled pin found: {line}"
+        );
+        assert!(
+            line.contains(&crate::demo::figure(Cents(75))),
+            "no scrambled drift found: {line}"
         );
     }
 
@@ -3167,7 +3260,7 @@ mod tests {
     /// A target is money exactly when its `write` arm parses an amount. The
     /// two matches are written out separately, so nothing but this holds them
     /// together -- and getting it wrong either publishes a figure in a demo
-    /// or blocks a percentage that was never private.
+    /// or scrambles a percentage that was never private.
     #[test]
     fn a_money_target_is_the_one_whose_write_parses_an_amount() {
         for target in [
@@ -3193,15 +3286,16 @@ mod tests {
     }
 
     /// The waterfall is a column of absolute figures, and every one of them
-    /// is blocked. The percentages that produced them are not: a split is a
-    /// rule rather than a sum, and reading `22%` beside a blocked figure is
+    /// is scrambled. The percentages that produced them are not: a split is a
+    /// rule rather than a sum, and reading `22%` beside a scrambled figure is
     /// exactly what makes the screen worth demonstrating.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_waterfall_and_keeps_its_percentages() {
+    fn a_demo_scrambles_the_waterfall_and_keeps_its_percentages() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        crate::demo::install(true);
+        crate::demo::install_with_salt(7);
         let mut planning = Planning::new();
         planning.set_view(view(None, None)).unwrap();
 
@@ -3224,17 +3318,77 @@ mod tests {
 
         assert!(!drawn.contains("32,500"), "the checking balance survived");
         assert!(!drawn.contains("1,200"), "a bill survived");
-        assert!(drawn.contains("██████"), "nothing was blocked: {drawn}");
+        assert!(
+            drawn.contains(&crate::demo::whole_figure(Cents::from_dollars(1_200))),
+            "no scrambled bill found: {drawn}"
+        );
         assert!(drawn.contains("%"), "the percentages must stay: {drawn}");
         assert!(drawn.contains("Bills"), "the labels must stay: {drawn}");
+    }
+
+    /// The Destinations block draws two more owner-text cells this way: a
+    /// goal-backed line's value is the goal's own name (`wiring` hands it
+    /// over real, in `Landing::Goal`), and the suggestion beside an unset
+    /// line is too, `?` and all. Rendered end to end, the same way
+    /// `a_demo_scrambles_the_waterfall_and_keeps_its_percentages` checks the
+    /// waterfall above it, so this cannot pass over a cell nothing draws.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_the_goal_names_the_destinations_block_draws() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        crate::demo::install_with_salt(7);
+        let mut planning = Planning::new();
+        planning
+            .set_view(view(Some(Cents::from_dollars(17_500)), None))
+            .unwrap();
+
+        let height = planning.rows().len() as u16 + 5;
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &planning);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let drawn: String = (0..height)
+            .map(|y| {
+                (0..MIN_WIDTH)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
+
+        assert!(
+            !drawn.contains("Emergency Savings"),
+            "a goal name survived: {drawn}"
+        );
+        assert!(
+            drawn.contains(&crate::demo::text("Emergency Savings").to_string()),
+            "no scrambled goal name found: {drawn}"
+        );
+        assert!(
+            !drawn.contains("Home Down Payment?"),
+            "a suggestion survived: {drawn}"
+        );
+        assert!(
+            drawn.contains(&format!("{}?", crate::demo::text("Home Down Payment"))),
+            "no scrambled suggestion found: {drawn}"
+        );
     }
 
     /// The modal that confirms a payday is the last thing shown before real
     /// money moves, and it is as much a part of the demo as the screen behind
     /// it.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_confirm_modal_and_keeps_its_date() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_confirm_modal_and_keeps_its_date() {
+        crate::demo::install_with_salt(7);
         let rows = vec![transfer::Row::Transfer {
             to: crate::db::AccountId(1),
             name: "Brokerage".to_string(),
@@ -3249,8 +3403,18 @@ mod tests {
         ));
 
         assert!(!text.contains("1,234"), "the transfer survived: {text}");
-        assert!(text.contains("██████"), "nothing was blocked: {text}");
-        assert!(text.contains("Brokerage"), "the destination must stay");
+        assert!(
+            text.contains(&crate::demo::whole_figure(Cents(123_456))),
+            "no scrambled transfer found: {text}"
+        );
+        assert!(
+            !text.contains("Brokerage"),
+            "the destination survived: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::text("Brokerage").to_string()),
+            "no scrambled destination found: {text}"
+        );
         assert!(text.contains("2026-08-24"), "the date must stay: {text}");
     }
 

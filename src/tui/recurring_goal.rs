@@ -268,7 +268,7 @@ impl RecurringGoalForm {
 
     pub fn display(&self, field: RecurringGoalField) -> Label {
         Label::plain(match field {
-            RecurringGoalField::Name => self.name.value().to_string(),
+            RecurringGoalField::Name => crate::demo::text(self.name.value()).into_owned(),
             RecurringGoalField::Month => super::month_full_name(self.month),
             RecurringGoalField::Amount => crate::demo::typed(self.amount.value()),
             RecurringGoalField::Taxed => (if self.taxed { "yes" } else { "no" }).to_string(),
@@ -366,7 +366,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, recurring_goal: &RecurringGo
         .iter()
         .map(|r| {
             TableRow::new(vec![
-                Cell::from(r.name.clone()),
+                Cell::from(crate::demo::text(&r.name).into_owned()),
                 Cell::from(month_name(r.month)),
                 amount(r.base_cents),
                 Cell::from(if r.taxed { "yes" } else { "no" }),
@@ -852,9 +852,10 @@ mod tests {
 
     /// The base amount is money; the month, the cadence and whether it is
     /// taxed are the rule rather than the figure.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_base_amount_and_keeps_the_rule() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_base_amount_and_keeps_the_rule() {
+        crate::demo::install_with_salt(7);
         let form = RecurringGoalForm::edit(
             &Entry {
                 id: RecurringGoalId(2),
@@ -866,10 +867,9 @@ mod tests {
             },
             None,
         );
-        assert_eq!(
-            form.display(RecurringGoalField::Amount).plain_text(),
-            "██████"
-        );
+        let drawn = form.display(RecurringGoalField::Amount).plain_text();
+        assert_ne!(drawn, "128.00");
+        assert_eq!(drawn.len(), "128.00".len());
         assert_eq!(
             form.display(RecurringGoalField::Month).plain_text(),
             "September"
