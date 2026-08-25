@@ -162,7 +162,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/backup/` | The schedule, the snapshot, and the upload. `aws_config`, `aws_sdk_s3` and `tokio` are named only in `s3.rs`. |
 | `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `tui/mod.rs` rather than in whichever screen needed it first. `app` is a directory, one module per screen over one `App`. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
-| `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `import`, `report` and `backup` are the three subcommands. |
+| `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `report` and `backup` are always subcommands, and `import` is a third behind the `import` feature -- a default build does not offer it. |
 
 **`rusqlite` is named only inside `src/db/`.** `Db` holds a private `Connection` and deliberately does
 not `Deref` to it — handing out a `&Connection` would put every rusqlite method back within reach of

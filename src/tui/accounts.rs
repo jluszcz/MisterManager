@@ -35,9 +35,8 @@ const CODE_WIDTH: u16 = 8;
 ///
 /// The import is one of them only where the build has one: `mm import` is
 /// behind the `import` feature, so a default build naming it would send the
-/// owner to a subcommand its own binary refuses -- and this is the first
-/// screen a fresh database opens on, so it is the first thing that owner
-/// reads. `a` is the way out either build has.
+/// owner to a subcommand its own binary refuses. `a` is the way out either
+/// build has, and on a build without an importer it is the whole message.
 #[cfg(feature = "import")]
 const EMPTY: &str = "no accounts yet — press a, or run mm import";
 #[cfg(not(feature = "import"))]
