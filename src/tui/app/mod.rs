@@ -1265,11 +1265,14 @@ mod tests {
     /// The fixture is the one with rows on every list, because an absence
     /// check over an empty table passes for free: `app()` has no funds, no
     /// recurring goals and no recurring transactions, which left three of the
-    /// nine screens drawing nothing to catch. Asserting that the scrambled
-    /// draw differs from the real one is what holds that shut from here on --
-    /// which screen's figures moved is not the question, only that some did.
-    /// Accounts is the one screen exempt: it draws a name, a band and a
-    /// position, and no figure at all, so its two draws agree.
+    /// nine screens drawing nothing to catch. What holds that shut is the
+    /// guard beside it, and it is asked of the **real** draw: a screen must be
+    /// shown to have drawn one of these figures before being asked not to draw
+    /// it scrambled. Asking it of the scrambled draw instead -- that the two
+    /// differ -- says nothing, because every screen also masks the names on
+    /// it, so the two would differ on a screen whose figures had stopped being
+    /// masked entirely. Accounts is the one screen exempt: it draws a name, a
+    /// band and a position, and no figure at all.
     #[cfg(feature = "demo")]
     #[test]
     fn a_demo_leaves_no_figure_on_any_screen() {
@@ -1299,8 +1302,8 @@ mod tests {
                 );
             }
             assert!(
-                screen == '9' || scrambled != real,
-                "screen {screen} drew no scrambled figure, so the check above passed for free:\n{scrambled}"
+                screen == '9' || DEMO_FIXTURE_FIGURES.iter().any(|f| real.contains(f)),
+                "screen {screen} drew none of the fixture's figures, so the check above passed for free:\n{real}"
             );
         }
     }
