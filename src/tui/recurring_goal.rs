@@ -11,6 +11,7 @@ use super::form::{
     step_index, tax_note,
 };
 use super::month::MonthCycle;
+use super::search::{Search, SearchBox};
 use crate::db::RecurringGoalId;
 use crate::db::recurring_goal::{Cadence, Entry, NewEntry};
 use crate::money::Cents;
@@ -35,11 +36,12 @@ pub struct Row {
 
 pub struct RecurringGoals {
     all: Vec<Row>,
-    /// Indices into `all` that survive the month filter.
+    /// Indices into `all` that survive the month filter and the needle.
     visible: Vec<usize>,
     /// The cycle is the calendar itself: the entries carry a month of the
     /// year and no date, so every month is always in it and the ends wrap.
     month: MonthCycle<i64>,
+    search: SearchBox,
     cursor: Cursor,
 }
 
@@ -52,6 +54,7 @@ impl RecurringGoals {
             all: Vec::new(),
             visible: Vec::new(),
             month: MonthCycle::new((1..=12).collect(), today_month),
+            search: SearchBox::new(),
             cursor: Cursor::new(),
         }
     }
@@ -87,7 +90,9 @@ impl RecurringGoals {
         self.refilter();
     }
 
-    /// `Esc`: show every entry again.
+    /// `Esc`: show every entry again. The needle is cleared before this is
+    /// reached -- see [`super::search::escape_kept_filter`] -- so the key
+    /// backs out of the innermost filter first, as it does on Savings.
     pub fn clear_month(&mut self) {
         self.month.clear();
         self.refilter();
@@ -95,18 +100,6 @@ impl RecurringGoals {
 
     pub fn selected_month(&self) -> Option<i64> {
         self.month.selected()
-    }
-
-    fn refilter(&mut self) {
-        let month = self.month.selected();
-        self.visible = self
-            .all
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| month.is_none_or(|m| row.month == m))
-            .map(|(i, _)| i)
-            .collect();
-        self.cursor.clamp(self.visible.len());
     }
 
     pub fn rows(&self) -> Vec<&Row> {
@@ -122,7 +115,42 @@ impl RecurringGoals {
             None => "All".to_string(),
             Some(m) => super::month_name(m),
         };
-        format!("Recurring Goals · {month} · {}", self.visible.len())
+        let mut title = format!("Recurring Goals · {month} · {}", self.visible.len());
+        if !self.search().is_empty() {
+            title = format!("{title} · /{}", self.search());
+        }
+        title
+    }
+}
+
+impl Search for RecurringGoals {
+    fn search_box(&self) -> &SearchBox {
+        &self.search
+    }
+
+    fn search_box_mut(&mut self) -> &mut SearchBox {
+        &mut self.search
+    }
+
+    /// The month filter and the needle in one pass, so the two cannot narrow
+    /// to different lists. Also the hook `[` and `]` call when they move.
+    ///
+    /// An entry answers to its name and to the one figure it is *about*, the
+    /// base. The month is `[`/`]`'s already, and the open-goal count is a
+    /// tally rather than a figure the entry carries -- a needle reaching
+    /// either would narrow through a column nobody was searching.
+    fn refilter(&mut self) {
+        let matcher = self.matcher();
+        let month = self.month.selected();
+        self.visible = self
+            .all
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| month.is_none_or(|m| row.month == m))
+            .filter(|(_, row)| matcher.matches(&row.name, &[row.base_cents]))
+            .map(|(i, _)| i)
+            .collect();
+        self.cursor.clamp(self.visible.len());
     }
 }
 
@@ -413,6 +441,22 @@ mod tests {
         recurring_goal
     }
 
+    /// Two entries whose bases differ, for the tests about matching a figure
+    /// -- `screen`'s four all cost the same, so a needle could not tell them
+    /// apart. Dropbox carries three open goals, which is the tally a needle
+    /// must *not* reach: no digit of either base is a `3`.
+    fn priced() -> RecurringGoals {
+        let mut recurring_goal = RecurringGoals::new(9);
+        let mut entries = vec![
+            entry(1, "Car Insurance", 3, Cadence::Annual),
+            entry(2, "Dropbox", 9, Cadence::Annual),
+        ];
+        entries[0].base_cents = Cents::from_dollars(1_240);
+        entries[1].base_cents = Cents::from_dollars(96);
+        recurring_goal.set_entries(entries, HashMap::from([(RecurringGoalId(2), 3)]));
+        recurring_goal
+    }
+
     /// The same four entries, narrowed to September by one step out of All.
     fn september() -> RecurringGoals {
         let mut recurring_goal = screen();
@@ -607,6 +651,120 @@ mod tests {
 
         recurring_goal.next_month();
         assert_eq!(recurring_goal.title(), "Recurring Goals · Sep · 1");
+    }
+
+    /// Both filters, side by side, so the title says which of the two left
+    /// the count it quotes.
+    #[test]
+    fn the_title_names_the_search_beside_the_month() {
+        let mut recurring_goal = screen();
+        recurring_goal.begin_search();
+        for c in "dro".chars() {
+            recurring_goal.push_search(c);
+        }
+        assert_eq!(recurring_goal.title(), "Recurring Goals · All · 1 · /dro");
+
+        recurring_goal.next_month();
+        assert_eq!(recurring_goal.title(), "Recurring Goals · Sep · 1 · /dro");
+    }
+
+    #[test]
+    fn search_matches_names_case_insensitively_and_narrows_the_list() {
+        let mut recurring_goal = screen();
+        recurring_goal.begin_search();
+        for c in "BAC".chars() {
+            recurring_goal.push_search(c);
+        }
+        assert_eq!(names(&recurring_goal), ["Backblaze"]);
+
+        recurring_goal.edit_search(backspace_key());
+        recurring_goal.edit_search(backspace_key());
+        recurring_goal.edit_search(backspace_key());
+        assert_eq!(names(&recurring_goal).len(), 4);
+    }
+
+    /// The one figure an entry is *about*, typed without the separators the
+    /// column draws.
+    #[test]
+    fn search_matches_an_entrys_base() {
+        let mut recurring_goal = priced();
+        recurring_goal.begin_search();
+        for c in "1240".chars() {
+            recurring_goal.push_search(c);
+        }
+        assert_eq!(names(&recurring_goal), ["Car Insurance"]);
+    }
+
+    /// `Open` is a tally of the goals made from an entry rather than a figure
+    /// the entry carries, so a needle reaching it would narrow through a
+    /// column nobody was searching. Nothing here answers to the three goals
+    /// open against Dropbox.
+    #[test]
+    fn search_does_not_reach_the_open_goal_tally() {
+        let mut recurring_goal = priced();
+        recurring_goal.begin_search();
+        recurring_goal.push_search('3');
+        assert!(names(&recurring_goal).is_empty());
+    }
+
+    /// One pass over the entries, so the two filters cannot narrow to
+    /// different lists: `Dropbox` answers the needle but falls outside March.
+    #[test]
+    fn the_month_narrows_within_the_search() {
+        let mut recurring_goal = screen();
+        recurring_goal.begin_search();
+        for c in "o".chars() {
+            recurring_goal.push_search(c);
+        }
+        assert_eq!(names(&recurring_goal), ["Dropbox", "Lego"]);
+
+        recurring_goal.next_month();
+        assert_eq!(names(&recurring_goal), ["Dropbox"]);
+        recurring_goal.next_month();
+        assert!(names(&recurring_goal).is_empty());
+    }
+
+    /// `Esc` on the screen clears the month; the needle has its own `Esc`
+    /// inside the box, and `search::escape_kept_filter` is what reaches a
+    /// kept one first.
+    #[test]
+    fn clearing_the_month_leaves_the_search_alone() {
+        let mut recurring_goal = september();
+        recurring_goal.begin_search();
+        for c in "dropbox".chars() {
+            recurring_goal.push_search(c);
+        }
+
+        recurring_goal.clear_month();
+        assert_eq!(recurring_goal.search(), "dropbox");
+        assert_eq!(names(&recurring_goal), ["Dropbox"]);
+    }
+
+    /// `e`, `d` and `s` act on the selection, so a cursor left past the end
+    /// of a narrowed list would act on whatever later lands at that index.
+    #[test]
+    fn a_shrinking_search_moves_the_selection_into_bounds() {
+        let mut recurring_goal = screen();
+        recurring_goal.select_last();
+        assert_eq!(recurring_goal.selected().unwrap().name, "Lego");
+
+        recurring_goal.begin_search();
+        for c in "drop".chars() {
+            recurring_goal.push_search(c);
+        }
+        assert_eq!(recurring_goal.selected_index(), 0);
+        assert_eq!(recurring_goal.selected().unwrap().name, "Dropbox");
+    }
+
+    #[test]
+    fn an_empty_result_has_nothing_selected() {
+        let mut recurring_goal = screen();
+        recurring_goal.begin_search();
+        for c in "zzz".chars() {
+            recurring_goal.push_search(c);
+        }
+        assert!(recurring_goal.rows().is_empty());
+        assert!(recurring_goal.selected().is_none());
     }
 
     /// The same question the goal form answers, in the same words: the field
