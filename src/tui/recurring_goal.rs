@@ -34,6 +34,18 @@ pub struct Row {
     pub open_goals: i64,
 }
 
+/// What one cadence's entries come to, and what that costs each payday.
+///
+/// Derived once, where the entries arrive, rather than in [`title`]: the
+/// spread can fail on a nonsense divisor and a title has no way to say so.
+///
+/// [`title`]: RecurringGoals::title
+struct Total {
+    cadence: Cadence,
+    cost: Cents,
+    per_paycheck: Cents,
+}
+
 pub struct RecurringGoals {
     all: Vec<Row>,
     /// Indices into `all` that survive the month filter and the needle.
@@ -41,6 +53,11 @@ pub struct RecurringGoals {
     /// The cycle is the calendar itself: the entries carry a month of the
     /// year and no date, so every month is always in it and the ends wrap.
     month: MonthCycle<i64>,
+    /// One per cadence any entry carries, in [`Cadence::ALL`] order. Over
+    /// every entry rather than the visible ones, which is what the title
+    /// drawing them only while unfiltered means.
+    totals: Vec<Total>,
+    periods_per_year: i64,
     search: SearchBox,
     cursor: Cursor,
 }
@@ -49,17 +66,27 @@ impl RecurringGoals {
     /// Opens unfiltered. The screen is a reference list of a dozen-odd
     /// entries, so showing all of them is the useful default; `[` and `]` are
     /// what start narrowing it.
-    pub fn new(today_month: i64) -> RecurringGoals {
+    pub fn new(today_month: i64, periods_per_year: i64) -> RecurringGoals {
         RecurringGoals {
             all: Vec::new(),
             visible: Vec::new(),
             month: MonthCycle::new((1..=12).collect(), today_month),
+            totals: Vec::new(),
+            periods_per_year,
             search: SearchBox::new(),
             cursor: Cursor::new(),
         }
     }
 
-    pub fn set_entries(&mut self, entries: Vec<Entry>, open_goals: HashMap<RecurringGoalId, i64>) {
+    /// The rate arrives per reload rather than being held on the screen, the
+    /// way each of this screen's modals reads it at the moment it opens: it
+    /// is the owner's setting and can be re-imported under the screen.
+    pub fn set_entries(
+        &mut self,
+        entries: Vec<Entry>,
+        open_goals: HashMap<RecurringGoalId, i64>,
+        rate: Option<BasisPoints>,
+    ) -> Result<()> {
         self.all = entries
             .into_iter()
             .map(|entry| Row {
@@ -72,7 +99,39 @@ impl RecurringGoals {
                 cadence: entry.cadence,
             })
             .collect();
+        self.retotal(rate)?;
         self.refilter();
+        Ok(())
+    }
+
+    /// One [`Total`] per cadence any entry carries.
+    ///
+    /// A cadence nothing is filed under is left out rather than totalled to
+    /// zero: the title says what a year costs, and `$0 Biennially` is a
+    /// sentence about nothing.
+    fn retotal(&mut self, rate: Option<BasisPoints>) -> Result<()> {
+        self.totals.clear();
+        for cadence in Cadence::ALL {
+            let cost: Cents = self
+                .all
+                .iter()
+                .filter(|row| row.cadence == cadence)
+                .map(|row| target(row, rate))
+                .sum();
+            if cost == Cents(0) {
+                continue;
+            }
+            self.totals.push(Total {
+                cadence,
+                cost,
+                per_paycheck: crate::calc::per_paycheck_over_years(
+                    cost,
+                    self.periods_per_year,
+                    cadence.years(),
+                )?,
+            });
+        }
+        Ok(())
     }
 
     /// `]`: forward a month, December wrapping to January.
@@ -110,16 +169,59 @@ impl RecurringGoals {
         self.visible.get(self.cursor.index()).map(|i| &self.all[*i])
     }
 
+    /// `Recurring Goals`, the month filter, and -- unfiltered only -- what
+    /// each cadence costs a year and a payday.
+    ///
+    /// A total is a fact about the whole list, so either filter drops both
+    /// totals rather than narrowing them: a figure over the visible rows
+    /// answers a question nobody asked, and one over all of them beside a
+    /// filter that hides most of them is worse.
     pub fn title(&self) -> String {
         let month = match self.month.selected() {
             None => "All".to_string(),
             Some(m) => super::month_name(m),
         };
-        let mut title = format!("Recurring Goals · {month} · {}", self.visible.len());
+        let mut title = format!("Recurring Goals · {month}");
         if !self.search().is_empty() {
-            title = format!("{title} · /{}", self.search());
+            return format!("{title} · /{}", self.search());
+        }
+        if self.month.selected().is_some() {
+            return title;
+        }
+        for total in &self.totals {
+            title = format!(
+                "{title} · ${} {} (${}/paycheck)",
+                crate::demo::whole_figure(total.cost),
+                adverb(total.cadence),
+                crate::demo::whole_figure(total.per_paycheck),
+            );
         }
         title
+    }
+}
+
+/// What one entry costs at the register: its base, or the base taxed.
+///
+/// The tolerant reading of [`crate::goal::target`], and tolerant for the
+/// reason the Savings screen's is -- a title cannot decline to draw itself
+/// over a rate the import has not written yet. Nothing here is spent, so a
+/// base standing in for a missing rate moves no money.
+fn target(row: &Row, rate: Option<BasisPoints>) -> Cents {
+    if !row.taxed {
+        return row.base_cents;
+    }
+    rate.and_then(|rate| crate::calc::tax(row.base_cents, rate).ok())
+        .unwrap_or(row.base_cents)
+}
+
+/// How often a cadence comes round, as the title's own adverb.
+///
+/// Not [`Cadence::as_str`], which is the value the column holds and the
+/// database stores: a title reads as a sentence and a table cell does not.
+fn adverb(cadence: Cadence) -> &'static str {
+    match cadence {
+        Cadence::Annual => "Annually",
+        Cadence::Biennial => "Biennially",
     }
 }
 
@@ -428,16 +530,19 @@ mod tests {
     /// month set to September — where `Dropbox` falls, and the only month of
     /// the four that `[` and `]` reach without stepping.
     fn screen() -> RecurringGoals {
-        let mut recurring_goal = RecurringGoals::new(9);
-        recurring_goal.set_entries(
-            vec![
-                entry(1, "Car Insurance", 3, Cadence::Annual),
-                entry(2, "Dropbox", 9, Cadence::Annual),
-                entry(3, "Backblaze", 11, Cadence::Biennial),
-                entry(4, "Lego", 12, Cadence::Annual),
-            ],
-            HashMap::from([(RecurringGoalId(1), 2), (RecurringGoalId(4), 1)]),
-        );
+        let mut recurring_goal = RecurringGoals::new(9, 26);
+        recurring_goal
+            .set_entries(
+                vec![
+                    entry(1, "Car Insurance", 3, Cadence::Annual),
+                    entry(2, "Dropbox", 9, Cadence::Annual),
+                    entry(3, "Backblaze", 11, Cadence::Biennial),
+                    entry(4, "Lego", 12, Cadence::Annual),
+                ],
+                HashMap::from([(RecurringGoalId(1), 2), (RecurringGoalId(4), 1)]),
+                None,
+            )
+            .unwrap();
         recurring_goal
     }
 
@@ -446,14 +551,16 @@ mod tests {
     /// apart. Dropbox carries three open goals, which is the tally a needle
     /// must *not* reach: no digit of either base is a `3`.
     fn priced() -> RecurringGoals {
-        let mut recurring_goal = RecurringGoals::new(9);
+        let mut recurring_goal = RecurringGoals::new(9, 26);
         let mut entries = vec![
             entry(1, "Car Insurance", 3, Cadence::Annual),
             entry(2, "Dropbox", 9, Cadence::Annual),
         ];
         entries[0].base_cents = Cents::from_dollars(1_240);
         entries[1].base_cents = Cents::from_dollars(96);
-        recurring_goal.set_entries(entries, HashMap::from([(RecurringGoalId(2), 3)]));
+        recurring_goal
+            .set_entries(entries, HashMap::from([(RecurringGoalId(2), 3)]), None)
+            .unwrap();
         recurring_goal
     }
 
@@ -515,10 +622,13 @@ mod tests {
         let mut recurring_goal = screen();
         recurring_goal.select_last();
 
-        recurring_goal.set_entries(
-            vec![entry(1, "Car Insurance", 3, Cadence::Annual)],
-            HashMap::new(),
-        );
+        recurring_goal
+            .set_entries(
+                vec![entry(1, "Car Insurance", 3, Cadence::Annual)],
+                HashMap::new(),
+                None,
+            )
+            .unwrap();
 
         assert_eq!(recurring_goal.selected_index(), 0);
         assert_eq!(
@@ -529,8 +639,10 @@ mod tests {
 
     #[test]
     fn an_empty_list_has_nothing_selected() {
-        let mut recurring_goal = RecurringGoals::new(9);
-        recurring_goal.set_entries(Vec::new(), HashMap::new());
+        let mut recurring_goal = RecurringGoals::new(9, 26);
+        recurring_goal
+            .set_entries(Vec::new(), HashMap::new(), None)
+            .unwrap();
         assert!(recurring_goal.rows().is_empty());
         assert!(recurring_goal.selected().is_none());
     }
@@ -641,20 +753,37 @@ mod tests {
         assert_eq!(recurring_goal.selected().unwrap().name, "Dropbox");
     }
 
+    /// The whole list's cost, by cadence, and what each comes to per payday
+    /// -- the question the screen exists to answer, which a count of rows the
+    /// reader can see for themselves does not.
+    ///
+    /// Three annual entries at $128 and one biennial: $384 over 26 paychecks
+    /// is $14.77 rounded up, and $128 over 52 is $2.46 rounded up.
     #[test]
-    fn the_title_names_the_filter_and_how_many_rows_it_left() {
-        let mut recurring_goal = september();
-        assert_eq!(recurring_goal.title(), "Recurring Goals · Sep · 1");
-
-        recurring_goal.clear_month();
-        assert_eq!(recurring_goal.title(), "Recurring Goals · All · 4");
-
-        recurring_goal.next_month();
-        assert_eq!(recurring_goal.title(), "Recurring Goals · Sep · 1");
+    fn the_unfiltered_title_totals_each_cadence_and_what_it_costs_per_paycheck() {
+        assert_eq!(
+            screen().title(),
+            "Recurring Goals · All · $384 Annually ($15/paycheck) · $128 Biennially ($3/paycheck)"
+        );
     }
 
-    /// Both filters, side by side, so the title says which of the two left
-    /// the count it quotes.
+    /// A total is a fact about the whole list, so a filtered title says
+    /// nothing rather than quoting a figure that answers a narrower question
+    /// than the one the reader is holding.
+    #[test]
+    fn a_filter_leaves_the_title_naming_only_the_filter() {
+        let mut recurring_goal = september();
+        assert_eq!(recurring_goal.title(), "Recurring Goals · Sep");
+
+        recurring_goal.clear_month();
+        assert!(recurring_goal.title().contains("Annually"));
+
+        recurring_goal.next_month();
+        assert_eq!(recurring_goal.title(), "Recurring Goals · Sep");
+    }
+
+    /// Both filters, side by side. A needle hides the totals as the month
+    /// filter does -- it narrows the same list.
     #[test]
     fn the_title_names_the_search_beside_the_month() {
         let mut recurring_goal = screen();
@@ -662,10 +791,73 @@ mod tests {
         for c in "dro".chars() {
             recurring_goal.push_search(c);
         }
-        assert_eq!(recurring_goal.title(), "Recurring Goals · All · 1 · /dro");
+        assert_eq!(recurring_goal.title(), "Recurring Goals · All · /dro");
 
         recurring_goal.next_month();
-        assert_eq!(recurring_goal.title(), "Recurring Goals · Sep · 1 · /dro");
+        assert_eq!(recurring_goal.title(), "Recurring Goals · Sep · /dro");
+    }
+
+    /// A cadence nothing is filed under is left out rather than drawn as a
+    /// zero: the title says what the year costs, and `$0 Biennially` is a
+    /// sentence about nothing.
+    #[test]
+    fn a_cadence_with_no_entries_is_left_out_of_the_title() {
+        let mut recurring_goal = RecurringGoals::new(9, 26);
+        recurring_goal
+            .set_entries(
+                vec![entry(1, "Car Insurance", 3, Cadence::Annual)],
+                HashMap::new(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            recurring_goal.title(),
+            "Recurring Goals · All · $128 Annually ($5/paycheck)"
+        );
+    }
+
+    #[test]
+    fn an_empty_list_leaves_the_title_with_nothing_to_total() {
+        let mut recurring_goal = RecurringGoals::new(9, 26);
+        recurring_goal
+            .set_entries(Vec::new(), HashMap::new(), None)
+            .unwrap();
+        assert_eq!(recurring_goal.title(), "Recurring Goals · All");
+    }
+
+    /// A taxed entry costs what it costs at the register, so the total is of
+    /// derived targets rather than of the bases the table draws -- the same
+    /// figure the form's `w/ tax` note shows.
+    #[test]
+    fn a_taxed_entry_totals_at_its_taxed_target() {
+        let mut recurring_goal = RecurringGoals::new(9, 26);
+        let mut taxed = entry(1, "Couch", 3, Cadence::Annual);
+        taxed.taxed = true;
+        recurring_goal
+            .set_entries(vec![taxed], HashMap::new(), Some(BasisPoints(625)))
+            .unwrap();
+        // 128 * 1.0625 = 136, and `calc::tax` rounds up to the dollar.
+        assert_eq!(
+            recurring_goal.title(),
+            "Recurring Goals · All · $136 Annually ($6/paycheck)"
+        );
+    }
+
+    /// A rate the import has not written yet must not take the title down --
+    /// the tolerant reading every screen makes, since a title cannot decline
+    /// to draw itself. The base is what a rate-less taxed entry counts as.
+    #[test]
+    fn a_taxed_entry_with_no_rate_on_record_totals_at_its_base() {
+        let mut recurring_goal = RecurringGoals::new(9, 26);
+        let mut taxed = entry(1, "Couch", 3, Cadence::Annual);
+        taxed.taxed = true;
+        recurring_goal
+            .set_entries(vec![taxed], HashMap::new(), None)
+            .unwrap();
+        assert_eq!(
+            recurring_goal.title(),
+            "Recurring Goals · All · $128 Annually ($5/paycheck)"
+        );
     }
 
     #[test]
@@ -1105,5 +1297,28 @@ mod tests {
         );
         assert_eq!(header[2], row[2], "Base over {:?}", lines[2]);
         assert_eq!(header[5], row[5], "Open over {:?}", lines[2]);
+    }
+
+    /// The title is the widest thing this screen draws, and a border truncates
+    /// rather than wrapping -- so a total the reader can only see half of is a
+    /// figure worse than no figure. Totals sized like a real year's, to leave
+    /// the room they actually need.
+    #[test]
+    fn the_totals_fit_the_minimum_width() {
+        let mut recurring_goal = RecurringGoals::new(9, 26);
+        let mut annual = entry(1, "Car Insurance", 3, Cadence::Annual);
+        annual.base_cents = Cents::from_dollars(64_000);
+        let mut biennial = entry(2, "Backblaze", 11, Cadence::Biennial);
+        biennial.base_cents = Cents::from_dollars(8_000);
+        recurring_goal
+            .set_entries(vec![annual, biennial], HashMap::new(), None)
+            .unwrap();
+
+        let title = recurring_goal.title();
+        assert_eq!(
+            title,
+            "Recurring Goals · All · $64,000 Annually ($2,462/paycheck) · $8,000 Biennially ($154/paycheck)"
+        );
+        assert!(drawn(&recurring_goal)[0].contains(&title), "{title}");
     }
 }

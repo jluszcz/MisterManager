@@ -261,8 +261,8 @@ impl App {
         self.recurring_goal.set_entries(
             recurring_goal::list(&self.db)?,
             recurring_goal::open_goal_counts(&self.db)?,
-        );
-        Ok(())
+            setting::get(&self.db, key::TAX_RATE)?,
+        )
     }
 
     /// `n`: the recurring goal, to create the next round of goals from.

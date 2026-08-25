@@ -33,11 +33,19 @@ date has passed, the remaining periods go zero or negative, and without the clam
 either blows up or hands back a negative set-aside. Clamped, the full remainder comes due now,
 which is the honest answer.
 
+**`per_paycheck_over_years` has no lambda behind it.** The recurring-goal block carries a month of
+the year and a cadence and no dates, so there is no runway for `PerPaycheck` to divide: the runway
+*is* the cadence — one round's cost spread over every paycheck before it comes round again. It is
+the Recurring Goals title's figure and nothing else's, so no money moves on it. `years` comes off a
+`Cadence` and is never zero; `periods_per_year` is the owner's setting and is clamped the way
+`Biweekly` clamps it.
+
 ## Rounding direction is not incidental
 
 Two directions, applied by role:
 
-- **Ceiling** wherever a *requirement* is computed — `tax`, `biweekly`, `per_paycheck`. Round up, so
+- **Ceiling** wherever a *requirement* is computed — `tax`, `biweekly`, `per_paycheck`,
+  `per_paycheck_over_years`. Round up, so
   the figure covers the thing it is sizing. Under-rounding a set-aside means missing the goal date.
 - **Floor** (`Cents::floor_to_dollar`) on every *transfer instruction* in `planning::compute`. You
   move whole dollars, and never more than you actually have.

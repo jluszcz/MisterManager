@@ -214,6 +214,19 @@ impl Savings {
         }
     }
 
+    /// The container, the month, the needle -- and what the goals still
+    /// showing come to each payday.
+    ///
+    /// **The figure follows every filter**, which is the opposite call the
+    /// Recurring Goals title makes and for the opposite reason: there a total
+    /// is a fact about the whole year, here it answers "what do *these* goals
+    /// cost me a paycheck", and narrowing to a container or a month is asking
+    /// that of the container or the month. It is the `$/Pay` column footed,
+    /// so it counts exactly what the column shows -- an undated goal has no
+    /// runway and a met one needs nothing, and neither carries a figure.
+    ///
+    /// Omitted rather than drawn as `$0` when no visible goal carries one at
+    /// all, for the reason the column draws an em dash instead of a zero.
     pub fn title(&self) -> Label {
         let mut title = match self.container {
             None => Label::plain("Savings · All"),
@@ -226,6 +239,13 @@ impl Savings {
         }
         if !self.search().is_empty() {
             title = title.text(format!(" · /{}", self.search()));
+        }
+        let per_paycheck: Cents = self.rows().iter().filter_map(|r| r.per_paycheck).sum();
+        if per_paycheck != Cents::ZERO {
+            title = title.text(format!(
+                " · ${}/paycheck",
+                crate::demo::whole_figure(per_paycheck)
+            ));
         }
         title
     }
@@ -671,11 +691,14 @@ mod tests {
     #[test]
     fn the_title_names_the_month_only_once_one_is_selected() {
         let mut savings = dated();
-        assert_eq!(savings.title().plain_text(), "Savings \u{b7} All");
+        assert_eq!(
+            savings.title().plain_text(),
+            "Savings \u{b7} All \u{b7} $228/paycheck"
+        );
         savings.next_month();
         assert_eq!(
             savings.title().plain_text(),
-            "Savings \u{b7} All \u{b7} Aug 2026"
+            "Savings \u{b7} All \u{b7} Aug 2026 \u{b7} $164/paycheck"
         );
     }
 
@@ -1472,12 +1495,76 @@ mod tests {
     #[test]
     fn the_title_names_the_container_filter_and_the_search() {
         let mut savings = savings();
-        assert_eq!(savings.title().plain_text(), "Savings · All");
+        assert_eq!(savings.title().plain_text(), "Savings · All · $83/paycheck");
         savings.next_container();
-        assert_eq!(savings.title().plain_text(), "Savings · Rainy Day");
+        assert_eq!(
+            savings.title().plain_text(),
+            "Savings · Rainy Day · $83/paycheck"
+        );
         savings.begin_search();
         savings.push_search('D');
-        assert_eq!(savings.title().plain_text(), "Savings · Rainy Day · /D");
+        assert_eq!(
+            savings.title().plain_text(),
+            "Savings · Rainy Day · /D · $75/paycheck"
+        );
+    }
+
+    /// The `$/Pay` column footed, and it follows every filter -- narrowing to
+    /// a container is asking what *that* container costs a payday.
+    ///
+    /// `Apple Watch` asks $8 and `Dropbox` $75 against the same date; the
+    /// other two carry no figure at all, one undated and one already met.
+    #[test]
+    fn the_title_foots_the_per_paycheck_column_over_the_visible_rows() {
+        let mut savings = savings();
+        assert_eq!(savings.title().plain_text(), "Savings · All · $83/paycheck");
+
+        savings.begin_search();
+        savings.push_search('D');
+        assert_eq!(names(&savings), vec!["Dropbox"]);
+        assert_eq!(
+            savings.title().plain_text(),
+            "Savings · All · /D · $75/paycheck"
+        );
+    }
+
+    /// The figure sits last in the title, past the filters, so a border that
+    /// ran out of room would truncate the one thing on the line that is a
+    /// figure. Every filter on at once, which is the widest this title gets.
+    #[test]
+    fn the_whole_title_fits_the_minimum_width() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut savings = dated();
+        savings.next_container();
+        savings.next_month();
+        savings.begin_search();
+        savings.push_search('a');
+        let title = savings.title().plain_text();
+        assert_eq!(title, "Savings · Rainy Day · Aug 2026 · /a · $14/paycheck");
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &savings);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let border: String = (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect();
+        assert!(border.contains(&title), "{border}");
+    }
+
+    /// An undated goal and a met one contribute nothing, so a filter leaving
+    /// only those says nothing rather than `$0/paycheck` -- the same call the
+    /// column makes when it draws an em dash instead of a zero.
+    #[test]
+    fn a_filter_leaving_no_goal_asking_for_anything_drops_the_figure() {
+        let mut savings = savings();
+        savings.next_container();
+        savings.next_container();
+        assert_eq!(names(&savings), vec!["Emergency Savings"]);
+        assert_eq!(savings.title().plain_text(), "Savings · Brokerage");
     }
 
     /// The container in the title is the same account the Account column

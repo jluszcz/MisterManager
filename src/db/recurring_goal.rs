@@ -18,6 +18,18 @@ pub enum Cadence {
 impl Cadence {
     pub const ALL: [Cadence; 2] = [Cadence::Annual, Cadence::Biennial];
 
+    /// How many years one round covers -- the divisor beside
+    /// `key::PAY_PERIODS_PER_YEAR` when a round's cost is spread over the
+    /// paychecks before it comes round again. On the cadence rather than
+    /// beside the screen that spreads it, for the reason [`Cadence`] is a
+    /// type at all: `biennial` means two years in one place.
+    pub fn years(self) -> i64 {
+        match self {
+            Cadence::Annual => 1,
+            Cadence::Biennial => 2,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Cadence::Annual => "annual",

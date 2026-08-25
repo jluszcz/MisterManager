@@ -52,6 +52,21 @@ pub fn per_paycheck(
     )))
 }
 
+/// What to set aside each payday for a cost that comes round every `years`
+/// years, rounded up to a whole dollar.
+///
+/// The Recurring Goals screen's title: an entry carries a month and a cadence
+/// rather than a date, so there is no runway for [`per_paycheck`] to divide.
+/// The runway is the cadence itself -- one round's cost spread over every
+/// paycheck before it comes round again.
+///
+/// `years` comes off a `Cadence` and so is never zero; `periods_per_year` is
+/// a user-editable setting and is clamped the way [`biweekly`] clamps it.
+pub fn per_paycheck_over_years(total: Cents, periods_per_year: i64, years: i64) -> Result<Cents> {
+    let periods = periods_per_year.max(1) * years;
+    Ok(Cents(super::div_ceil(total.0, periods * 100)? * 100))
+}
+
 /// Fit a set of per-paycheck asks into the money there is.
 ///
 /// Under-subscribed, every ask is met in full and the difference is left over
@@ -231,6 +246,33 @@ mod tests {
     #[test]
     fn biweekly_tolerates_zero_periods_per_year() {
         assert!(biweekly(Cents::from_dollars(100), 0).is_ok());
+    }
+
+    /// An annual cost is spread over one year's paychecks and a biennial one
+    /// over two, both rounded up to a whole dollar.
+    #[test]
+    fn per_paycheck_over_years_spreads_a_round_over_the_paychecks_before_the_next_one() {
+        let d = Cents::from_dollars;
+        assert_eq!(per_paycheck_over_years(d(2_600), 26, 1).unwrap(), d(100));
+        assert_eq!(per_paycheck_over_years(d(2_600), 26, 2).unwrap(), d(50));
+    }
+
+    /// Rounded up rather than to nearest, the way every other figure the
+    /// paycheck lambdas produce is: a cent short each payday is a round the
+    /// last paycheck cannot cover.
+    #[test]
+    fn per_paycheck_over_years_rounds_a_remainder_up_to_a_whole_dollar() {
+        let d = Cents::from_dollars;
+        assert_eq!(per_paycheck_over_years(d(26), 26, 1).unwrap(), d(1));
+        assert_eq!(per_paycheck_over_years(Cents(2_601), 26, 1).unwrap(), d(2));
+    }
+
+    /// Same clamp, same reason as `biweekly`'s: `periods_per_year` is the
+    /// owner's setting, and a `0` must not surface `div_ceil`'s error into a
+    /// screen title.
+    #[test]
+    fn per_paycheck_over_years_tolerates_zero_periods_per_year() {
+        assert!(per_paycheck_over_years(Cents::from_dollars(100), 0, 2).is_ok());
     }
 
     #[test]
