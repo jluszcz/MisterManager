@@ -176,6 +176,8 @@ pub(super) enum Topic {
     LedgerSearch,
     /// `/` on the Savings screen.
     SavingsSearch,
+    /// `/` on the Recurring Goals screen.
+    RecurringGoalsSearch,
     /// `/` then a non-digit inside a worksheet.
     WorksheetSearch,
     /// `/` inside the destination list.
@@ -459,14 +461,18 @@ const RECURRING_TXNS: [Entry; 7] = [
     },
 ];
 
-const RECURRING_GOALS: [Entry; 6] = [
+const RECURRING_GOALS: [Entry; 7] = [
     Entry::filter(
         MONTH_FILTER,
         "Step the month filter. Entries carry a month and no date, so the cycle is the calendar: December wraps to January. The screen opens on All, and the first step enters at this month.",
     ),
     Entry::filter(
         CLEAR_FILTER,
-        "Return to All. The next step re-enters at this month rather than the one you left.",
+        "Clear a kept search if one is narrowing the list; otherwise return to All. The next month step re-enters at this month rather than the one you left.",
+    ),
+    Entry::filter(
+        SEARCH_FILTER,
+        "Filter entries by name or base as you type -- 128 finds an entry at $128.00. The month is [ ]'s already, and the Open tally is not searched. Enter keeps the filter and leaves the box; Esc clears it.",
     ),
     Entry {
         key: "a",
@@ -852,6 +858,7 @@ impl Topic {
             Topic::Accounts => &ACCOUNTS,
             Topic::LedgerSearch
             | Topic::SavingsSearch
+            | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch => &SEARCH,
             Topic::Destination => &DESTINATION,
@@ -878,6 +885,7 @@ impl Topic {
             Topic::Accounts => "Accounts",
             Topic::LedgerSearch => "Ledger search",
             Topic::SavingsSearch => "Savings search",
+            Topic::RecurringGoalsSearch => "Recurring Goals search",
             Topic::WorksheetSearch => "Worksheet search",
             Topic::DestinationSearch => "Destination search",
             Topic::Destination => "Where a line lands",
@@ -898,7 +906,7 @@ impl Topic {
     /// `modal_key` above the `q` and `1-9` arms, so every modal makes both
     /// dead: a digit typed into a worksheet's `/` box is part of the needle,
     /// a `q` under a confirm dialog is one of the "any key" that cancels it,
-    /// and a form takes both as text. The two screen-level search boxes are
+    /// and a form takes both as text. The screen-level search boxes are
     /// the same case one layer up. Naming a key that does nothing is worse
     /// than naming none: `q quit` under an unanswered question reads as a way
     /// out of it.
@@ -918,6 +926,7 @@ impl Topic {
             | Topic::Accounts => true,
             Topic::LedgerSearch
             | Topic::SavingsSearch
+            | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch
             | Topic::Worksheet
@@ -946,6 +955,7 @@ impl Topic {
             | Topic::SuggestForm
             | Topic::LedgerSearch
             | Topic::SavingsSearch
+            | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch => true,
             Topic::Overview
@@ -983,6 +993,7 @@ impl Topic {
             | Topic::SuggestForm
             | Topic::LedgerSearch
             | Topic::SavingsSearch
+            | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch
             | Topic::Worksheet
@@ -1235,7 +1246,7 @@ mod tests {
 
     /// Every topic there is. `SCREENS` stays separate because only those eight
     /// join a footer.
-    const ALL: [Topic; 20] = [
+    const ALL: [Topic; 21] = [
         Topic::Overview,
         Topic::Ledger,
         Topic::Savings,
@@ -1246,6 +1257,7 @@ mod tests {
         Topic::Accounts,
         Topic::LedgerSearch,
         Topic::SavingsSearch,
+        Topic::RecurringGoalsSearch,
         Topic::WorksheetSearch,
         Topic::DestinationSearch,
         Topic::Worksheet,
@@ -1409,7 +1421,7 @@ mod tests {
         );
         assert_eq!(
             Topic::RecurringGoals.footer(),
-            "[ ] month · Esc clear · a add · e edit · d delete · s savings"
+            "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings"
         );
         assert_eq!(Topic::Accounts.footer(), "a add · e edit");
     }

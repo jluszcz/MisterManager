@@ -78,7 +78,7 @@ the screen's own, not `q quit`.
 Who *shows* it is a separate question, and the rule is that the chrome appears only where `dispatch`
 actually answers those two keys. `Topic::answers_app_wide_keys` states it — the eight screens, and
 nothing else — and `App::footer_chrome` asks it through `App::topic`, so one question covers every
-modal and all four search boxes rather than a list of screens re-derived at the call site. That
+modal and all five search boxes rather than a list of screens re-derived at the call site. That
 `dispatch` returns into `modal_key` *above* its `q` and `1-9` arms is what makes the answer false
 under a modal: a digit typed into a worksheet's `/` box is part of the needle, a `q` under a confirm
 dialog is one of the "any key" that cancels it, and naming a key that does nothing is worse than
@@ -168,9 +168,9 @@ choice, and the plumbing stays visibly plumbing. `help` is where the screen foot
 so a footer cannot drift from the panel that explains it; modal border titles are still written
 where they are drawn. `cursor` answers the scroll keys for every list at once, `text` is the line
 of text under the caret and the keys that edit one — every box in the app is one — and `search` is
-the `/` box the ledgers, Savings, the worksheet and the destination chooser share: the box, its
-keys, and `Matcher`, which is what a needle *means* on all four. What every screen
-shares lives in `tui/mod.rs`, not in whichever screen needed it first.
+the `/` box the ledgers, Savings, Recurring Goals, the worksheet and the destination chooser
+share: the box, its keys, and `Matcher`, which is what a needle *means* on all five. What every
+screen shares lives in `tui/mod.rs`, not in whichever screen needed it first.
 
 `app` is a directory rather than a file, and it is split the same way this section reads: one
 module per screen — `app/ledger.rs`, `app/savings.rs`, `app/planning.rs`, `app/worksheet.rs`,
@@ -377,7 +377,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   field read as though a space had been typed into it. `value_spans` splits the one span the caret
   falls in and patches `form::caret_style()` onto that character, keeping the span's own style
   underneath — so an account keeps its colour with the caret in the middle of it, swapped into the
-  background. Every box goes through it: a form's field, both search footers, the destination
+  background. Every box goes through it: a form's field, every search footer, the destination
   title, and the worksheet's date.
   - **At the end of a line the caret sits on the space past it,** which is the one place it costs a
     column, and where a terminal's own cursor sits too. A **selector** draws it there always: its
@@ -1164,7 +1164,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     first rather than with them: while the box is open `Esc` is the box's, the one
     `search::search_key` answers on every screen that has one, and once `Enter` has left the box
     the needle is still narrowing the list — `search::escape_kept_filter` clears it before these
-    two. That is the same order on all four `/` screens, so Savings is not the odd one out either
+    two. That is the same order on all five `/` screens, so Savings is not the odd one out either
     way.
   - **A goal with no date belongs to no month**, so any month filter drops it and All is the only
     place it appears. That is what the filter is *for*, not an edge case.
@@ -1239,7 +1239,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   The worksheet is the one screen that overrides anything else: `/` is two keys there, so opening
   the box also spends the pending slash that `/N` would have used.
 - **`Esc` clears a kept filter before it means anything else**, through `search::escape_kept_filter`
-  in each of the four screens' own `Esc` arms. `Enter` leaves the box and keeps the needle, so
+  in each of the five screens' own `Esc` arms. `Enter` leaves the box and keeps the needle, so
   without this the only way back to the whole list is to open the box again and close it the other
   way -- the one route nothing on screen suggests. It is the vocabulary's "innermost thing" read
   literally: the needle first, then the screen's own filter (a ledger's account and window, Savings'
@@ -1261,6 +1261,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     stale rows.
   - A ledger offers the amount **as stored**, so Credit's debt-positive figures match the column
     above them.
+  - Recurring Goals offers the **base**. The month is `[`/`]`'s already, and the `Open` column is a
+    tally of the goals made from an entry rather than a figure the entry carries.
   - The destination chooser offers none. What is being chosen is a goal by identity, and the
     amount that will land on it is the waterfall's rather than the goal's.
 - **Every `/` screen filters in memory, the Ledger included.** Its rows come out of SQL, but

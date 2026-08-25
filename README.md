@@ -120,9 +120,10 @@ date the schedule no longer produces — the mortgage moved by hand from the
 ticked one as a goal in the container the Savings screen's `Tab` names, all in
 one transaction. It opens showing every entry; the first `[` or `]` narrows it
 to the current month, and from there they step through the calendar — entries
-carry a month of the year and no date, so December wraps to January. `Esc`
-shows every entry again. Most months hold nothing, so an empty table there is
-the answer rather than a fault.
+carry a month of the year and no date, so December wraps to January. `/`
+searches names and bases, the same box the ledgers and Savings open, and `Esc`
+clears a kept search before it shows every entry again. Most months hold
+nothing, so an empty table there is the answer rather than a fault.
 
 The month filter is also what `s` ticks: whatever the screen is showing opens
 already selected and sorted to the top, so the entries about to be created are

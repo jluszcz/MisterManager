@@ -280,8 +280,8 @@ fn add_share(shares: &mut Vec<(GoalId, Cents)>, goal: GoalId, amount: Cents) {
 /// The footer a screen shows while its `/` box is open: the needle with the
 /// caret on it, and what the two keys leaving the box do.
 ///
-/// One function for both screen-level boxes, for the reason `search_key`
-/// answers both: a box that said this in its own words could come to say
+/// One function for every screen-level box, for the reason `search_key`
+/// answers them all: a box that said this in its own words could come to say
 /// something else.
 fn search_footer(target: &impl Search) -> TextLine<'static> {
     let mut spans = vec![Span::raw("/")];
@@ -436,7 +436,7 @@ impl App {
         if self.modal.is_some() {
             return self.modal_key(key);
         }
-        // Both boxes narrow a list already in memory, so a keystroke is the
+        // Every box narrows a list already in memory, so a keystroke is the
         // screen's own `refilter` and nothing else -- no re-query, and no
         // handler of their own to hold the difference that used to be here.
         match self.screen {
@@ -446,6 +446,10 @@ impl App {
             }
             Screen::Savings if self.savings.is_searching() => {
                 search::search_key(&mut self.savings, key);
+                return Ok(());
+            }
+            Screen::RecurringGoals if self.recurring_goal.is_searching() => {
+                search::search_key(&mut self.recurring_goal, key);
                 return Ok(());
             }
             _ => {}
@@ -621,8 +625,8 @@ impl App {
     ///
     /// Joined from `help::Topic` rather than written here, so a key cannot
     /// appear in the footer with one name and in the Help panel with another.
-    /// Two cases stay hand-written because they are not key lists: both search
-    /// boxes echo what has been typed.
+    /// The search boxes stay hand-written because they are not key lists: each
+    /// echoes what has been typed.
     ///
     /// A `match` over the screen, guarded the way [`App::topic`] is, so a ninth
     /// screen is a compile error here rather than a footer that silently reads
@@ -657,6 +661,9 @@ impl App {
                 false => Topic::Funds.footer(),
             }),
             Screen::RecurringTxns => TextLine::from(Topic::RecurringTxns.footer()),
+            Screen::RecurringGoals if self.recurring_goal.is_searching() => {
+                search_footer(&self.recurring_goal)
+            }
             Screen::RecurringGoals => TextLine::from(Topic::RecurringGoals.footer()),
             Screen::Accounts => TextLine::from(Topic::Accounts.footer()),
         }
@@ -668,7 +675,7 @@ impl App {
     /// Three things withhold them, and the first two are the same rule: show
     /// them only where `dispatch` answers them. `Topic::answers_app_wide_keys`
     /// is that rule, and `App::topic` is what resolves the context, so a modal
-    /// and the two screen-level search boxes are covered by one question
+    /// and the screen-level search boxes are covered by one question
     /// rather than a list of screens re-derived here. The open Help panel is
     /// the third: it is not a `Topic` -- `dispatch` returns into `help_key`
     /// above everything, which takes Esc and the scroll keys and drops the
@@ -712,6 +719,9 @@ impl App {
             Screen::Planning => Topic::Planning,
             Screen::Funds => Topic::Funds,
             Screen::RecurringTxns => Topic::RecurringTxns,
+            Screen::RecurringGoals if self.recurring_goal.is_searching() => {
+                Topic::RecurringGoalsSearch
+            }
             Screen::RecurringGoals => Topic::RecurringGoals,
             Screen::Accounts => Topic::Accounts,
         }
@@ -1999,7 +2009,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '7'),
-            "[ ] month · Esc clear · a add · e edit · d delete · s savings"
+            "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings"
         );
         assert_eq!(
             footer_of(&mut app, '8'),
@@ -2445,7 +2455,10 @@ mod tests {
             ),
             (Topic::Funds, &["a", "e", "E", "d"]),
             (Topic::RecurringTxns, &["a", "e", "d", "g", "G", "x", "P"]),
-            (Topic::RecurringGoals, &["[ ]", "Esc", "a", "e", "d", "s"]),
+            (
+                Topic::RecurringGoals,
+                &["[ ]", "Esc", "/", "a", "e", "d", "s"],
+            ),
             (Topic::Accounts, &["a", "e"]),
         ];
         assert_documented(&handlers);
@@ -2500,14 +2513,14 @@ mod tests {
     }
 
     /// The same check for the contexts a screen key cannot reach: the two modals
-    /// with a cursor, the confirm dialogs, the two field forms, the three
+    /// with a cursor, the confirm dialogs, the two field forms, the four
     /// search boxes, and the transfer-confirmation dialog.
     ///
     /// Written by reading the `match` arms of `worksheet_key`, `picker_key`,
     /// `destination_key`, `form_key` -- with `popup_key`, which it delegates to --
     /// `modal_key`'s confirm arms and its `Modal::PlanTransfers` arm, and the
-    /// three `search::search_key` calls: the two branches `dispatch` opens with
-    /// and the one `destination_key` does. Three families of arm are
+    /// four `search::search_key` calls: the three branches `dispatch` opens
+    /// with and the one `destination_key` does. Three families of arm are
     /// deliberately not listed:
     ///
     /// - the six scroll keys, which `cursor::scroll_key` answers uniformly on
@@ -2519,7 +2532,7 @@ mod tests {
     ///   same text-editing mechanics as typing into a form or a search box, and
     ///   the panel does not spend a row on either. Backspace keeps its own
     ///   entry everywhere else it appears -- the two field-form topics, the
-    ///   three search topics, and the transfer confirmation -- where it is a
+    ///   four search topics, and the transfer confirmation -- where it is a
     ///   named, explained key rather than typing. The `Ctrl` editing keys those
     ///   same catch-alls now carry into `text::edit_key` *are* listed, under
     ///   `help::EDITING`'s one key string: eight keys nobody would guess from
@@ -2530,7 +2543,7 @@ mod tests {
     ///   cancels.
     #[test]
     fn every_key_a_modal_handler_matches_appears_in_its_table() {
-        let handlers: [(Topic, &[&str]); 11] = [
+        let handlers: [(Topic, &[&str]); 12] = [
             (
                 Topic::Worksheet,
                 &[
@@ -2592,6 +2605,10 @@ mod tests {
             ),
             (
                 Topic::SavingsSearch,
+                &["Ctrl+A/E/B/F/W/U/K/D", "Enter", "Esc", "Backspace", "F1"],
+            ),
+            (
+                Topic::RecurringGoalsSearch,
                 &["Ctrl+A/E/B/F/W/U/K/D", "Enter", "Esc", "Backspace", "F1"],
             ),
             (
