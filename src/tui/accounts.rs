@@ -31,6 +31,18 @@ use anyhow::{Result, ensure};
 /// codes by the column, so widening it is what makes room for a longer one.
 const CODE_WIDTH: u16 = 8;
 
+/// What an account-less screen says, which is a list of the ways out of it.
+///
+/// The import is one of them only where the build has one: `mm import` is
+/// behind the `import` feature, so a default build naming it would send the
+/// owner to a subcommand its own binary refuses -- and this is the first
+/// screen a fresh database opens on, so it is the first thing that owner
+/// reads. `a` is the way out either build has.
+#[cfg(feature = "import")]
+const EMPTY: &str = "no accounts yet — press a, or run mm import";
+#[cfg(not(feature = "import"))]
+const EMPTY: &str = "no accounts yet — press a";
+
 /// One account as the screen shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
@@ -570,10 +582,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
         // the one `Min` column, and the only one wide enough to hold a
         // sentence. A single cell would sit in `Code` and be cut to
         // `CODE_WIDTH`, which is a message that reports its own truncation.
-        rows.push(TableRow::new(vec![
-            Cell::from(""),
-            Cell::from("no accounts yet — press a, or run mm import"),
-        ]));
+        rows.push(TableRow::new(vec![Cell::from(""), Cell::from(EMPTY)]));
     }
 
     let header = TableRow::new(vec![
@@ -882,17 +891,32 @@ mod tests {
     }
 
     /// An empty screen is what a database before its first import looks
-    /// like, and there are two ways out of it now: the import that names
-    /// every account the workbook carries, and `a` for one it does not.
-    /// Naming only the import would send an owner to a workbook they may not
-    /// have.
+    /// like, and `a` is the way out of it that every build has: the account
+    /// the workbook does not name. Naming only the import would send an owner
+    /// to a workbook they may not have.
     #[test]
-    fn an_empty_screen_names_both_ways_out_of_it() {
+    fn an_empty_screen_always_names_the_key_that_leaves_it() {
         let mut accounts = Accounts::new();
         accounts.set_rows(Vec::new());
         let drawn = drawn(&accounts).join("\n");
-        assert!(drawn.contains("mm import"), "{drawn}");
         assert!(drawn.contains("press a"), "{drawn}");
+    }
+
+    /// The second way out is the import, and it is offered only by a build
+    /// that has one. The `not` half is the half worth pinning: a default
+    /// build has no `mm import` subcommand, so naming it here would hand a
+    /// fresh owner a command their own binary answers with `unrecognized
+    /// subcommand`.
+    #[test]
+    fn an_empty_screen_names_the_import_only_where_there_is_one() {
+        let mut accounts = Accounts::new();
+        accounts.set_rows(Vec::new());
+        let drawn = drawn(&accounts).join("\n");
+        assert_eq!(
+            drawn.contains("mm import"),
+            cfg!(feature = "import"),
+            "{drawn}"
+        );
     }
 
     fn drawn(accounts: &Accounts) -> Vec<String> {

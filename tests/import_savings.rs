@@ -1,3 +1,8 @@
+//! Needs the `import` feature: the workbook is what these assert against, and
+//! the importer is what puts it in a database. Without it the file compiles to
+//! nothing rather than failing to build.
+#![cfg(feature = "import")]
+
 mod common;
 
 use common::{container, imported, sheet_cents, workbook, workbook_today};

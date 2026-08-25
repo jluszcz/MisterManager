@@ -194,10 +194,19 @@ fn apply(conn: &Connection, schema: &str, chain: &[Migration]) -> Result<()> {
         return Ok(());
     }
     if current > head {
+        // The rebuild is a way out only where the build has an importer, and
+        // this is the one path where the owner is already stuck: handing them
+        // `mm import` on a build whose binary has no such subcommand spends
+        // the only instruction they get on a command that cannot run.
+        #[cfg(feature = "import")]
+        const REBUILD: &str = "delete the file and re-run `mm import <workbook>`";
+        #[cfg(not(feature = "import"))]
+        const REBUILD: &str =
+            "delete the file and rebuild it with a build carrying the `import` feature";
         anyhow::bail!(
             "database is at schema version {current}, newer than this build ({head}); \
-             open it with the build that wrote it, or delete the file and re-run \
-             `mm import <workbook>`, then re-enter the recurring transactions"
+             open it with the build that wrote it, or {REBUILD}, then re-enter the \
+             recurring transactions"
         );
     }
     let tx = conn.unchecked_transaction()?;

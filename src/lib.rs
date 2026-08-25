@@ -8,6 +8,9 @@ pub mod description;
 pub mod fund;
 pub mod gate;
 pub mod goal;
+/// The workbook importer. Behind the `import` feature, which is what makes
+/// `calamine` an optional dependency: this is the only module that names it.
+#[cfg(feature = "import")]
 pub mod import;
 pub mod money;
 pub mod overview;

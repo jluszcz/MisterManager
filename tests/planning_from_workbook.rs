@@ -1,3 +1,8 @@
+//! Needs the `import` feature: the workbook is what these assert against, and
+//! the importer is what puts it in a database. Without it the file compiles to
+//! nothing rather than failing to build.
+#![cfg(feature = "import")]
+
 use chrono::NaiveDate;
 use mistermanager::calc::planning;
 use mistermanager::db::bill;
