@@ -1136,6 +1136,13 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     figure, so both forms that edit a base answer the same question in the same words. This form asks
     nothing about the rate — an entry writes no goal, and it is `App::commit_picker`, the picker that
     turns a taxed entry into one, that refuses when no rate is on record.
+- **`$/Pay` divides a runway by the pay cadence, and the cadence arrives per reload.**
+  `Savings::set_goals` takes `periods_per_year` beside its goals, the way
+  `RecurringGoals::set_entries` takes it beside the tax rate and for the same reason: it is
+  `Target::PeriodsPerYear` on the Planning screen, whose commit reloads this one, and a copy held
+  on the screen would leave the column quoting the cadence the app opened with. `App` holds no copy
+  either -- `App::periods_per_year` reads it. The days between two paydays are
+  `calc::period_days` of that count rather than a setting of their own; see the root `CLAUDE.md`.
 - **The Savings title foots the `$/Pay` column, and the figure follows every filter.** `Savings ·
   Rainy Day · Aug 2026 · /a · $14/paycheck` — the sum over the *visible* rows, so `Tab`, `[`/`]`
   and `/` all move it. That is the opposite call the Recurring Goals title below makes, and for
@@ -1157,7 +1164,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   over all of them beside a filter hiding most of them is worse. `RecurringGoals::set_entries`
   derives them where the entries arrive rather than in `title`, because the spread through
   `calc::per_paycheck_over_years` can fail on a nonsense `PAY_PERIODS_PER_YEAR` and a border title
-  has no way to report it.
+  has no way to report it. **The rate and that pay-period count are both arguments to that call,
+  not fields on the screen**, for the reason each modal re-reads the rate when it opens: they are
+  the owner's settings, and either can move under the screen -- the rate re-imported, the count
+  typed into `Target::PeriodsPerYear` on Planning, whose commit reloads this screen along with
+  every other. A count held from startup would go on dividing by the figure the app opened with
+  while the Planning waterfall and every other per-paycheck figure used the new one.
 - **Creating one goal and creating goals from recurring entries are different keys on different
   screens.** `n` on Savings is a goal typed from scratch — `a` there is the allocation the screen is
   mostly used for, so the add takes another letter. `s` on Recurring Goals opens the picker: goals

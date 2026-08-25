@@ -65,6 +65,13 @@ re-running the pass is a no-op rather than an `account_code_kind` failure.
 are also fractions in the sheet but become `Percent` (×100). Two scalings, two types, so a value
 cannot be read at one scale and used at the other.
 
+**`H2` is read by nothing.** The pay cadence is one fact and the sheet states it twice — a count in
+`G2` and a length in `H2` — so only the count is imported, and `calc::period_days` derives the
+length from it. Two cells can disagree, and a database holding `26` beside `15` would count every
+goal's runway in a cadence the owner never worked: `26 / 14` is the pairing, and nothing in the
+sheet enforces it. `tests/import_constants.rs` asserts the derivation against `H2` all the same,
+which is what would catch a workbook where the two have come apart.
+
 ### `Cash` and `Credit` → `txn`
 
 `A=Date, B=Amount, C=Acct, D=Description`, header in row 1. One shape, two sign conventions: cash

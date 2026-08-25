@@ -190,7 +190,9 @@ fn per_paycheck_reproduces_the_sheets_column_f() {
         return;
     };
     let today = workbook_today(&mut sheets);
-    let period_days = setting::get(&db, key::PAY_PERIOD_DAYS).unwrap().unwrap();
+    let periods_per_year = setting::get(&db, key::PAY_PERIODS_PER_YEAR)
+        .unwrap()
+        .unwrap();
     let sheet = import::sheet(&mut sheets, "Savings").unwrap();
     // Through the policy module rather than `db::goal`, so the figure fed to
     // `per_paycheck` is the derived target every screen actually shows --
@@ -219,7 +221,7 @@ fn per_paycheck_reproduces_the_sheets_column_f() {
             g.target,
             g.goal.goal_date,
             today,
-            period_days,
+            periods_per_year,
         )
         .unwrap();
         assert_eq!(

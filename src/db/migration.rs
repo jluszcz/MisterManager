@@ -144,6 +144,25 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // renamed, and only the owner knows which.
         data: None,
     },
+    Migration {
+        version: 6,
+        // `pay.period_days` is retired: the days between two paydays are
+        // derived from `pay.periods_per_year` by `calc::period_days`, so the
+        // sheet's `Constants!H2` is no longer read and nothing asks this key
+        // anything. A retired key is a row holding an answer to a question
+        // that is no longer put, and the two could disagree -- which is the
+        // whole reason one of them went.
+        //
+        // An arm rather than left to `--replace`, which does clear `setting`:
+        // an owner who never replaces would keep the row indefinitely, and
+        // "it goes away next time you re-import" is not when a fact stops
+        // being stored.
+        sql: "DELETE FROM setting WHERE key = 'pay.period_days'",
+        // The delete is the whole arm. A database that never held the key --
+        // a fresh install replaying the chain -- deletes no rows and is
+        // exactly where it should be.
+        data: None,
+    },
 ];
 
 /// The version this build's chain leaves a database at.
@@ -252,6 +271,42 @@ mod tests {
             .unwrap();
         let found = stmt.query_map([], |r| r.get(0)).unwrap();
         found.collect::<rusqlite::Result<Vec<String>>>().unwrap()
+    }
+
+    /// The first arm with rows of its own to put right, so the first that can
+    /// be wrong about an existing database rather than only about a fresh one.
+    /// Driven through the real baseline and the real chain: the database is
+    /// brought to the version just below the arm, given the row an owner's
+    /// database would be holding, and then taken the rest of the way.
+    ///
+    /// Found by version rather than by index, so appending arm 7 does not
+    /// quietly turn this into a test of arm 6 and 7 together.
+    #[test]
+    fn the_arm_retiring_pay_period_days_clears_it_from_an_existing_database() {
+        const RETIRED_AT: i64 = 6;
+        let at = MIGRATIONS
+            .iter()
+            .position(|arm| arm.version == RETIRED_AT)
+            .expect("the arm that retires pay.period_days");
+
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn, SCHEMA, &MIGRATIONS[..at]).unwrap();
+        conn.execute(
+            "INSERT INTO setting (key, value) VALUES ('pay.period_days', '14')",
+            [],
+        )
+        .unwrap();
+
+        apply(&conn, SCHEMA, MIGRATIONS).unwrap();
+
+        let left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM setting WHERE key = 'pay.period_days'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0, "the retired key outlived the arm that retires it");
     }
 
     /// An empty file is the one version that is not "some other schema", and

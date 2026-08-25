@@ -56,8 +56,10 @@ impl App {
     /// goal with no rate on record would otherwise stop the application
     /// starting, and the rate is set from inside it.
     pub(super) fn reload_savings(&mut self) -> Result<()> {
-        self.savings
-            .set_goals(goal_engine::all_with_balances(&self.db, Reading::Tolerant)?)?;
+        self.savings.set_goals(
+            goal_engine::all_with_balances(&self.db, Reading::Tolerant)?,
+            self.periods_per_year()?,
+        )?;
         let excess = crate::savings::containers_with_excess(&self.db)?;
         let containers = excess.iter().map(|(id, _)| *id).collect();
         self.savings.set_containers(containers);
@@ -307,8 +309,36 @@ mod tests {
     use crate::tui::goal_form;
     use crate::tui::goal_form::GoalTarget;
     use crate::tui::modal::Modal;
+    use crate::tui::planning::Target;
     use crate::tui::search::Search;
     use ratatui::crossterm::event::KeyCode;
+
+    /// `PAY_PERIODS_PER_YEAR` is the only thing `$/Pay` divides a runway by,
+    /// it is editable on the Planning screen, and that commit reloads this
+    /// one -- so the column follows the setting rather than the cadence the
+    /// app opened with. The other half of the same read is the Recurring
+    /// Goals title, which
+    /// `editing_the_pay_period_count_moves_the_recurring_goals_title` pins.
+    #[test]
+    fn editing_the_pay_period_count_moves_the_savings_per_paycheck_column() {
+        let mut app = app();
+        let ask = |app: &App| {
+            app.savings
+                .rows()
+                .iter()
+                .find(|r| r.name == "Vacation 2027")
+                .expect("the fixture's one dated goal")
+                .per_paycheck
+        };
+        // $5,000 short, 139 days of runway: ten fortnights, five months.
+        assert_eq!(ask(&app), Some(Cents::from_dollars(500)));
+
+        Target::PeriodsPerYear
+            .write(&app.db, today(), "12")
+            .unwrap();
+        app.reload().unwrap();
+        assert_eq!(ask(&app), Some(Cents::from_dollars(1_000)));
+    }
 
     /// One container holding three undated goals and one dated, for the
     /// manual order `K` and `J` move things around in.

@@ -98,10 +98,19 @@ fn the_constants_settings_are_the_sheets_own_cells() {
         import::cell::as_i64(&at(1, 6)),
         "Constants!G2"
     );
+    // `Constants!H2` is no longer a setting: the days between two paydays are
+    // `calc::period_days` of the count in `G2`. Asserted against the cell all
+    // the same, and this is the assertion that holds the derivation to the
+    // sheet it replaced -- a workbook whose two cells disagree fails here,
+    // rather than quietly counting every deadline's runway in a cadence the
+    // owner never used.
+    let periods = setting::get(&db, key::PAY_PERIODS_PER_YEAR)
+        .unwrap()
+        .unwrap();
     assert_eq!(
-        setting::get(&db, key::PAY_PERIOD_DAYS).unwrap(),
+        Some(mistermanager::calc::period_days(periods)),
         import::cell::as_i64(&at(1, 7)),
-        "Constants!H2"
+        "Constants!H2 is calc::period_days of Constants!G2"
     );
 
     // Sanity: the rate that arrived is a rate, not a fraction stored at the

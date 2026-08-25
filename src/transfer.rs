@@ -104,11 +104,11 @@ pub fn spread_goals(db: &Db, reading: Reading) -> Result<Vec<Goal>> {
 /// A goal with nothing to ask -- undated, or already at its target -- comes
 /// back at zero rather than dropping out: it is in the set, and `fit` reads
 /// a zero ask as "hand this one nothing".
-pub fn spread_asks(db: &Db, today: NaiveDate, period_days: i64) -> Result<Vec<(Goal, Cents)>> {
+pub fn spread_asks(db: &Db, today: NaiveDate, periods_per_year: i64) -> Result<Vec<(Goal, Cents)>> {
     let unclaimed = unclaimed_with_balances(db, Reading::Strict)?;
     let mut priced = Vec::new();
     for funding in shares_of(&unclaimed) {
-        let ask = crate::savings::paycheck_ask(funding, today, period_days)?;
+        let ask = crate::savings::paycheck_ask(funding, today, periods_per_year)?;
         priced.push((funding.goal.clone(), ask.unwrap_or(Cents::ZERO)));
     }
     Ok(priced)
@@ -1036,7 +1036,7 @@ mod tests {
         )
         .unwrap();
 
-        let priced: Vec<(String, Cents)> = spread_asks(&db, day(2026, 8, 22), 14)
+        let priced: Vec<(String, Cents)> = spread_asks(&db, day(2026, 8, 22), 26)
             .unwrap()
             .into_iter()
             .map(|(g, ask)| (g.name, ask))

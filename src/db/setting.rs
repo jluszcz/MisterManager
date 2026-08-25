@@ -201,10 +201,11 @@ pub mod key {
 
     /// `Constants!E2`.
     pub const TAX_RATE: Key<BasisPoints> = Key::new("tax.rate_bp");
-    /// `Constants!G2`.
+    /// `Constants!G2`. The days between two paydays are
+    /// `calc::period_days` of it rather than a key of their own: the sheet
+    /// carries both in `G2` and `H2`, and two cells for one cadence can
+    /// disagree.
     pub const PAY_PERIODS_PER_YEAR: Key<i64> = Key::new("pay.periods_per_year");
-    /// `Constants!H2`.
-    pub const PAY_PERIOD_DAYS: Key<i64> = Key::new("pay.period_days");
     /// `Constants!J2`.
     pub const WORKBOOK_TODAY: Key<NaiveDate> = Key::new("dates.workbook_today");
     /// `Constants!K2`.
@@ -382,7 +383,6 @@ mod tests {
         let mut names = vec![
             key::TAX_RATE.name(),
             key::PAY_PERIODS_PER_YEAR.name(),
-            key::PAY_PERIOD_DAYS.name(),
             key::WORKBOOK_TODAY.name(),
             key::BIRTH_DATE.name(),
             key::PLANNING_TARGET.name(),

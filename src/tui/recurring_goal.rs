@@ -57,7 +57,6 @@ pub struct RecurringGoals {
     /// every entry rather than the visible ones, which is what the title
     /// drawing them only while unfiltered means.
     totals: Vec<Total>,
-    periods_per_year: i64,
     search: SearchBox,
     cursor: Cursor,
 }
@@ -66,26 +65,30 @@ impl RecurringGoals {
     /// Opens unfiltered. The screen is a reference list of a dozen-odd
     /// entries, so showing all of them is the useful default; `[` and `]` are
     /// what start narrowing it.
-    pub fn new(today_month: i64, periods_per_year: i64) -> RecurringGoals {
+    pub fn new(today_month: i64) -> RecurringGoals {
         RecurringGoals {
             all: Vec::new(),
             visible: Vec::new(),
             month: MonthCycle::new((1..=12).collect(), today_month),
             totals: Vec::new(),
-            periods_per_year,
             search: SearchBox::new(),
             cursor: Cursor::new(),
         }
     }
 
-    /// The rate arrives per reload rather than being held on the screen, the
-    /// way each of this screen's modals reads it at the moment it opens: it
-    /// is the owner's setting and can be re-imported under the screen.
+    /// The rate and the pay-period count both arrive per reload rather than
+    /// being held on the screen, the way each of this screen's modals reads
+    /// the rate at the moment it opens: they are the owner's settings, and
+    /// either can change under the screen -- re-imported, or, for the count,
+    /// typed on the Planning screen, whose commit reloads this one. A count
+    /// held on the type would go on dividing by whatever it was at startup
+    /// while every other per-paycheck figure in the app moved.
     pub fn set_entries(
         &mut self,
         entries: Vec<Entry>,
         open_goals: HashMap<RecurringGoalId, i64>,
         rate: Option<BasisPoints>,
+        periods_per_year: i64,
     ) -> Result<()> {
         self.all = entries
             .into_iter()
@@ -99,7 +102,7 @@ impl RecurringGoals {
                 cadence: entry.cadence,
             })
             .collect();
-        self.retotal(rate)?;
+        self.retotal(rate, periods_per_year)?;
         self.refilter();
         Ok(())
     }
@@ -109,7 +112,7 @@ impl RecurringGoals {
     /// A cadence nothing is filed under is left out rather than totalled to
     /// zero: the title says what a year costs, and `$0 Biennially` is a
     /// sentence about nothing.
-    fn retotal(&mut self, rate: Option<BasisPoints>) -> Result<()> {
+    fn retotal(&mut self, rate: Option<BasisPoints>, periods_per_year: i64) -> Result<()> {
         self.totals.clear();
         for cadence in Cadence::ALL {
             let cost: Cents = self
@@ -126,7 +129,7 @@ impl RecurringGoals {
                 cost,
                 per_paycheck: crate::calc::per_paycheck_over_years(
                     cost,
-                    self.periods_per_year,
+                    periods_per_year,
                     cadence.years(),
                 )?,
             });
@@ -530,7 +533,7 @@ mod tests {
     /// month set to September — where `Dropbox` falls, and the only month of
     /// the four that `[` and `]` reach without stepping.
     fn screen() -> RecurringGoals {
-        let mut recurring_goal = RecurringGoals::new(9, 26);
+        let mut recurring_goal = RecurringGoals::new(9);
         recurring_goal
             .set_entries(
                 vec![
@@ -541,6 +544,7 @@ mod tests {
                 ],
                 HashMap::from([(RecurringGoalId(1), 2), (RecurringGoalId(4), 1)]),
                 None,
+                26,
             )
             .unwrap();
         recurring_goal
@@ -551,7 +555,7 @@ mod tests {
     /// apart. Dropbox carries three open goals, which is the tally a needle
     /// must *not* reach: no digit of either base is a `3`.
     fn priced() -> RecurringGoals {
-        let mut recurring_goal = RecurringGoals::new(9, 26);
+        let mut recurring_goal = RecurringGoals::new(9);
         let mut entries = vec![
             entry(1, "Car Insurance", 3, Cadence::Annual),
             entry(2, "Dropbox", 9, Cadence::Annual),
@@ -559,7 +563,7 @@ mod tests {
         entries[0].base_cents = Cents::from_dollars(1_240);
         entries[1].base_cents = Cents::from_dollars(96);
         recurring_goal
-            .set_entries(entries, HashMap::from([(RecurringGoalId(2), 3)]), None)
+            .set_entries(entries, HashMap::from([(RecurringGoalId(2), 3)]), None, 26)
             .unwrap();
         recurring_goal
     }
@@ -627,6 +631,7 @@ mod tests {
                 vec![entry(1, "Car Insurance", 3, Cadence::Annual)],
                 HashMap::new(),
                 None,
+                26,
             )
             .unwrap();
 
@@ -639,9 +644,9 @@ mod tests {
 
     #[test]
     fn an_empty_list_has_nothing_selected() {
-        let mut recurring_goal = RecurringGoals::new(9, 26);
+        let mut recurring_goal = RecurringGoals::new(9);
         recurring_goal
-            .set_entries(Vec::new(), HashMap::new(), None)
+            .set_entries(Vec::new(), HashMap::new(), None, 26)
             .unwrap();
         assert!(recurring_goal.rows().is_empty());
         assert!(recurring_goal.selected().is_none());
@@ -802,12 +807,13 @@ mod tests {
     /// sentence about nothing.
     #[test]
     fn a_cadence_with_no_entries_is_left_out_of_the_title() {
-        let mut recurring_goal = RecurringGoals::new(9, 26);
+        let mut recurring_goal = RecurringGoals::new(9);
         recurring_goal
             .set_entries(
                 vec![entry(1, "Car Insurance", 3, Cadence::Annual)],
                 HashMap::new(),
                 None,
+                26,
             )
             .unwrap();
         assert_eq!(
@@ -816,11 +822,38 @@ mod tests {
         );
     }
 
+    /// The pay-period count is the owner's setting and is editable on the
+    /// Planning screen, whose commit reloads this one -- so it arrives with
+    /// the entries rather than being held on the type. Held, the title would
+    /// go on dividing by the count the app started with while every other
+    /// per-paycheck figure moved.
+    #[test]
+    fn a_reload_spreads_the_year_over_the_pay_period_count_it_is_handed() {
+        let mut recurring_goal = RecurringGoals::new(9);
+        let mut annual = entry(1, "Car Insurance", 3, Cadence::Annual);
+        annual.base_cents = Cents::from_dollars(1_300);
+        recurring_goal
+            .set_entries(vec![annual.clone()], HashMap::new(), None, 26)
+            .unwrap();
+        assert_eq!(
+            recurring_goal.title(),
+            "Recurring Goals · All · $1,300 Annually ($50/paycheck)"
+        );
+
+        recurring_goal
+            .set_entries(vec![annual], HashMap::new(), None, 24)
+            .unwrap();
+        assert_eq!(
+            recurring_goal.title(),
+            "Recurring Goals · All · $1,300 Annually ($55/paycheck)"
+        );
+    }
+
     #[test]
     fn an_empty_list_leaves_the_title_with_nothing_to_total() {
-        let mut recurring_goal = RecurringGoals::new(9, 26);
+        let mut recurring_goal = RecurringGoals::new(9);
         recurring_goal
-            .set_entries(Vec::new(), HashMap::new(), None)
+            .set_entries(Vec::new(), HashMap::new(), None, 26)
             .unwrap();
         assert_eq!(recurring_goal.title(), "Recurring Goals · All");
     }
@@ -830,11 +863,11 @@ mod tests {
     /// figure the form's `w/ tax` note shows.
     #[test]
     fn a_taxed_entry_totals_at_its_taxed_target() {
-        let mut recurring_goal = RecurringGoals::new(9, 26);
+        let mut recurring_goal = RecurringGoals::new(9);
         let mut taxed = entry(1, "Couch", 3, Cadence::Annual);
         taxed.taxed = true;
         recurring_goal
-            .set_entries(vec![taxed], HashMap::new(), Some(BasisPoints(625)))
+            .set_entries(vec![taxed], HashMap::new(), Some(BasisPoints(625)), 26)
             .unwrap();
         // 128 * 1.0625 = 136, and `calc::tax` rounds up to the dollar.
         assert_eq!(
@@ -848,11 +881,11 @@ mod tests {
     /// to draw itself. The base is what a rate-less taxed entry counts as.
     #[test]
     fn a_taxed_entry_with_no_rate_on_record_totals_at_its_base() {
-        let mut recurring_goal = RecurringGoals::new(9, 26);
+        let mut recurring_goal = RecurringGoals::new(9);
         let mut taxed = entry(1, "Couch", 3, Cadence::Annual);
         taxed.taxed = true;
         recurring_goal
-            .set_entries(vec![taxed], HashMap::new(), None)
+            .set_entries(vec![taxed], HashMap::new(), None, 26)
             .unwrap();
         assert_eq!(
             recurring_goal.title(),
@@ -1305,13 +1338,13 @@ mod tests {
     /// the room they actually need.
     #[test]
     fn the_totals_fit_the_minimum_width() {
-        let mut recurring_goal = RecurringGoals::new(9, 26);
+        let mut recurring_goal = RecurringGoals::new(9);
         let mut annual = entry(1, "Car Insurance", 3, Cadence::Annual);
         annual.base_cents = Cents::from_dollars(64_000);
         let mut biennial = entry(2, "Backblaze", 11, Cadence::Biennial);
         biennial.base_cents = Cents::from_dollars(8_000);
         recurring_goal
-            .set_entries(vec![annual, biennial], HashMap::new(), None)
+            .set_entries(vec![annual, biennial], HashMap::new(), None, 26)
             .unwrap();
 
         let title = recurring_goal.title();

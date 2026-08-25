@@ -105,13 +105,17 @@ pub fn unallocated(excess: Cents) -> Cents {
 ///
 /// The target, not the base: a goal due next paycheck asks for all it lacks,
 /// and what a taxed one lacks includes the tax.
-pub fn paycheck_ask(goal: &Funding, today: NaiveDate, period_days: i64) -> Result<Option<Cents>> {
+pub fn paycheck_ask(
+    goal: &Funding,
+    today: NaiveDate,
+    periods_per_year: i64,
+) -> Result<Option<Cents>> {
     crate::calc::per_paycheck(
         goal.current,
         goal.target,
         goal.goal.goal_date,
         today,
-        period_days,
+        periods_per_year,
     )
 }
 
@@ -128,11 +132,11 @@ pub fn rows(
     goals: Vec<Funding>,
     accounts: &[account::Account],
     today: NaiveDate,
-    period_days: i64,
+    periods_per_year: i64,
 ) -> Result<Vec<Row>> {
     let mut rows = Vec::with_capacity(goals.len());
     for g in goals {
-        let per_paycheck = paycheck_ask(&g, today, period_days)?;
+        let per_paycheck = paycheck_ask(&g, today, periods_per_year)?;
         rows.push(Row {
             goal_id: g.goal.id,
             container: Account::named(accounts, g.goal.container_account_id),
@@ -263,7 +267,7 @@ mod tests {
     /// truncated, or 13,000/15,000 would read 86%.
     #[test]
     fn the_percent_column_rounds_to_the_nearest_whole_percent() {
-        let rows = rows(goals(), &accounts(), today(), 14).unwrap();
+        let rows = rows(goals(), &accounts(), today(), 26).unwrap();
         let percents: Vec<Option<Percent>> = rows.iter().map(|r| r.percent).collect();
         assert_eq!(
             percents,
@@ -279,7 +283,7 @@ mod tests {
     /// Column F of the sheet goes blank for undated and already-met goals.
     #[test]
     fn per_paycheck_is_blank_for_undated_and_met_goals() {
-        let rows = rows(goals(), &accounts(), today(), 14).unwrap();
+        let rows = rows(goals(), &accounts(), today(), 26).unwrap();
         assert_eq!(rows[0].per_paycheck, None, "Bill Payments is undated");
         assert_eq!(rows[1].per_paycheck, Some(Cents(800)), "Apple Watch");
         assert_eq!(rows[2].per_paycheck, Some(Cents(7_500)), "Dropbox");
@@ -392,7 +396,7 @@ mod tests {
 
     #[test]
     fn each_row_names_its_own_goals_container() {
-        let rows = rows(goals(), &accounts(), today(), 14).unwrap();
+        let rows = rows(goals(), &accounts(), today(), 26).unwrap();
         let names: Vec<&str> = rows.iter().map(|r| r.container.text()).collect();
         assert_eq!(names, ["Rainy Day", "Rainy Day", "Rainy Day", "Brokerage"]);
     }
