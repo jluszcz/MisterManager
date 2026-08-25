@@ -8,20 +8,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cargo build
 cargo test
 cargo test shortfall                       # single test / substring filter
-cargo test --test planning_from_workbook   # one integration test binary
+cargo test --features import --test planning_from_workbook  # one integration test binary
 cargo test --lib                           # unit tests only (no workbook needed)
 cargo fmt                                  # pre-commit hook runs `cargo fmt --check`
 cargo clippy --all-targets -- -D warnings  # CI treats warnings as errors
+cargo clippy --all-targets --all-features -- -D warnings  # CI runs this too
 
-cargo run --bin mm -- import <workbook>
-cargo run --bin mm -- --db /tmp/scratch.db --today 2026-08-12 import --replace <workbook>
+# `import` and `demo` are both off by default, so anything touching either is
+# checked under the feature as well as without it.
+cargo run --features import --bin mm -- import <workbook>
+cargo run --features import --bin mm -- --db /tmp/scratch.db --today 2026-08-12 import --replace <workbook>
 
 # The workbook-oracle tests need the workbook *and* the three accounts no cell
 # names: the current account, then the two `Savings` block containers, by code.
 # Neither the path nor the codes may live in this repository, so both are read
 # from the environment.
 MM_REQUIRE_WORKBOOK=1 MM_WORKBOOK=<workbook> \
-  MM_ACCOUNTS=<checking>,<goals>,<buckets> cargo test
+  MM_ACCOUNTS=<checking>,<goals>,<buckets> cargo test --features import
 ```
 
 ## The workbook is the test oracle
@@ -38,6 +41,13 @@ Tests skip loudly when it is unset or the file is absent, so a clean checkout pa
 `MM_REQUIRE_WORKBOOK=1` turns either into a hard failure instead. When changing anything the
 importer or the waterfall touches, run with that set — otherwise the tests that actually exercise
 it silently no-op.
+
+**`--features import` is part of that same sentence.** Every binary in `tests/` carries
+`#![cfg(feature = "import")]`, because the importer is what puts the workbook into a database to
+assert against. Without the feature they compile to nothing, and `MM_REQUIRE_WORKBOOK=1` then has
+no test left to fail — the one thing it exists to prevent. CI runs the suite twice, default
+features and all of them, which is what keeps the feature from rotting; a local run meant to
+exercise the importer passes it explicitly.
 
 The workbook's own layout and formulas are documented next to the code that reproduces them:
 `src/import/CLAUDE.md` maps every sheet, block, and cell reference the importer reads;
@@ -140,7 +150,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/db/bill.rs` | The monthly bill block, labelled — the `Planning!C6:E12` rows. |
 | `src/db/fund.rs` | The `fund` table — the asset-allocation block, `Planning!I1:M5`. `Target` is the age rule or a share of what it leaves. |
 | `src/db/recurring_txn.rs` | The `recurring_txn` table — rows whose amount and date are known in advance. CRUD plus the queries regeneration needs. |
-| `src/import/` | Reads `Money.xlsx` via `calamine`. |
+| `src/import/` | Reads `Money.xlsx` via `calamine`. Behind the non-default `import` Cargo feature — it is the only module naming `calamine`, which is what lets that dependency be `optional`, so a default build compiles no spreadsheet parser and offers no `mm import`. |
 | `src/overview.rs` | Reads balances at the three projection dates out of `db` and bands them into the Overview's sections and Net. Read by the Overview screen and by `report`. |
 | `src/savings.rs` | A goal's derived columns — `%`, `$/Pay`, expired — and what a container has left unallocated. Read by the Savings screen and by `report`. |
 | `src/plan.rs` | Reads settings and balances out of `db`, feeds `calc::planning::compute`. |
@@ -152,7 +162,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/backup/` | The schedule, the snapshot, and the upload. `aws_config`, `aws_sdk_s3` and `tokio` are named only in `s3.rs`. |
 | `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `tui/mod.rs` rather than in whichever screen needed it first. `app` is a directory, one module per screen over one `App`. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
-| `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `import`, `report` and `backup` are the three subcommands. |
+| `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `report` and `backup` are always subcommands, and `import` is a third behind the `import` feature -- a default build does not offer it. |
 
 **`rusqlite` is named only inside `src/db/`.** `Db` holds a private `Connection` and deliberately does
 not `Deref` to it — handing out a `&Connection` would put every rusqlite method back within reach of

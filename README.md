@@ -8,6 +8,7 @@ A terminal application for tracking money, replacing a per-year spreadsheet.
 mm            # launch the application
 mm --demo     # the same, with figures and names disguised (needs --features demo)
 mm report     # write the HTML report without opening the application
+mm import ... # load a Money.xlsx workbook (needs --features import)
 ```
 
 Screens are `1` Overview, `2` Cash, `3` Credit, `4` Savings, `5` Planning,
@@ -178,6 +179,20 @@ mm import path/to/Money.xlsx
 
 Accepts `--db <path>` (default `~/.local/share/mistermanager/money.db`) and
 `--today <YYYY-MM-DD>`.
+
+**The importer is a build-time feature, off by default**, the way demo mode
+is:
+
+```bash
+cargo install --path . --features import
+```
+
+A default build has no `import` subcommand and none of the code behind it,
+and `calamine` — named nowhere else in the crate — is not compiled at all.
+The workbook is a document the owner imports from once per edit of it, not
+something the application reads to open a database, so the binary that runs
+day to day need not carry a spreadsheet parser. Everything below describes
+that build.
 
 **The first import against an empty database takes two runs of that same
 command.** The `Savings` sheet identifies its two blocks by position and
@@ -412,7 +427,7 @@ read a backup, delete one, or list the prefix.
 | `src/db/bill.rs` | The monthly bill block, labelled — the `Planning!C6:E12` rows. |
 | `src/db/fund.rs` | The `fund` table — the asset-allocation block of `Planning!I1:M5`. |
 | `src/db/recurring_txn.rs` | The `recurring_txn` table — rows whose amount and date are known in advance. |
-| `src/import/` | Reads `Money.xlsx`. |
+| `src/import/` | Reads `Money.xlsx`. Behind the `import` feature, which is what lets `calamine` be an optional dependency. |
 | `src/import/fund.rs` | Reads the fund block, `Planning!I2:M<n>`, into `db::fund`. |
 | `src/gate.rs` | `Gate` — the Planning gates, key and name substring together. |
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the key naming its container account. |
@@ -428,7 +443,8 @@ read a backup, delete one, or list the prefix.
 
 `ratatui` (which re-exports `crossterm`) is named only inside `src/tui/`, the
 same discipline that confines `rusqlite` to `src/db/`, `calamine` to
-`src/import/`, `serde` and `toml` to `src/config.rs` (and again in
+`src/import/` — which is what makes `calamine` optional, since one module
+naming it is one `cfg` to put it behind — `serde` and `toml` to `src/config.rs` (and again in
 `src/backup/state.rs`), and `aws-config`, `aws-sdk-s3` and `tokio` to
 `src/backup/s3.rs`.
 
@@ -473,12 +489,22 @@ environment too:
 
 ```bash
 MM_REQUIRE_WORKBOOK=1 MM_WORKBOOK=path/to/Money.xlsx \
-  MM_ACCOUNTS=<checking>,<goals>,<buckets> cargo test
+  MM_ACCOUNTS=<checking>,<goals>,<buckets> cargo test --features import
 ```
 
 `tests/common/mod.rs` reads both, configures a database the way screen `9`
 would, and runs the two-pass first import. Unset, the tests needing them skip
 as loudly as they do for a missing workbook.
+
+`--features import` is part of that same invocation rather than an extra on
+it: every one of these binaries is behind the feature, since the importer is
+what puts the workbook in a database to assert against. Without it they
+compile to nothing, `MM_REQUIRE_WORKBOOK=1` has no test left to fail, and the
+run goes green having asserted nothing — the one thing that variable exists to
+prevent.
+
+CI runs `cargo test` twice, once on the default features and once on all of
+them, which is what keeps the second column honest.
 
 ## No real data in the repository
 

@@ -3,6 +3,12 @@
 `calamine` is named only in here. This module is the one place that knows where anything lives in
 `Money.xlsx`; everything downstream sees `db` rows and `setting` keys.
 
+That containment is what puts the whole module behind the non-default `import` Cargo feature: one
+module naming the dependency is one `cfg` to put it behind, so `calamine` is `optional` and a
+default build carries neither the parser nor the `mm import` subcommand. Anything added here is
+reachable only under `--features import` — including its `mod tests`, and every binary in
+`tests/`, which carry `#![cfg(feature = "import")]` for the same reason.
+
 The whole import runs inside one SQL transaction opened by `import_all`, in dependency order:
 `Constants` (accounts and settings) → `Planning` (settings, the bill table and the fund table) → the ledgers →
 `Savings`. A failure partway through — an unknown account code, half a bill row — leaves the
@@ -221,5 +227,7 @@ container reconciliations, and the whole waterfall against the workbook's **own 
 values**, never hardcoded literals. They need `MM_ACCOUNTS` as well as the workbook — the three
 accounts no cell names, by code — and `tests/common/mod.rs` is what reads it, configures a database
 the way the Accounts screen would, and runs the two-pass first import. Run them with
-`MM_REQUIRE_WORKBOOK=1` when changing anything in here, or a missing fixture turns the whole check
-into a silent skip.
+`MM_REQUIRE_WORKBOOK=1 ... --features import` when changing anything in here: a missing fixture
+turns the whole check into a silent skip, and so does a missing feature, since every binary in
+`tests/` is `#![cfg(feature = "import")]` and compiles to nothing without it -- leaving
+`MM_REQUIRE_WORKBOOK=1` no test left to fail.

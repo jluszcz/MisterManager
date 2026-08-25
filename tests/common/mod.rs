@@ -49,7 +49,8 @@ pub fn workbook() -> Option<PathBuf> {
 ///
 /// ```sh
 /// MM_REQUIRE_WORKBOOK=1 MM_WORKBOOK=<workbook> \
-///   MM_ACCOUNTS=<checking>,<goal block>,<bucket block> cargo test
+///   MM_ACCOUNTS=<checking>,<goal block>,<bucket block> \
+///   cargo test --features import
 /// ```
 ///
 /// Unset, the tests that need it skip, exactly as they do for a missing

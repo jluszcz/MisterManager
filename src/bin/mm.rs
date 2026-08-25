@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDate, Utc};
 use clap::{Parser, Subcommand};
-use mistermanager::{backup, config, db, import, report, tui};
+#[cfg(feature = "import")]
+use mistermanager::import;
+use mistermanager::{backup, config, db, report, tui};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -48,6 +50,10 @@ impl Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Load a Money.xlsx workbook into the database.
+    ///
+    /// Behind the `import` feature: a build without it has no importer to
+    /// call, so it offers no subcommand that would only fail.
+    #[cfg(feature = "import")]
     Import {
         workbook: PathBuf,
         /// Overwrite previously imported data instead of refusing to run.
@@ -116,6 +122,7 @@ fn main() -> Result<()> {
             let db = tui::run(db, today, demo)?;
             write_report(&db, &cfg, today, demo);
         }
+        #[cfg(feature = "import")]
         Some(Command::Import { workbook, replace }) => {
             match import::import_all(&db, &workbook, today, replace)? {
                 // The Savings sheet names its two blocks by position and
@@ -279,6 +286,7 @@ fn print_backup_status(cfg: &config::Config, state_path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "import")]
 fn print_full(report: &import::Full) {
     println!(
         "imported {} cash rows, {} credit rows",

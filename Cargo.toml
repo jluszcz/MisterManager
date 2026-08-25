@@ -14,7 +14,7 @@ anyhow = "1.0"
 aws-config = { version = "1.10", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
 aws-sdk-s3 = { version = "1.142", default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
 aws-smithy-types = "1.6"
-calamine = "0.36"
+calamine = { version = "0.36", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4.6", features = ["derive"] }
 minify-html = "0.18"
@@ -29,6 +29,13 @@ toml = "1.1"
 # Demo mode: `mm --demo`, and the obfuscation behind it. Off by default so a
 # shipped binary carries neither the flag nor the code it installs.
 demo = []
+# The workbook importer: `mm import`, `src/import/`, and `calamine` under it.
+# Off by default for the reason `demo` is -- the workbook is a migration the
+# owner runs once per edit of it, not something the application needs to open
+# a database -- and `calamine` is the only dependency a build without it drops
+# entirely. The workbook-oracle tests in `tests/` compile to nothing without
+# it, so CI's all-features job is what runs them.
+import = ["dep:calamine"]
 
 [[bin]]
 name = "mm"

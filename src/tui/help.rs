@@ -406,6 +406,18 @@ const FUNDS: [Entry; 4] = [
     },
 ];
 
+/// What `e` edits, and -- on a build that has an importer -- what the import
+/// does and does not take back.
+///
+/// The two clauses naming `mm import` are dropped rather than reworded on a
+/// default build: it has no such subcommand, so a panel describing what to
+/// run and what survives it would be answering a question that build cannot
+/// be asked. What is left is true of both, and is what the key does.
+#[cfg(feature = "import")]
+const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its Overview band, its place among the accounts of its kind, and -- for a cash account -- how an interest posting is divided and which block of the Savings sheet it is the container for, which is what the first mm import waits on. The code and the kind are set by 'a', not here. Nothing here is imported, so all of it survives mm import --replace.";
+#[cfg(not(feature = "import"))]
+const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its Overview band, its place among the accounts of its kind, and -- for a cash account -- how an interest posting is divided and which block of the Savings sheet it is the container for. The code and the kind are set by 'a', not here.";
+
 /// Two keys, and no `d`. An account is created here or by the workbook
 /// naming it, and deleting one would orphan every transaction, goal and
 /// recurring rule pointing at it -- and the next import would put a sheet's
@@ -419,7 +431,7 @@ const ACCOUNTS: [Entry; 2] = [
     Entry {
         key: "e",
         label: Label::Own("edit"),
-        detail: "Edit the selected account: its name, its Overview band, its place among the accounts of its kind, and -- for a cash account -- how an interest posting is divided and which block of the Savings sheet it is the container for, which is what the first mm import waits on. The code and the kind are set by 'a', not here. Nothing here is imported, so all of it survives mm import --replace.",
+        detail: ACCOUNT_EDIT,
     },
 ];
 
