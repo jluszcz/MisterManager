@@ -16,6 +16,7 @@ use crate::tui::modal::{Confirm, Modal};
 use crate::tui::picker::{self, Picker};
 use crate::tui::recurring_goal::RecurringGoalForm;
 use crate::tui::recurring_txn::RecurringTxnForm;
+use crate::tui::search::{self, Search};
 use anyhow::{Result, ensure};
 use chrono::Datelike;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
@@ -158,7 +159,12 @@ impl App {
             // unlike the ledgers' `[` and `]` there is nothing to re-query.
             KeyCode::Char('[') => self.recurring_goal.previous_month(),
             KeyCode::Char(']') => self.recurring_goal.next_month(),
-            KeyCode::Esc => self.recurring_goal.clear_month(),
+            KeyCode::Esc => {
+                if !search::escape_kept_filter(&mut self.recurring_goal) {
+                    self.recurring_goal.clear_month();
+                }
+            }
+            KeyCode::Char('/') => self.recurring_goal.begin_search(),
             KeyCode::Char('a') => self.open_recurring_goal_add()?,
             KeyCode::Char('e') => self.open_recurring_goal_edit()?,
             KeyCode::Char('d') => self.open_recurring_goal_delete()?,
@@ -1236,6 +1242,124 @@ mod tests {
 
         press(&mut app, KeyCode::Home);
         assert_eq!(picker(&app).selected_index(), 0);
+    }
+
+    /// The names the Goals screen is left showing.
+    fn entry_names(app: &App) -> Vec<String> {
+        app.recurring_goal
+            .rows()
+            .iter()
+            .map(|r| r.name.clone())
+            .collect()
+    }
+
+    /// The same box the ledgers and Savings open, on the screen that had only
+    /// a month filter until now.
+    #[test]
+    fn slash_on_the_goals_screen_narrows_the_entries_as_they_are_typed() {
+        let mut app = app_with_recurring_goals();
+        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "ro");
+
+        assert!(app.recurring_goal.is_searching());
+        assert_eq!(entry_names(&app), ["Dropbox", "Rolex"]);
+    }
+
+    /// Both filters at once, so the needle cannot be narrowing one list while
+    /// the month narrows another.
+    #[test]
+    fn the_goals_month_filter_narrows_within_a_kept_search() {
+        let mut app = app_with_recurring_goals();
+        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "ro");
+        press(&mut app, KeyCode::Enter);
+        assert!(!app.recurring_goal.is_searching(), "Enter left the box");
+
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char(']'));
+        assert_eq!(app.recurring_goal.selected_month(), Some(9));
+        assert_eq!(entry_names(&app), ["Dropbox"]);
+    }
+
+    /// `Esc` inside the box is the box's, which is the handler the month
+    /// filter must not have taken over.
+    #[test]
+    fn esc_in_the_goals_search_box_clears_the_search_not_the_month() {
+        let mut app = app_with_recurring_goals();
+        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "rol");
+        press(&mut app, KeyCode::Esc);
+
+        assert_eq!(app.recurring_goal.search(), "");
+        assert_eq!(app.recurring_goal.selected_month(), Some(8));
+    }
+
+    /// `Enter` leaves the box and keeps the needle, so `Esc` outside it is
+    /// what clears one -- and the needle goes before the month, the same
+    /// order every other `/` screen reads `Esc` in.
+    #[test]
+    fn esc_outside_the_goals_box_clears_a_kept_search_before_the_month() {
+        let mut app = app_with_recurring_goals();
+        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "lego");
+        press(&mut app, KeyCode::Enter);
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.recurring_goal.search(), "");
+        assert_eq!(
+            app.recurring_goal.selected_month(),
+            Some(9),
+            "the month is the next thing out, not this one"
+        );
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.recurring_goal.selected_month(), None);
+        assert_eq!(entry_names(&app), ["Dropbox", "Lego", "Rolex"]);
+    }
+
+    /// A digit or a `q` typed into the box is part of the needle: `dispatch`
+    /// hands the key to the box above its own screen and quit arms.
+    #[test]
+    fn q_while_searching_the_goals_screen_types_into_the_box() {
+        let mut app = app_with_recurring_goals();
+        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "q");
+
+        assert!(!app.should_quit());
+        assert_eq!(app.recurring_goal.search(), "q");
+        assert!(app.recurring_goal.rows().is_empty());
+    }
+
+    /// `e`, `d` and `s` act on the selection, so a narrowed list must leave
+    /// the cursor inside it rather than on the row that was there before.
+    #[test]
+    fn a_kept_search_is_what_the_goals_row_keys_act_on() {
+        let mut app = app_with_recurring_goals();
+        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.recurring_goal.selected().unwrap().name, "Rolex");
+
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "lego");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('e'));
+
+        match &app.modal {
+            Some(Modal::RecurringGoalEntry(form)) => assert_eq!(
+                form.editing,
+                Some(app.recurring_goal.selected().unwrap().recurring_goal_id)
+            ),
+            _ => panic!("e opened no form"),
+        }
+        assert_eq!(entry_names(&app), ["Lego"]);
     }
 
     /// Three entries: two in September and one in October, with one of
