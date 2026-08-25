@@ -1136,6 +1136,28 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     figure, so both forms that edit a base answer the same question in the same words. This form asks
     nothing about the rate — an entry writes no goal, and it is `App::commit_picker`, the picker that
     turns a taxed entry into one, that refuses when no rate is on record.
+- **The Savings title foots the `$/Pay` column, and the figure follows every filter.** `Savings ·
+  Rainy Day · Aug 2026 · /a · $14/paycheck` — the sum over the *visible* rows, so `Tab`, `[`/`]`
+  and `/` all move it. That is the opposite call the Recurring Goals title below makes, and for
+  the opposite reason: a cadence's cost is a fact about the whole year, while this answers "what
+  do *these* goals cost me a paycheck", and narrowing to a container or a month is asking that of
+  the container or the month. It counts exactly what the column shows — an undated goal has no
+  runway and a met one needs nothing, and `savings::Row::per_paycheck` is `None` for both — so a
+  filter leaving only those says nothing rather than `$0/paycheck`, the same call the column makes
+  when it draws an em dash. It sits last, past the needle, where the ledgers put their `Today`,
+  `Target` and `Δ`.
+- **The Recurring Goals title totals the year rather than counting the rows.** Unfiltered it names
+  what each cadence comes to and what that costs a payday — `Recurring Goals · All · $1,240
+  Annually ($48/paycheck) · $96 Biennially ($2/paycheck)` — over every entry, and a cadence nothing
+  is filed under is left out rather than drawn as a zero. The figures are of *derived targets*, so
+  a taxed entry counts at what it costs at the register, and the reading is tolerant: a rate the
+  import has not written yet leaves that entry at its base rather than taking the title down, the
+  same call `App::reload_savings` makes for the same reason. **Either filter drops them, and the
+  row count with them** — a total over the visible rows answers a question nobody asked, and one
+  over all of them beside a filter hiding most of them is worse. `RecurringGoals::set_entries`
+  derives them where the entries arrive rather than in `title`, because the spread through
+  `calc::per_paycheck_over_years` can fail on a nonsense `PAY_PERIODS_PER_YEAR` and a border title
+  has no way to report it.
 - **Creating one goal and creating goals from recurring entries are different keys on different
   screens.** `n` on Savings is a goal typed from scratch — `a` there is the allocation the screen is
   mostly used for, so the add takes another letter. `s` on Recurring Goals opens the picker: goals

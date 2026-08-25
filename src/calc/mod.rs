@@ -9,7 +9,7 @@ mod tax;
 use anyhow::{Result, ensure};
 
 pub use interest::pro_rata;
-pub use paycheck::{biweekly, fit, month_end_projection, per_paycheck};
+pub use paycheck::{biweekly, fit, month_end_projection, per_paycheck, per_paycheck_over_years};
 pub use tax::tax;
 
 /// Ceiling division for positive divisors, correct for negative dividends.

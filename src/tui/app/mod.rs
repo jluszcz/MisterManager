@@ -319,6 +319,7 @@ impl App {
         let dates = projection::dates(&db, today)?;
         let range = txn::date_range(&db)?;
         let period_days = setting::get_or(&db, key::PAY_PERIOD_DAYS, 14)?;
+        let periods_per_year = setting::get_or(&db, key::PAY_PERIODS_PER_YEAR, 26)?;
         let mut app = App {
             overview: Overview::load(&db, dates)?,
             cash: Ledger::new(
@@ -337,7 +338,7 @@ impl App {
             planning: Planning::new(),
             funds: Funds::new(),
             recurring_txn: RecurringTxns::new(account::list(&db)?),
-            recurring_goal: RecurringGoals::new(i64::from(today.month())),
+            recurring_goal: RecurringGoals::new(i64::from(today.month()), periods_per_year),
             accounts: Accounts::new(),
             period_days,
             db,
