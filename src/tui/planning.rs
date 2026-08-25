@@ -1065,9 +1065,9 @@ impl TransferConfirm {
     }
 
     /// Step the date by `step`, as `←`/`→` do on every date field in the
-    /// app, and `Shift` with them a week at a time.
+    /// app, `Shift` with them a week at a time, and `[`/`]` a month.
     pub fn step_date(&mut self, step: Step) {
-        self.date.step(step.days());
+        self.date.step(step);
     }
 
     /// The date as typed. Parsed before anything is written, so a typo leaves
@@ -3499,6 +3499,18 @@ mod tests {
         confirm.step_date(Step::PREVIOUS);
         confirm.step_date(Step::PREVIOUS);
         assert_eq!(confirm.commit().unwrap(), day(2026, 8, 23));
+    }
+
+    /// `[`/`]` step that same field a month, the meaning they carry on every
+    /// date field in the app.
+    #[test]
+    fn the_brackets_step_the_confirm_date_by_a_month() {
+        let mut confirm = TransferConfirm::new(Vec::new(), day(2026, 8, 24), day(2026, 8, 24));
+        confirm.step_date(Step::NEXT_MONTH);
+        assert_eq!(confirm.date_value(), "2026-09-24");
+        confirm.step_date(Step::PREVIOUS_MONTH);
+        confirm.step_date(Step::PREVIOUS_MONTH);
+        assert_eq!(confirm.commit().unwrap(), day(2026, 7, 24));
     }
 
     /// A half-typed date keeps what was typed: the arrows nudge a date that

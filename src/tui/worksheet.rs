@@ -283,14 +283,15 @@ impl Worksheet {
     }
 
     /// Step the date by `step`, when the date is what has focus. What `←`/`→`
-    /// mean on every date field in the app, and `Shift` with them a week.
+    /// mean on every date field in the app, `Shift` with them a week, and
+    /// `[`/`]` a month.
     ///
     /// Guarded on the focus rather than on the key: the other two focuses are
-    /// digit fields, and an arrow pressed on one of them must not move the
-    /// date this batch will be stamped with.
+    /// digit fields, and a key pressed on one of them must not move the date
+    /// this batch will be stamped with.
     pub fn step_date(&mut self, step: Step) {
         if self.focus == Focus::Date {
-            self.date.step(step.days());
+            self.date.step(step);
         }
     }
 
@@ -823,6 +824,20 @@ mod tests {
         sheet.step_date(Step::PREVIOUS);
         assert_eq!(sheet.date_text(), "2026-08-13");
         assert_eq!(sheet.commit().unwrap().date, day(2026, 8, 13));
+    }
+
+    /// `[`/`]` step the same date a month, and are guarded on the focus for
+    /// the reason the arrows are.
+    #[test]
+    fn the_brackets_step_the_date_by_a_month() {
+        let mut sheet = sheet();
+        sheet.next_focus();
+        assert_eq!(sheet.focus(), Focus::Date);
+        sheet.step_date(Step::NEXT_MONTH);
+        assert_eq!(sheet.date_text(), "2026-09-14");
+        sheet.step_date(Step::PREVIOUS_MONTH);
+        sheet.step_date(Step::PREVIOUS_MONTH);
+        assert_eq!(sheet.commit().unwrap().date, day(2026, 7, 14));
     }
 
     /// The pot and the lines are digit fields, and a stray arrow there must
