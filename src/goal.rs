@@ -55,7 +55,10 @@ pub fn target(goal: &Goal, rate: Option<BasisPoints>) -> Result<Cents> {
     let rate = rate.with_context(|| {
         format!(
             "{:?} is taxed but {} is unset: {NO_TAX_RATE}",
-            goal.name,
+            // The Planning screen renders this in place of the plan, so the
+            // goal's name reaches a viewer as prose. Masked here, where the
+            // message is built, rather than in each screen that draws it.
+            crate::demo::text(&goal.name),
             key::TAX_RATE
         )
     })?;

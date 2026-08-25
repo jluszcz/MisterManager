@@ -74,7 +74,10 @@ impl App {
                 "added"
             }
         };
-        self.status = format!("{verb} {} · g generates its rows", new.description);
+        self.status = format!(
+            "{verb} {} · g generates its rows",
+            crate::demo::text(&new.description)
+        );
         self.close_modal();
         self.reload()
     }
@@ -87,7 +90,7 @@ impl App {
             Some(row) => {
                 let label = format!(
                     "{} · {} · {} ledger rows will be released, not deleted",
-                    row.description,
+                    crate::demo::text(&row.description),
                     crate::demo::figure(row.cents),
                     row.owned
                 );
@@ -103,7 +106,10 @@ impl App {
         let Some(row) = self.recurring_txn.selected() else {
             return self.nothing_selected();
         };
-        let (id, description) = (row.recurring_txn_id, row.description.clone());
+        let (id, description) = (
+            row.recurring_txn_id,
+            crate::demo::text(&row.description).into_owned(),
+        );
         let report = recurring_engine::regenerate(&self.db, id, self.today)?;
         self.status = format!("{description}: {report}");
         self.reload()
@@ -124,7 +130,10 @@ impl App {
         let Some(row) = self.recurring_txn.selected() else {
             return self.nothing_selected();
         };
-        let (id, description) = (row.recurring_txn_id, row.description.clone());
+        let (id, description) = (
+            row.recurring_txn_id,
+            crate::demo::text(&row.description).into_owned(),
+        );
         self.status = match recurring_engine::extend(&self.db, id, self.today)? {
             Extended::Through { through, report } => {
                 format!("{description} extended through {through}: {report}")
@@ -143,7 +152,10 @@ impl App {
         let Some(row) = self.recurring_txn.selected() else {
             return self.nothing_selected();
         };
-        let (id, description) = (row.recurring_txn_id, row.description.clone());
+        let (id, description) = (
+            row.recurring_txn_id,
+            crate::demo::text(&row.description).into_owned(),
+        );
         recurring_txn::set_paycheck(&self.db, id)?;
         self.status = format!("{description} is now the paycheck transaction");
         self.reload()
@@ -202,7 +214,7 @@ impl App {
                 "added"
             }
         };
-        self.status = format!("{verb} {}", new.name);
+        self.status = format!("{verb} {}", crate::demo::text(&new.name));
         self.close_modal();
         self.reload()
     }
@@ -219,7 +231,7 @@ impl App {
         let goals = recurring_goal::goal_count(&self.db, row.recurring_goal_id)?;
         let label = format!(
             "{} · {} · {goals} goal(s), open or closed, reference it",
-            row.name,
+            crate::demo::text(&row.name),
             crate::demo::figure(row.base_cents)
         );
         self.modal = Some(Modal::Confirm {

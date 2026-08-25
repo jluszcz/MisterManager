@@ -244,12 +244,14 @@ mod tests {
     }
 
     /// The screen knows nothing about `--demo`: every figure it draws goes
-    /// through `tui::amount`, so blocking them is one decision rather than
-    /// one per screen. The rows, the names and the bands are untouched --
-    /// what a demo hides is the money.
+    /// through `tui::amount`, and every account through `Account::render_with`,
+    /// so scrambling either is one decision rather than one per screen. The
+    /// rows and the bands are untouched -- what a demo hides is the money and
+    /// the owner's own words for it, never the shape of the screen.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_balances_and_leaves_the_rows_standing() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_balances_and_leaves_the_rows_standing() {
+        crate::demo::install_with_salt(7);
         let rows = drawn();
         let text = rows.join("\n");
         assert!(!text.contains("1,000"), "the balance survived: {text:?}");
@@ -257,8 +259,19 @@ mod tests {
             !text.contains("70.00"),
             "the card balance survived: {text:?}"
         );
-        assert!(text.contains("██████"), "nothing was blocked: {text:?}");
-        assert!(text.contains("Everyday"), "the account names must stay");
+        assert!(
+            text.contains(&crate::demo::figure(crate::money::Cents(100_000))),
+            "no scrambled balance found: {text:?}"
+        );
+        assert!(
+            text.contains(&crate::demo::figure(crate::money::Cents(-7_000))),
+            "no scrambled card balance found: {text:?}"
+        );
+        assert!(!text.contains("Everyday"), "the account name survived");
+        assert!(
+            text.contains(&crate::demo::text("Everyday").to_string()),
+            "no scrambled account name found: {text:?}"
+        );
         assert!(text.contains("Net"), "the subtotals must stay");
     }
 

@@ -55,7 +55,7 @@ fn month(kind: Kind, m: &LedgerMonth) -> String {
                 "<tr{class}><td class=\"d\">{}</td><td>{}</td><td class=\"w\">{}</td>{}</tr>",
                 r.date,
                 account(&r.account),
-                escape(description::render(&r.description)),
+                escape(&description::render(&r.description)),
                 money(r.cents.to_string(), r.cents),
             )
         })

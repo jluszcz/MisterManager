@@ -613,7 +613,7 @@ pub(super) fn render(frame: &mut Frame, sheet: &Worksheet) -> Viewport {
         .map(|line| {
             Row::new(vec![
                 Cell::from(if line.selected { "✓" } else { " " }),
-                Cell::from(line.name.clone()),
+                Cell::from(crate::demo::text(&line.name).into_owned()),
                 amount(line.amount),
             ])
         })
@@ -1504,24 +1504,30 @@ mod tests {
 
     /// The refusal quotes how far over the lines went, and a status line is
     /// on screen as surely as a column is.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_figure_an_over_allocation_refuses_with() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_figure_an_over_allocation_refuses_with() {
+        crate::demo::install_with_salt(7);
         let mut sheet = sheet();
         sheet.set_amount(Cents(1_000));
+        let overage = -sheet.remaining();
         let err = sheet.commit().unwrap_err().to_string();
         assert!(!err.contains("2,247"), "the overage survived: {err}");
-        assert!(err.contains("██████"), "nothing was blocked: {err}");
+        assert!(
+            err.contains(&crate::demo::figure(overage)),
+            "no scrambled overage found: {err}"
+        );
     }
 
     /// Four figures reach this modal: the pot in the header, the amount on
     /// every line, what is left in the footer, and the pot again in the
-    /// title. A demo blocks all four -- a worksheet is the screen a payday is
-    /// actually posted from, so it is the one most likely to be on screen
-    /// while someone is watching.
+    /// title. A demo scrambles all four, and a line's name along with them --
+    /// a worksheet is the screen a payday is actually posted from, so it is
+    /// the one most likely to be on screen while someone is watching.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_pot_the_lines_and_what_is_left_of_it() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_pot_the_lines_and_what_is_left_of_it() {
+        crate::demo::install_with_salt(7);
         let mut sheet = sheet();
         sheet.set_amount(Cents(123_456));
         let buffer = drawn(&sheet);
@@ -1532,11 +1538,33 @@ mod tests {
 
         assert!(!text.contains("1,234"), "the pot survived: {text}");
         assert!(!text.contains("2,544"), "a line survived: {text}");
-        assert!(text.contains("██████"), "nothing was blocked: {text}");
-        assert!(text.contains("Bill Payments"), "the goal names must stay");
+        assert!(
+            text.contains(&crate::demo::figure(Cents(123_456))),
+            "no scrambled pot found: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::figure(Cents(254_400))),
+            "no scrambled line found: {text}"
+        );
+        assert!(
+            !text.contains("Bill Payments"),
+            "a line name survived: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::text("Bill Payments").to_string()),
+            "no scrambled line name found: {text}"
+        );
         assert!(
             !sheet.title().plain_text().contains("1,234"),
             "the title survived: {:?}",
+            sheet.title().plain_text()
+        );
+        assert!(
+            sheet
+                .title()
+                .plain_text()
+                .contains(&crate::demo::figure(Cents(123_456))),
+            "no scrambled title figure found: {:?}",
             sheet.title().plain_text()
         );
     }

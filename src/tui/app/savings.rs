@@ -156,7 +156,7 @@ impl App {
         match target {
             GoalTarget::Update(id) => {
                 goal::update(&self.db, id, &edit)?;
-                self.status = format!("updated {}", edit.name);
+                self.status = format!("updated {}", crate::demo::text(&edit.name));
             }
             GoalTarget::Create(container) => {
                 goal::insert(
@@ -173,7 +173,7 @@ impl App {
                         taxed: edit.taxed,
                     },
                 )?;
-                self.status = format!("created {}", edit.name);
+                self.status = format!("created {}", crate::demo::text(&edit.name));
             }
         }
         self.close_modal();
@@ -212,7 +212,10 @@ impl App {
             return Ok(());
         }
         if dated {
-            self.status = format!("{name} has a goal date, so its place comes from that date");
+            self.status = format!(
+                "{} has a goal date, so its place comes from that date",
+                crate::demo::text(&name)
+            );
             return Ok(());
         }
         let undated: Vec<GoalId> = goal::list(&self.db, container)?

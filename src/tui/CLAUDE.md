@@ -218,12 +218,15 @@ derive it from `MIN_WIDTH` rather than write the offset out.
 - **No screen formats a `Cents` itself.** Every figure a screen draws goes through `tui::amount`,
   `whole_amount`, `money_span` or `money_text` — or, where it lands in prose rather than a cell,
   through `demo::figure`/`whole_figure` directly. Two reasons, and the second is why the rule is
-  absolute: "negative reads red" is one decision rather than one per screen, and `mm --demo` blocks
-  every absolute figure out of the app at those same four functions. A `format!("{cents}")` written
+  absolute: "negative reads red" is one decision rather than one per screen, and `mm --demo`
+  scrambles every absolute figure's digits at those same four functions. A `format!("{cents}")` written
   at a call site is outside both — it draws an uncolored figure, and it publishes a real balance to
   whoever the app is being demonstrated to. `crate::demo` is where the mask lives and what it looks
   like; it sits at the crate root rather than here because `transfer::diagnose` writes the plug's
-  figure into the prose this screen draws.
+  figure into the prose this screen draws, and because the refusals `goal` and `db` build — an
+  ambiguous Checking band, a duplicate account code, a taxed goal with no rate on record — are
+  drawn verbatim by the Planning screen or the status line and are masked where the sentence is
+  built.
   - **A `Field` holding an amount keeps the real text and is masked on the way out.** The buffer is
     what commits, so `demo::typed` is applied where the field becomes a `Label` — in each form's
     `display(field)` — and never to what `Field::given` was handed. That is what lets a demo be
@@ -243,18 +246,22 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     narrows a list by amount exactly as an ordinary run does; masking it would turn every row's key
     into the mask and leave the owner unable to find anything mid-demonstration. The needle stays
     visible for the same reason — it is a query being typed, not a figure off a row.
-  - **Percentages, dates, counts and names are never masked.** A percentage is a shape rather than a
-    sum — it is what makes the Funds and Planning screens worth demonstrating at all — and a goal's
-    name is already the owner's own word for it. The mask is six blocks wide, plus a sign where the
-    figure has one, which is exactly the narrowest money column any screen lays out (`$/Pay`, at 7):
-    a demo moves no column and truncates nothing.
+  - **Percentages, dates and counts are never masked; a name is.** A percentage is a shape rather
+    than a sum — it is what makes the Funds and Planning screens worth demonstrating at all — a
+    scrambled date is not a date, and a count over a list of rows the reader can see would read as
+    a rendering fault. A name reaches the mask the way a figure does, through `demo::text` rather
+    than through the four functions above: it lands in a `Label` or a `Cell` directly, with no
+    `Cents` to format first.
+    A scrambled figure and a pseudonym are each as wide as what they replace — a figure keeps its
+    digit count and its punctuation, a pseudonym keeps the name's own length — so a demo draws in
+    exactly the widths an ordinary run lays out, and moves no column.
     - **The allocation form's amount field is the one field whose text may be either**, so it is the
       one `display(field)` that asks before masking. `/12` is a count and stays; a typed figure goes
       through `demo::typed`. `form::is_share` is the question, beside the `parse_share` that answers
       it for real, so the two cannot come to disagree about what a divisor looks like. Masking it
       too would leave that field with no feedback at all — what it divides is on the line below and
-      blocked, and `resolved_share` puts the answer beside it blocked — so `/12` and `/2` would read
-      the same right up to Enter.
+      scrambled, and `resolved_share` puts the answer beside it scrambled — so `/12` and `/2` would
+      read the same right up to Enter.
   - **The net is one test per screen and two sweeps, and both sweeps assert something *arrived*.**
     `a_demo_leaves_no_figure_on_any_screen` walks all nine screens with the mask on and asserts none
     of the fixture's own figures reach the buffer; `a_demo_leaves_no_figure_on_any_form_a_row_opens`
@@ -270,6 +277,17 @@ derive it from `MIN_WIDTH` rather than write the offset out.
       The form sweep asserts `modal.is_some()` before it looks at the buffer, because a key that
       finds nothing to open on leaves the screen as it was: `('2', 'r')` needs the account filter
       `r` reconciles against, and screen 6 needs a fixture with a `fund` row under the cursor.
+  - **Text is masked where it becomes a `Label` or a `Cell`, never where a screen builds its rows.**
+    A form prefills from the row a screen is holding, so a pseudonym written into view state is a
+    pseudonym `Enter` would commit. `App::open_goal_edit` is the example: it hands `GoalForm` the
+    selected row's own name, and the mask is applied only in `display(GoalField::Name)`, never to
+    what the row handed the form. The same two-sweep shape the figures use holds this shut:
+    `a_demo_leaves_no_name_on_any_screen` walks all nine screens with the mask on and asserts none
+    of the fixture's own names reach the buffer, and `a_demo_leaves_no_name_on_any_form_a_row_opens`
+    presses every key that opens a form or a worksheet over a row carrying a name and asserts the
+    same of the modal. `a_demo_draws_a_pseudonym_in_a_name_field_and_commits_the_name` pins the two
+    halves against each other directly: the field draws a pseudonym and `commit` still returns the
+    row's real name.
 - **Every editable Planning constant is a `Target` variant**, which owns both its `Key<T>` and how
   its text parses — the same construction as `gate::Gate`. Never write a Planning key at a call
   site. The enum lives in `plan_rows` and the half that is this screen's — how each arm's text
@@ -367,9 +385,13 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     digits are pushed onto and rubbed off the end of.
   - **The offset is honoured only where the text on screen *is* the text in the buffer.**
     `form::Caret` carries both, and where they differ the caret goes to the end. That is what keeps
-    it out of a **figure `--demo` has blocked**, where a caret among the blocks would count the
-    digits back out. Comparing the text rather than its length is what makes it airtight — the mask
-    is six characters, so `123.45` is a figure a length check would place the caret inside of.
+    it out of a **figure `--demo` has scrambled**, where a caret sitting inside it would count the
+    digits back out even though the count lands in bounds — and out of a **name `--demo` has
+    replaced with a pseudonym**, which `Caret::offset` sends to the end for the same reason, since
+    a name field is a buffer like any other and `display` masks it on the way out. Comparing the
+    text rather than its length is what makes it airtight — a scrambled figure and a pseudonym are
+    each as wide as what they replace, so a length check alone would place the caret inside every
+    figure and every name a demo draws.
   - **A search box draws its caret only while it is open.** `SearchBox::caret` is `None` once
     `Enter` has left the filter narrowing the list, because a kept filter takes no keystrokes. The
     ledger title is the one echo that never carries a caret even so: the box itself is in the
@@ -649,29 +671,80 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     says what `Teal` looks like, not which account this is.
   - **The status line is deliberately uncolored.** It is transient prose rather than a place a
     reader looks to identify an account.
-  - **Four account displays are outside this guarantee, and this is the entire list.** The first
-    two are gaps nothing has closed yet; the last two are routes deliberately taken around
-    `Account`, where the account is tinted by another mechanism or named in color elsewhere on
-    the same row. The Savings `Unallocated` footer is not among them: it names a container, which
-    is the one thing a reader reads that line to find, so it draws each one through
-    `Savings::container_account` and `label_line` like every other account on the screen:
-    - **The destination picker's `Offered.container`**, in `app/planning.rs`'s `open_destination` (backed
-      by `destination.rs`): an uncolored account display in a picker column, a genuine gap rather
-      than a justified exemption — no task has put `destination.rs` in scope.
-    - **`AllocationForm`'s `container_name: String`**, in `goal_form.rs`, drawn into the
-      Allocation modal's body by `unallocated_line`. It reads through `Savings::account_name`,
-      whose only caller it now is, and it is a real display kept out of `Account` because
-      converting `AllocationForm` is outside this guarantee's scope.
-    - **`transfer::Container`'s `String` name, in the Planning screen's Destinations block.**
-      Those rows tint an account through `planning::Tint` (below) rather than through
+  - **Fourteen account displays are outside this guarantee, and this is the entire list**, checked
+    by grepping every `crate::demo::text` call site in the crate and reading each one for what it
+    draws. None of them goes through `Account`, so none carries its color — a picker column with
+    nowhere to put a tint, a form field that is a `Field`'s buffer like any other, a row tinted by
+    another mechanism, or a string built for prose rather than a cell — but each reaches the mask
+    on its own, through a direct call to `demo::text`. The Savings `Unallocated` footer is not
+    among them: it names a container, which is the one thing a reader reads that line to find, so
+    it draws each one through `Savings::container_account` and `label_line` like every other
+    account on the screen:
+    - **The destination picker's `Offered.container`**, built in `app/planning.rs`'s
+      `open_destination` and drawn by `destination.rs`'s `render`: an uncolored account display in
+      a picker column, masked through `demo::text` where the `Choice` beside it becomes a `Cell`,
+      not where `Offered` is built. That is the view-state rule above rather than an exception to
+      it: `Offered` becomes a `Choice`, whose `name` is what the `/` filter matches against, so a
+      pseudonym written in at either step would leave the owner unable to find a row
+      mid-demonstration. The goal name in the same row masks at the same call for the same reason.
+    - **`AllocationForm`'s `container_name: String`**, in `goal_form.rs`, drawn into the Allocation
+      modal's body by `unallocated_line` through `demo::text`. It reads through
+      `Savings::account_name`, whose only caller it now is.
+    - **The payday confirmation's destination column**, in `planning.rs`'s `render_transfers`:
+      `transfer::Row::Transfer`'s own `name`, drawn as the left half of a plain `TextLine` because
+      the modal is a preview of the ledger rows rather than a table. `transfer::plan` carries that
+      name unmasked — it is also the description the row is written under, and
+      `transfer::already_written` matches against it — so it reaches `demo::text` here, at the one
+      draw. The transfers block on the screen behind the modal is the other consumer and is not
+      among these: it reaches the same name through `plan_rows::RowLabel::Account`, so its colour
+      and its mask both come from `Account`.
+    - **`transfer::Container`'s `String` name, in the Planning screen's Destinations block.** Those
+      rows tint an account through `planning::Tint` (below) rather than through
       `account_label::Account`: `wiring` already has the account row in hand, and `Account` would
-      only look it up again for the same color. The block *above* them is not among these — a
-      transfer's head reaches its label through `plan_rows::RowLabel::Account`, so its name comes
-      with its color like every other account display.
-    - **The Accounts screen's `Code` column**, built in `app/accounts.rs` and drawn by `accounts.rs` as a
-      bare `Cell`. Deliberately plain rather than missed: the next cell along that row is
-      `account_cell`, which names the same account in color, so the row already says which
-      account it is and tinting the code as well would say it twice.
+      only look it up again for the same color. Every `Landing` arm masks its own name through
+      `demo::text` before `Tint` ever sees it — `Goal`, `Account` and `Spread` each mask the
+      account or container they name, and `Ambiguous` masks the whole list of containers the same
+      way, since a list overflowing past two names is counted rather than named and has nothing
+      left to color. The block *above* them is not among these — a transfer's head reaches its
+      label through `plan_rows::RowLabel::Account`, so its name comes with its color like every
+      other account display.
+    - **The Accounts screen's `Code` column**, built in `app/accounts.rs` and drawn by `accounts.rs`
+      as a bare `Cell` through `demo::text`. Deliberately plain rather than missed: the next cell
+      along that row is `account_cell`, which names the same account in color, so the row already
+      says which account it is and tinting the code as well would say it twice.
+    - **`AccountField::Name` and `AccountField::Code`**, the Accounts screen's own add/edit form,
+      masked through `demo::text` the way any other field's `display` masks its buffer — a form
+      field has no account row beside it to tint against, only the text it is holding.
+    - **The reconcile confirmation's status line**, in `app/ledger.rs`'s `commit_reconcile`: the
+      account's name is masked through `demo::text` into the status prose, the same reasoning that
+      leaves the status line uncolored everywhere else.
+    - **The Accounts screen's own add and save confirmations**, in `app/accounts.rs`'s
+      `commit_new_account` and `commit_account`: each writes `"{name} added"` or `"{name} saved"`
+      to the status line with the name masked through `demo::text`, the same reasoning as the
+      reconcile line above — it is prose, not a place a reader looks to identify an account by
+      color.
+    - **`TransferField::Description`'s payment prefill.** `refresh_payment_description` fills the
+      buffer with the card's own code (`"CC1 Payment"`); `display` masks the whole string through
+      `demo::text` rather than picking the code back out to tint on its own.
+    - **The same-account transfer refusal**, in `TransferForm::commit`: the source account's code
+      is named in the error text through `demo::text`, because the message is prose rather than a
+      cell.
+    - **`spread_container`'s ambiguous-plug refusal**, in `src/transfer.rs`: `container_names`
+      masks each container's name through `demo::text` before `ambiguous_plug` joins them into the
+      `bail!`'s prose. This is the refusal raised where the plug is priced for an actual transfer.
+    - **`transfer::diagnose`'s own ambiguous-plug prose**, drawn into the Planning screen whether or
+      not a transfer is being attempted: the containers named in `"...has nowhere single to go"`
+      are masked through `demo::text` at the point `diagnose` builds that line, and
+      `unclaimed_by_container`, which lists what sits in each one, masks every container's name
+      through `demo::text` the same way. A second, independent call from `spread_container`'s own
+      refusal above — the two read the same containers but are two draws in two functions, not one.
+    - **`account::checking`'s ambiguous-band refusal**, in `src/db/account.rs`: the Planning screen
+      draws it in place of the plan, so the accounts sitting in the Checking band are named to a
+      viewer as prose. Masked where the sentence is built, because two callers would otherwise
+      rewrite one message.
+    - **`account::insert`'s duplicate-code refusal**, in the same file: `App::on_key` puts it on
+      the status line verbatim, and typing a code that already exists is an ordinary thing to do
+      on the Accounts screen. The code is quoted as the database holds it, masked on the way.
   - **`as_str` is the escape for text, and it is pinned.** `AccountName::as_str` serves the uses
     that are not displays — a description prefill, a search filter folding case, a form seeding
     its editable field — and `nothing_that_draws_an_account_reads_its_name_as_bare_text` lists
@@ -680,14 +753,17 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     screen's `Code` column — so the sanctioned list is wider than "not a display" and says so
     entry by entry. A source scan rather than a type, because the property is "nobody reached for
     the escape hatch", which no signature can state — and it is purely textual, so a reflow that
-    hid an escape behind a local variable would pass it just the same. **It reads four roots, not
+    hid an escape behind a local variable would pass it just the same. **It reads five roots, not
     just this directory**: `src/account_label.rs`, which owns `Account` and whose constructors are
     the one sanctioned place the text is read; `src/tui/`; `src/report/`, the second sink, which
-    would otherwise be free to flatten an account into a `format!`; and `src/transfer.rs`, which
+    would otherwise be free to flatten an account into a `format!`; `src/transfer.rs`, which
     names accounts in `diagnose`'s prose and carries the name and the color apart on
-    `Wiring`'s `Container` and the `Row::Transfer` beside it. Entries are keyed by the
-    path below `src/`, since `tui/ledger.rs` and `report/html/ledger.rs` are two different files and a
-    sanctioned line in one must not excuse the same text in the other. The same test's second
+    `Wiring`'s `Container` and the `Row::Transfer` beside it; and `src/db/`, whose own refusals —
+    `account::checking`'s ambiguous Checking band, `account::insert`'s duplicate code — are drawn
+    verbatim by the Planning screen or the status line, so a name read there reaches a viewer with
+    no color and, unless it is masked on the line that reads it, no pseudonym either. Entries are
+    keyed by the path below `src/`, since `tui/ledger.rs` and `report/html/ledger.rs` are two
+    different files and a sanctioned line in one must not excuse the same text in the other. The same test's second
     clause pins `Label::plain_text`, the escape for a `Label` rather than an `AccountName`: it
     flattens whatever accounts a label carries and is meant for wording assertions, never a draw.
 - **Every Planning row that names an account is tinted by it, and the tone outranks the tint.** A
@@ -860,8 +936,16 @@ derive it from `MIN_WIDTH` rather than write the offset out.
 - **Some screens drop the cents, all through `Cents::to_whole_dollars`.** Savings, Planning, and
   Funds render whole dollars; the digits are dropped rather than rounded, truncating toward zero, so
   `200.99` and `-200.99` read as the same figure under opposite signs. (`to_whole_dollars` alone
-  would leave a sub-dollar negative reading `-0`; `whole_amount` truncates the `Cents` first, so the
-  figure and the color it is chosen from agree and the cell draws a plain `0`.) Not
+  would leave a sub-dollar negative reading `-0`, which Planning draws and Savings does not: a
+  figure whose color is chosen from its own truncation goes through `demo::truncated_figure`, which
+  takes the cents off the `Cents` rather than off the string, so the figure and the color agree and
+  the cell draws a plain `0`.) **The cents come off past the demo's key, never before it** — which
+  is why that truncation lives in `demo` and not at the call site. A figure's scrambled digits are
+  keyed on the amount handed to the mask, so a caller truncating on its own way in would draw whole
+  dollars unrelated to the ones the same amount draws where it is quoted in full: a container
+  $2,500.17 unallocated would foot the Savings screen with one figure and open its allocation form
+  on another. `whole_amount` and the `Unallocated` footer therefore hand `truncated_figure` the
+  amount with its cents on and spend `trunc_to_dollar` only on the color. Not
   `floor_to_dollar`'s direction, which is for *computing* a transfer —
   these screens only render what is already there. All are display only, but they part ways past
   that: on Savings and Planning the `edit` prefill keeps the stored cents *and* the commit path
@@ -1033,7 +1117,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     before there is a goal to be broken by its absence.
   - **The note is empty wherever there is nothing to say**, and never a guess: the flag is off, the
     Target is not a whole figure yet, or no rate is on record. It is drawn through
-    `demo::whole_figure`, so `--demo` blocks it like every other absolute figure on a form.
+    `demo::whole_figure`, so `--demo` scrambles it like every other absolute figure on a form.
   - **The `Base` field carries the same note the goal form's `Target` does.** `RecurringGoalForm::tax_note`
     puts `(1,065 w/ tax)` past the caret whenever the `Taxed` selector is on and the field holds a whole
     figure, so both forms that edit a base answer the same question in the same words. This form asks

@@ -124,7 +124,7 @@ impl App {
         } else {
             Some(form::parse_amount(&raw)?)
         };
-        let name = self.ledger().account_name(id).to_string();
+        let name = crate::demo::text(self.ledger().account_name(id)).into_owned();
         self.ledger_mut().set_target(target);
         self.status = match target {
             Some(cents) => format!("{name} target {}", crate::demo::figure(cents)),
@@ -295,7 +295,7 @@ impl App {
         self.entry_date = Some(moved.date);
         self.status = format!(
             "{} {} on {}",
-            moved.description,
+            description::render(&moved.description),
             crate::demo::figure(moved.cents),
             moved.date
         );

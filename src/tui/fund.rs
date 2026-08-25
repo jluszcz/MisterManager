@@ -222,7 +222,7 @@ impl FundForm {
 
     pub fn display(&self, field: FundField) -> Label {
         Label::plain(match field {
-            FundField::Name => self.name.value().to_string(),
+            FundField::Name => crate::demo::text(self.name.value()).into_owned(),
             FundField::Share => self.share.value().to_string(),
             FundField::Actual => crate::demo::typed(self.actual.value()),
             FundField::Kind => match self.target_kind() {
@@ -339,7 +339,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
                 false => percent(r.delta),
             };
             let row = TableRow::new(vec![
-                Cell::from(r.name.clone()),
+                Cell::from(crate::demo::text(&r.name).into_owned()),
                 percent(r.target),
                 percent(Some(r.actual_share)),
                 delta,
@@ -631,12 +631,14 @@ mod tests {
         assert_eq!(form.display(FundField::Actual).plain_text(), "60,000.00");
     }
 
-    /// The value is money and the share is not: a fund's allocation is the
-    /// shape of the portfolio rather than a sum, and blocking it would hide
-    /// the one thing this screen is worth demonstrating.
+    /// The value and the name are what a demo has to hide; the share is not,
+    /// since a fund's allocation is the shape of the portfolio rather than a
+    /// sum, and scrambling it would hide the one thing this screen is worth
+    /// demonstrating.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_a_funds_value_and_keeps_its_share() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_a_funds_value_and_keeps_its_share() {
+        crate::demo::install_with_salt(7);
         let form = FundForm::edit(&crate::db::fund::Fund {
             id: FundId(2),
             name: "International".to_string(),
@@ -644,9 +646,13 @@ mod tests {
             target: Target::RemainderShare(BasisPoints(4_000)),
             actual: Cents::from_dollars(60_000),
         });
-        assert_eq!(form.display(FundField::Actual).plain_text(), "██████");
+        let drawn = form.display(FundField::Actual).plain_text();
+        assert_ne!(drawn, "60,000.00");
+        assert_eq!(drawn.len(), "60,000.00".len());
         assert_eq!(form.display(FundField::Share).plain_text(), "40.00");
-        assert_eq!(form.display(FundField::Name).plain_text(), "International");
+        let drawn_name = form.display(FundField::Name).plain_text();
+        assert_ne!(drawn_name, "International");
+        assert_eq!(drawn_name, crate::demo::text("International"));
     }
 
     /// Five columns at `MIN_WIDTH`, all read for one test.

@@ -70,7 +70,11 @@ impl App {
         };
         self.modal = Some(Modal::Confirm {
             action: Confirm::DeleteFund(row.fund_id),
-            label: format!("{} — {}", row.name, crate::demo::whole_figure(row.actual)),
+            label: format!(
+                "{} — {}",
+                crate::demo::text(&row.name),
+                crate::demo::whole_figure(row.actual)
+            ),
         });
     }
 
@@ -94,7 +98,7 @@ impl App {
                 )?;
             }
         }
-        self.status = format!("{} saved", edit.name);
+        self.status = format!("{} saved", crate::demo::text(&edit.name));
         self.close_modal();
         self.reload()
     }

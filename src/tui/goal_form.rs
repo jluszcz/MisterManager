@@ -114,7 +114,7 @@ impl AllocationForm {
     pub fn unallocated_line(&self) -> String {
         format!(
             "{} unallocated {} · /N takes 1/N",
-            self.container_name,
+            crate::demo::text(&self.container_name),
             crate::demo::figure(self.unallocated)
         )
     }
@@ -122,7 +122,7 @@ impl AllocationForm {
     pub fn title(&self) -> String {
         format!(
             "Allocate to {} — Tab field · Enter save · Esc cancel",
-            self.goal_name
+            crate::demo::text(&self.goal_name)
         )
     }
 
@@ -130,10 +130,10 @@ impl AllocationForm {
         Label::plain(match field {
             AllocField::Date => self.date.display(self.focus == AllocField::Date),
             // The one amount field that can be holding something other than an
-            // amount. `/12` is a count, and counts are not masked: what it
+            // amount. `/12` is a count, and counts are not scrambled: what it
             // divides is the unallocated remainder on the line below, which is
-            // blocked out there, and `resolved_share` puts the answer beside
-            // the field blocked out too. Masking the divisor as well would
+            // scrambled there, and `resolved_share` puts the answer beside
+            // the field scrambled too. Scrambling the divisor as well would
             // leave the one field whose text is not a figure with no visible
             // feedback at all -- `/12` and `/2` would read the same right up
             // to Enter.
@@ -345,7 +345,7 @@ impl GoalForm {
 
     pub fn display(&self, field: GoalField) -> Label {
         Label::plain(match field {
-            GoalField::Name => self.name.value().to_string(),
+            GoalField::Name => crate::demo::text(self.name.value()).into_owned(),
             GoalField::Target => crate::demo::typed(self.target.value()),
             GoalField::Date => self.date.display(self.focus == GoalField::Date),
             GoalField::Taxed => if self.taxed { "yes" } else { "no" }.to_string(),
@@ -494,7 +494,7 @@ impl CloseForm {
     pub fn title(&self) -> String {
         format!(
             "Close out {} ({}) — ←/→ destination · Enter save · Esc cancel",
-            self.goal_name,
+            crate::demo::text(&self.goal_name),
             crate::demo::figure(self.balance)
         )
     }
@@ -502,10 +502,16 @@ impl CloseForm {
     pub fn display(&self, field: CloseField) -> Label {
         Label::plain(match field {
             CloseField::Date => self.date.display(self.focus == CloseField::Date),
+            // The first destination is always `None` -- "— unallocated —",
+            // the app's own words, never masked -- and every other one names
+            // a sibling goal.
             CloseField::Destination => self
                 .destinations
                 .get(self.destination)
-                .map(|(_, label)| label.clone())
+                .map(|(id, label)| match id {
+                    Some(_) => crate::demo::text(label).into_owned(),
+                    None => label.clone(),
+                })
                 .unwrap_or_default(),
         })
     }
@@ -730,12 +736,14 @@ mod tests {
 
     /// Two figures reach this modal beside whatever is typed -- the share a
     /// `/N` resolves to, and the container's remainder underneath -- and a
-    /// demo blocks both. The divisor itself is a count and stays, which is
-    /// what leaves the field feedback: blocked, `/12` and `/2` would read the
-    /// same right up to Enter, and the answer beside them is blocked already.
+    /// demo scrambles both. The divisor itself is a count and stays, which is
+    /// what leaves the field feedback: scrambled, `/12` and `/2` would read
+    /// the same right up to Enter, and the answer beside them is scrambled
+    /// already.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_share_and_the_remainder_but_not_the_divisor() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_share_and_the_remainder_but_not_the_divisor() {
+        crate::demo::install_with_salt(7);
         let mut form = AllocationForm::new(
             GoalId(7),
             "Lego",
@@ -749,17 +757,29 @@ mod tests {
         assert!(!text.contains("216"), "the resolved share survived: {text}");
         assert!(!text.contains("2,600"), "the remainder survived: {text}");
         assert!(text.contains("/12"), "the divisor is a count: {text}");
-        assert!(text.contains("██████"), "nothing was blocked: {text}");
-        assert!(text.contains("Lego"), "the goal name must stay: {text}");
+        assert!(
+            text.contains(&crate::demo::whole_figure(Cents::from_dollars(216))),
+            "no scrambled share found: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::figure(Cents(260_017))),
+            "no scrambled remainder found: {text}"
+        );
+        assert!(!text.contains("Lego"), "the goal name survived: {text}");
+        assert!(
+            text.contains(&crate::demo::text("Lego").to_string()),
+            "no scrambled goal name found: {text}"
+        );
         assert!(text.contains("2026-08-16"), "the date must stay: {text}");
     }
 
     /// The other half of the same field. A typed figure *is* a figure, and
     /// the form opens prefilled on an edit -- a field showing what is already
     /// there publishes it to whoever is watching.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_an_amount_typed_into_the_same_field() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_an_amount_typed_into_the_same_field() {
+        crate::demo::install_with_salt(7);
         let mut form = AllocationForm::new(
             GoalId(7),
             "Lego",
@@ -771,9 +791,13 @@ mod tests {
         let text = rendered(&form);
 
         assert!(!text.contains("1234"), "the typed amount survived: {text}");
-        assert!(text.contains("██████"), "nothing was blocked: {text}");
+        assert!(
+            text.contains(&crate::demo::typed("1234")),
+            "no scrambled amount found: {text}"
+        );
     }
 
+    #[cfg(feature = "demo")]
     fn rendered(form: &AllocationForm) -> String {
         use crate::tui::MIN_WIDTH;
         use ratatui::Terminal;
@@ -1310,10 +1334,12 @@ mod tests {
     }
 
     /// The balance is the whole point of the title -- it is what is about to
-    /// move -- so it is exactly the figure a demo has to block.
+    /// move -- and the goal's own name sits right beside it, so a demo has
+    /// to hide both.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_balance_a_close_out_is_about_to_move() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_balance_a_close_out_is_about_to_move() {
+        crate::demo::install_with_salt(7);
         let form = CloseForm::new(
             GoalId(7),
             "Couch",
@@ -1322,8 +1348,48 @@ mod tests {
             day(2026, 8, 16),
         );
         assert!(!form.title().contains("600.00"), "{}", form.title());
-        assert!(form.title().contains("██████"), "{}", form.title());
-        assert!(form.title().contains("Couch"), "{}", form.title());
+        assert!(
+            form.title().contains(&crate::demo::figure(Cents(60_000))),
+            "no scrambled balance found: {}",
+            form.title()
+        );
+        assert!(!form.title().contains("Couch"), "{}", form.title());
+        assert!(
+            form.title()
+                .contains(&crate::demo::text("Couch").to_string()),
+            "no scrambled goal name found: {}",
+            form.title()
+        );
+    }
+
+    /// The destination selector names a sibling goal to close into, and a
+    /// demo hides that name too -- but "— unallocated —" is the app's own
+    /// word for the default, never the owner's, and stays exactly as typed.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_a_close_outs_sibling_destinations_but_not_unallocated() {
+        crate::demo::install_with_salt(7);
+        let mut form = CloseForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(60_000),
+            siblings(),
+            day(2026, 8, 16),
+        );
+        assert_eq!(
+            form.display(CloseField::Destination).plain_text(),
+            "— unallocated —"
+        );
+
+        while form.focus != CloseField::Destination {
+            form.next_field();
+        }
+        form.choice(Step::NEXT);
+        let drawn = form.display(CloseField::Destination).plain_text();
+        assert_ne!(drawn, "Rug");
+        assert_eq!(drawn, crate::demo::text("Rug"));
+        // The buffer is untouched: the id, not the name, is what commits.
+        assert_eq!(form.commit().unwrap().to, Some(GoalId(8)));
     }
 
     /// Every date field in the app steps a day at a time under `←`/`→`, and

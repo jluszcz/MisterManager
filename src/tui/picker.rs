@@ -46,14 +46,26 @@ pub fn next_occurrence(month: u32, today: NaiveDate) -> Option<NaiveDate> {
 /// reseeded in August 2026 is next-occurring in March 2027, so it lands in
 /// 2028.
 pub fn goal_date(entry: &Entry, has_goal_this_year: bool, today: NaiveDate) -> Result<NaiveDate> {
-    let base = next_occurrence(entry.month as u32, today)
-        .with_context(|| format!("{:?} has an impossible month: {}", entry.name, entry.month))?;
+    let base = next_occurrence(entry.month as u32, today).with_context(|| {
+        format!(
+            "{:?} has an impossible month: {}",
+            // The status line prints this verbatim, so the entry's name is
+            // prose a viewer reads.
+            crate::demo::text(&entry.name),
+            entry.month
+        )
+    })?;
     let years = match (entry.cadence, has_goal_this_year) {
         (Cadence::Biennial, true) => 2,
         _ => 1,
     };
     base.checked_add_months(Months::new(12 * years))
-        .with_context(|| format!("{:?}'s next goal date runs off the calendar", entry.name))
+        .with_context(|| {
+            format!(
+                "{:?}'s next goal date runs off the calendar",
+                crate::demo::text(&entry.name)
+            )
+        })
 }
 
 pub struct Picker {
@@ -168,7 +180,7 @@ pub(super) fn render(frame: &mut Frame, picker: &Picker) -> Viewport {
             let open = picker.open_count(entry.id);
             Row::new(vec![
                 Cell::from(if picker.is_selected(i) { "✓" } else { " " }),
-                Cell::from(entry.name.clone()),
+                Cell::from(crate::demo::text(&entry.name).into_owned()),
                 Cell::from(month_name(entry.month)),
                 amount(entry.base_cents),
                 Cell::from(entry.cadence.as_str()),
@@ -310,6 +322,53 @@ mod tests {
             day(2028, 12, 1),
             "the first has passed, so the next occurrence is already 2027"
         );
+    }
+
+    /// A recurring goal's name is the owner's own word for it, and the
+    /// picker is the one place the catalog is drawn -- no other test renders
+    /// it, so nothing else would notice the mask going away.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_a_recurring_goals_name_in_the_picker() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        crate::demo::install_with_salt(7);
+        let picker = Picker::new(
+            vec![entry(1, "Dropbox", 9, Cadence::Annual)],
+            HashMap::new(),
+            &HashSet::new(),
+            Account::named(&accounts(), AccountId(2)),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, &picker);
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+
+        assert!(!text.contains("Dropbox"), "the entry name survived: {text}");
+        assert!(
+            text.contains(&crate::demo::text("Dropbox").to_string()),
+            "no scrambled entry name found: {text}"
+        );
+        // The title is the only thing on screen naming the container the
+        // goals land in, and it reaches the mask through `Account` rather
+        // than through the cell above.
+        assert!(!text.contains("Nest Egg"), "the container survived: {text}");
+        assert!(
+            text.contains(&crate::demo::text("Nest Egg").to_string()),
+            "no scrambled container found: {text}"
+        );
+        // The month and the cadence are the app's own words, and stay.
+        assert!(text.contains("Sep"), "the month must stay: {text}");
     }
 
     #[test]

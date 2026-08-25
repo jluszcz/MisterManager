@@ -20,9 +20,18 @@
 //! like is exactly what one shared rule prevents -- the same reason
 //! [`crate::palette`] is not part of `tui::style`.
 
+use std::borrow::Cow;
+
 /// The text to draw for a stored description, `—` when there is none.
-pub fn render(raw: &str) -> &str {
-    if raw.trim().is_empty() { "—" } else { raw }
+///
+/// A demo replaces the text and leaves the em dash alone: an absence is not
+/// something to hide, and a row with nothing in its Description column reads
+/// the same in a demonstration as it does in an ordinary run.
+pub fn render(raw: &str) -> Cow<'_, str> {
+    if raw.trim().is_empty() {
+        return Cow::Borrowed("—");
+    }
+    crate::demo::text(raw)
 }
 
 #[cfg(test)]
@@ -46,5 +55,13 @@ mod tests {
     #[test]
     fn a_description_of_nothing_but_whitespace_reads_as_an_em_dash() {
         assert_eq!(render("   "), "—");
+    }
+
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_replaces_a_description_and_leaves_an_absence_alone() {
+        crate::demo::install_with_salt(7);
+        assert_ne!(render("Whole Foods"), "Whole Foods");
+        assert_eq!(render(""), "—");
     }
 }

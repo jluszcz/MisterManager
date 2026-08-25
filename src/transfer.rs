@@ -257,7 +257,7 @@ pub fn spread_container(db: &Db) -> Result<Option<AccountId>> {
 fn container_names(db: &Db, ids: &[AccountId]) -> Result<Vec<String>> {
     ids.iter()
         // names the containers in a text report, not a display of an account
-        .map(|id| Ok(account::get(db, *id)?.name.as_str().to_string()))
+        .map(|id| Ok(crate::demo::text(account::get(db, *id)?.name.as_str()).into_owned()))
         .collect()
 }
 
@@ -497,7 +497,18 @@ pub fn diagnose(db: &Db, lines: &Lines) -> Result<Vec<String>> {
                     "The Goals plug is {plug} and has nowhere single to go."
                 ));
                 out.push(String::new());
-                out.push(format!("{}:", capitalized(&ambiguous_plug(containers))));
+                // `ambiguous_plug` itself is shared with `spread_container`'s
+                // refusal, which masks its own containers through
+                // `container_names` before it joins them. So the mask belongs
+                // at each call rather than inside the sentence both of them
+                // build: `Landing::Ambiguous` carries the names as `wiring`
+                // read them, and masking them twice would draw a third
+                // string.
+                let containers: Vec<String> = containers
+                    .iter()
+                    .map(|c| crate::demo::text(c).into_owned())
+                    .collect();
+                out.push(format!("{}:", capitalized(&ambiguous_plug(&containers))));
                 out.extend(unclaimed_by_container(db)?);
                 out.push(String::new());
                 out.push(
@@ -541,10 +552,10 @@ fn unclaimed_by_container(db: &Db) -> Result<Vec<String>> {
     let goals = spread_goals(db, Reading::Tolerant)?;
     let mut out = Vec::new();
     for id in spread_containers(&goals) {
-        let names: Vec<&str> = goals
+        let names: Vec<String> = goals
             .iter()
             .filter(|g| g.container_account_id == id)
-            .map(|g| g.name.as_str())
+            .map(|g| crate::demo::text(&g.name).into_owned())
             .collect();
         let count = match names.len() {
             1 => "1 goal".to_string(),
@@ -557,7 +568,7 @@ fn unclaimed_by_container(db: &Db) -> Result<Vec<String>> {
         };
         out.push(format!(
             "  {}: {count}{listed}",
-            account::get(db, id)?.name.as_str()
+            crate::demo::text(account::get(db, id)?.name.as_str())
         ));
     }
     Ok(out)
@@ -1456,18 +1467,47 @@ mod tests {
     /// The panel this text fills is drawn by the Planning screen, so the
     /// figure in it is on screen exactly as a column is -- and this module
     /// sits below `tui`, which is why `demo` sits at the crate root.
+    #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_blocks_the_plug_the_diagnosis_quotes() {
-        crate::demo::install(true);
+    fn a_demo_scrambles_the_plug_the_diagnosis_quotes() {
+        crate::demo::install_with_salt(7);
         let (db, _, _) = configured();
         setting::clear(&db, key_of(Line::MomAndDad)).unwrap();
 
         let text = diagnose(&db, &lines()).unwrap().join("\n");
         assert!(!text.contains("4,832"), "the plug survived: {text}");
-        assert!(text.contains("██████"), "nothing was blocked: {text}");
         assert!(
-            text.contains("Rainy Day"),
-            "the containers must stay: {text}"
+            text.contains(&crate::demo::figure(Cents::from_dollars(4_832))),
+            "no scrambled plug found: {text}"
+        );
+        assert!(!text.contains("Rainy Day"), "a container survived: {text}");
+        assert!(
+            text.contains(&crate::demo::text("Rainy Day").to_string()),
+            "no scrambled container found: {text}"
+        );
+    }
+
+    /// `diagnose` writes goal and account names into prose for the Planning
+    /// screen to draw, which is why the mask lives at the crate root rather
+    /// than under `tui`.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_names_no_goal_in_the_prose_it_writes() {
+        crate::demo::install_with_salt(7);
+        // the fixture the neighbouring ambiguous-plug test builds
+        let (db, _, _) = configured();
+        setting::clear(&db, key_of(Line::MomAndDad)).unwrap();
+
+        let text = diagnose(&db, &lines()).unwrap().join("\n");
+        assert!(!text.contains("Lego"), "{text}");
+        assert!(!text.contains("Brokerage"), "{text}");
+        assert!(
+            text.contains(&crate::demo::text("Lego").to_string()),
+            "no scrambled goal name found: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::text("Brokerage").to_string()),
+            "no scrambled container found: {text}"
         );
     }
 
@@ -1622,6 +1662,37 @@ mod tests {
             err.contains("Rainy Day") && err.contains("Brokerage"),
             "{err}"
         );
+    }
+
+    /// `plan`'s refusal reaches a screen two ways: `app::planning::reload`
+    /// turns it into the transfers block's own note, and `t` puts the same
+    /// string on the status line -- so the ambiguous-plug state this test
+    /// builds must not leave the real container names in either.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_the_containers_named_in_the_ambiguous_plug_refusal() {
+        crate::demo::install_with_salt(7);
+        let (db, _, brokerage) = configured();
+        goal::insert(
+            &db,
+            &NewGoal {
+                name: "Sabbatical".to_string(),
+                container_account_id: brokerage,
+                base_cents: Cents::from_dollars(1_000),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 9,
+                taxed: false,
+            },
+        )
+        .unwrap();
+
+        let err = format!("{:#}", plan(&db, &lines()).unwrap_err());
+        assert!(!err.contains("Rainy Day"), "a container survived: {err}");
+        assert!(!err.contains("Brokerage"), "a container survived: {err}");
+        assert!(err.contains(&crate::demo::text("Rainy Day").to_string()));
+        assert!(err.contains(&crate::demo::text("Brokerage").to_string()));
     }
 
     /// Spreading to nowhere is not a withdrawal: with no unclaimed goal, a

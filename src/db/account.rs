@@ -438,7 +438,11 @@ pub fn insert(db: &Db, code: &str, name: &str, kind: Kind, sort: i64) -> Result<
         bail!(
             "a {} account with code {:?} already exists",
             kind.as_str(),
-            existing.code
+            // The Accounts screen puts this on the status line verbatim, and
+            // retyping a code that already exists is an ordinary thing to do
+            // mid-demonstration. Prose rather than a cell, so it reaches the
+            // mask here rather than through `account_label::Account`.
+            crate::demo::text(existing.code.as_str())
         );
     }
     db.conn.execute(
@@ -557,8 +561,11 @@ pub fn checking(db: &Db) -> Result<Account> {
         found.len(),
         found
             .iter()
-            // names the offenders in the ambiguity error, not a display of an account
-            .map(|a| a.name.as_str())
+            // Names the offenders in the ambiguity error, not a display of an
+            // account -- and the Planning screen draws this message in place
+            // of the plan, so the names reach a viewer as prose and are
+            // masked here rather than through `account_label::Account`.
+            .map(|a| crate::demo::text(a.name.as_str()).into_owned())
             .collect::<Vec<_>>()
             .join(", ")
     );

@@ -25,15 +25,22 @@ about a figure, one of them is wrong.
   a thread-local flag once, before the first frame, and nothing ever clears it
   -- `main` regains control on that same thread when `tui::run` returns, so the
   flag it set is still on there, and a report written under it would be a page
-  of blocks over the one file that cannot be regenerated without quitting an
-  ordinary session. The page also formats
-  `Cents` directly rather than through `demo::figure`, so a caller that forgets
-  the skip writes real figures rather than blocks. Its dates come from
-  `projection::dates`, never from `App::adhoc`: the scrub is a hypothetical the
-  owner left a cursor on, and a report cannot say which day it was quoting.
+  of scrambled figures over the one file that cannot be regenerated without
+  quitting an ordinary session. **That skip is the whole of the guard, and
+  there is no second line behind it.** The page's figures are formatted off
+  `Cents` directly rather than through `demo::figure`, but text is a different
+  story: an account reaches the page through `account_label::Account` and a
+  description through `description::render`, both of which mask where the text
+  becomes a display and both of which the screens share. A page written under
+  the mask would therefore carry real figures beside pseudonymous names, which
+  is worse than either -- so the flag is checked before anything is queried
+  rather than relied on to be harmless. Its dates come
+  from `projection::dates`, never from `App::adhoc`: the scrub is a
+  hypothetical the owner left a cursor on, and a report cannot say which day
+  it was quoting.
   `mm report` refuses `--demo` rather than ignoring it: no subcommand installs
-  the mask, so the flag would quietly write the real figures it exists to
-  block.
+  the mask, so the flag would quietly write the real figures the mask exists
+  to keep off the page.
 - **Every control on the page is CSS, and that is what the no-script rule
   buys.** The tabs and the ledgers' month filter are radio buttons the page
   never shows, plus a `:checked ~` rule per control; the radios are moved

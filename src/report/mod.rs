@@ -348,11 +348,17 @@ pub fn write(db: &Db, dir: &Path, today: NaiveDate) -> Result<Written> {
 ///
 /// `demo` skips before anything is queried. `crate::demo::install` sets a
 /// thread-local flag that is still set when `main` regains control, so a
-/// report written under it would be a page of blocks overwriting the one file
-/// that cannot be regenerated without quitting an ordinary session.
+/// report written under it would be a page of scrambled figures overwriting
+/// the one file that cannot be regenerated without quitting an ordinary
+/// session.
 ///
-/// The page itself never calls `demo::figure`: it formats `Cents` directly.
-/// Belt and braces on the skip above.
+/// The skip is the whole of the guard. The page's *figures* are formatted
+/// off `Cents` directly rather than through `demo::figure`, but its account
+/// names and transaction descriptions go through `account_label::Account` and
+/// `description::render`, which mask where the text becomes a display and are
+/// shared with the screens. So a page written with the mask installed would
+/// come out as real figures beside pseudonymous names -- worse than either --
+/// and there is no second line of defence to fall back on.
 pub fn write_if_enabled(
     db: &Db,
     cfg: &crate::config::Config,
@@ -597,9 +603,9 @@ mod tests {
     }
 
     /// The mask is process-global and still installed when `main` regains
-    /// control, so a report written under it would be a page of blocks over
-    /// the one file that cannot be regenerated without quitting a normal
-    /// session.
+    /// control, so a report written under it would be a page of scrambled
+    /// figures over the one file that cannot be regenerated without quitting
+    /// a normal session.
     #[test]
     fn a_demo_run_writes_nothing_and_leaves_an_existing_report_untouched() {
         let dir = scratch("demo");

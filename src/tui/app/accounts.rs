@@ -32,7 +32,7 @@ impl App {
         let new = form.commit_new()?;
         let sort = account::list_by_kind(&self.db, new.kind)?.len() as i64;
         account::insert(&self.db, &new.code, &new.name, new.kind, sort)?;
-        self.status = format!("{} added", new.name);
+        self.status = format!("{} added", crate::demo::text(new.name.as_str()));
         self.close_modal();
         self.reload()
     }
@@ -157,7 +157,7 @@ impl App {
         account::set_interest_policy(&self.db, id, edit.policy)?;
         account::reorder(&self.db, id, edit.position)?;
         self.set_savings_block(id, edit.block)?;
-        self.status = format!("{} saved", edit.name);
+        self.status = format!("{} saved", crate::demo::text(edit.name.as_str()));
         self.close_modal();
         self.reload()
     }

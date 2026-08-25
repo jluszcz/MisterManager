@@ -16,16 +16,33 @@ struct Cli {
     /// Config file. Defaults to ~/.config/mistermanager/config.toml
     #[arg(long, global = true)]
     config: Option<PathBuf>,
-    /// Block every dollar figure out, for showing the application to someone.
+    /// Scramble every dollar figure's digits, for showing the application to
+    /// someone.
     ///
     /// Not global, unlike the three above: it changes what the screens draw
     /// and nothing else. `mm report` refuses it rather than ignoring it --
-    /// the mask is the TUI's, installed before its first frame, so it would
-    /// never reach a page written without one.
+    /// the scramble is the TUI's, installed before its first frame, so it
+    /// would never reach a page written without one.
+    #[cfg(feature = "demo")]
     #[arg(long)]
     demo: bool,
     #[command(subcommand)]
     command: Option<Command>,
+}
+
+impl Cli {
+    /// Whether this run is a demo. Always `false` without the `demo`
+    /// feature, where there is no flag to read: a build that cannot install
+    /// the mask must not have a way to ask for it.
+    #[cfg(feature = "demo")]
+    fn demo(&self) -> bool {
+        self.demo
+    }
+
+    #[cfg(not(feature = "demo"))]
+    fn demo(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Subcommand)]
@@ -69,6 +86,9 @@ fn default_db() -> Result<PathBuf> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Read before `cli.db` and `cli.config` are moved out below, which a
+    // method call on `&cli` cannot follow -- a field read can.
+    let demo = cli.demo();
     // Whether the schedule applies is a question about *which* database this
     // is, so it is asked before the option is collapsed into a path.
     let is_default_db = cli.db.is_none();
@@ -93,8 +113,8 @@ fn main() -> Result<()> {
         // No subcommand launches the application. `--db` and `--today` are
         // global, so the TUI honors them exactly as the importer does.
         None => {
-            let db = tui::run(db, today, cli.demo)?;
-            write_report(&db, &cfg, today, cli.demo);
+            let db = tui::run(db, today, demo)?;
+            write_report(&db, &cfg, today, demo);
         }
         Some(Command::Import { workbook, replace }) => {
             match import::import_all(&db, &workbook, today, replace)? {
@@ -115,11 +135,11 @@ fn main() -> Result<()> {
         }
         Some(Command::Report { dir }) => {
             // The mask lives in the TUI and nothing here installs it, so the
-            // flag would silently write the real figures it exists to block.
-            if cli.demo {
+            // flag would silently write the real figures it exists to mask.
+            if demo {
                 anyhow::bail!(
                     "--demo cannot be honoured here: no subcommand installs the mask, so \
-                     the page would carry the figures the flag exists to block. Drop the \
+                     the page would carry the figures the flag exists to mask. Drop the \
                      flag, or quit the app with --demo, which writes no report at all"
                 );
             }

@@ -365,9 +365,9 @@ impl AccountForm {
 
     pub fn display(&self, field: AccountField) -> Label {
         Label::plain(match field {
-            AccountField::Code => self.code.value().to_string(),
+            AccountField::Code => crate::demo::text(self.code.value()).into_owned(),
             AccountField::Kind => self.kind().label().to_string(),
-            AccountField::Name => self.name.value().to_string(),
+            AccountField::Name => crate::demo::text(self.name.value()).into_owned(),
             AccountField::Color => match color_choices()[self.color] {
                 None => "—".to_string(),
                 Some(color) => color.label().to_string(),
@@ -547,7 +547,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
         .iter()
         .map(|r| {
             TableRow::new(vec![
-                Cell::from(r.code.clone()),
+                Cell::from(crate::demo::text(&r.code).into_owned()),
                 account_cell(&r.account),
                 Cell::from(r.kind.label()),
                 Cell::from(r.group.label()),
@@ -1149,6 +1149,24 @@ mod tests {
         assert_eq!(new.code, "CC1");
         assert_eq!(new.name, "Card One");
         assert_eq!(new.kind, Kind::Credit);
+    }
+
+    /// An account code is one of the four categories `CLAUDE.md` bans from a
+    /// tracked file outright, and the Accounts screen's own table already
+    /// masks it -- the add form's own `Code` field is the same text, typed
+    /// rather than read off a row, and a demo must hide it just the same.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_a_typed_account_code() {
+        crate::demo::install_with_salt(7);
+        let mut form = AccountForm::add();
+        type_into(&mut form, AccountField::Code, "CHK");
+        let drawn = form.display(AccountField::Code).plain_text();
+        assert_ne!(drawn, "CHK");
+        assert_eq!(drawn, crate::demo::text("CHK"));
+        // The buffer is untouched: Enter still writes the real code.
+        type_into(&mut form, AccountField::Name, "Everyday");
+        assert_eq!(form.commit_new().unwrap().code, "CHK");
     }
 
     /// Focus a field and type into it, the way the modal's key handler does.

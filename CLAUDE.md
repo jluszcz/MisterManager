@@ -133,7 +133,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/plan_rows.rs` | The Planning waterfall as an ordered list of rows, in neither medium -- a peer of `overview` and `savings`. The order, the labels, the grouping, the two footers outside the transfers block, and `Target`, the constant a row *is*. The Planning screen and the report's Planning tab both read it, and each spends `Row::depth` in its own units. |
 | `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `pro_rata`, the Planning waterfall, `fund` (the target/actual/delta derivation), `schedule` (when a recurring thing happens). No database. |
 | `src/description.rs` | What a transaction's description reads as, in any medium: the stored text, or `—` when there is none. One rule rather than one per sink, the same split `palette` makes for color — `tui`'s ledger, status line and delete confirmation read it, and so does `report::html::ledger`. |
-| `src/demo.rs` | `mm --demo`: the mask every absolute figure is drawn through, and the once-per-run flag that turns it on. Named by `tui` and by `transfer`, the two layers that put a figure in front of a human. |
+| `src/demo/` | `mm --demo`: the mask every absolute figure and owner-entered name is drawn through, and the once-per-run salt that turns it on. `mask` is the pure scrambling and pseudoword rules; `mod.rs` is the API every layer that puts a figure or a name in front of a human calls — `tui`, `transfer`'s prose, and the refusals `goal` and `db` build for a screen to print verbatim. Compiles only under the `demo` Cargo feature. |
 | `src/db/` | Schema and queries — one module per aggregate. |
 | `src/db/migration.rs` | The frozen v1 baseline, the chain of arms above it, and the runner that applies whichever of them a database is missing. |
 | `src/db/date.rs` | The stored date format, in one place: `iso` writes it, `parse`/`parse_opt` read it back for a `from_row`. |
@@ -476,14 +476,18 @@ matches, since nothing but a test ties them together.
   own come back out of the workbook for `g` to adopt. Losing the paycheck flag would revert
   Paycheck-Eve to today and move the Planning waterfall's excess, so keeping it is the point
   rather than a side effect.
-- **`mm --demo` blocks the figures and nothing else.** Every absolute dollar amount the app draws
-  is replaced by a fixed run of blocks — the same run whatever the figure, because the number of
-  digits is itself a figure. Percentages, dates, counts, account and goal names are untouched: a
-  percentage is a shape rather than a sum, and the point of the flag is to show the application
-  working. It is display-only and installed once, before the first frame, so nothing it touches can
-  reach a write: what is typed into a form still parses, every buffer keeps its real text, and the
-  status line that reports a write reports a masked figure over a real row. `mm import` and
-  `mm backup` do not take the flag, because neither prints a figure. The rules for reaching the
+- **`mm --demo` replaces absolute figures and owner-entered text, and nothing else.** Every
+  absolute dollar figure draws with another figure's digits, keyed on a per-run salt so one amount
+  reads the same everywhere; every account name and code, goal name, recurring-goal name, bill
+  label, fund name and transaction description draws as a same-length pronounceable pseudoword,
+  keyed the same way so one word reads the same all run. Percentages, dates, counts, the app's own vocabulary, and every match key are
+  untouched: a percentage is a shape rather than a sum, a scrambled date is not a date, and a count
+  over a list of rows the reader can see would read as a fault. It is display-only and installed
+  once, before the first frame, so nothing it touches can reach a write: what is typed into a form
+  still parses, every buffer keeps its real text, and the status line that reports a write reports
+  a masked figure over a real row. `mm import` and `mm backup` do not take the flag, because
+  neither prints a figure. It compiles only under the non-default `demo` Cargo feature, so a
+  default build has no `--demo` flag and none of the code behind it. The rules for reaching the
   mask — and the one place a caller has to say whether its figure is money — are in
   `src/tui/CLAUDE.md`.
 - **Sign conventions differ per ledger.** Cash rows are signed naturally (positive is inflow); credit
