@@ -12,7 +12,7 @@ use crate::db::{AccountId, TxnId};
 use crate::money::Cents;
 use crate::rate::BasisPoints;
 use anyhow::{Context, Result, anyhow, ensure};
-use chrono::{Datelike, NaiveDate, TimeDelta};
+use chrono::{Datelike, Months, NaiveDate, TimeDelta};
 use ratatui::crossterm::event::KeyEvent;
 
 /// One text input: its buffer, and whether the user has typed into it.
@@ -202,24 +202,24 @@ impl DateField {
         &self.field
     }
 
-    /// Step the date by `days`, rewriting it as the date it now means. What
-    /// `←`/`→` do on every date field in the app, and `Shift` with them a
-    /// week at a time.
+    /// Step the date by `step`, rewriting it as the date it now means. What
+    /// `←`/`→` do on every date field in the app, `Shift` with them a week at
+    /// a time, and `[`/`]` a month.
     ///
     /// A field holding something that is not a date is left exactly as it
-    /// was: the arrows are a nudge on a date already there, not a way to
+    /// was: the keys are a nudge on a date already there, not a way to
     /// conjure one. That is what keeps them off a half-typed date, and off
     /// the blank fields that mean something in their own right -- an undated
     /// goal, and a recurring transaction that does not end.
     ///
     /// The step counts as the user's own, the same as a keystroke: a date
-    /// arrived at by pressing an arrow is not a prefill for a suggestion to
+    /// arrived at by pressing a key is not a prefill for a suggestion to
     /// overwrite.
-    pub(super) fn step(&mut self, days: i64) {
+    pub(super) fn step(&mut self, step: Step) {
         let Ok(date) = self.parse() else {
             return;
         };
-        let Some(stepped) = date.checked_add_signed(TimeDelta::days(days)) else {
+        let Some(stepped) = step.apply(date) else {
             return;
         };
         self.field.retype(iso(stepped));
@@ -258,37 +258,85 @@ impl DateField {
     }
 }
 
-/// How far one arrow press moves what it is pressed on: a day, or -- with
-/// `Shift` -- a week.
+/// How far one keypress moves what it is pressed on: a day, a week with
+/// `Shift`, or a month on `[`/`]`.
 ///
 /// One value rather than a direction and a magnitude, so a form's answer to
-/// the arrows is one match on its focus rather than two near-identical ones
-/// that have to be kept in step by hand. `Shift` is then the same nudge with
-/// a bigger step, by construction, rather than by a second code path beside
-/// the first.
+/// the keys is one match on its focus rather than several near-identical ones
+/// that have to be kept in step by hand. A bigger step is then the same nudge
+/// carrying a bigger number, by construction, rather than a second code path
+/// beside the first.
 ///
-/// A selector has no week to move, so it reads the direction and ignores the
-/// size: a modified arrow that did nothing would be a dead key on the very
-/// fields the hand reaches for it on.
+/// A selector has no week and no month to move, so it reads the direction and
+/// ignores the size: a modified arrow that did nothing would be a dead key on
+/// the very fields the hand reaches for it on.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Step(i64);
+pub struct Step {
+    amount: i64,
+    unit: Unit,
+}
+
+/// What a [`Step`]'s amount counts.
+///
+/// A month is not a number of days -- August steps to September over 31 of
+/// them and February over 28 -- so the unit travels with the amount instead
+/// of being flattened into days at the constant, where it would have to guess
+/// which month it was about to land in.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Unit {
+    Days,
+    Months,
+}
 
 impl Step {
     /// `→`, and `←`.
-    pub const NEXT: Step = Step(1);
-    pub const PREVIOUS: Step = Step(-1);
+    pub const NEXT: Step = Step::days(1);
+    pub const PREVIOUS: Step = Step::days(-1);
     /// `Shift` with them.
-    pub const NEXT_WEEK: Step = Step(super::WEEK);
-    pub const PREVIOUS_WEEK: Step = Step(-super::WEEK);
+    pub const NEXT_WEEK: Step = Step::days(super::WEEK);
+    pub const PREVIOUS_WEEK: Step = Step::days(-super::WEEK);
+    /// `]`, and `[`.
+    pub const NEXT_MONTH: Step = Step::months(1);
+    pub const PREVIOUS_MONTH: Step = Step::months(-1);
 
-    /// The step in days, which is what a date moves by.
-    pub fn days(self) -> i64 {
-        self.0
+    const fn days(amount: i64) -> Step {
+        Step {
+            amount,
+            unit: Unit::Days,
+        }
+    }
+
+    const fn months(amount: i64) -> Step {
+        Step {
+            amount,
+            unit: Unit::Months,
+        }
+    }
+
+    /// The date `from` steps to, or `None` where the calendar runs out.
+    ///
+    /// A month step clamps the day into the month it lands in, which is what
+    /// `chrono` does and the only answer there is: the 31st of a month
+    /// stepping onto a thirty-day one has nowhere else to go, and stepping
+    /// back from there does not return to the 31st. Stepping a *date* is the
+    /// one reading of a month here -- what a screen's `[`/`]` month filter
+    /// steps is a filter, and lives in [`super::month`].
+    pub fn apply(self, from: NaiveDate) -> Option<NaiveDate> {
+        match self.unit {
+            Unit::Days => from.checked_add_signed(TimeDelta::days(self.amount)),
+            Unit::Months => {
+                let months = Months::new(u32::try_from(self.amount.unsigned_abs()).ok()?);
+                match self.amount {
+                    ..0 => from.checked_sub_months(months),
+                    _ => from.checked_add_months(months),
+                }
+            }
+        }
     }
 
     /// Which way, which is all a selector takes.
     pub fn direction(self) -> isize {
-        self.0.signum() as isize
+        self.amount.signum() as isize
     }
 }
 
@@ -603,12 +651,29 @@ pub(super) trait FormFields {
                 return;
             }
             Focused::Date(date) => {
-                date.step(step.days());
+                date.step(step);
                 return;
             }
             Focused::Selector => {}
         }
         self.cycle(step);
+    }
+
+    /// `[`/`]`: step the focused date a month, and say whether there was one.
+    ///
+    /// The difference from [`FormFields::choice`], which every kind of field
+    /// answers, is that a bracket stays an ordinary character everywhere else
+    /// -- a description may hold one. So a form with no date under the caret
+    /// reports that rather than swallowing the key, and the handler above
+    /// lets it through to the text.
+    fn step_month(&mut self, step: Step) -> bool {
+        match self.focused() {
+            Focused::Date(date) => {
+                date.step(step);
+                true
+            }
+            Focused::Text(_) | Focused::Selector => false,
+        }
     }
 
     /// The text to autocomplete against, when the description field has
@@ -1660,18 +1725,19 @@ mod tests {
         for c in "9/10".chars() {
             f.push(c);
         }
-        f.step(1);
+        f.step(Step::NEXT);
         assert_eq!(f.value(), "2026-09-11");
     }
 
     /// Blank means an undated goal and a rule that does not end. Neither is
-    /// a date an arrow may conjure, and neither is a parse failure.
+    /// a date a step key may conjure, and neither is a parse failure.
     #[test]
-    fn a_blank_date_field_is_no_date_and_no_arrow_dates_it() {
+    fn a_blank_date_field_is_no_date_and_no_step_key_dates_it() {
         let mut f = DateField::blank(day(2026, 8, 21));
         assert_eq!(f.parse_opt().unwrap(), None);
-        f.step(1);
-        f.step(-7);
+        f.step(Step::NEXT);
+        f.step(Step::PREVIOUS_WEEK);
+        f.step(Step::NEXT_MONTH);
         assert_eq!(f.value(), "");
         assert_eq!(f.parse_opt().unwrap(), None);
     }
@@ -1701,6 +1767,72 @@ mod tests {
         form.choice(Step::PREVIOUS_WEEK);
         form.choice(Step::PREVIOUS_WEEK);
         assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-08");
+    }
+
+    /// `[`/`]` move a whole month, which is why a step carries a unit rather
+    /// than a count of days: August steps to September over 31 of them and
+    /// February over 28.
+    #[test]
+    fn brackets_step_a_transaction_date_a_month() {
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
+        focused(&mut form, TxnField::Date);
+        assert!(form.step_month(Step::NEXT_MONTH));
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-09-15");
+        assert!(form.step_month(Step::PREVIOUS_MONTH));
+        assert!(form.step_month(Step::PREVIOUS_MONTH));
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-07-15");
+    }
+
+    /// A month is not a fixed length, so the day is clamped into the month it
+    /// lands in and stepping back does not return to where it came from.
+    /// There is no other answer: the 31st of September is not a date.
+    #[test]
+    fn a_month_step_onto_a_shorter_month_clamps_the_day_and_does_not_come_back() {
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 31)), None).unwrap();
+        focused(&mut form, TxnField::Date);
+        form.step_month(Step::NEXT_MONTH);
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-09-30");
+        form.step_month(Step::PREVIOUS_MONTH);
+        assert_eq!(form.display(TxnField::Date).plain_text(), "2026-08-30");
+    }
+
+    /// February is where that clamp bites hardest, and where it depends on
+    /// the year: two days lost stepping out of a 30th in 2026, one in the
+    /// leap year. The day does not spring back on the way out the far side,
+    /// which is what makes a month step something to check rather than a
+    /// nudge to hold down.
+    #[test]
+    fn a_month_step_into_february_lands_on_its_last_day_and_keeps_that_day_after() {
+        let mut f = DateField::on(day(2026, 1, 30), day(2026, 1, 30));
+        f.step(Step::NEXT_MONTH);
+        assert_eq!(f.value(), "2026-02-28");
+        f.step(Step::NEXT_MONTH);
+        assert_eq!(f.value(), "2026-03-28");
+        f.step(Step::PREVIOUS_MONTH);
+        f.step(Step::PREVIOUS_MONTH);
+        assert_eq!(f.value(), "2026-01-28");
+
+        let mut leap = DateField::on(day(2028, 1, 30), day(2028, 1, 30));
+        leap.step(Step::NEXT_MONTH);
+        assert_eq!(leap.value(), "2028-02-29");
+    }
+
+    /// The difference from the arrows: a bracket is an ordinary character in
+    /// a description, so a form with no date under the caret reports that it
+    /// stepped nothing and the handler types the key instead.
+    #[test]
+    fn a_month_step_off_a_date_is_refused_so_the_bracket_stays_a_character() {
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
+        focused(&mut form, TxnField::Description);
+        assert!(!form.step_month(Step::NEXT_MONTH));
+        focused(&mut form, TxnField::Account);
+        assert!(!form.step_month(Step::NEXT_MONTH));
+
+        typed(&mut form, TxnField::Amount, "10");
+        typed(&mut form, TxnField::Description, "Coffee");
+        let committed = form.commit().unwrap();
+        assert_eq!(committed.date, day(2026, 8, 15));
+        assert_eq!(committed.account_id, AccountId(1));
     }
 
     /// A selector has no week to move, so it takes the direction and ignores

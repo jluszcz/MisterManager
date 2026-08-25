@@ -588,7 +588,7 @@ const SEARCH: [Entry; 5] = [
     },
 ];
 
-const WORKSHEET: [Entry; 14] = [
+const WORKSHEET: [Entry; 15] = [
     WORKSHEET_EDITING,
     Entry {
         key: "Tab",
@@ -609,6 +609,11 @@ const WORKSHEET: [Entry; 14] = [
         key: "Shift+←/→",
         label: Label::Hidden,
         detail: "The same step, a week at a time.",
+    },
+    Entry {
+        key: "[ ]",
+        label: Label::Hidden,
+        detail: "Step the date a month, while the date has focus. The day is clamped into the month it lands in, so the 31st becomes the 30th where there are thirty days.",
     },
     Entry {
         key: "Space",
@@ -720,7 +725,7 @@ const CONFIRM: [Entry; 3] = [
     },
 ];
 
-const FORM: [Entry; 9] = [
+const FORM: [Entry; 10] = [
     EDITING,
     Entry {
         key: "Tab",
@@ -741,6 +746,11 @@ const FORM: [Entry; 9] = [
         key: "Shift+←/→",
         label: Label::Hidden,
         detail: "The same arrows, a week at a time on a date. A choice field has no week to move, so it steps one choice as it would unmodified.",
+    },
+    Entry {
+        key: "[ ]",
+        label: Label::Hidden,
+        detail: "Step a date back or forward a month, when a date has the caret. The day is clamped into the month it lands in, so the 31st becomes the 30th where there are thirty days. Every other field takes the bracket as a character.",
     },
     Entry {
         key: "Backspace",
@@ -768,7 +778,7 @@ const FORM: [Entry; 9] = [
     },
 ];
 
-const SUGGEST_FORM: [Entry; 10] = [
+const SUGGEST_FORM: [Entry; 11] = [
     EDITING,
     Entry {
         key: "Tab",
@@ -794,6 +804,11 @@ const SUGGEST_FORM: [Entry; 10] = [
         key: "Shift+←/→",
         label: Label::Hidden,
         detail: "The same arrows, a week at a time on a date. A choice field has no week to move, so it steps one choice as it would unmodified.",
+    },
+    Entry {
+        key: "[ ]",
+        label: Label::Hidden,
+        detail: "Step a date back or forward a month, when a date has the caret. The day is clamped into the month it lands in, so the 31st becomes the 30th where there are thirty days. Every other field takes the bracket as a character.",
     },
     Entry {
         key: "Backspace",
@@ -825,7 +840,7 @@ const SUGGEST_FORM: [Entry; 10] = [
 /// convention as [`Topic::Form`]: `TransferConfirm::type_char` forwards any
 /// `char` to the date field, which needs `-` as well as digits, so no single
 /// key stands in for it.
-const PLAN_TRANSFERS: [Entry; 6] = [
+const PLAN_TRANSFERS: [Entry; 7] = [
     EDITING,
     Entry {
         key: "Esc",
@@ -841,6 +856,11 @@ const PLAN_TRANSFERS: [Entry; 6] = [
         key: "Shift+←/→",
         label: Label::Hidden,
         detail: "The same step, a week at a time.",
+    },
+    Entry {
+        key: "[ ]",
+        label: Label::Hidden,
+        detail: "Step the date a month. The day is clamped into the month it lands in, so the 31st becomes the 30th where there are thirty days.",
     },
     Entry {
         key: "Enter",

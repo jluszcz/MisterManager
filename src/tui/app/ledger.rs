@@ -441,6 +441,29 @@ mod tests {
         assert_eq!(form_date(&app), "2026-08-20");
     }
 
+    /// `[`/`]` reach a form's date the way the arrows do -- and stop there.
+    /// A bracket is an ordinary character in a description, so the key has to
+    /// go on to the text when the caret is not in a date.
+    #[test]
+    fn brackets_step_a_form_date_a_month_and_still_type_into_a_description() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('a'));
+        focus(&mut app, TxnField::Date);
+        press(&mut app, KeyCode::Char(']'));
+        assert_eq!(form_date(&app), "2026-09-15");
+        press(&mut app, KeyCode::Char('['));
+        press(&mut app, KeyCode::Char('['));
+        assert_eq!(form_date(&app), "2026-07-15");
+
+        focus(&mut app, TxnField::Description);
+        type_str(&mut app, "Lot [3]");
+        assert_eq!(
+            form(&app).display(TxnField::Description).plain_text(),
+            "Lot [3]"
+        );
+    }
+
     /// Rows in July, August and September, so `[` and `]` have somewhere to
     /// go: the window is clamped to the months the data covers, and the
     /// single-month fixture above cannot step at all.

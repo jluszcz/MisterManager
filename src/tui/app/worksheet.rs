@@ -70,6 +70,11 @@ impl App {
             // here.
             KeyCode::Left => sheet.step_date(week_step(key, Step::PREVIOUS_WEEK, Step::PREVIOUS)),
             KeyCode::Right => sheet.step_date(week_step(key, Step::NEXT_WEEK, Step::NEXT)),
+            // A month, above the operators so the date focus reads them as a
+            // step rather than as text. The other two focuses take digits and
+            // drop everything else, so a bracket was never a character here.
+            KeyCode::Char('[') if text::is_bare(key) => sheet.step_date(Step::PREVIOUS_MONTH),
+            KeyCode::Char(']') if text::is_bare(key) => sheet.step_date(Step::NEXT_MONTH),
             // The operators are line-editing keys, but they are live from the
             // amount too: that field takes digits and drops everything else,
             // so gating them on `Lines` only made them dead keys on the

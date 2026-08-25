@@ -171,6 +171,30 @@ fn week_step(key: KeyEvent, week: Step, day: Step) -> Step {
     }
 }
 
+/// `[` and `]`, which step a date a month back and forward wherever one is
+/// being typed. `None` for every other key.
+///
+/// A month is too far for a modifier on the arrows to reach: `Shift` is
+/// already the week, and a second modifier would be a chord where every other
+/// nudge in the app is a single press. `[`/`]` is the month the whole app
+/// already steps -- a screen's filter there, a date field's own month here --
+/// so the hand reaching for it does not have to know which of the two it is
+/// looking at.
+///
+/// Read through `text::is_bare` for the reason `App::dispatch` is: `Ctrl`
+/// means editing text everywhere in the app, and a modifier nothing binds
+/// must not fall through to the bare key's meaning.
+fn month_step(key: KeyEvent) -> Option<Step> {
+    if !text::is_bare(key) {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char('[') => Some(Step::PREVIOUS_MONTH),
+        KeyCode::Char(']') => Some(Step::NEXT_MONTH),
+        _ => None,
+    }
+}
+
 /// How long a status message holds the footer before the screen's own keys
 /// come back.
 ///
@@ -492,10 +516,9 @@ impl App {
         // out is a plausible question here, and nowhere else, so the bigger
         // step is a modifier on the key that already means "move this date"
         // rather than a second letter for the same action.
-        let step = week_step(key, Step::NEXT_WEEK, Step::NEXT).days();
         match key.code {
-            KeyCode::Left => self.scrub(-step)?,
-            KeyCode::Right => self.scrub(step)?,
+            KeyCode::Left => self.scrub(week_step(key, Step::PREVIOUS_WEEK, Step::PREVIOUS))?,
+            KeyCode::Right => self.scrub(week_step(key, Step::NEXT_WEEK, Step::NEXT))?,
             _ => {}
         }
         Ok(())
@@ -504,10 +527,9 @@ impl App {
     /// Move the Paycheck-Eve date without touching the paycheck recurring
     /// transaction. To-Date and Month-End are derived from today and cannot
     /// scrub.
-    fn scrub(&mut self, days: i64) -> Result<()> {
-        self.adhoc = self
-            .adhoc
-            .checked_add_signed(chrono::Duration::days(days))
+    fn scrub(&mut self, step: Step) -> Result<()> {
+        self.adhoc = step
+            .apply(self.adhoc)
             .context("the ad-hoc date ran off the end of the calendar")?;
         self.reload_overview()?;
         // The drift is what the press did, so it is a message rather than a
@@ -818,10 +840,17 @@ impl App {
                         }
                     }
                     // The date is a text field, and the editing keys reach it
-                    // here as they do in every form.
+                    // here as they do in every form -- `[`/`]` included, which
+                    // this dialog can take unconditionally because the date is
+                    // the only thing in it.
                     _ => {
                         if let Some(Modal::PlanTransfers(confirm)) = &mut self.modal {
-                            confirm.edit(key);
+                            match month_step(key) {
+                                Some(step) => confirm.step_date(step),
+                                None => {
+                                    confirm.edit(key);
+                                }
+                            }
                         }
                     }
                 }
@@ -906,7 +935,16 @@ impl App {
             // Everything a text field answers -- the character itself, and
             // the `Ctrl` editing keys -- in one place, so a suggestion is
             // re-asked for on the presses that changed the text and no other.
-            _ => edited = fields.edit(key) == Edit::Changed,
+            //
+            // `[`/`]` come through here rather than as arms of their own,
+            // because whether they are a key at all is the form's answer: a
+            // date under the caret steps a month, and every other field takes
+            // the bracket as the character it is.
+            _ => {
+                if !month_step(key).is_some_and(|step| fields.step_month(step)) {
+                    edited = fields.edit(key) == Edit::Changed;
+                }
+            }
         }
         if edited {
             self.refresh_suggestions()?;
@@ -2552,6 +2590,7 @@ mod tests {
                     "BackTab",
                     "←/→",
                     "Shift+←/→",
+                    "[ ]",
                     "Space",
                     "*",
                     "-",
@@ -2579,6 +2618,7 @@ mod tests {
                     "Backspace",
                     "←/→",
                     "Shift+←/→",
+                    "[ ]",
                     "Enter",
                     "Esc",
                     "F1",
@@ -2594,6 +2634,7 @@ mod tests {
                     "↑/↓",
                     "←/→",
                     "Shift+←/→",
+                    "[ ]",
                     "Enter",
                     "Esc",
                     "F1",
@@ -2622,6 +2663,7 @@ mod tests {
                     "Esc",
                     "←/→",
                     "Shift+←/→",
+                    "[ ]",
                     "Enter",
                     "Backspace",
                 ],

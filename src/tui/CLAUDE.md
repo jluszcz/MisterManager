@@ -25,7 +25,7 @@ whoever presses the key.
 | `p` | pay a card on the ledgers, pin a plan on Planning — unrelated actions, so the letter is free to serve both |
 | `P` | unpin a plan on Planning, mark the paycheck on Recurring Txns — likewise |
 | `r` | reconcile the ledgers' filtered account against a statement |
-| `[` / `]` | step the month, whatever a month filters here |
+| `[` / `]` | step a month: the filter a screen narrows by, or the date a field holds |
 | `←` / `→` | move the caret in a text field, step a date a day at a time, or cycle the focused selector — see the invariant below |
 | `Shift`+`←` / `Shift`+`→` | the same nudge, a week at a time on a date; one choice on a selector |
 | `Ctrl`+a letter | edit the text under the caret, in every box in the app — see the invariant below |
@@ -309,7 +309,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   is one: both ledger forms, the allocation, goal and close-out forms, the worksheet, both dates on
   a recurring transaction, `t`'s confirmation, and the Funds birth-date prompt through
   `ValueForm`'s `Entry::Date`. A new form asks for a `DateField` rather than assembling one.
-- **`←`/`→` step a date a day at a time, wherever there is a date, and `Shift` with them a week.**
+- **`←`/`→` step a date a day at a time, wherever there is a date, `Shift` with them a week, and
+  `[`/`]` a month.**
   The Overview scrub, the worksheet's date, both dates on a recurring transaction, and the date
   every form and confirm dialog opens on all answer the same keys the same way — the reflex is
   "nudge the date", not "nudge the date on the screens that happen to have wired it". On a form the
@@ -332,12 +333,24 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     only way in — which is why `-` still types on the worksheet's date focus and why every date is
     still parsed at commit rather than only ever assembled by arrow.
   - **One step type, so a modifier cannot mean a week on one handler and nothing on the next.**
-    `form::Step` carries the days and hands a selector `direction()` alone; `tui::WEEK` is the only
-    place `7` is written; and `app::week_step` is how the three handlers that answer an arrow
-    themselves — the Overview scrub, the worksheet, and `t`'s confirmation — read the modifier.
-    A selector steps **one** choice under `Shift` rather than none: it has no week to move, and a
-    modified arrow the terminal delivers and the app drops is a dead key with nothing on screen to
-    say why.
+    `form::Step` carries an amount *and the unit it counts*, and hands a selector `direction()`
+    alone; `tui::WEEK` is the only place `7` is written; and `app::week_step` and `app::month_step`
+    are how the three handlers that answer a step key themselves — the Overview scrub, the
+    worksheet, and `t`'s confirmation — read the modifier and the brackets. A selector steps **one**
+    choice under `Shift` rather than none: it has no week to move, and a modified arrow the terminal
+    delivers and the app drops is a dead key with nothing on screen to say why.
+    - **The unit is why a step is not a number of days.** A month is 28 to 31 of them depending on
+      where it is stepped from, so `Step::apply` is the one place a date moves and `Days`/`Months`
+      travel with the amount rather than being flattened at the constant. The day is clamped into
+      the month it lands in — the 31st becomes the 30th, and stepping back does not return to the
+      31st — because the alternative is inventing a 31st of September.
+  - **`[`/`]` reach a date *field*, and only a field.** The bracket is an ordinary character
+    everywhere else — a description may hold one — so `FormFields::step_month` reports whether there
+    was a date under the caret and the handler types the key when there was not. That is the whole
+    difference from `choice`, which every kind of field answers. The Overview scrub is deliberately
+    outside this: it is a scrub rather than a field, and `[`/`]` on a *screen* already step that
+    screen's month filter, so a footer there reading `[ ] month` beside no filter at all would be
+    the one thing worse than the key doing nothing.
 - **Every text box in the app is a `text::TextBuffer`, and the caret is the buffer's.** A form's
   `form::Field` is that buffer plus "has the user touched this"; a `search::SearchBox` is the same
   buffer plus "is the box open". Both answer one dispatcher, `text::edit_key`, which is to text

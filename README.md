@@ -150,7 +150,10 @@ September and `3/4` is next March. The year turns on the month alone, so `8/1`
 in August is the first of this August, which is what makes backdating a row a
 fortnight a three-keystroke job. A field shows what was typed while the caret
 is in it and the date it means once focus leaves. `←`/`→` nudge a date a day
-wherever there is one, `Shift` with them a week, and a date field stays
+wherever there is one, `Shift` with them a week, and `[`/`]` a month — the same
+brackets a screen's month filter takes. A month is not a fixed number of days,
+so the day is clamped into the month it lands in: the 30th of January steps to
+the 28th of February and stays a 28th on the way back out. A date field stays
 typeable either way. A form editing a row opens on that row's own date; one
 entering something new opens on today, bar a handful. The three that write a
 ledger row — `a`, `t` and `p` — open on the date the last row added this
