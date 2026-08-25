@@ -336,8 +336,10 @@ matches, since nothing but a test ties them together.
   date on record** claims nothing, so the share rows divide the whole 100% rather than being told a
   zero that is really a question.
 - **The pay cadence is one setting, and the days between paydays are derived from it.**
-  `key::PAY_PERIODS_PER_YEAR` is the count; `calc::period_days` floors `365 /` it, clamped at both
-  ends, and that is what `calc::per_paycheck` counts a deadline's runway in. The workbook states the
+  `key::PAY_PERIODS_PER_YEAR` is the count; `calc::period_days` divides a year of whole weeks
+  (`52 × 7`) by it, clamped at both ends, and that is what `calc::per_paycheck` counts a deadline's
+  runway in. Weeks rather than the calendar's 365 days because a pay cadence counts in weeks — `364`
+  divides exactly by every whole-week cadence, and the 365th day belongs to no pay period. The workbook states the
   cadence twice — `Constants!G2` and `Constants!H2` — and only `G2` is imported, because two cells
   for one fact can disagree: `26` beside `15` is a pay cadence nobody works, and it would have every
   goal's `$/Pay` divided by one cadence while every annual cost was spread over the other.

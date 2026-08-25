@@ -20,8 +20,18 @@ pub fn biweekly(monthly: Cents, periods_per_year: i64) -> Result<Cents> {
     Ok(Cents(super::div_ceil(num, step)? * 100))
 }
 
-/// A year, in the days a pay cadence divides.
-const DAYS_PER_YEAR: i64 = 365;
+/// A year, in the whole weeks a pay cadence divides it into.
+///
+/// Weeks rather than the calendar's 365 days, because a pay cadence counts in
+/// weeks. `52 * 7` is 364, which divides exactly by every whole-week cadence
+/// there is -- weekly, biweekly, four-weekly -- so the floor in
+/// [`period_days`] is an approximation only for the cadences that were never
+/// whole weeks to begin with. The 365th day belongs to no pay period, and all
+/// it can ever do is round one of them up.
+const WEEKS_PER_YEAR: i64 = 52;
+
+/// The other half of that year, so neither number is a bare `7` in a divide.
+const DAYS_PER_WEEK: i64 = 7;
 
 /// How many days apart two paydays fall, for a cadence of `periods_per_year`.
 ///
@@ -32,15 +42,16 @@ const DAYS_PER_YEAR: i64 = 365;
 /// one cadence while spreading every annual cost in the other. One setting,
 /// so there is nothing to reconcile.
 ///
-/// Floored, which is what every real cadence wants: 52 -> 7, 26 -> 14,
-/// 24 -> 15, 12 -> 30. The remainder a biweekly year leaves over 364 days is
-/// not a day any schedule spends.
+/// Exact for every whole-week cadence -- 52 -> 7, 26 -> 14, 13 -> 28 -- and
+/// floored for the ones that are not: 24 -> 15, 12 -> 30. A semi-monthly or
+/// monthly payday does not fall a fixed number of days apart at all, so there
+/// is no exact answer to floor away.
 ///
 /// Clamped at both ends, because `periods_per_year` is the owner's setting
 /// and reaches a divide: a count at zero or below would divide by it, and one
-/// above `DAYS_PER_YEAR` would floor to a period no days long.
+/// above the days in a year of weeks would floor to a period no days long.
 pub fn period_days(periods_per_year: i64) -> i64 {
-    (DAYS_PER_YEAR / periods_per_year.max(1)).max(1)
+    (WEEKS_PER_YEAR * DAYS_PER_WEEK / periods_per_year.max(1)).max(1)
 }
 
 /// The workbook's `PerPaycheck()` lambda: what to set aside each payday to
@@ -273,14 +284,19 @@ mod tests {
         assert!(biweekly(Cents::from_dollars(100), 0).is_ok());
     }
 
-    /// The cadences the setting is ever plausibly set to, floored: the
-    /// workbook carried this in `Constants!H2` beside the count in `G2`, and
-    /// the two agreeing is what makes deriving it safe rather than a second
-    /// answer to the same question.
+    /// The cadences the setting is ever plausibly set to. The workbook
+    /// carried this in `Constants!H2` beside the count in `G2`, and the two
+    /// agreeing is what makes deriving it safe rather than a second answer to
+    /// the same question.
+    ///
+    /// A year of whole weeks divides exactly by every whole-week cadence, so
+    /// only the two that are not whole weeks are floored at all.
     #[test]
-    fn period_days_floors_a_year_over_the_pay_cadence() {
+    fn period_days_divides_a_year_of_weeks_by_the_pay_cadence() {
         assert_eq!(period_days(52), 7);
         assert_eq!(period_days(26), 14);
+        assert_eq!(period_days(13), 28);
+        // Neither of these falls a fixed number of days apart to begin with.
         assert_eq!(period_days(24), 15);
         assert_eq!(period_days(12), 30);
     }
@@ -290,9 +306,9 @@ mod tests {
     /// count at zero nor one finer than a day should take a screen down.
     #[test]
     fn period_days_is_never_less_than_a_day_whatever_the_setting_says() {
-        assert_eq!(period_days(0), 365);
-        assert_eq!(period_days(-4), 365);
-        assert_eq!(period_days(365), 1);
+        assert_eq!(period_days(0), 364);
+        assert_eq!(period_days(-4), 364);
+        assert_eq!(period_days(364), 1);
         assert_eq!(period_days(10_000), 1);
     }
 

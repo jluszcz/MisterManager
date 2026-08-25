@@ -303,7 +303,7 @@ mod tests {
             )],
             &accounts(),
             today(),
-            14,
+            26,
         )
         .unwrap();
         assert_eq!(rows[0].per_paycheck, None);
@@ -322,7 +322,7 @@ mod tests {
             ],
             &accounts(),
             today(),
-            14,
+            26,
         )
         .unwrap();
         let expired: Vec<bool> = rows.iter().map(|r| r.expired).collect();
@@ -342,7 +342,7 @@ mod tests {
             )],
             &accounts(),
             today(),
-            14,
+            26,
         )
         .unwrap();
 
@@ -364,7 +364,7 @@ mod tests {
             )],
             &accounts(),
             today(),
-            14,
+            26,
         )
         .unwrap();
 
@@ -387,7 +387,7 @@ mod tests {
             )],
             &accounts(),
             today(),
-            14,
+            26,
         )
         .unwrap();
 
@@ -413,7 +413,7 @@ mod tests {
             ],
             &accounts(),
             today(),
-            14,
+            26,
         )
         .unwrap();
         let marked: Vec<bool> = rows.iter().map(|r| r.favorite).collect();

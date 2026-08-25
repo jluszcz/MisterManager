@@ -246,5 +246,8 @@ actually matters. Don't reintroduce a bare divide.
 own.** The sheet carries both (`G2` and `H2`) and the two can disagree; one setting has nothing to
 reconcile, and it means `per_paycheck`, which counts a deadline's runway in days, and `biweekly`
 and `per_paycheck_over_years`, which spread a cost over the count, cannot come to describe
-different pay cadences. `period_days` floors `365 / periods_per_year` and clamps at both ends, so
-it is also where the clamp for `per_paycheck`'s divide now lives.
+different pay cadences. `period_days` divides `WEEKS_PER_YEAR * DAYS_PER_WEEK` by the count and
+clamps at both ends, so it is also where the clamp for `per_paycheck`'s divide now lives. A year of
+whole weeks rather than the calendar's 365 days, because a pay cadence counts in weeks: `364`
+divides exactly by every whole-week cadence, so the floor bites only on the semi-monthly and
+monthly counts, whose paydays are not a fixed number of days apart to begin with.
