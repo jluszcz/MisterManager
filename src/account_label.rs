@@ -60,13 +60,18 @@ impl Account {
     /// what this reads as until the owner renames the row on the Accounts
     /// screen -- and a selector saying the same word twice reads as two
     /// facts about the account rather than one it has yet to be told.
+    ///
+    /// The comparison folds case, the way `account::by_code` and the index
+    /// under it do: `CHK` and `Chk` are one code as far as an import's match
+    /// is concerned, so `CHK — Chk` is the same word said twice. The half
+    /// drawn is then the *name*, since that is the one the owner typed.
     pub fn labelled(account: &account::Account) -> Account {
         let code = account.code.as_str();
         let name = account.name.as_str();
         Account {
             id: account.id,
-            text: if code == name {
-                code.to_string()
+            text: if code.eq_ignore_ascii_case(name) {
+                name.to_string()
             } else {
                 format!("{code} — {name}")
             },
@@ -345,6 +350,17 @@ mod tests {
         let mut unnamed = accounts()[0].clone();
         unnamed.name = unnamed.code.as_str().into();
         assert_eq!(Account::labelled(&unnamed).text(), "CHK");
+    }
+
+    /// A code and a name differing only in case are one code everywhere else
+    /// -- `account::by_code` folds it, and so does the index under it -- so
+    /// they are one word here too. The name is what gets drawn: it is the
+    /// half the owner typed.
+    #[test]
+    fn a_selectors_label_says_a_name_that_only_cases_its_code_differently_once() {
+        let mut restyled = accounts()[0].clone();
+        restyled.name = "Chk".into();
+        assert_eq!(Account::labelled(&restyled).text(), "Chk");
     }
 
     /// An id with no account is a corrupt row, not a reason to stop drawing
