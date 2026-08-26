@@ -707,8 +707,12 @@ impl TxnForm {
     /// `preselected` is the account the ledger is filtered to, if any, so `a`
     /// opens on the account being looked at rather than always on the first.
     ///
-    /// It is a *default*, not the user's own choice: like the prefilled date,
-    /// it stays untouched, so an accepted suggestion may still move it.
+    /// A filter is the owner saying which account they are entering rows for,
+    /// so it arrives as a *choice* rather than a default: an accepted
+    /// suggestion fills the description and the amount and leaves the account
+    /// alone, the way it already leaves an amount that was typed. Under the
+    /// `All` filter nothing has been said, and the selector opens on the first
+    /// account as a bare default a suggestion is free to move.
     ///
     /// The date arrives already built rather than as a day to open on,
     /// because a `DateField` carries *two* dates -- the day it shows and the
@@ -725,9 +729,7 @@ impl TxnForm {
             !accounts.is_empty(),
             "there is no account of this kind to add a transaction to"
         );
-        let account = preselected
-            .and_then(|id| accounts.iter().position(|a| a.id == id))
-            .unwrap_or(0);
+        let filtered = preselected.and_then(|id| accounts.iter().position(|a| a.id == id));
         Ok(TxnForm {
             editing: None,
             focus: TxnField::Description,
@@ -735,8 +737,8 @@ impl TxnForm {
             amount: Field::default(),
             description: Field::default(),
             accounts,
-            account,
-            account_touched: false,
+            account: filtered.unwrap_or(0),
+            account_touched: filtered.is_some(),
         })
     }
 
@@ -839,7 +841,8 @@ impl FormFields for TxnForm {
     }
 
     /// Take a suggestion: the description always, the account and amount only
-    /// if the user has not touched them.
+    /// if the user has not touched them — and a ledger filtered to one account
+    /// counts as touching it.
     ///
     /// `txn::autocomplete` returns all three, and overwriting an amount the
     /// user just typed — because they then edited the description — is
@@ -2212,10 +2215,11 @@ mod tests {
         );
     }
 
-    /// The preselection is a default, not the user's own choice, so it obeys
-    /// the same untouched-field rule the prefilled date does.
+    /// Entering rows from a filtered ledger is a statement about which
+    /// account they land in, so a suggestion off another account brings its
+    /// description and amount and nothing else.
     #[test]
-    fn a_preselected_account_still_yields_to_an_accepted_suggestion() {
+    fn a_preselected_account_survives_an_accepted_suggestion() {
         let mut form = TxnForm::add(
             accounts(),
             DateField::today(day(2026, 8, 15)),
@@ -2226,7 +2230,20 @@ mod tests {
 
         form.apply_suggestion(&suggestion("Movies", AccountId(1), 1_499));
 
-        assert_eq!(form.commit().unwrap().account_id, AccountId(1));
+        assert_eq!(form.display(TxnField::Amount).plain_text(), "14.99");
+        assert_eq!(form.commit().unwrap().account_id, AccountId(2));
+    }
+
+    /// The `All` filter names no account, so the selector is still the bare
+    /// default a suggestion may move.
+    #[test]
+    fn an_unfiltered_ledger_still_yields_its_account_to_a_suggestion() {
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
+        typed(&mut form, TxnField::Description, "Mov");
+
+        form.apply_suggestion(&suggestion("Movies", AccountId(2), 1_499));
+
+        assert_eq!(form.commit().unwrap().account_id, AccountId(2));
     }
 
     /// A filter that names an account this form cannot write to — a stale id,
