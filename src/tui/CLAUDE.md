@@ -669,7 +669,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     `CHK — Everyday` as one segment, because both halves name the same account and splitting
     them would leave the code reading as chrome in front of a colored name. An account still
     named after its own code — which is every account an import has just written — shows that
-    text once rather than joined to itself.
+    text once rather than joined to itself, and the comparison folds case the way
+    `account::by_code` and the index under it do, so `CHK — Chk` is the same word said twice
+    too. What the collapsed cell draws is the name, the half the owner typed.
   - **`Label` is what lets a title carry a tint.** A title cannot be a `String` and be colored,
     and it cannot be a ratatui `Line` because view-state types hold no ratatui. So it is a
     sequence of plain runs and `Account`s: `Savings::title`, `Ledger::title`, `Picker::title`,
