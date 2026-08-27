@@ -485,6 +485,27 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     `DateField` rather than a day to open on — two adjacent `NaiveDate` parameters would be one
     transposition away from exactly that. `Worksheet::on` takes one for the same reason;
     `Worksheet::new`, which opens on today and has only the one day to be told, builds it.
+- **`t` and `p` open their `From` on the account the owner named on screen 9, and `t` opens its
+  `To` off it.** `default_source::Source` is the pair of `setting` keys; `App::open_transfer` and
+  `open_payment` read one each. Two keys rather than one, because paying a card and moving savings
+  are separate decisions — and separate keys are also what lets one account answer for both.
+  - **The `To` adjustment belongs to `t` alone**, and is the bug the whole thing started as: `t`'s
+    destination list is *every* account, so both selectors at the head of their lists opened the
+    form on a transfer from an account to itself — the one pair `TransferForm::commit` refuses. `p`
+    needs no such step: its two lists are disjoint by kind, so no card it opens on can be the cash
+    account paying it.
+  - **An unset key and one naming an account that is gone are the same state**: `opening_index`
+    falls back to the head of the list. This is a prefill rather than a resolution — nothing is
+    spent on the answer, and the owner can see which account the selector landed on before pressing
+    Enter — so the root `CLAUDE.md`'s rule about dangling keys does not reach it. Refusing to open
+    would also be a refusal to open the form the owner uses most, over a setting corrected two
+    screens away.
+- **One form backs `t` and `p`, and `TransferForm::title` is what says which one is open.** They
+  write different things — a transfer is money moving between accounts the owner holds, a payment
+  is cash settling a card — and a modal titled `Transfer` over a `CC1 Payment` description tells
+  the owner they pressed the wrong key, at the point where they still can. The title lives on the
+  form beside `TransferKind` rather than at the render call, so a third caller cannot open it under
+  a title that describes neither.
 - **The app reads two modifiers, and each means one thing.** `Shift` is always the same nudge with
   a bigger step. It is on the key that already means "move this", rather than a second letter for
   one action, and it reaches every date rather than only the Overview's — a horizon several paydays
@@ -836,11 +857,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     sheet. The form bounds the code at `CODE_WIDTH`, the `Code` column's own width: that column is
     the only place a code is ever drawn, so a code too wide for it would be stored whole and read
     cut, leaving the owner unable to check the string the next import matches the row against.
-  - **`e` asks the six things the sheet does *not* say** — the name, the color, the band, the
-    position, how an interest posting against it is divided, and which block of the `Savings` sheet
-    it is the container for — and none of them is touched by an import after the row's first
-    insert. All six are *placements*: an account is created by `a` and placed by `e`, which is why
-    the kind decides an edit form's fields and decides nothing on an add form.
+  - **`e` asks the seven things the sheet does *not* say** — the name, the color, the band, the
+    position, how an interest posting against it is divided, which block of the `Savings` sheet
+    it is the container for, and which of the two money forms open their `From` on it — and none of
+    them is touched by an import after the row's first insert. All seven are *placements*: an
+    account is created by `a` and placed by `e`, which is why the kind decides an edit form's
+    fields and decides nothing on an add form.
   - **The code and the kind are on `a` and deliberately absent from `e`.** They are what
     `account::by_code` matches the next import against, so choosing them is the whole of creating
     an account and editing either would orphan the row from the sheet that produced it. An account
@@ -867,12 +889,30 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     Moving an account *off* a block clears that block's key rather than leaving it naming an account
     that no longer answers for it, and a key naming another account is left alone, so editing one
     row never disturbs the other block's mapping.
+  - **The `Default` selector is a *set*, where the `Savings` one beside it is a value.** It cycles
+    every subset of `default_source::Source::ALL` — neither form, each on its own, then both —
+    generated from `ALL` rather than written out, the way the `Savings` choices are. Two blocks of
+    one sheet cannot share a container, so that field holds one value and the both-blocks state is
+    unrepresentable; the account a card is paid from and the account savings leave are unrelated
+    decisions, and one account answering for both is ordinary. `defaults_label` is what the field
+    and the table's `Default` column both read the set through, so a choice cycled in the modal and
+    the row behind it are recognisably the same answer.
+    - **Each key holds one id, so at most one account answers for each form**, without anything
+      having to enforce it: pointing a source at a second account is a `setting::set`, which takes
+      it off the first. Dropping a source from the set clears that key only when *this* account is
+      the one it names, which is `set_savings_block`'s rule and is what keeps editing one row from
+      disturbing another's defaults.
+    - **A key naming an account that is gone is not an error here**, unlike the `Savings` block's.
+      Nothing is spent on the answer: the form opens on the head of its list, which the owner can
+      see before pressing Enter, and refusing to open it would take away the screen the setting is
+      corrected from. Unset and stale are one state, and it is the state every database starts in.
   - **Which fields an *edit* shows depends on the kind**, the way `FundForm`'s depend on the target.
     Credit does not split into bands, so there is nothing for a band selector to cycle; only a cash
-    account holds the goals an interest posting is divided among or a `Savings` block fills, so only
-    a cash account is asked about either. A card's edit form is three fields. An add form is three
-    whatever the kind says, because none of the five a kind decides is on it.
-  - **`Color` is the one of the six every kind is asked, and no kind is asked on `a`.** An account
+    account holds the goals an interest posting is divided among or a `Savings` block fills, and
+    only a cash account can be what `t` and `p` take their `From` from — so only a cash account is
+    asked about any of the three. A card's edit form is three fields. An add form is three whatever
+    the kind says, because none of the six a kind decides is on it.
+  - **`Color` is the one of the seven every kind is asked, and no kind is asked on `a`.** An account
     that does not exist yet has no id, so there is no derived shade for `—` to stand for and
     nothing for the field to draw itself in; a new account is drawn in its derivation until `e`
     says otherwise. A card is named on the Credit

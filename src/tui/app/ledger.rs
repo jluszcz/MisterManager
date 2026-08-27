@@ -6,7 +6,8 @@
 //! the month and the window are shared between them.
 
 use super::{Account, App, Label, NOTHING_SELECTED, Screen};
-use crate::db::{account, txn};
+use crate::db::{account, setting, txn};
+use crate::default_source::Source;
 use crate::description;
 use crate::money::Cents;
 use crate::tui::autocomplete::Autocomplete;
@@ -180,6 +181,7 @@ impl App {
         self.modal = Some(Modal::Transfer(TransferForm::transfer(
             accounts,
             self.entry_field(),
+            setting::get(&self.db, Source::Transfer.key())?,
         )?));
         Ok(())
     }
@@ -191,6 +193,7 @@ impl App {
         self.modal = Some(Modal::Transfer(TransferForm::payment(
             accounts,
             self.entry_field(),
+            setting::get(&self.db, Source::Payment.key())?,
         )?));
         Ok(())
     }
@@ -308,6 +311,7 @@ impl App {
 mod tests {
     use super::*;
     use crate::db;
+    use crate::db::AccountId;
     use crate::db::account::{self, Group, Kind};
     use crate::money::Cents;
     use crate::test_support::day;
@@ -665,6 +669,107 @@ mod tests {
         press(&mut app, KeyCode::Char('3'));
         press(&mut app, KeyCode::Char('p'));
         assert!(matches!(app.modal, Some(Modal::Transfer(_))));
+    }
+
+    /// The account the form's `From` opens on, and the one its `To` does --
+    /// both by id, which is what the setting holds and what the row it
+    /// writes carries.
+    fn opens_on(app: &App) -> (AccountId, AccountId) {
+        let Some(Modal::Transfer(form)) = &app.modal else {
+            panic!("no money form is open");
+        };
+        let side = |field| form.display(field).accounts()[0].id();
+        (side(TransferField::From), side(TransferField::To))
+    }
+
+    /// With no default set, `t` opens on the first cash account and steps the
+    /// destination off it: the `To` list is every account, so leaving both at
+    /// the head of their lists opens the form on a transfer from an account
+    /// to itself.
+    #[test]
+    fn t_opens_on_two_different_accounts_with_no_default_set() {
+        let mut app = app();
+        let first = account::list_by_kind(&app.db, Kind::Cash).unwrap()[0].id;
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('t'));
+
+        let (from, to) = opens_on(&app);
+        assert_eq!(from, first);
+        assert_ne!(to, from);
+    }
+
+    /// `t` opens on the transfer key's account, and `To` steps off *that*
+    /// one rather than off the head of the list.
+    #[test]
+    fn t_opens_on_the_default_transfer_source() {
+        let mut app = app();
+        let savings = account::list_by_kind(&app.db, Kind::Cash).unwrap()[1].id;
+        setting::set(&app.db, Source::Transfer.key(), savings).unwrap();
+
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('t'));
+
+        let (from, to) = opens_on(&app);
+        assert_eq!(from, savings);
+        assert_ne!(to, savings);
+    }
+
+    /// `p` reads its own key. The two are separate settings because paying a
+    /// card and moving savings are separate decisions -- a payment opening on
+    /// the transfer account would be the one thing one key could not express.
+    #[test]
+    fn p_opens_on_the_default_payment_source_and_not_the_transfer_one() {
+        let mut app = app();
+        let cash = account::list_by_kind(&app.db, Kind::Cash).unwrap();
+        setting::set(&app.db, Source::Transfer.key(), cash[1].id).unwrap();
+        setting::set(&app.db, Source::Payment.key(), cash[0].id).unwrap();
+
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('p'));
+
+        assert_eq!(opens_on(&app).0, cash[0].id);
+    }
+
+    /// One account may answer for both, which is what two independent keys
+    /// buy over a single "default account" naming one.
+    #[test]
+    fn one_account_can_be_the_default_for_both_forms() {
+        let mut app = app();
+        let savings = account::list_by_kind(&app.db, Kind::Cash).unwrap()[1].id;
+        for source in Source::ALL {
+            setting::set(&app.db, source.key(), savings).unwrap();
+        }
+
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('t'));
+        assert_eq!(opens_on(&app).0, savings);
+
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('p'));
+        assert_eq!(opens_on(&app).0, savings);
+    }
+
+    /// One form backs both keys, and the two write different things: a modal
+    /// titled `Transfer` over a `CC1 Payment` description says the owner
+    /// pressed the wrong key.
+    #[test]
+    fn the_two_money_forms_are_titled_by_the_key_that_opened_them() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('t'));
+        let Some(Modal::Transfer(form)) = &app.modal else {
+            panic!("t opened no form");
+        };
+        assert!(form.title().starts_with("Transfer"), "{}", form.title());
+
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('p'));
+        let Some(Modal::Transfer(form)) = &app.modal else {
+            panic!("p opened no form");
+        };
+        assert!(form.title().starts_with("Payment"), "{}", form.title());
     }
 
     /// The cursor opens on the last row dated on or before today, so `d`

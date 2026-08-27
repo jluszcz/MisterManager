@@ -138,6 +138,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/gate.rs` | `Gate` — the Planning gates, each owning its setting key and goal-name substring. |
 | `src/reading.rs` | `Reading` — whether a reader refuses a row it cannot resolve or draws past it. One parameter rather than a strict function and a tolerant twin, so the two readings differ in nothing but the thing they name. Taken by `goal::all_with_balances` and by the `transfer` readers built on it. |
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the setting key naming its container account. |
+| `src/default_source.rs` | `Source` — the two money forms, `t` and `p`, each owning the setting key naming the account its `From` opens on. |
 | `src/config.rs` | The TOML config file. `serde` and `toml` are named here, and both again in `src/backup/state.rs`, whose `State` derives `Serialize` as well as `Deserialize`. |
 | `src/plan_line.rs` | Every Planning line: its label, the amount it moves, and the setting key that says where it lands. |
 | `src/plan_rows.rs` | The Planning waterfall as an ordered list of rows, in neither medium -- a peer of `overview` and `savings`. The order, the labels, the grouping, the two footers outside the transfers block, and `Target`, the constant a row *is*. The Planning screen and the report's Planning tab both read it, and each spends `Row::depth` in its own units. |
@@ -284,10 +285,11 @@ matches, since nothing but a test ties them together.
   `account_label::Account`, which colors what it draws, everywhere but the residual list in
   `src/tui/CLAUDE.md`'s account-color section, and `AccountName`/`AccountCode` have no `Display`,
   so an account cannot be flattened into a `String` on the way.
-- **Three things about the owner's accounts are in no cell of the workbook, and all three are
+- **Five things about the owner's accounts are in no cell of the workbook, and every one of them is
   configured on the Accounts screen.** The `Savings` sheet names its two blocks by *position* --
-  `A:E` and `I:K` -- with no account code beside either, and nothing anywhere says which account is
-  the current one. So:
+  `A:E` and `I:K` -- with no account code beside either; nothing anywhere says which account is
+  the current one; and no cell says which account a transfer leaves or which one settles a card.
+  So:
   - `savings_block::Block` owns a `Key<AccountId>` per block, the same construction as
     `gate::Gate`: one value carries the key and what it means, because a block recorded under the
     other block's key sends a whole sheet's goals to the wrong container and every balance, gate and
@@ -297,6 +299,15 @@ matches, since nothing but a test ties them together.
     different accounts. None is a database nobody has finished configuring; more than one is an
     ambiguity only the owner can settle. Both are errors saying what to do, and the Planning screen
     renders the message in place of the plan, exactly as it does for every other unresolvable plan.
+  - `default_source::Source` owns a `Key<AccountId>` per money form, the same construction a third
+    time: `t`'s `From` opens on `Source::Transfer`'s account and `p`'s on `Source::Payment`'s, and
+    a key holds one id, so at most one account answers for each. Two keys rather than one, because
+    the account savings leave and the account that settles a card are two decisions — which is also
+    what lets one account be both. Unlike the two above, **a key naming an account that is gone is
+    not an error here**: nothing is spent on the answer, the form opens on the head of its list
+    instead, and the screen it would otherwise refuse to open is the screen the setting is
+    corrected from. Unset and stale are therefore one state, and it is the state every database
+    starts in.
 - **`mm import` is self-resolving, not two commands.** With the block mapping unset it imports
   `Constants`, commits the accounts, and stops with `Report::AccountsOnly`; with it set it runs the
   whole import in one pass. Only the first import against an empty database is ever two steps: the

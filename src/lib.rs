@@ -3,6 +3,7 @@ pub mod backup;
 pub mod calc;
 pub mod config;
 pub mod db;
+pub mod default_source;
 pub mod demo;
 pub mod description;
 pub mod fund;

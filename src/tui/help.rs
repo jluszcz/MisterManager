@@ -247,12 +247,12 @@ const LEDGER: [Entry; 11] = [
     Entry {
         key: "t",
         label: Label::Shared("money"),
-        detail: "Move money between two cash accounts, opening on the same date 'a' does. Cash ledger only.",
+        detail: "Move money out of a cash account and into any other account, opening on the same date 'a' does, and on the default transfer account if screen 9 names one. Cash ledger only.",
     },
     Entry {
         key: "p",
         label: Label::Shared("money"),
-        detail: "Pay a credit card from a cash account, writing both sides. Opens on the same date 'a' does.",
+        detail: "Pay a credit card from a cash account, writing both sides. Opens on the same date 'a' does, and on the default payment account if screen 9 names one.",
     },
     Entry {
         key: "e",
@@ -414,9 +414,9 @@ const FUNDS: [Entry; 4] = [
 /// run and what survives it would be answering a question that build cannot
 /// be asked. What is left is true of both, and is what the key does.
 #[cfg(feature = "import")]
-const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its Overview band, its place among the accounts of its kind, and -- for a cash account -- how an interest posting is divided and which block of the Savings sheet it is the container for, which is what the first mm import waits on. The code and the kind are set by 'a', not here. Nothing here is imported, so all of it survives mm import --replace.";
+const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its Overview band, its place among its kind, and -- for a cash account -- how interest is divided, which Savings block it holds, which is what the first mm import waits on, and whether 't' and 'p' open on it. The code and the kind are set by 'a'. Nothing here is imported, so all of it survives mm import --replace.";
 #[cfg(not(feature = "import"))]
-const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its Overview band, its place among the accounts of its kind, and -- for a cash account -- how an interest posting is divided and which block of the Savings sheet it is the container for. The code and the kind are set by 'a', not here.";
+const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its Overview band, its place among the accounts of its kind, and -- for a cash account -- how an interest posting is divided, which block of the Savings sheet it is the container for, and whether 't' and 'p' open on it. The code and the kind are set by 'a', not here.";
 
 /// Two keys, and no `d`. An account is created here or by the workbook
 /// naming it, and deleting one would orphan every transaction, goal and
@@ -426,7 +426,7 @@ const ACCOUNTS: [Entry; 2] = [
     Entry {
         key: "a",
         label: Label::Own("add"),
-        detail: "Add an account the workbook does not name: a code, a kind, and what to call it. The code and the kind are asked here and nowhere else -- they are what the next import matches this row against -- and a code the same kind already holds is refused. The account takes its kind's default band, no color, and the last place among its kind.",
+        detail: "Add an account the workbook does not name: a code, a kind, and what to call it. The code and the kind are asked here and nowhere else -- they are what the next import matches this row against -- and a code the same kind already holds is refused. The account takes its kind's default band, no color, no money form's default, and the last place among its kind.",
     },
     Entry {
         key: "e",

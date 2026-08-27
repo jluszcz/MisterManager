@@ -1,14 +1,14 @@
 //! The Accounts screen: what each account the workbook names is called here,
 //! which Overview band it sits in, in what order, how an interest posting
-//! against it is divided, and which block of the `Savings` sheet it is the
-//! container for.
+//! against it is divided, which block of the `Savings` sheet it is the
+//! container for, and which of the two money forms open their `From` on it.
 //!
 //! The workbook carries a short code per account and nothing else. Everything
 //! on this screen is therefore the owner's rather than the importer's, and
 //! `account` is not an imported table, so none of it is lost to a
-//! `--replace`. The last of the five is the one the import *reads*: until
-//! both `Savings` blocks have been pointed at a container here, `mm import`
-//! writes the accounts and stops.
+//! `--replace`. The `Savings` block is the one the import *reads*: until
+//! both blocks have been pointed at a container here, `mm import` writes the
+//! accounts and stops.
 //!
 //! View state only -- no ratatui above the render functions at the bottom,
 //! and no `Db` on the type. `App` runs the queries and hands the results in.
@@ -18,6 +18,7 @@ use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::form::{Caret, Field, Focused, FormFields, Step, next_in, step_index};
 use crate::db::AccountId;
 use crate::db::account::{Account, AccountColor, Group, InterestPolicy, Kind};
+use crate::default_source::Source;
 use crate::savings_block::Block as SavingsBlock;
 use anyhow::{Result, ensure};
 
@@ -55,6 +56,10 @@ pub struct Row {
     /// than merely leaves alone: without both blocks pointed somewhere,
     /// `mm import` stops after the accounts.
     pub block: Option<SavingsBlock>,
+    /// Which money forms open their `From` on this account, in
+    /// `Source::ALL`'s order. Both, one, or -- for every account but the two
+    /// the keys name -- neither.
+    pub defaults: Vec<Source>,
 }
 
 pub struct Accounts {
@@ -126,6 +131,8 @@ pub enum AccountField {
     Order,
     Interest,
     Savings,
+    /// Which money forms open their `From` on this account.
+    Default,
 }
 
 impl AccountField {
@@ -139,6 +146,7 @@ impl AccountField {
             AccountField::Order => "Order",
             AccountField::Interest => "Interest",
             AccountField::Savings => "Savings",
+            AccountField::Default => "Default",
         }
     }
 }
@@ -154,6 +162,51 @@ fn savings_choices() -> Vec<Option<SavingsBlock>> {
     let mut choices = vec![None];
     choices.extend(SavingsBlock::ALL.map(Some));
     choices
+}
+
+/// The `Default` selector's choices: every subset of [`Source::ALL`],
+/// smallest first — neither form, then each on its own, then both.
+///
+/// A *set* rather than one value per account, which is what separates this
+/// field from the `Savings` one beside it. Two blocks of one sheet cannot
+/// share a container, so that selector holds one value and the both-blocks
+/// state is unrepresentable; the account a card is paid from and the account
+/// savings leave are two unrelated decisions, and one account answering for
+/// both is the ordinary case rather than the impossible one.
+///
+/// Generated from `ALL` rather than written out, for `savings_choices`'
+/// reason: a third form with a default source reaches this screen without
+/// anyone remembering to come here. The bit at position `i` of the counter is
+/// whether `ALL[i]` is in the subset, so the order is stable and every subset
+/// appears exactly once.
+fn default_choices() -> Vec<Vec<Source>> {
+    (0..1u32 << Source::ALL.len())
+        .map(|mask| {
+            Source::ALL
+                .into_iter()
+                .enumerate()
+                .filter(|(i, _)| mask >> i & 1 == 1)
+                .map(|(_, source)| source)
+                .collect()
+        })
+        .collect()
+}
+
+/// What a set of default sources reads as, in the form's field and in the
+/// table's column alike -- `—` for the accounts neither key names.
+///
+/// One spelling for the two, because the selector is answering the question
+/// the column asks: a choice cycled in the modal and the row behind it have
+/// to be recognisable as the same answer.
+pub(super) fn defaults_label(defaults: &[Source]) -> String {
+    match defaults.is_empty() {
+        true => "—".to_string(),
+        false => defaults
+            .iter()
+            .map(|s| s.label())
+            .collect::<Vec<_>>()
+            .join(" + "),
+    }
 }
 
 /// The `Color` selector's choices: no color, then one per name.
@@ -193,6 +246,12 @@ pub struct AccountEdit {
     /// so moving it off a block is the only way that block loses its
     /// container from here.
     pub block: Option<SavingsBlock>,
+    /// Which money forms open their `From` on this account. A source missing
+    /// from the set *clears* that key when this account is the one it names,
+    /// for `block`'s reason: the field says the whole of what this account
+    /// answers for, so dropping a source is the only way a form's default
+    /// goes away from here.
+    pub defaults: Vec<Source>,
 }
 
 /// What `a` commits: an account the workbook has not named.
@@ -215,8 +274,8 @@ pub struct NewAccount {
 /// accident. `a` asks the two things an account cannot be given afterwards --
 /// the code and the kind, which are what `account::by_code` matches the next
 /// import against, so editing either would orphan the row from the sheet that
-/// produced it. `e` asks the six the workbook does not carry, none of which a
-/// new account needs before it exists.
+/// produced it. `e` asks the seven the workbook does not carry, none of which
+/// a new account needs before it exists.
 ///
 /// All but the name and the code are selectors rather than text, so a band
 /// the schema's `CHECK` would refuse, a position off the end, a policy that is
@@ -246,6 +305,7 @@ pub struct AccountForm {
     of_kind: usize,
     policy: usize,
     block: usize,
+    defaults: usize,
 }
 
 impl AccountForm {
@@ -261,16 +321,17 @@ impl AccountForm {
             code: Field::default(),
             kind: 0,
             name: Field::default(),
-            // None of the six is on an add form. They are what `e` asks, and
-            // an account takes its kind's defaults until it is asked: the
+            // None of the seven is on an add form. They are what `e` asks,
+            // and an account takes its kind's defaults until it is asked: the
             // default band, no color, appended last, `NULL` interest policy,
-            // and no `Savings` block.
+            // no `Savings` block, and neither form's default source.
             color: 0,
             band: 0,
             position: 0,
             of_kind: 1,
             policy: 0,
             block: 0,
+            defaults: 0,
         }
     }
 
@@ -281,6 +342,7 @@ impl AccountForm {
         position: usize,
         of_kind: usize,
         block: Option<SavingsBlock>,
+        defaults: &[Source],
     ) -> AccountForm {
         AccountForm {
             editing: Some(account.id),
@@ -290,7 +352,7 @@ impl AccountForm {
             // `a` is where it is said. Reading it here to fill a field nobody
             // sees would be an account's text taken as a bare string, which
             // is how one reaches a screen with no color on it. The *kind* is
-            // still read, because it decides which of the six fields below
+            // still read, because it decides which of the seven fields below
             // are worth asking about.
             code: Field::default(),
             kind: Kind::ALL
@@ -332,6 +394,14 @@ impl AccountForm {
                 .iter()
                 .position(|b| *b == block)
                 .unwrap_or(0),
+            // Compared as a set the caller may hand over in any order, and
+            // held as the choice list's own order from here on: the field is
+            // a subset, and two spellings of one subset would make the
+            // selector open on a choice it does not contain.
+            defaults: default_choices()
+                .iter()
+                .position(|d| d.len() == defaults.len() && d.iter().all(|s| defaults.contains(s)))
+                .unwrap_or(0),
         }
     }
 
@@ -344,7 +414,7 @@ impl AccountForm {
     /// The fields this form shows, which is also its tab order.
     ///
     /// An add form asks three and stops, and the kind decides none of them:
-    /// the five it would decide are all *placements*, and an account is
+    /// the six it would decide are all *placements*, and an account is
     /// placed by `e` once it exists.
     pub fn fields(&self) -> Vec<AccountField> {
         if self.editing.is_none() {
@@ -363,6 +433,12 @@ impl AccountForm {
         if self.kind() == Kind::Cash {
             fields.push(AccountField::Interest);
             fields.push(AccountField::Savings);
+            // Cash only, because both forms this sets a default for take
+            // their `From` from the cash accounts alone: `t` moves money out
+            // of an account the owner holds, and `p` is cash settling a card.
+            // A card offered the field would be storing an id neither form's
+            // `From` list could ever land on.
+            fields.push(AccountField::Default);
         }
         fields
     }
@@ -391,6 +467,7 @@ impl AccountForm {
                 None => "—".to_string(),
                 Some(block) => block.label().to_string(),
             },
+            AccountField::Default => defaults_label(&default_choices()[self.defaults]),
         })
     }
 
@@ -439,6 +516,7 @@ impl AccountForm {
             position: self.position,
             policy: InterestPolicy::ALL[self.policy],
             block: savings_choices()[self.block],
+            defaults: default_choices()[self.defaults].clone(),
         })
     }
 }
@@ -464,7 +542,8 @@ impl FormFields for AccountForm {
             | AccountField::Band
             | AccountField::Order
             | AccountField::Interest
-            | AccountField::Savings => Focused::Selector,
+            | AccountField::Savings
+            | AccountField::Default => Focused::Selector,
         }
     }
 
@@ -477,7 +556,8 @@ impl FormFields for AccountForm {
             | AccountField::Band
             | AccountField::Order
             | AccountField::Interest
-            | AccountField::Savings => Caret::End,
+            | AccountField::Savings
+            | AccountField::Default => Caret::End,
         }
     }
 }
@@ -503,6 +583,9 @@ impl AccountForm {
             }
             AccountField::Savings => {
                 self.block = step_index(self.block, savings_choices().len(), step);
+            }
+            AccountField::Default => {
+                self.defaults = step_index(self.defaults, default_choices().len(), step);
             }
         }
     }
@@ -572,6 +655,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
                     Some(block) => block.label(),
                     None => "—",
                 }),
+                Cell::from(defaults_label(&r.defaults)),
             ])
         })
         .collect();
@@ -591,6 +675,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
         Cell::from("Band"),
         Cell::from("Interest"),
         Cell::from("Savings"),
+        Cell::from("Default"),
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
     let widths = [
@@ -600,6 +685,12 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
         Constraint::Length(10),
         Constraint::Length(16),
         Constraint::Length(8),
+        // Measured off the widest label the column can hold rather than
+        // written out, the way the choices themselves are generated from
+        // `Source::ALL`: the column says which forms an account answers for,
+        // and a cut cell would report an account as the default for one of
+        // two.
+        Constraint::Length(defaults_label(&Source::ALL).chars().count() as u16),
     ];
 
     // The placeholder an empty list draws is not a row the cursor may rest
@@ -640,6 +731,7 @@ mod tests {
             group,
             policy: InterestPolicy::Manual,
             block: None,
+            defaults: Vec::new(),
         }
     }
 
@@ -684,7 +776,8 @@ mod tests {
 
     /// Credit does not split into bands, so there is nothing for a band
     /// selector to cycle -- and only a cash account holds the goals an
-    /// interest posting is divided among.
+    /// interest posting is divided among, fills a `Savings` block, or can be
+    /// the account `t` and `p` open their `From` on.
     #[test]
     fn the_form_offers_a_band_and_a_policy_only_where_they_mean_something() {
         let cash = AccountForm::edit(
@@ -693,6 +786,7 @@ mod tests {
             0,
             3,
             None,
+            &[],
         );
         assert_eq!(
             cash.fields(),
@@ -702,7 +796,8 @@ mod tests {
                 AccountField::Band,
                 AccountField::Order,
                 AccountField::Interest,
-                AccountField::Savings
+                AccountField::Savings,
+                AccountField::Default
             ]
         );
 
@@ -712,6 +807,7 @@ mod tests {
             0,
             2,
             None,
+            &[],
         );
         assert_eq!(
             card.fields(),
@@ -729,6 +825,7 @@ mod tests {
             0,
             3,
             None,
+            &[],
         );
         assert_eq!(form.display(AccountField::Band).plain_text(), "Checking");
         form.next_choice_on(AccountField::Band);
@@ -737,6 +834,66 @@ mod tests {
         // Two bands, so a second step wraps back rather than reaching Credit.
         form.next_choice_on(AccountField::Band);
         assert_eq!(form.commit().unwrap().group, Group::Checking);
+    }
+
+    /// Four choices for two forms, and each of them exactly once: an account
+    /// may answer for neither, for one, or for both. The `Savings` selector
+    /// beside it holds one value instead, because two blocks of one sheet
+    /// cannot share a container.
+    #[test]
+    fn the_default_selector_cycles_every_subset_of_the_two_forms() {
+        let mut form = AccountForm::edit(
+            &account(1, "Everyday", Kind::Cash, Group::Checking),
+            InterestPolicy::Manual,
+            0,
+            3,
+            None,
+            &[],
+        );
+        let mut seen = vec![form.commit().unwrap().defaults];
+        for _ in 1..default_choices().len() {
+            form.next_choice_on(AccountField::Default);
+            seen.push(form.commit().unwrap().defaults);
+        }
+        assert_eq!(
+            seen,
+            vec![
+                vec![],
+                vec![Source::Transfer],
+                vec![Source::Payment],
+                vec![Source::Transfer, Source::Payment],
+            ]
+        );
+
+        // One more step wraps, rather than reaching a fifth subset.
+        form.next_choice_on(AccountField::Default);
+        assert_eq!(form.commit().unwrap().defaults, Vec::new());
+    }
+
+    /// The selector opens on what the account already answers for, however
+    /// the caller happened to order it -- a subset spelled the other way
+    /// round would open the field on `—` and clear both keys on save.
+    #[test]
+    fn the_default_selector_opens_on_the_set_it_was_given_in_any_order() {
+        for given in [
+            vec![Source::Transfer, Source::Payment],
+            vec![Source::Payment, Source::Transfer],
+        ] {
+            let form = AccountForm::edit(
+                &account(1, "Everyday", Kind::Cash, Group::Checking),
+                InterestPolicy::Manual,
+                0,
+                3,
+                None,
+                &given,
+            );
+            assert_eq!(
+                form.display(AccountField::Default).plain_text(),
+                defaults_label(&Source::ALL),
+                "{given:?}"
+            );
+            assert_eq!(form.commit().unwrap().defaults, Source::ALL.to_vec());
+        }
     }
 
     /// One-based on the form, zero-based in the write: it is a place in a
@@ -749,6 +906,7 @@ mod tests {
             2,
             3,
             None,
+            &[],
         );
         assert_eq!(form.display(AccountField::Order).plain_text(), "3 of 3");
         assert_eq!(form.commit().unwrap().position, 2);
@@ -785,6 +943,7 @@ mod tests {
             0,
             3,
             None,
+            &[],
         );
         let opening = form.commit().unwrap().color;
         assert_eq!(opening, Some(AccountColor::derived(AccountId(1))));
@@ -811,7 +970,7 @@ mod tests {
     fn the_form_opens_on_the_color_the_account_already_holds() {
         let mut account = account(2, "Rainy Day", Kind::Cash, Group::Savings);
         account.color = Some(AccountColor::Violet);
-        let form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None);
+        let form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None, &[]);
         assert_eq!(form.display(AccountField::Color).plain_text(), "Violet");
         assert_eq!(form.commit().unwrap().color, Some(AccountColor::Violet));
     }
@@ -824,6 +983,7 @@ mod tests {
             1,
             3,
             None,
+            &[],
         );
         assert_eq!(form.commit().unwrap().policy, InterestPolicy::ProRata);
         for _ in 0..InterestPolicy::ALL.len() {
@@ -845,6 +1005,7 @@ mod tests {
             0,
             3,
             None,
+            &[],
         );
         for _ in 0.."Everyday".len() {
             form.edit(backspace_key());
@@ -860,6 +1021,7 @@ mod tests {
             0,
             3,
             None,
+            &[],
         );
         form.edit(char_key('!'));
         assert_eq!(form.commit().unwrap().name, "Everyday!");
@@ -942,6 +1104,7 @@ mod tests {
         let mut rows = accounts.rows().to_vec();
         rows[1].policy = InterestPolicy::ProRata;
         rows[1].block = Some(SavingsBlock::Goals);
+        rows[1].defaults = Source::ALL.to_vec();
         rows[2].block = Some(SavingsBlock::Buckets);
         accounts.set_rows(rows);
         let table = drawn(&accounts).join("\n");
@@ -953,6 +1116,7 @@ mod tests {
             "Band",
             "Interest",
             "Savings",
+            "Default",
             "CHK",
             "Everyday Card",
             "Rainy Day",
@@ -963,6 +1127,7 @@ mod tests {
             "like last time",
             SavingsBlock::Goals.label(),
             SavingsBlock::Buckets.label(),
+            &defaults_label(&Source::ALL),
         ] {
             assert!(
                 table.contains(expected),
@@ -982,7 +1147,7 @@ mod tests {
 
         let mut account = account(2, "Rainy Day", Kind::Cash, Group::Savings);
         account.color = Some(AccountColor::Violet);
-        let form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None);
+        let form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None, &[]);
 
         let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 16)).unwrap();
         terminal
@@ -1029,6 +1194,7 @@ mod tests {
             1,
             3,
             None,
+            &[],
         );
         let derived = AccountColor::derived(AccountId(2));
         assert_eq!(
@@ -1054,6 +1220,7 @@ mod tests {
             1,
             3,
             None,
+            &[],
         );
         walk_until!(
             form.color_choice().is_none(),
@@ -1237,6 +1404,7 @@ mod savings_block_tests {
             0,
             3,
             None,
+            &[],
         );
         assert_eq!(form.display(AccountField::Savings).plain_text(), "—");
         assert_eq!(form.commit().unwrap().block, None);
@@ -1263,6 +1431,7 @@ mod savings_block_tests {
             0,
             2,
             None,
+            &[],
         );
         assert!(!card.fields().contains(&AccountField::Savings));
     }
@@ -1277,6 +1446,7 @@ mod savings_block_tests {
             1,
             3,
             Some(SavingsBlock::Buckets),
+            &[],
         );
         assert_eq!(
             form.display(AccountField::Savings).plain_text(),

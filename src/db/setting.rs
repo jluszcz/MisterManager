@@ -399,6 +399,16 @@ mod tests {
             key::RECURRING_TXN_HORIZON_MONTHS.name(),
         ];
         names.extend(crate::gate::Gate::ALL.iter().map(|g| g.key().name()));
+        names.extend(
+            crate::savings_block::Block::ALL
+                .iter()
+                .map(|b| b.key().name()),
+        );
+        names.extend(
+            crate::default_source::Source::ALL
+                .iter()
+                .map(|s| s.key().name()),
+        );
         // Only the keys `Line` owns: the two gate-backed lines borrow the
         // gate's key, and counting it twice would report a clash with itself.
         names.extend(

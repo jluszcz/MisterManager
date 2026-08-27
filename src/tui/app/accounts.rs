@@ -6,6 +6,7 @@
 use super::App;
 use crate::db::account::{self, Kind};
 use crate::db::{AccountId, setting};
+use crate::default_source::Source;
 use crate::savings_block::Block as SavingsBlock;
 use crate::tui::accounts::{self as accounts_screen, AccountForm};
 use crate::tui::cursor;
@@ -15,6 +16,10 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 /// The account each `Savings` block names, one entry per `Block::ALL` entry.
 type Containers = [Option<AccountId>; SavingsBlock::ALL.len()];
+
+/// The account each money form opens its `From` on, one entry per
+/// `Source::ALL` entry.
+type Defaults = [Option<AccountId>; Source::ALL.len()];
 
 impl App {
     /// Insert the account `a` describes, appended to whatever its kind
@@ -45,6 +50,7 @@ impl App {
     pub(super) fn reload_accounts(&mut self) -> Result<()> {
         let accounts = account::list(&self.db)?;
         let containers = self.savings_containers()?;
+        let defaults = self.default_sources()?;
         let mut rows = Vec::with_capacity(accounts.len());
         for account in &accounts {
             rows.push(accounts_screen::Row {
@@ -54,6 +60,7 @@ impl App {
                 group: account.group,
                 policy: account::interest_policy(&self.db, account.id)?,
                 block: block_of(&containers, account.id),
+                defaults: sources_of(&defaults, account.id),
             });
         }
         self.accounts.set_rows(rows);
@@ -87,6 +94,27 @@ impl App {
         Ok(())
     }
 
+    /// Point the forms in `defaults` at this account, and off whichever ones
+    /// it used to answer for.
+    ///
+    /// A key is only ever cleared when this account is the one it names,
+    /// which is what keeps editing one account from disturbing another's
+    /// defaults -- the same rule [`App::set_savings_block`] follows, for the
+    /// same reason. What differs is the shape: a source *set* rather than one
+    /// value, because the two keys are independent and one account may
+    /// answer for both.
+    fn set_default_sources(&mut self, id: AccountId, defaults: &[Source]) -> Result<()> {
+        for source in Source::ALL {
+            let key = source.key();
+            match defaults.contains(&source) {
+                true => setting::set(&self.db, key, id)?,
+                false if setting::get(&self.db, key)? == Some(id) => setting::clear(&self.db, key)?,
+                false => {}
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn accounts_key(&mut self, key: KeyEvent) -> Result<()> {
         if cursor::scroll_key(&mut self.accounts, key.code) {
             return Ok(());
@@ -111,8 +139,9 @@ impl App {
         let account = account::get(&self.db, id)?;
         let policy = account::interest_policy(&self.db, id)?;
         let block = block_of(&self.savings_containers()?, id);
+        let defaults = sources_of(&self.default_sources()?, id);
         self.modal = Some(Modal::Account(AccountForm::edit(
-            &account, policy, position, of_kind, block,
+            &account, policy, position, of_kind, block, &defaults,
         )));
         Ok(())
     }
@@ -136,13 +165,31 @@ impl App {
         Ok(containers)
     }
 
-    /// `a`'s one write, or the five `e` stands for.
+    /// The account each money form opens its `From` on, in `Source::ALL`'s
+    /// order.
     ///
-    /// The five are ordered so the last one means what it says: `reorder`
-    /// renumbers by position, so it goes after the band change rather than
-    /// before one that could move the row. `a` writes none of them -- a new
-    /// account takes its kind's default band, no color, no interest policy
-    /// and no `Savings` block, and `e` is where it is placed.
+    /// Read from the keys rather than from a column, and a key naming an
+    /// account that is gone simply matches nothing -- both for
+    /// [`App::savings_containers`]' reasons. What it costs here is smaller
+    /// still: a stale default is a form opening on the head of its list,
+    /// which the owner can see and correct on this screen.
+    fn default_sources(&self) -> Result<Defaults> {
+        let mut defaults: Defaults = [None; Source::ALL.len()];
+        for (account, source) in defaults.iter_mut().zip(Source::ALL) {
+            *account = setting::get(&self.db, source.key())?;
+        }
+        Ok(defaults)
+    }
+
+    /// `a`'s one write, or the six `e` stands for.
+    ///
+    /// The six are ordered so `reorder` means what it says: it renumbers by
+    /// position, so it goes after the band change rather than before one that
+    /// could move the row. The two `setting` writes under it read no column
+    /// at all, which is why they can follow. `a` writes none of the six -- a
+    /// new account takes its kind's default band, no color, no interest
+    /// policy, no `Savings` block and neither money form's default, and `e`
+    /// is where it is placed.
     pub(super) fn commit_account(&mut self) -> Result<()> {
         let Some(Modal::Account(form)) = &self.modal else {
             return Ok(());
@@ -157,6 +204,7 @@ impl App {
         account::set_interest_policy(&self.db, id, edit.policy)?;
         account::reorder(&self.db, id, edit.position)?;
         self.set_savings_block(id, edit.block)?;
+        self.set_default_sources(id, &edit.defaults)?;
         self.status = format!("{} saved", crate::demo::text(edit.name.as_str()));
         self.close_modal();
         self.reload()
@@ -173,11 +221,25 @@ fn block_of(containers: &Containers, id: AccountId) -> Option<SavingsBlock> {
         .map(|(block, _)| block)
 }
 
+/// Which money forms open on `id`, against a mapping `default_sources` has
+/// already read. `block_of`'s counterpart, and a set rather than an option
+/// for the reason the `Default` selector's choices are subsets: the two keys
+/// are independent, so an account may answer for both.
+fn sources_of(defaults: &Defaults, id: AccountId) -> Vec<Source> {
+    Source::ALL
+        .into_iter()
+        .zip(defaults)
+        .filter(|(_, account)| **account == Some(id))
+        .map(|(source, _)| source)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::account::{self, Group, Kind};
     use crate::db::{AccountId, setting};
+    use crate::default_source::Source;
     use crate::savings_block::Block as SavingsBlock;
     use crate::test_support::walk_until;
     use crate::tui::accounts as accounts_screen;
@@ -631,6 +693,128 @@ mod tests {
             "moving off a block left its key naming the account"
         );
         assert_eq!(app.accounts.rows()[0].block, None);
+    }
+
+    /// Screen 9 is where the two money forms are told where to open, and the
+    /// set is what the account answers for: a source dropped from it clears
+    /// that key rather than leaving it naming an account the owner has just
+    /// taken it off.
+    #[test]
+    fn the_account_form_points_a_money_form_at_an_account_and_off_again() {
+        let mut app = app();
+        let id = account::list_by_kind(&app.db, Kind::Cash).unwrap()[0].id;
+        for source in Source::ALL {
+            assert!(setting::get(&app.db, source.key()).unwrap().is_none());
+        }
+
+        // One step off "neither" is the first source on its own; a full
+        // cycle back is "neither" again.
+        pick_default(&mut app, 1);
+        assert_eq!(
+            setting::get(&app.db, Source::Transfer.key()).unwrap(),
+            Some(id)
+        );
+        assert!(
+            setting::get(&app.db, Source::Payment.key())
+                .unwrap()
+                .is_none(),
+            "one step claimed both forms"
+        );
+        assert_eq!(
+            app.accounts.rows()[0].defaults,
+            vec![Source::Transfer],
+            "the screen does not show what was written"
+        );
+
+        pick_default(&mut app, default_choices_len() - 1);
+        for source in Source::ALL {
+            assert!(
+                setting::get(&app.db, source.key()).unwrap().is_none(),
+                "{source:?} was left naming the account it was taken off"
+            );
+        }
+        assert_eq!(app.accounts.rows()[0].defaults, Vec::new());
+    }
+
+    /// Both keys at once, which is the state the `Savings` selector beside it
+    /// deliberately cannot reach: paying a card and moving savings are two
+    /// decisions, and one account is allowed to answer both.
+    #[test]
+    fn one_account_can_be_the_default_for_both_money_forms() {
+        let mut app = app();
+        let id = account::list_by_kind(&app.db, Kind::Cash).unwrap()[0].id;
+
+        pick_default(&mut app, default_choices_len() - 1);
+
+        for source in Source::ALL {
+            assert_eq!(setting::get(&app.db, source.key()).unwrap(), Some(id));
+        }
+        assert_eq!(app.accounts.rows()[0].defaults, Source::ALL.to_vec());
+    }
+
+    /// At most one account per key: pointing a source at a second account
+    /// takes it off the first, because the key holds one id.
+    #[test]
+    fn pointing_a_money_form_at_a_second_account_takes_it_off_the_first() {
+        let mut app = app();
+        let cash = account::list_by_kind(&app.db, Kind::Cash).unwrap();
+        setting::set(&app.db, Source::Transfer.key(), cash[0].id).unwrap();
+        app.reload().unwrap();
+
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Down);
+        edit_default(&mut app, 1);
+
+        assert_eq!(
+            setting::get(&app.db, Source::Transfer.key()).unwrap(),
+            Some(cash[1].id)
+        );
+        assert_eq!(app.accounts.rows()[0].defaults, Vec::new());
+        assert_eq!(app.accounts.rows()[1].defaults, vec![Source::Transfer]);
+    }
+
+    /// Editing one account must not disturb the other account's defaults:
+    /// each key is only ever cleared when this account is the one it names.
+    #[test]
+    fn editing_one_account_leaves_another_accounts_defaults_alone() {
+        let mut app = app();
+        let cash = account::list_by_kind(&app.db, Kind::Cash).unwrap();
+        setting::set(&app.db, Source::Payment.key(), cash[1].id).unwrap();
+        app.reload().unwrap();
+
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(
+            setting::get(&app.db, Source::Payment.key()).unwrap(),
+            Some(cash[1].id)
+        );
+    }
+
+    /// How many subsets the `Default` selector cycles, which is what a full
+    /// lap of it costs.
+    fn default_choices_len() -> usize {
+        1 << Source::ALL.len()
+    }
+
+    /// Open `e` on the selected account, step its `Default` selector, save.
+    fn edit_default(app: &mut App, steps: usize) {
+        press(app, KeyCode::Char('e'));
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Default),
+            press(app, KeyCode::Tab)
+        );
+        for _ in 0..steps {
+            press(app, KeyCode::Right);
+        }
+        press(app, KeyCode::Enter);
+    }
+
+    /// The same, from whichever screen the test is on, on the first account.
+    fn pick_default(app: &mut App, steps: usize) {
+        press(app, KeyCode::Char('9'));
+        edit_default(app, steps);
     }
 
     /// Editing one account must not disturb the other block's mapping: the
