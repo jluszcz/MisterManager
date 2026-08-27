@@ -156,7 +156,7 @@ allocation worksheets prefilled; `destination` is the list `e` opens on one of i
 rows. `fund` is the sixth screen, its form, and the birth-date prompt the age row needs and no
 other screen owns. `recurring_goal` is the seventh screen and `recurring_txn` the
 eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
-smallest: `a`, which creates an account the workbook does not name, and `e`, over the six things
+smallest: `a`, which creates an account the workbook does not name, and `e`, over the seven things
 the workbook does not say about one.
 
 `month` is the `[`/`]` filter Savings and Recurring Goals share. `style` is where color is decided —
