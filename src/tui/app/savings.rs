@@ -644,7 +644,6 @@ mod tests {
         let before = app.savings.excess()[0].1;
 
         press(&mut app, KeyCode::Char('a'));
-        press(&mut app, KeyCode::Tab);
         type_str(&mut app, "454");
         press(&mut app, KeyCode::Enter);
 
@@ -669,7 +668,6 @@ mod tests {
         let before = app.savings.rows()[0].current;
 
         press(&mut app, KeyCode::Char('a'));
-        press(&mut app, KeyCode::Tab);
         type_str(&mut app, "/2");
         press(&mut app, KeyCode::Enter);
 
@@ -689,7 +687,6 @@ mod tests {
         app.reload().unwrap();
 
         press(&mut app, KeyCode::Char('a'));
-        press(&mut app, KeyCode::Tab);
         type_str(&mut app, "/12");
 
         let screen = drawn(&mut app);
@@ -723,7 +720,6 @@ mod tests {
         let mut app = app();
         press(&mut app, KeyCode::Char('4'));
         press(&mut app, KeyCode::Char('a'));
-        press(&mut app, KeyCode::Tab);
         type_str(&mut app, "/0");
         press(&mut app, KeyCode::Enter);
 
@@ -794,8 +790,8 @@ mod tests {
         press(&mut app, KeyCode::Down);
         let before = app.savings.excess()[0].1;
 
+        // The form opens focused on `To`, so the sibling is one `→` away.
         press(&mut app, KeyCode::Char('c'));
-        press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Right);
         press(&mut app, KeyCode::Enter);
 

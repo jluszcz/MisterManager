@@ -455,10 +455,17 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   form opens focused on `Description`, which is `ORDER[2]`. A form that opened on a field it had
   already answered would cost two `Tab`s before the first character, every time. `Shift`+`Tab`
   reaches the defaults on the rounds where one of them is wrong.
-  **`TxnForm` is the form both rules hold on, and the other two each keep one.** The rules are
-  worth stating anyway — they are what a new form is designed against — but a reader checking one
-  against `ORDER` will find the exemptions, so they are named here rather than left to be
-  rediscovered as bugs:
+  **`TxnForm` and `AllocationForm` are the forms both rules hold on, and the other three each keep
+  one.** `AllocField::ORDER` runs `Date, Amount, Note` and opens on `ORDER[1]`: the date is
+  prefilled and leads, and the amount is the first thing the hand has to fill — `a` is pressed in
+  runs, so a `Tab` before the first digit is a keystroke charged on every row. It opens there
+  **whichever subject it has**: the correction `e` builds on the history screen arrives with every
+  field prefilled, so the second rule has nothing to point at, and the amount is what a correction
+  is about — the rows most worth correcting are the ones the import and the interest postings
+  wrote, which is the same fact that gives that subject its `Precision::Cents` reading.
+  The rules are worth stating anyway — they are what a new form is designed against — but a reader
+  checking one against `ORDER` will find the exemptions, so they are named here rather than left
+  to be rediscovered as bugs:
   - `RecurringTxnField::ORDER` runs `Description, Amount, Account, Cadence, Anchor, Horizon` and
     opens on `ORDER[0]`, so the second rule holds and the first does not: the prefilled `Account`
     and `Anchor` sit *after* the typed `Amount`. What leads on `TxnForm` are two prefills that
@@ -474,6 +481,13 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     the date, arriving from `App::entry_date`, is the guess on the form worth seeing. `a` answers
     the same hazard the other way, by naming the date in its confirmation, because there the
     keystroke is charged on every row.
+  - `CloseField::ORDER` runs `Date, Destination` and opens on `ORDER[1]`, so the first rule holds
+    and the second does not — not because there is nothing to type, but because the *decision* is
+    the destination. A close-out is a goal ending on the day it is being ended, so the prefilled
+    date leads and is right nearly every time, while `To` is the field the form exists to ask:
+    which sibling the balance moves to, or whether it goes back to unallocated. Opening there is
+    what makes `c` `←`/`→` `Enter` rather than `c` `Tab` `←`/`→` `Enter`, and the date is one
+    `Shift`+`Tab` away on the rounds it is wrong.
 - **`a`, `t` and `p` on a ledger open on the date the last row *added* this session was written
   for.**
   `App::entry_date` is view state beside `adhoc` — `None` until the first add, which is what leaves
