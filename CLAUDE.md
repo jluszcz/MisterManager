@@ -65,8 +65,8 @@ before touching anything under `src/tui/` — nothing about the screens is docum
 from two facts — the page carries no script, and it is read offline on a phone — and the backup's
 from one: the key is long-lived and unattended, so what bounds it is an IAM policy rather than a
 setting. Two of the backup's invariants span `mistermanager.tf` at the repository root as well as
-that directory, and say so where they do; read that file before changing the bucket or the prefix,
-since neither is reachable from Rust.
+that directory, and say so where they do; read that file before changing the bucket, what it keeps,
+or what the backup identity may do, since none of that is reachable from Rust.
 
 ## No real data in the repository
 

@@ -145,9 +145,9 @@ mod tests {
         assert_eq!(backup.interval_days, 7);
     }
 
-    /// The prefix is fixed in `backup::PREFIX` because it has to match an IAM
-    /// policy only an AWS apply can change. A file asking for another one is
-    /// a line that does nothing, and the rest of the file still loads.
+    /// There is no prefix: a backup is an object at the root of a bucket this
+    /// application owns outright. A file asking for one is a line that does
+    /// nothing, and the rest of the file still loads.
     #[test]
     fn a_prefix_key_is_ignored_rather_than_refusing_the_file() {
         let path = fixture(

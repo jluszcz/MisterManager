@@ -69,15 +69,13 @@ fn create_snapshot_dir(dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)
 }
 
-/// The key prefix every backup is written under, and deliberately not a
-/// config setting. It has to equal the prefix in `mistermanager.tf`'s policy
-/// resource path, which the IAM user is scoped to and which only an AWS
-/// apply can change -- so a knob here could only ever be turned into
-/// `AccessDenied`. The coupling still exists, but both ends are now code.
-pub const PREFIX: &str = "mistermanager";
-
+/// A backup is an object at the root of the bucket, under no prefix. The
+/// bucket is this application's own and holds nothing else, so a prefix would
+/// name the only thing in there -- and every rule written about the bucket,
+/// the lifecycle configuration and the IAM policy alike, then covers the
+/// backups by covering everything.
 pub fn key_for(now: DateTime<Utc>) -> String {
-    format!("{PREFIX}/money-{}.db", now.format("%Y%m%dT%H%M%SZ"))
+    format!("money-{}.db", now.format("%Y%m%dT%H%M%SZ"))
 }
 
 /// Integer arithmetic on purpose: the crate has no floats, and a backup size
@@ -231,12 +229,12 @@ mod tests {
         );
     }
 
-    /// Sortable, so `aws s3 ls` returns the history in order and the newest
-    /// object is the last line.
+    /// At the root of the bucket, and sortable, so `aws s3 ls` returns the
+    /// history in order and the newest object is the last line.
     #[test]
-    fn a_key_is_the_prefix_and_a_sortable_utc_timestamp() {
+    fn a_key_is_a_sortable_utc_timestamp_under_no_prefix() {
         let now = Utc.with_ymd_and_hms(2026, 8, 20, 14, 3, 5).unwrap();
-        assert_eq!(key_for(now), "mistermanager/money-20260820T140305Z.db");
+        assert_eq!(key_for(now), "money-20260820T140305Z.db");
     }
 
     #[test]
@@ -331,7 +329,7 @@ mod tests {
             &state_path,
             &state::State {
                 last_backup_at: at(19, 0),
-                last_key: "a-prefix/money-20260819T000000Z.db".to_string(),
+                last_key: "money-20260819T000000Z.db".to_string(),
             },
         )
         .unwrap();
