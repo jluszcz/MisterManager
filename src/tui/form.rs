@@ -1042,6 +1042,20 @@ enum TransferKind {
     Payment,
 }
 
+/// Where a `From` selector opens: the default account if the list holds it,
+/// and the head of the list otherwise.
+///
+/// The fallback is what makes an unset key and a stale one behave alike, and
+/// deliberately so. This is a lookup rather than a resolution: nothing is
+/// spent on the answer, the owner can see which account the selector landed
+/// on before pressing Enter, and a form that refused to open over a prefill
+/// would take away the one screen the setting is corrected from.
+fn opening_index(accounts: &[account::Account], default: Option<AccountId>) -> usize {
+    default
+        .and_then(|id| accounts.iter().position(|a| a.id == id))
+        .unwrap_or_default()
+}
+
 /// Moving money between two accounts. Backs `t` and `p`.
 #[derive(Debug)]
 pub struct TransferForm {
@@ -1066,9 +1080,16 @@ impl TransferForm {
     /// transfer key. Keeping the source cash-only means every `t` reads the
     /// same way: something left an account you hold and arrived somewhere
     /// else.
+    ///
+    /// `default_from` is [`crate::default_source::Source::Transfer`]'s
+    /// account, and the `To` selector then opens on the first account that is
+    /// not it. Both halves matter: the destination list is *every* account,
+    /// so a `To` left at index zero opens the form on a transfer from an
+    /// account to itself — the one pair [`TransferForm::commit`] refuses.
     pub(super) fn transfer(
         accounts: Vec<account::Account>,
         date: DateField,
+        default_from: Option<AccountId>,
     ) -> Result<TransferForm> {
         ensure!(
             accounts.len() >= 2,
@@ -1083,6 +1104,14 @@ impl TransferForm {
             !cash.is_empty(),
             "there is no cash account to transfer from"
         );
+        let from = opening_index(&cash, default_from);
+        let source = cash[from].id;
+        // `accounts.len() >= 2` above is what makes this land somewhere: two
+        // accounts cannot both be the source.
+        let to = accounts
+            .iter()
+            .position(|a| a.id != source)
+            .unwrap_or_default();
         Ok(TransferForm {
             focus: TransferField::Date,
             kind: TransferKind::Transfer,
@@ -1090,9 +1119,9 @@ impl TransferForm {
             amount: Field::default(),
             description: Field::prefilled("Transfer"),
             from_accounts: cash,
-            from: 0,
+            from,
             to_accounts: accounts,
-            to: 0,
+            to,
         })
     }
 
@@ -1102,9 +1131,15 @@ impl TransferForm {
     /// cash: a "payment" means cash settling a card, and a card-to-card move
     /// is a balance transfer, which is a different thing the owner should not
     /// reach by pressing `p`.
+    ///
+    /// `default_from` is [`crate::default_source::Source::Payment`]'s
+    /// account. The `To` selector takes no such adjustment as `transfer`'s
+    /// does: the two lists here are disjoint by kind, so no card the
+    /// destination opens on can be the cash account paying it.
     pub(super) fn payment(
         accounts: Vec<account::Account>,
         date: DateField,
+        default_from: Option<AccountId>,
     ) -> Result<TransferForm> {
         let cards: Vec<account::Account> = accounts
             .iter()
@@ -1124,13 +1159,28 @@ impl TransferForm {
             date,
             amount: Field::default(),
             description: Field::default(),
+            from: opening_index(&cash, default_from),
             from_accounts: cash,
-            from: 0,
             to_accounts: cards,
             to: 0,
         };
         form.refresh_payment_description();
         Ok(form)
+    }
+
+    /// What the form's title bar calls it, which is the key that opened it.
+    ///
+    /// One form backs `t` and `p`, and the two write different things: a
+    /// payment is cash settling a card, and a modal titled `Transfer` over a
+    /// `<CODE> Payment` description tells the owner they pressed the wrong
+    /// key.
+    pub fn title(&self) -> &'static str {
+        match self.kind {
+            TransferKind::Transfer => {
+                "Transfer — Tab field · ←/→ account · Enter save · Esc cancel"
+            }
+            TransferKind::Payment => "Payment — Tab field · ←/→ account · Enter save · Esc cancel",
+        }
     }
 
     /// Keep the prefill pointing at the card actually selected, until the
@@ -1499,11 +1549,7 @@ pub fn render_transfer(frame: &mut Frame, form: &TransferForm, popup: &Autocompl
             )
         })
         .collect();
-    let area = render_fields(
-        frame,
-        "Transfer — Tab field · ←/→ account · Enter save · Esc cancel",
-        lines,
-    );
+    let area = render_fields(frame, form.title(), lines);
     render_popup(frame, area, popup)
 }
 
@@ -2051,7 +2097,7 @@ mod tests {
     /// readable at a glance rather than by reading two codes.
     #[test]
     fn both_ends_of_a_transfer_name_their_own_account() {
-        let form = TransferForm::transfer(all_accounts(), DateField::today(today())).unwrap();
+        let form = TransferForm::transfer(all_accounts(), DateField::today(today()), None).unwrap();
         let from = form.display(TransferField::From);
         let to = form.display(TransferField::To);
         assert_eq!(from.accounts().len(), 1);
@@ -2271,14 +2317,13 @@ mod tests {
     #[test]
     fn a_transfer_prefills_the_description_both_legs_share() {
         let mut form =
-            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31)), None)
+                .unwrap();
         assert_eq!(
             form.display(TransferField::Description).plain_text(),
             "Transfer"
         );
 
-        walk_until!(form.focus == TransferField::To, form.next_field());
-        form.choice(Step::NEXT);
         typed_transfer(&mut form, TransferField::Amount, "3,291.00");
 
         let moved = form.commit().unwrap();
@@ -2295,7 +2340,8 @@ mod tests {
     #[test]
     fn a_transfer_of_a_non_positive_amount_is_refused_in_the_form() {
         let mut form =
-            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31)), None)
+                .unwrap();
         walk_until!(form.focus == TransferField::To, form.next_field());
         form.choice(Step::NEXT);
         typed_transfer(&mut form, TransferField::Amount, "-100");
@@ -2304,14 +2350,92 @@ mod tests {
         assert!(err.to_string().contains("amount must be positive"), "{err}");
     }
 
+    /// Reached by cycling `To` back onto the source, which is the only way
+    /// to reach it now that the form no longer *opens* there.
     #[test]
     fn a_transfer_to_the_account_it_came_from_is_refused() {
         let mut form =
-            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31)), None)
+                .unwrap();
+        walk_until!(form.focus == TransferField::To, form.next_field());
+        form.choice(Step::PREVIOUS);
+        assert_eq!(
+            form.display(TransferField::To).plain_text(),
+            form.display(TransferField::From).plain_text()
+        );
         typed_transfer(&mut form, TransferField::Amount, "100");
 
         let err = form.commit().unwrap_err();
         assert!(err.to_string().contains("two different accounts"), "{err}");
+    }
+
+    /// The `To` selector opens off the source rather than on it: the
+    /// destination list is every account, so index zero is the cash account
+    /// the money is leaving, and the form would open on a pair `commit`
+    /// refuses.
+    #[test]
+    fn a_transfer_opens_on_two_different_accounts() {
+        let form = TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31)), None)
+            .unwrap();
+        let moved = commit_with(form, "100");
+        assert_eq!(moved.from_account_id, all_accounts()[0].id);
+        assert_ne!(moved.to_account_id, moved.from_account_id);
+    }
+
+    /// The account [`crate::default_source::Source::Transfer`] names is where
+    /// `From` opens, and `To` steps off *that* account rather than off the
+    /// head of the list.
+    #[test]
+    fn a_transfer_opens_on_the_default_source_and_away_from_it() {
+        let default = all_accounts()[1].id;
+        let form = TransferForm::transfer(
+            all_accounts(),
+            DateField::today(day(2026, 8, 31)),
+            Some(default),
+        )
+        .unwrap();
+        let moved = commit_with(form, "100");
+        assert_eq!(moved.from_account_id, default);
+        assert_ne!(moved.to_account_id, default);
+    }
+
+    /// An unset key and one naming an account that is gone are the same
+    /// state to a prefill: the head of the list, and a form the owner can
+    /// still see and correct.
+    #[test]
+    fn a_transfer_whose_default_source_is_not_a_cash_account_opens_on_the_first() {
+        let form = TransferForm::transfer(
+            all_accounts(),
+            DateField::today(day(2026, 8, 31)),
+            Some(AccountId(9_999)),
+        )
+        .unwrap();
+        assert_eq!(
+            commit_with(form, "100").from_account_id,
+            all_accounts()[0].id
+        );
+    }
+
+    /// `p`'s own key, and not `t`'s: the card a payment settles and the
+    /// account savings leave are two decisions, so the two forms open on
+    /// whichever account each was pointed at.
+    #[test]
+    fn a_payment_opens_on_its_own_default_source() {
+        let default = accounts()[1].id;
+        let form = TransferForm::payment(
+            all_accounts(),
+            DateField::today(day(2026, 9, 8)),
+            Some(default),
+        )
+        .unwrap();
+        let paid = commit_with(form, "100");
+        assert_eq!(paid.from_account_id, default);
+    }
+
+    /// A committed transfer, typed into an otherwise untouched form.
+    fn commit_with(mut form: TransferForm, amount: &str) -> Transfer {
+        typed_transfer(&mut form, TransferField::Amount, amount);
+        form.commit().unwrap()
     }
 
     /// The refusal quotes the account's own code back, and a demo has to
@@ -2321,7 +2445,12 @@ mod tests {
     fn a_demo_scrambles_the_code_a_same_account_transfer_refusal_quotes() {
         crate::demo::install_with_salt(7);
         let mut form =
-            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31)), None)
+                .unwrap();
+        // Back onto the source, which is the only way to the refusal now
+        // that the form opens off it.
+        walk_until!(form.focus == TransferField::To, form.next_field());
+        form.choice(Step::PREVIOUS);
         typed_transfer(&mut form, TransferField::Amount, "100");
 
         let err = form.commit().unwrap_err().to_string();
@@ -2338,7 +2467,7 @@ mod tests {
     #[test]
     fn a_payment_offers_only_credit_destinations() {
         let form =
-            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8))).unwrap();
+            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8)), None).unwrap();
         assert_eq!(
             form.display(TransferField::To).plain_text(),
             "CC1 — Card One"
@@ -2366,7 +2495,8 @@ mod tests {
     #[test]
     fn a_transfer_offers_only_cash_sources() {
         let mut form =
-            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31)), None)
+                .unwrap();
         walk_until!(form.focus == TransferField::From, form.next_field());
         let mut seen = Vec::new();
         for _ in 0..all_accounts().len() {
@@ -2389,8 +2519,8 @@ mod tests {
     /// payment, which `t` may write as well as `p`.
     #[test]
     fn a_transfer_still_offers_every_destination() {
-        let form =
-            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+        let form = TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31)), None)
+            .unwrap();
         let mut form = form;
         walk_until!(form.focus == TransferField::To, form.next_field());
         let mut seen = Vec::new();
@@ -2412,7 +2542,8 @@ mod tests {
     #[test]
     fn a_transfer_with_its_prefilled_description_cleared_is_refused() {
         let mut form =
-            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31)), None)
+                .unwrap();
         typed_transfer(&mut form, TransferField::Amount, "10");
         walk_until!(form.focus == TransferField::To, form.next_field());
         form.choice(Step::NEXT);
@@ -2432,7 +2563,8 @@ mod tests {
             .into_iter()
             .filter(|a| a.kind == Kind::Credit)
             .collect();
-        let err = TransferForm::transfer(cards, DateField::today(day(2026, 8, 31))).unwrap_err();
+        let err =
+            TransferForm::transfer(cards, DateField::today(day(2026, 8, 31)), None).unwrap_err();
         assert!(err.to_string().contains("cash"), "{err}");
     }
 
@@ -2441,7 +2573,7 @@ mod tests {
     #[test]
     fn a_payment_offers_only_cash_sources() {
         let mut form =
-            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8))).unwrap();
+            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8)), None).unwrap();
         assert_eq!(
             form.display(TransferField::From).plain_text(),
             "CHK — Everyday"
@@ -2462,7 +2594,7 @@ mod tests {
     #[test]
     fn a_payments_description_follows_the_card_until_it_is_edited() {
         let mut form =
-            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8))).unwrap();
+            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8)), None).unwrap();
         assert_eq!(
             form.display(TransferField::Description).plain_text(),
             "CC1 Payment"
@@ -2493,7 +2625,7 @@ mod tests {
     #[test]
     fn a_payment_commits_both_legs_worth_of_detail() {
         let mut form =
-            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8))).unwrap();
+            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8)), None).unwrap();
         walk_until!(form.focus == TransferField::From, form.next_field());
         form.choice(Step::NEXT);
         typed_transfer(&mut form, TransferField::Amount, "450.85");
@@ -2508,7 +2640,8 @@ mod tests {
 
     #[test]
     fn a_payment_with_no_card_to_pay_is_refused() {
-        let err = TransferForm::payment(accounts(), DateField::today(day(2026, 9, 8))).unwrap_err();
+        let err =
+            TransferForm::payment(accounts(), DateField::today(day(2026, 9, 8)), None).unwrap_err();
         assert!(err.to_string().contains("credit"), "{err}");
     }
 
@@ -2613,7 +2746,8 @@ mod tests {
     fn a_demo_scrambles_the_amount_a_transfer_form_shows() {
         crate::demo::install_with_salt(7);
         let mut form =
-            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31)), None)
+                .unwrap();
         typed_transfer(&mut form, TransferField::Amount, "3,291.00");
         let drawn = form.display(TransferField::Amount).plain_text();
         assert_ne!(drawn, "3,291.00");
@@ -2629,7 +2763,7 @@ mod tests {
     fn a_demo_scrambles_the_cards_code_in_a_payments_description() {
         crate::demo::install_with_salt(7);
         let form =
-            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8))).unwrap();
+            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8)), None).unwrap();
         let drawn = form.display(TransferField::Description).plain_text();
         assert_ne!(drawn, "CC1 Payment");
         assert_eq!(drawn, crate::demo::text("CC1 Payment"));
@@ -2644,7 +2778,8 @@ mod tests {
     fn a_demo_scrambles_the_figure_a_refused_amount_quotes() {
         crate::demo::install_with_salt(7);
         let mut form =
-            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31)), None)
+                .unwrap();
         walk_until!(form.focus == TransferField::To, form.next_field());
         form.choice(Step::NEXT);
         typed_transfer(&mut form, TransferField::Amount, "-500");
@@ -3086,7 +3221,8 @@ mod tests {
     #[test]
     fn the_transfer_description_comes_before_its_amount_too() {
         let mut form =
-            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31)), None)
+                .unwrap();
         walk_until!(form.focus == TransferField::Description, form.next_field());
         form.next_field();
         assert_eq!(form.focus, TransferField::Amount);
@@ -3153,7 +3289,8 @@ mod tests {
     #[test]
     fn the_arrows_step_a_transfer_date_by_a_day() {
         let mut form =
-            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31))).unwrap();
+            TransferForm::transfer(all_accounts(), DateField::today(day(2026, 8, 31)), None)
+                .unwrap();
         form.choice(Step::NEXT);
         assert_eq!(form.display(TransferField::Date).plain_text(), "2026-09-01");
         form.choice(Step::PREVIOUS);
@@ -3166,7 +3303,7 @@ mod tests {
     #[test]
     fn stepping_a_transfer_date_moves_neither_account() {
         let mut form =
-            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8))).unwrap();
+            TransferForm::payment(all_accounts(), DateField::today(day(2026, 9, 8)), None).unwrap();
         form.choice(Step::NEXT);
         assert_eq!(
             form.display(TransferField::From).plain_text(),

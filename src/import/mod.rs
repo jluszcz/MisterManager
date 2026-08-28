@@ -34,7 +34,8 @@ pub fn sheet(sheets: &mut Sheets, name: &str) -> Result<SheetRange> {
 
 use crate::db::account;
 use crate::db::setting::key;
-use crate::db::{self, Db, bill, setting};
+use crate::db::{self, AccountId, Db, bill, setting};
+use crate::default_source::Source;
 use chrono::NaiveDate;
 
 /// What a run of [`import_all`] did.
@@ -103,6 +104,7 @@ pub fn import_all(db: &Db, path: &Path, today: NaiveDate, replace: bool) -> Resu
         // so a `--replace` takes the mapping with it. The accounts it names
         // are not, so what is read here is still true afterwards.
         let containers = savings::containers(db)?;
+        let defaults = default_sources(db)?;
 
         if db::has_imported_data(db)? {
             if !replace {
@@ -115,6 +117,9 @@ pub fn import_all(db: &Db, path: &Path, today: NaiveDate, replace: bool) -> Resu
         }
 
         constants::import(db, &mut sheets)?;
+        // Before the early return below, not after it: a `--replace` that
+        // stops after the accounts has cleared `setting` just the same.
+        set_default_sources(db, &defaults)?;
 
         let Some(containers) = containers else {
             return Ok(Report::AccountsOnly {
@@ -135,6 +140,37 @@ pub fn import_all(db: &Db, path: &Path, today: NaiveDate, replace: bool) -> Resu
             fund_targets_frozen,
         }))
     })
+}
+
+/// The account each money form's `From` opens on, read before a `--replace`
+/// clears `setting`.
+///
+/// [`savings::containers`]' dance, for its reason: these are the owner's, set
+/// on the Accounts screen beside the `Savings` blocks and the interest
+/// policy, and the accounts they name are not imported, so what was true
+/// before the clear is still true after it. An owner who lost them to a
+/// `--replace` would find the screen's other five settings had survived it.
+///
+/// What differs is the tolerance. A dangling block key is a corrupt database
+/// and `containers` says so; a dangling default is the same state as an unset
+/// one -- a form opening on the head of its list -- so the ids are carried
+/// across without being resolved, and an absent key stays absent.
+fn default_sources(db: &Db) -> Result<Vec<(Source, AccountId)>> {
+    let mut found = Vec::with_capacity(Source::ALL.len());
+    for source in Source::ALL {
+        if let Some(id) = setting::get(db, source.key())? {
+            found.push((source, id));
+        }
+    }
+    Ok(found)
+}
+
+/// Write them back, once `constants::import` has run.
+fn set_default_sources(db: &Db, defaults: &[(Source, AccountId)]) -> Result<()> {
+    for (source, id) in defaults {
+        setting::set(db, source.key(), *id)?;
+    }
+    Ok(())
 }
 
 /// Sheet `Planning` -> settings, the `bill` table, and the `fund` table. Cell

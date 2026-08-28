@@ -9,6 +9,7 @@ use common::{container, imported, sheet_cents, workbook, workbook_today};
 use mistermanager::db::goal;
 use mistermanager::db::recurring_goal::{self, Cadence};
 use mistermanager::db::setting::{self, key};
+use mistermanager::default_source::Source;
 use mistermanager::gate::Gate;
 use mistermanager::goal as goal_engine;
 use mistermanager::money::Cents;
@@ -419,6 +420,37 @@ fn an_import_with_resolved_containers_completes_in_one_pass() {
             setting::get(&db, block.key()).unwrap().is_some(),
             "{} did not survive a --replace",
             block.key()
+        );
+    }
+}
+
+/// The other two Accounts-screen settings that live in `setting` rather than
+/// on the row: which account `t` and `p` open their `From` on.
+///
+/// They are the owner's, they are set on the screen whose every other field
+/// survives a `--replace`, and the accounts they name survive it too -- so a
+/// clear that took them would be the one thing on that screen an import could
+/// silently undo.
+#[test]
+fn a_replace_keeps_the_accounts_the_money_forms_open_on() {
+    let Some((db, mut sheets)) = loaded() else {
+        return;
+    };
+    let path = workbook().expect("loaded already found it");
+    let today = workbook_today(&mut sheets);
+    let account = db::account::list(&db).unwrap()[0].id;
+    for source in Source::ALL {
+        setting::set(&db, source.key(), account).unwrap();
+    }
+
+    import::import_all(&db, &path, today, true).unwrap();
+
+    for source in Source::ALL {
+        assert_eq!(
+            setting::get(&db, source.key()).unwrap(),
+            Some(account),
+            "{} did not survive a --replace",
+            source.key()
         );
     }
 }

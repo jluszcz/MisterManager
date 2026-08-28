@@ -208,10 +208,20 @@ steps — the mapping is read before anything is cleared and written back
 after, so `--replace` cannot reopen it.
 
 The accounts arrive named after their codes, in the kind's default band. The
-name, color, band, position, interest policy and `Savings` block are all yours,
-set on screen `9`, and no import touches them again: `account` is deliberately
-outside the tables a `--replace` clears. Neither is `recurring_txn` — the
-rules you typed, and the paycheck flag among them, survive a re-import.
+name, color, band, position, interest policy, `Savings` block and which of the
+two money forms open on the account are all yours, set on screen `9`, and no
+import touches them again: `account` is deliberately outside the tables a
+`--replace` clears. Neither is `recurring_txn` — the rules you typed, and the
+paycheck flag among them, survive a re-import.
+
+Two of those are `setting` keys rather than columns on the row, and the
+`Default` field is where both are pointed: `t` opens its `From` on the account
+named for a transfer, `p` on the one named for a payment. They are separate
+keys because paying a card and moving savings are separate decisions -- which
+is also what lets one account answer for both. A key naming an account that is
+gone is not an error here, unlike the `Savings` block's: the form opens on the
+head of its list, which is a prefill you can see before pressing `Enter` and
+correct on the very screen that sets it.
 
 An account the workbook does not name is yours to create there too: `a` asks a
 code, a kind and a name, and writes the same row an import would — default
@@ -442,7 +452,7 @@ read a backup, delete one, or list the prefix.
 | `src/backup/` | The schedule, the snapshot, and the S3 upload. `aws-config`, `aws-sdk-s3` and `tokio` are named only in `src/backup/s3.rs`. |
 | `src/tui/` | The terminal UI: screens, forms, key handling. |
 | `src/tui/fund.rs` | The Funds screen and its form. |
-| `src/tui/accounts.rs` | The Accounts screen — creating an account the workbook does not name, and the six things it does not say about one. |
+| `src/tui/accounts.rs` | The Accounts screen — creating an account the workbook does not name, and the seven things it does not say about one. |
 
 `ratatui` (which re-exports `crossterm`) is named only inside `src/tui/`, the
 same discipline that confines `rusqlite` to `src/db/`, `calamine` to
