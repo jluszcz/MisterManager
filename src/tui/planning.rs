@@ -1403,6 +1403,7 @@ mod tests {
             sort: 0,
             favorite: false,
             taxed: false,
+            floating: false,
         }
     }
 

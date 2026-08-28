@@ -1185,8 +1185,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   the color is chosen, sub-dollar drift below zero draws a plain `0` rather than a red `-0`. The
   report's `Unallocated` row is the same rule through the same function; its container is the
   `<h3>` above the table, colored there.
-- **The goal form's two `bool`s are selectors, not typed fields.** `Taxed` and `Interest` are
-  flipped with `←`/`→` and ignore keystrokes, because a `bool` the owner is spelling out one
+- **The goal form's three `bool`s are selectors, not typed fields.** `Floating`, `Taxed` and
+  `Interest` are flipped with `←`/`→` and ignore keystrokes, because a `bool` the owner is spelling out one
   letter at a time can sit at `n`, `no`, or `nope` and mean nothing in between. `Interest` is on
   the form at all because eligibility is a *policy* rather than a fact about the goal: the importer
   sets the opening value from `Planning!J7`'s forced-zero weight, and whether a bucket keeps
@@ -1220,6 +1220,27 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     figure, so both forms that edit a base answer the same question in the same words. This form asks
     nothing about the rate — an entry writes no goal, and it is `App::commit_picker`, the picker that
     turns a taxed entry into one, that refuses when no rate is on record.
+- **`Floating` takes the Target and the Taxed fields off the form rather than blanking them.** A
+  floating goal is funded to whatever it holds — `goal.floating`, read first by
+  `crate::goal::target` — so a target and a tax on it describe nothing, and `GoalForm::fields` is
+  what Tab walks and what `render_goal` draws: `Name`, `Goal Date`, `Floating`, `Interest`. It sits
+  after the Date and beside `Taxed` because the two say what the Target above them means, and
+  because a goal that *has* a target is still typed name, target, date.
+  - **What those two fields hold is suspended, not erased.** The commit writes the base the
+    unreachable field still carries and the `taxed` flag beside it, so flipping `Floating` back off
+    reopens the goal on the figure it was funded towards. The field cannot always be *read* back —
+    an imported base carries whatever cents the sheet had, and `parse_whole_amount` refuses those —
+    so `GoalForm` keeps the base it opened on and an unparseable field falls back to that rather
+    than to zero, which would erase the figure on an edit that never touched it. A goal typed from
+    scratch opened on nothing, which is zero.
+  - **A floating goal is not refused for want of a tax rate.** `goal::NO_TAX_RATE` guards a stored
+    base that something will spend; nothing spends this one while the flag is on, which is the same
+    reading `crate::goal::target` makes when a row carries both flags.
+  - **The Savings row states the hundred rather than dividing for it.** `current / current` is
+    `0 / 0` on an empty floating goal, and `savings::percent_complete` rightly refuses a
+    non-positive target — so `savings::rows` sets `Some(Percent(100))` for a floating goal and the
+    ramp draws it green whatever it holds. The Goal column is the balance, and the report's Savings
+    tab reads the same rows.
 - **`$/Pay` divides a runway by the pay cadence, and the cadence arrives per reload.**
   `Savings::set_goals` takes `periods_per_year` beside its goals, the way
   `RecurringGoals::set_entries` takes it beside the tax rate and for the same reason: it is

@@ -27,11 +27,16 @@ pub struct Row {
     pub current: Cents,
     /// The target, which is what the `Goal` column shows.
     pub goal: Cents,
-    /// What the table holds. Equal to `goal` unless the goal is taxed, and
-    /// carried so `e` can prefill the form from the row rather than
-    /// re-querying -- the reason `interest_eligible` is here too.
+    /// What the table holds. Equal to `goal` unless the goal is taxed, whose
+    /// target is the lambda of this, or floating, whose target is the balance
+    /// beside it. Carried so `e` can prefill the form from the row rather
+    /// than re-querying -- the reason `interest_eligible` is here too.
     pub base: Cents,
     pub taxed: bool,
+    /// Whether the target above follows the balance beside it. Carried for
+    /// the reason `taxed` is -- `e` prefills the form from the row -- and
+    /// because `percent` is stated rather than divided for while it is set.
+    pub floating: bool,
     pub percent: Option<Percent>,
     pub goal_date: Option<NaiveDate>,
     /// Past its goal date and still short. What the screen offers there is a
@@ -140,13 +145,22 @@ pub fn rows(
         rows.push(Row {
             goal_id: g.goal.id,
             container: Account::named(accounts, g.goal.container_account_id),
-            percent: percent_complete(g.current, g.target),
+            // Stated rather than divided for: a floating goal's target *is*
+            // its balance, so the division is `current / current` -- `0 / 0`
+            // on an empty one, which `percent_complete` rightly refuses. A
+            // goal at its target by definition reads full whatever it holds.
+            percent: if g.goal.floating {
+                Some(Percent(100))
+            } else {
+                percent_complete(g.current, g.target)
+            },
             expired: g.goal.goal_date.is_some_and(|d| d < today) && g.current < g.target,
             name: g.goal.name,
             current: g.current,
             goal: g.target,
             base: g.goal.base_cents,
             taxed: g.goal.taxed,
+            floating: g.goal.floating,
             goal_date: g.goal.goal_date,
             per_paycheck,
             interest_eligible: g.goal.interest_eligible,
@@ -208,6 +222,7 @@ mod tests {
                 sort: id,
                 favorite: false,
                 taxed: false,
+                floating: false,
             },
             current: Cents(current),
             target: Cents(target),
@@ -231,6 +246,15 @@ mod tests {
         g
     }
 
+    /// The same goal, floating: its target is whatever it holds, which is
+    /// what `crate::goal::target` has already derived by the time a row is
+    /// built.
+    fn floating(mut g: Funding) -> Funding {
+        g.goal.floating = true;
+        g.target = g.current;
+        g
+    }
+
     /// The four rows of the design's screen mock, at its own today.
     fn goals() -> Vec<Funding> {
         vec![
@@ -243,6 +267,83 @@ mod tests {
 
     /// The target -- derived from a user-editable base -- reaches a divisor.
     /// A zero target renders `--` rather than dividing.
+    /// A goal that is at its target by definition reads full, and the
+    /// division that would say so cannot be done: `current / current` is
+    /// `0 / 0` on an empty one. So the row states the hundred rather than
+    /// dividing for it, and an empty floating goal draws green like every
+    /// other one instead of `--`.
+    #[test]
+    fn a_floating_goal_is_a_hundred_percent_with_nothing_in_it() {
+        let rows = rows(
+            vec![floating(goal(1, 1, "Brokerage", 0, 0, None))],
+            &accounts(),
+            today(),
+            26,
+        )
+        .unwrap();
+
+        assert_eq!(rows[0].percent, Some(Percent(100)));
+        assert_eq!(rows[0].goal, Cents::ZERO, "the Goal column is the balance");
+    }
+
+    /// The same answer once there is money in it, and once it has been
+    /// overspent -- the two cases `percent_complete` would report as `--`
+    /// and as a negative.
+    #[test]
+    fn a_floating_goal_is_a_hundred_percent_however_much_it_holds() {
+        let rows = rows(
+            vec![
+                floating(goal(1, 1, "Brokerage", 50_000, 0, None)),
+                floating(goal(2, 1, "Overspent", -4_000, 0, None)),
+            ],
+            &accounts(),
+            today(),
+            26,
+        )
+        .unwrap();
+
+        assert_eq!(rows[0].percent, Some(Percent(100)));
+        assert_eq!(rows[0].goal, Cents(50_000));
+        assert_eq!(rows[1].percent, Some(Percent(100)));
+    }
+
+    /// The flag reaches the row so `e` can prefill the form from what is
+    /// already on screen, the way `taxed` and `interest_eligible` do.
+    #[test]
+    fn a_rows_floating_flag_comes_off_the_goal() {
+        let rows = rows(
+            vec![
+                floating(goal(1, 1, "Brokerage", 50_000, 0, None)),
+                goal(2, 1, "Couch", 0, 10_000, None),
+            ],
+            &accounts(),
+            today(),
+            26,
+        )
+        .unwrap();
+
+        assert!(rows[0].floating);
+        assert!(!rows[1].floating);
+    }
+
+    /// A floating goal with a date is neither overdue nor asking for
+    /// anything: it is at its target, so there is nothing for the runway to
+    /// divide.
+    #[test]
+    fn a_dated_floating_goal_is_never_expired_and_asks_for_nothing() {
+        let past = today().pred_opt().unwrap();
+        let rows = rows(
+            vec![floating(goal(1, 1, "Brokerage", 50_000, 0, Some(past)))],
+            &accounts(),
+            today(),
+            26,
+        )
+        .unwrap();
+
+        assert!(!rows[0].expired);
+        assert_eq!(rows[0].per_paycheck, None);
+    }
+
     #[test]
     fn a_goal_with_a_zero_target_has_no_percent_rather_than_dividing() {
         assert_eq!(percent_complete(Cents(500), Cents::ZERO), None);
@@ -460,6 +561,7 @@ mod tests {
                     recurring_goal_id: None,
                     interest_eligible: false,
                     sort: 0,
+                    floating: false,
                 },
             )
             .unwrap();

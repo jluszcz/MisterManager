@@ -310,6 +310,7 @@ mod tests {
             interest_eligible: true,
             sort: 0,
             taxed: false,
+            floating: false,
         };
         crate::db::goal::insert(&db, &new_goal("Lego", lego)).unwrap();
         crate::db::goal::insert(&db, &new_goal("Lego", lego)).unwrap();
@@ -390,6 +391,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 0,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap();

@@ -67,6 +67,7 @@ pub(super) fn app() -> App {
             interest_eligible: true,
             sort: 0,
             taxed: false,
+            floating: false,
         },
     )
     .unwrap();
@@ -82,6 +83,7 @@ pub(super) fn app() -> App {
             interest_eligible: true,
             sort: 1,
             taxed: false,
+            floating: false,
         },
     )
     .unwrap();
@@ -267,6 +269,7 @@ pub(super) fn planning_app() -> App {
                 interest_eligible: true,
                 sort: 0,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap()

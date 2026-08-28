@@ -539,15 +539,29 @@ matches, since nothing but a test ties them together.
   the **same container**) — and it closes the goal itself, in one transaction. The next round of a
   recurring goal is created from the `recurring_goal` table. Crossing containers is refused: no cash moved between
   the accounts, so allowing it would break both reconciliations at once.
-- **A goal's target is derived, never stored.** The table holds `goal.base_cents` and `goal.taxed`;
-  `goal::target` is `base_cents` for an untaxed goal and `calc::tax` of it for a taxed one, the way
-  `calc::fund` turns an age rule into a percentage. A rate that changes must not leave a stored
-  figure behind quoting the old one. **The derived figure is the target everywhere** — the shortfall
+- **A goal's target is derived, never stored.** The table holds `goal.base_cents`, `goal.taxed` and
+  `goal.floating`; `goal::target` is the balance for a floating goal, `base_cents` for an untaxed
+  one and `calc::tax` of it for a taxed one, the way `calc::fund` turns an age rule into a
+  percentage. A rate that changes must not leave a stored figure behind quoting the old one, and
+  neither may a balance that moves. **The derived figure is the target everywhere** — the shortfall
   behind a Planning gate, the percentage complete, `$/Pay`, whether the payday plug still counts the
   goal as short, whether the Savings screen draws it as overdue. The base is shown as itself in
   exactly two places, the goal form and the recurring-goal form, and both say what it comes to
   beside it. A goal that funds to its base comes up short at the register, which is the whole
   reason the column is split in two.
+  - **A floating goal's target is whatever it holds**, which is why `goal::target` takes the
+    balance. `goal.floating` is the owner's answer to "this is a pot rather than a purchase" — a
+    brokerage account, a rainy-day fund, anything never meant to be finished — and it is read
+    *first*, before `taxed` and before the rate is asked for: a target that follows the balance has
+    no base for the lambda to ceiling, so a row carrying both flags resolves rather than erroring.
+    Everything downstream follows from that one branch and nothing else knows the flag exists: the
+    shortfall is zero at every balance, so a Planning gate behind a floating goal never opens and
+    `transfer::spread_goals` never offers it a penny of the payday plug; `$/Pay` is blank and the
+    goal is never overdue, because it is already at its target. The one reader that *does* name the
+    flag is `savings::rows`, which states `100%` rather than dividing `current` by itself — see
+    `src/tui/CLAUDE.md`. The base and the `taxed` flag beside it are kept rather than cleared, so
+    turning the flag off restores the goal the owner was funding towards; the goal form is what
+    puts both fields out of reach while it is on.
   - **A taxed goal with no rate on record is a loud error naming `key::TAX_RATE`**, not a silent
     fallback to the base. An unset key normally means a feature is off, but the flag on the row says
     tax is wanted, and quietly targeting the base would move the waterfall's plug on the strength of

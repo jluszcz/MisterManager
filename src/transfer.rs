@@ -871,6 +871,7 @@ mod tests {
                     interest_eligible: true,
                     sort: 0,
                     taxed: false,
+                    floating: false,
                 },
             )
             .unwrap()
@@ -918,6 +919,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 0,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap()
@@ -1032,6 +1034,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 0,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap();
@@ -1085,6 +1088,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 0,
                 taxed: true,
+                floating: false,
             },
         )
         .unwrap();
@@ -1099,6 +1103,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 1,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap();
@@ -1156,6 +1161,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 0,
                 taxed: true,
+                floating: false,
             },
         )
         .unwrap();
@@ -1170,6 +1176,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 1,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap();
@@ -1181,6 +1188,54 @@ mod tests {
             spread.iter().map(|g| g.id).collect::<Vec<_>>(),
             vec![short],
             "a goal at its taxed figure needs nothing"
+        );
+    }
+
+    /// A floating goal is at its target whatever it holds, so it is never
+    /// short and the plug never offers it a penny -- including the empty one
+    /// a `current < target` reader working off the base would call the
+    /// neediest goal on the screen.
+    #[test]
+    fn a_floating_goal_is_never_in_the_plugs_set() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        goal::insert(
+            &db,
+            &NewGoal {
+                name: "Brokerage".to_string(),
+                container_account_id: savings,
+                base_cents: Cents::from_dollars(100_000),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: false,
+                floating: true,
+            },
+        )
+        .unwrap();
+        let short = goal::insert(
+            &db,
+            &NewGoal {
+                name: "Rug".to_string(),
+                container_account_id: savings,
+                base_cents: Cents::from_dollars(500),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 1,
+                taxed: false,
+                floating: false,
+            },
+        )
+        .unwrap();
+
+        let spread = spread_goals(&db, Reading::Strict).unwrap();
+
+        assert_eq!(
+            spread.iter().map(|g| g.id).collect::<Vec<_>>(),
+            vec![short],
+            "a goal that cannot be short takes none of the plug"
         );
     }
 
@@ -1363,6 +1418,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 0,
                 taxed: true,
+                floating: false,
             },
         )
         .unwrap();
@@ -1653,6 +1709,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 9,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap();
@@ -1684,6 +1741,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 9,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap();

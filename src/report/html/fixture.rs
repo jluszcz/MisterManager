@@ -47,6 +47,7 @@ pub(super) fn row(name: &str, current: i64, goal: i64) -> crate::savings::Row {
         goal: Cents::from_dollars(goal),
         base: Cents::from_dollars(goal),
         taxed: false,
+        floating: false,
         percent: Some(Percent(50)),
         goal_date: Some(day(2027, 1, 1)),
         expired: false,

@@ -374,6 +374,7 @@ impl App {
                 interest_eligible: true,
                 sort: first_sort + offset as i64,
                 taxed: entry.taxed,
+                floating: false,
             });
         }
         goal::insert_all(&self.db, &new_goals)?;
@@ -502,6 +503,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 9,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap();
@@ -1439,6 +1441,7 @@ mod tests {
                         interest_eligible: true,
                         sort: 9,
                         taxed: false,
+                        floating: false,
                     },
                 )
                 .unwrap();

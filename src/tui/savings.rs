@@ -476,6 +476,7 @@ mod tests {
                 sort: id,
                 favorite: false,
                 taxed: false,
+                floating: false,
             },
             current: Cents(current),
             target: Cents(target),

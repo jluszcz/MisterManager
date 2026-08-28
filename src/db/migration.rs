@@ -163,6 +163,21 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // exactly where it should be.
         data: None,
     },
+    Migration {
+        version: 7,
+        // Whether this goal's target follows its balance rather than standing
+        // still. A goal the owner never intends to finish -- a brokerage
+        // account, a rainy-day pot -- is at its target by definition, and the
+        // base beside it says nothing.
+        //
+        // `NOT NULL DEFAULT 0` rather than nullable, for the reason `taxed`
+        // and `favorite` are: there is no third state between a target that
+        // follows the balance and one that does not.
+        sql: "ALTER TABLE goal ADD COLUMN floating INTEGER NOT NULL DEFAULT 0",
+        // Nothing to move. Every existing goal was funded towards a figure
+        // somebody typed, which is exactly what `floating = 0` reads as.
+        data: None,
+    },
 ];
 
 /// The version this build's chain leaves a database at.

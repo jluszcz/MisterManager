@@ -1236,6 +1236,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 9,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap();
@@ -1841,6 +1842,7 @@ mod tests {
                     goal_date: Some(app.today + chrono::Duration::days(7)),
                     interest_eligible: true,
                     taxed: false,
+                    floating: false,
                 },
             )
             .unwrap();
@@ -1905,6 +1907,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 0,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap();
@@ -1953,6 +1956,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 0,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap();
@@ -2008,6 +2012,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 0,
                 taxed: true,
+                floating: false,
             },
         )
         .unwrap();
@@ -2074,6 +2079,7 @@ mod tests {
                     interest_eligible: true,
                     sort,
                     taxed: false,
+                    floating: false,
                 },
             )
             .unwrap()

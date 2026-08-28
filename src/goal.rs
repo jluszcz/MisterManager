@@ -33,13 +33,20 @@ pub struct Funding {
     /// Carries `base_cents` and `taxed` -- what the table holds.
     pub goal: Goal,
     pub current: Cents,
-    /// `base_cents`, or `calc::tax` of it. Derived on every read, the way a
-    /// fund's target percentage is: a rate that changes must not leave a
-    /// stored figure behind quoting the old one.
+    /// `base_cents`, `calc::tax` of it, or -- for a floating goal -- `current`.
+    /// Derived on every read, the way a fund's target percentage is: a rate
+    /// that changes must not leave a stored figure behind quoting the old
+    /// one, and neither may a balance that moves.
     pub target: Cents,
 }
 
 /// What a goal is funded to.
+///
+/// **A floating goal is funded to whatever it holds**, which is why the
+/// balance is an argument here rather than something the callers keep to
+/// themselves. Read before `taxed`, and before the rate is asked for: a
+/// target that follows the balance has no base for the tax lambda to
+/// ceiling, so a row carrying both flags resolves rather than erroring.
 ///
 /// **A taxed goal with no rate on record is an error, not a silent fallback
 /// to the base.** An unset key normally means a feature is off, but the flag
@@ -48,7 +55,10 @@ pub struct Funding {
 /// same reasoning that makes a dangling gate key an error. The state is hard
 /// to reach anyway: the rate arrives with `Constants`, and the goal form
 /// refuses to create a taxed goal without one.
-pub fn target(goal: &Goal, rate: Option<BasisPoints>) -> Result<Cents> {
+pub fn target(goal: &Goal, current: Cents, rate: Option<BasisPoints>) -> Result<Cents> {
+    if goal.floating {
+        return Ok(current);
+    }
     if !goal.taxed {
         return Ok(goal.base_cents);
     }
@@ -74,7 +84,7 @@ fn derive(
 ) -> Result<Vec<Funding>> {
     rows.into_iter()
         .map(|g| {
-            let derived = target(&g.goal, rate);
+            let derived = target(&g.goal, g.current, rate);
             Ok(Funding {
                 target: match reading {
                     Reading::Strict => derived?,
@@ -134,8 +144,8 @@ pub fn list_with_balances(db: &Db, container: AccountId) -> Result<Vec<Funding>>
 /// allocations still count.
 pub fn shortfall(db: &Db, goal_id: GoalId) -> Result<Cents> {
     let found = goal::get(db, goal_id)?.with_context(|| format!("no goal with id {goal_id}"))?;
-    let target = target(&found, setting::get(db, key::TAX_RATE)?)?;
-    let remaining = target - goal::balance(db, goal_id)?;
+    let current = goal::balance(db, goal_id)?;
+    let remaining = target(&found, current, setting::get(db, key::TAX_RATE)?)? - current;
     Ok(if remaining < Cents::ZERO {
         Cents::ZERO
     } else {
@@ -168,6 +178,7 @@ mod tests {
             interest_eligible: true,
             sort: 0,
             taxed,
+            floating: false,
         }
     }
 
@@ -187,9 +198,10 @@ mod tests {
             sort: 0,
             favorite: false,
             taxed: false,
+            floating: false,
         };
         assert_eq!(
-            target(&g, Some(BasisPoints(625))).unwrap(),
+            target(&g, Cents::from_dollars(250), Some(BasisPoints(625))).unwrap(),
             Cents::from_dollars(1_000)
         );
     }
@@ -348,6 +360,86 @@ mod tests {
         .unwrap();
 
         assert_eq!(shortfall(&db, id).unwrap(), Cents::ZERO);
+    }
+
+    /// The flag is the whole of what a floating goal's target is: the base
+    /// beside it is inert, so a goal switched to floating stops quoting the
+    /// figure it was funded towards and starts quoting what it holds.
+    #[test]
+    fn a_floating_goals_target_is_its_balance_whatever_its_base() {
+        let mut g = new_goal("Brokerage", crate::db::AccountId(1), 1_000, false);
+        g.floating = true;
+        let stored = db::goal::Goal {
+            id: crate::db::GoalId(1),
+            name: g.name,
+            container_account_id: g.container_account_id,
+            base_cents: g.base_cents,
+            goal_date: None,
+            recurring_goal_id: None,
+            interest_eligible: true,
+            closed: false,
+            sort: 0,
+            favorite: false,
+            taxed: false,
+            floating: true,
+        };
+
+        assert_eq!(
+            target(&stored, Cents::from_dollars(250), None).unwrap(),
+            Cents::from_dollars(250),
+            "the balance, not the $1,000 base"
+        );
+    }
+
+    /// Floating is read before `taxed`, so a row carrying both is not an
+    /// error over a missing rate: there is no base for a lambda to ceiling
+    /// once the target follows the balance. The form cannot write that pair,
+    /// but a row can hold it, and a strict read must still resolve.
+    #[test]
+    fn a_floating_goal_targets_its_balance_even_when_it_is_also_flagged_taxed() {
+        let (db, savings) = seeded();
+        let mut g = new_goal("Brokerage", savings, 1_000, true);
+        g.floating = true;
+        let id = db::goal::insert(&db, &g).unwrap();
+        db::goal::insert_allocation(
+            &db,
+            id,
+            NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            Cents::from_dollars(250),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let funded = all_with_balances(&db, Reading::Strict).unwrap();
+        assert_eq!(funded[0].target, Cents::from_dollars(250));
+    }
+
+    /// The point of the flag: a goal that is at its target by definition is
+    /// never short, so no Planning gate behind one ever opens and the payday
+    /// plug never offers it anything.
+    #[test]
+    fn shortfall_of_a_floating_goal_is_zero_at_any_balance() {
+        let (db, savings) = seeded();
+        let mut g = new_goal("Brokerage", savings, 100_000, false);
+        g.floating = true;
+        let id = db::goal::insert(&db, &g).unwrap();
+        assert_eq!(
+            shortfall(&db, id).unwrap(),
+            Cents::ZERO,
+            "with nothing in it"
+        );
+
+        db::goal::insert_allocation(
+            &db,
+            id,
+            NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            Cents::from_dollars(-40),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(shortfall(&db, id).unwrap(), Cents::ZERO, "and overspent");
     }
 
     /// A dangling id is a corrupt database, not an unfunded goal. Returning
