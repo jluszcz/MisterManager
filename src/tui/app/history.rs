@@ -376,8 +376,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Char('e'));
 
-        // Tab to the amount, clear the prefill and retype it.
-        press(&mut app, KeyCode::Tab);
+        // The editor opens on the amount: clear the prefill and retype it.
         ctrl_press(&mut app, 'u');
         type_str(&mut app, "9000");
         press(&mut app, KeyCode::Enter);
@@ -398,7 +397,6 @@ mod tests {
         let mut app = on_vacation();
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Char('e'));
-        press(&mut app, KeyCode::Tab);
         ctrl_press(&mut app, 'u');
         type_str(&mut app, "9000.55");
 
@@ -414,6 +412,8 @@ mod tests {
         let mut app = on_vacation();
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Char('e'));
+        // Back one field: the editor opens on the amount.
+        press(&mut app, KeyCode::BackTab);
         ctrl_press(&mut app, 'u');
         type_str(&mut app, "2026-09-09");
         press(&mut app, KeyCode::Enter);
@@ -429,7 +429,6 @@ mod tests {
         let mut app = on_vacation();
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Char('e'));
-        press(&mut app, KeyCode::Tab);
         ctrl_press(&mut app, 'u');
         type_str(&mut app, "lots");
 
@@ -541,7 +540,6 @@ mod tests {
 
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Char('e'));
-        press(&mut app, KeyCode::Tab);
         ctrl_press(&mut app, 'u');
         type_str(&mut app, "/2");
         press(&mut app, KeyCode::Enter);
