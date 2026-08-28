@@ -90,7 +90,9 @@ impl AllocationForm {
         AllocationForm {
             goal_id,
             target: AllocTarget::Insert,
-            focus: AllocField::Date,
+            // The amount is what the row is being written to say; the date is
+            // prefilled and right nearly every time.
+            focus: AllocField::Amount,
             goal_name: goal_name.to_string(),
             container_name: container_name.to_string(),
             unallocated,
@@ -115,7 +117,7 @@ impl AllocationForm {
         AllocationForm {
             goal_id: row.goal_id,
             target: AllocTarget::Update(row.id),
-            focus: AllocField::Date,
+            focus: AllocField::Amount,
             goal_name: goal_name.to_string(),
             container_name: container_name.to_string(),
             unallocated,
@@ -546,7 +548,9 @@ impl CloseForm {
         destinations.extend(siblings.into_iter().map(|(id, name)| (Some(id), name)));
         CloseForm {
             goal_id,
-            focus: CloseField::Date,
+            // The destination is the decision this form exists to make; the
+            // date is almost always today.
+            focus: CloseField::Destination,
             goal_name: goal_name.to_string(),
             balance,
             date: DateField::today(today),
@@ -714,6 +718,25 @@ mod tests {
         for c in text.chars() {
             form.edit(char_key(c));
         }
+    }
+
+    /// The date is prefilled and the amount is what the row is being written
+    /// to say, so a run of `a` costs no `Tab` before the first digit. A
+    /// correction opens there too: every field of it is prefilled, and the
+    /// amount is what a correction is about.
+    #[test]
+    fn an_allocation_opens_focused_on_its_amount_whichever_subject_it_has() {
+        assert_eq!(alloc("Apple Watch").focus, AllocField::Amount);
+
+        let row = Allocation {
+            id: AllocationId(3),
+            goal_id: GoalId(7),
+            date: day(2026, 8, 16),
+            cents: Cents(12_300),
+            note: None,
+        };
+        let form = AllocationForm::edit(&row, "Apple Watch", "Rainy Day", Cents::ZERO, today());
+        assert_eq!(form.focus, AllocField::Amount);
     }
 
     #[test]
@@ -1379,6 +1402,20 @@ mod tests {
         ]
     }
 
+    /// The destination is what the form is for; the date is almost always
+    /// today. Opening on `To` is what keeps a close-out to `c` `→` `Enter`.
+    #[test]
+    fn a_close_out_opens_focused_on_its_destination() {
+        let form = CloseForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(60_000),
+            siblings(),
+            day(2026, 8, 16),
+        );
+        assert_eq!(form.focus, CloseField::Destination);
+    }
+
     #[test]
     fn a_close_out_opens_on_unallocated_and_cycles_through_the_containers_goals() {
         let mut form = CloseForm::new(
@@ -1472,9 +1509,7 @@ mod tests {
             "— unallocated —"
         );
 
-        while form.focus != CloseField::Destination {
-            form.next_field();
-        }
+        walk_until!(form.focus == CloseField::Destination, form.next_field());
         form.choice(Step::NEXT);
         let drawn = form.display(CloseField::Destination).plain_text();
         assert_ne!(drawn, "Rug");
@@ -1488,6 +1523,7 @@ mod tests {
     #[test]
     fn the_arrows_step_an_allocation_date_by_a_day() {
         let mut form = alloc("Apple Watch");
+        walk_until!(form.focus == AllocField::Date, form.next_field());
         form.choice(Step::NEXT);
         assert_eq!(form.display(AllocField::Date).plain_text(), "2026-08-17");
         form.choice(Step::PREVIOUS);
@@ -1577,6 +1613,7 @@ mod tests {
             siblings(),
             day(2026, 8, 16),
         );
+        walk_until!(form.focus == CloseField::Date, form.next_field());
         form.choice(Step::PREVIOUS);
         assert_eq!(form.display(CloseField::Date).plain_text(), "2026-08-15");
         assert_eq!(

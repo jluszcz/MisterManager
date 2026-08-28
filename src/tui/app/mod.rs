@@ -1158,7 +1158,6 @@ mod tests {
         let mut app = app();
         press(&mut app, KeyCode::Char('4'));
         press(&mut app, KeyCode::Char('a'));
-        press(&mut app, KeyCode::Tab);
         type_str(&mut app, "/0");
         press(&mut app, KeyCode::Enter);
         assert!(app.modal.is_some(), "the form must stay open");
