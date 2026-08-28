@@ -751,7 +751,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
       mid-demonstration. The goal name in the same row masks at the same call for the same reason.
     - **`AllocationForm`'s `container_name: String`**, in `goal_form.rs`, drawn into the Allocation
       modal's body by `unallocated_line` through `demo::text`. It reads through
-      `Savings::account_name`, whose only caller it now is.
+      `Savings::account_name`, whose two callers both fill this one field: `open_allocate`'s
+      prefill, and `open_history`, which carries the name into `History` so that modal's `e`
+      builds the same form without going back to the Savings rows.
     - **The payday confirmation's destination column**, in `planning.rs`'s `render_transfers`:
       `transfer::Row::Transfer`'s own `name`, drawn as the left half of a plain `TextLine` because
       the modal is a preview of the ledger rows rather than a table. `transfer::plan` carries that
