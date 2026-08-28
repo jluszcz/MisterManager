@@ -102,6 +102,32 @@ resource "aws_s3_bucket_lifecycle_configuration" "backup" {
     }
   }
 
+  # A backup older than a month is a restore point rather than the copy anyone
+  # reaches for, and Infrequent Access prices exactly that trade: cheaper to
+  # keep, dearer to read. Nothing here reads one on a schedule, so the retrieval
+  # charge is only ever paid on a restore the owner asked for.
+  #
+  # 30 days is also IA's own minimum billable duration, so an object moved at
+  # 30 and expired at 365 is never charged for storage it did not use.
+  #
+  # IA's other minimum is a size rather than a duration: it bills a 128 KB floor
+  # per object, and S3 Lifecycle declines to transition anything below it. So
+  # this rule saves money on a database with a ledger in it and quietly does
+  # nothing to one without -- which is the right way round, and is why the
+  # 128 KB is worth stating here rather than being discovered as a transition
+  # that never happened.
+  rule {
+    id     = "transition-ia"
+    status = "Enabled"
+
+    filter {}
+
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+  }
+
   rule {
     id     = "expire-noncurrent"
     status = "Enabled"
@@ -136,9 +162,15 @@ resource "aws_iam_access_key" "mistermanager" {
 data "aws_iam_policy_document" "mistermanager" {
   # PutObject and nothing else. This key is long-lived and sits unattended on
   # a laptop, so what bounds the damage is the policy rather than the key's
-  # lifetime: a stolen key can add objects under the prefix, but cannot read a
+  # lifetime: a stolen key can add objects to the bucket, but cannot read a
   # backup, delete one, or list what is there. Restores are done by the owner
   # under their own SSO identity.
+  #
+  # The whole bucket rather than a prefix under it: the bucket is this
+  # application's own and holds nothing but backups, so a prefix would only
+  # narrow the policy to the one thing already in there -- and a prefix written
+  # here is a prefix `backup::key_for` has to spell identically, with nothing
+  # tying the two together and `AccessDenied` as the way they disagree.
   #
   # No KMS statement is needed: the bucket encrypts under the AWS-managed aws/s3
   # key above, whose key policy already grants same-account principals use of it
@@ -146,7 +178,7 @@ data "aws_iam_policy_document" "mistermanager" {
   # kms:GenerateDataKey added here.
   statement {
     actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.backup.arn}/mistermanager/*"]
+    resources = ["${aws_s3_bucket.backup.arn}/*"]
   }
 }
 

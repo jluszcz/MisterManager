@@ -251,11 +251,8 @@ fn print_backup_status(cfg: &config::Config, state_path: &Path) -> Result<()> {
         return Ok(());
     };
     println!(
-        "bucket {}, prefix {}, profile {}, every {} days",
-        backup_cfg.bucket,
-        backup::PREFIX,
-        backup_cfg.profile,
-        backup_cfg.interval_days
+        "bucket {}, profile {}, every {} days",
+        backup_cfg.bucket, backup_cfg.profile, backup_cfg.interval_days
     );
     // Matches `run_if_due`: the state file is advisory where a `setting` key is
     // binding, so an unreadable one is a warning and "never backed up" rather than

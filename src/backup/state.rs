@@ -74,7 +74,7 @@ mod tests {
     fn a_state() -> State {
         State {
             last_backup_at: Utc.with_ymd_and_hms(2026, 8, 20, 14, 3, 5).unwrap(),
-            last_key: "a-prefix/money-20260820T140305Z.db".to_string(),
+            last_key: "money-20260820T140305Z.db".to_string(),
         }
     }
 
