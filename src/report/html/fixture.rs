@@ -197,11 +197,7 @@ pub(super) fn snapshot(rows: Vec<crate::savings::Row>, net: i64) -> Snapshot {
     Snapshot {
         generated_at: Local.with_ymd_and_hms(2026, 8, 21, 14, 30, 0).unwrap(),
         overview: Overview {
-            dates: Dates {
-                to_date: day(2026, 8, 21),
-                adhoc: day(2026, 8, 27),
-                month_end: day(2026, 9, 1),
-            },
+            dates: Dates::new(day(2026, 8, 21), day(2026, 8, 27)),
             cash: section(Kind::Cash, Group::Checking, net),
             credit: section(Kind::Credit, Group::Credit, 0),
             net: balances(net),

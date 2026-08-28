@@ -183,11 +183,7 @@ mod tests {
     use crate::test_support::day;
 
     fn dates() -> Dates {
-        Dates {
-            to_date: day(2026, 8, 12),
-            adhoc: day(2026, 8, 27),
-            month_end: day(2026, 9, 1),
-        }
+        Dates::new(day(2026, 8, 12), day(2026, 8, 27))
     }
 
     fn add(db: &Db, account_id: AccountId, date: NaiveDate, cents: i64) {
