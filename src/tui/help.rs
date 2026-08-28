@@ -478,7 +478,7 @@ const RECURRING_TXNS: [Entry; 7] = [
     Entry {
         key: "P",
         label: Label::Own("paycheck"),
-        detail: "Mark the selected one as the paycheck, clearing the flag from every other. The ad-hoc projection date is the day before the next one.",
+        detail: "Mark the selected one as the paycheck, clearing the flag from every other. The ad-hoc projection date is the eve of the next one still ahead: on that eve it rolls over to the eve after.",
     },
 ];
 

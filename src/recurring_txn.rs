@@ -293,8 +293,11 @@ fn regenerate_within(
     Ok(report)
 }
 
-/// The next paycheck after `today`, from whichever recurring transaction
-/// carries the flag.
+/// The first paycheck strictly after `after`, from whichever recurring
+/// transaction carries the flag.
+///
+/// `after` is not always today: `projection::dates` asks from tomorrow, so
+/// that a paycheck landing tomorrow is one this has already gone past.
 ///
 /// `None` when no recurring transaction does. A freshly imported database is
 /// in that state until the owner enters one, which is visible and correctable
@@ -306,14 +309,14 @@ fn regenerate_within(
 /// honouring it here would collapse Paycheck-Eve onto To-Date the day the
 /// recurring transaction lapsed, which is a wrong number where the fallback at
 /// least announces itself.
-pub fn next_paycheck(db: &Db, today: NaiveDate) -> Result<Option<NaiveDate>> {
+pub fn next_paycheck(db: &Db, after: NaiveDate) -> Result<Option<NaiveDate>> {
     let Some(recurring_txn) = recurring_txn::paycheck(db)? else {
         return Ok(None);
     };
     Ok(schedule::next_after(
         recurring_txn.anchor_date,
         step(recurring_txn.cadence),
-        today,
+        after,
     ))
 }
 

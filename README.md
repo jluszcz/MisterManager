@@ -21,7 +21,9 @@ screen's own title spells its name out. The screens are laid out for a terminal
 at least 120 columns wide. Overview stacks the accounts in bands — checking, then
 savings, then the cards — with a subtotal under each and a total under each
 kind; its `←`/`→` scrub the Paycheck-Eve date against the baseline derived
-from the paycheck transaction — `Shift+←`/`Shift+→` move it a week, as they do on
+from the paycheck transaction — a day always still ahead of today while a
+transaction is marked, so on the eve itself the column names the eve of the
+paycheck after rather than naming today, and it reads today until you mark one — `Shift+←`/`Shift+→` move it a week, as they do on
 every date in the app — and
 Planning quotes its excess at whatever that scrub leaves it at. Cash and Credit share one month: `[` and `]`
 step both so the two always compare the same weeks, and `Esc` returns them to
