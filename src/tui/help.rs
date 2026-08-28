@@ -270,7 +270,7 @@ const LEDGER: [Entry; 11] = [
     },
 ];
 
-const SAVINGS: [Entry; 15] = [
+const SAVINGS: [Entry; 16] = [
     Entry::filter(
         ACCOUNT_FILTER,
         "Cycle the container filter: All, then one entry per account that holds goals.",
@@ -334,8 +334,13 @@ const SAVINGS: [Entry; 15] = [
     },
     Entry {
         key: "f",
-        label: Label::Own("fave"),
+        label: Label::Shared("goal"),
         detail: "Mark the selected goal, or take the mark back. A marked goal's row is drawn as a band, and that is the whole of what it does: it does not sort the goal up and it does not survive a filter the goal itself would not.",
+    },
+    Entry {
+        key: "Enter",
+        label: Label::Shared("goal"),
+        detail: "Open the selected goal's allocation rows -- the long form of the balance cell the row already carries. Correcting one and deleting one are that modal's own keys.",
     },
     Entry {
         key: "U",
@@ -1469,7 +1474,7 @@ mod tests {
         );
         assert_eq!(
             Topic::Savings.footer(),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c/K/J goal · f fave · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c/K/J/f/Enter goal · U undo"
         );
         assert_eq!(
             Topic::Planning.footer(),

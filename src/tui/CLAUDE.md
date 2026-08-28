@@ -111,18 +111,20 @@ own last keys with nothing on screen to say a word went missing.
 halves plus the separator; `app`'s two own width tests measure what `App::footer` composes at
 runtime, which a `Topic` alone does not see. The first lever when a screen runs out of room is
 `Label::Shared`: several keys join under one word naming what they act *on* — `E/a/d bill` on
-Planning, `a/A/i allocate` and `n/e/c goal` on Savings, `a/t/p money` on the ledgers, where the
-three keys that write new rows join against the `e` and `d` that act on the one selected — which
-buys back a whole item's separator per key absorbed, and the verbs it costs are a keystroke away in
-the panel, which has room for them. A shorter word is the smaller adjustment beside it — `f fave`,
-and the `acct` every screen's `Tab` takes. What neither of them does is drop a key: a key nothing
+Planning, `a/A/i allocate` and `n/e/c/K/J/f/Enter goal` on Savings, `a/t/p money` on the ledgers,
+where the three keys that write new rows join against the `e` and `d` that act on the one selected —
+which buys back a whole item's separator per key absorbed, and the verbs it costs are a keystroke
+away in the panel, which has room for them. A shorter word is the smaller adjustment beside it —
+the `acct` every screen's `Tab` takes. What neither of them does is drop a key: a key nothing
 advertises is a key nobody presses, so `Label::Hidden` stays for the entries a footer word would
 only say twice, `BackTab` being the one.
 
-**The ledgers' footer is the one closest to the edge**, by some margin, so the next key that needs a
-group is likelier to be Cash or Credit's than any other screen's — and both of its levers are now
-spent, the grouping on `a/t/p` and the shorter word on `Tab`. A footer that overflows again has
-nothing left to fall back on but a shorter word somewhere.
+**Savings' footer is the one closest to the edge**, at three columns of slack, so the next key that
+needs a group is likelier to be its than any other screen's — and its lever is spent: every key it
+has that acts on one goal is already inside `n/e/c/K/J/f/Enter goal`, which is what bought `Enter`
+its place there. The ledgers' is the next widest, and both of *its* levers are spent too, the
+grouping on `a/t/p` and the shorter word on `Tab`. A footer that overflows has nothing left to fall
+back on but a shorter word somewhere.
 
 A status message — a write's result, a parse error, a "nothing selected" — borrows the footer rather
 than owning it, and gives it back on its own after `app::STATUS_TTL`. A key press still clears it

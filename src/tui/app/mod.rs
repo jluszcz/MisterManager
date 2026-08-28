@@ -1995,10 +1995,11 @@ mod tests {
         );
     }
 
-    /// The ledger footer is the longest of the eight, and grouping `a/t/p`
-    /// under one word is what bought it room for the app-wide keys. Cash is
-    /// the state that gets measured: it is the Credit footer plus `t`, which
-    /// is one key inside that group.
+    /// The ledger footer is the second widest of the eight -- Savings is the
+    /// one closest to the edge -- and grouping `a/t/p` under one word is what
+    /// bought it room for the app-wide keys. Cash is the state that gets
+    /// measured: it is the Credit footer plus `t`, which is one key inside
+    /// that group.
     #[test]
     fn the_ledger_footers_key_hints_fit_the_minimum_width() {
         let mut app = app();
@@ -2061,7 +2062,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '4'),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c/K/J goal · f fave · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c/K/J/f/Enter goal · U undo"
         );
         assert_eq!(
             footer_of(&mut app, '5'),
@@ -2510,7 +2511,7 @@ mod tests {
                 Topic::Savings,
                 &[
                     "Tab", "BackTab", "[ ]", "Esc", "/", "a", "A", "i", "e", "c", "n", "K", "J",
-                    "f", "U",
+                    "f", "U", "Enter",
                 ],
             ),
             (
