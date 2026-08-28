@@ -194,3 +194,26 @@ pub fn eve_is_comparable(today: NaiveDate, eve: NaiveDate) -> bool {
     );
     false
 }
+
+/// Whether the sheet's `Overview!C30` is quoted at the day the app's Month-End
+/// column names.
+///
+/// The sheet's projection is `EOMONTH(today, 0) + 1`; the app derives Month-End
+/// from the paycheck eve instead, so once that eve crosses into the next month
+/// the app deliberately quotes the month after the one the sheet does, and the
+/// workbook holds no cached column at that date. The comparison is dropped for
+/// that run rather than pinned against a figure the sheet does not carry --
+/// the same trade `eve_is_comparable` makes, for the other derived column.
+///
+/// A loud line on stderr, like every other fixture a run does not have, so the
+/// runs it happens on are never a silently thinner test.
+pub fn month_end_is_comparable(today: NaiveDate, month_end: NaiveDate) -> bool {
+    if month_end == mistermanager::calc::month_end_projection(today) {
+        return true;
+    }
+    eprintln!(
+        "skipping the Month-End comparison: the app quotes {month_end}, a month past the \
+         workbook's today ({today}), which Overview!C30 does not reach"
+    );
+    false
+}

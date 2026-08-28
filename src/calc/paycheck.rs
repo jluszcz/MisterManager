@@ -125,9 +125,9 @@ pub fn fit(pot: Cents, asks: &[(i64, Cents)]) -> Result<Vec<(i64, Cents)>> {
     super::pro_rata(pot, asks)
 }
 
-/// `EOMONTH(today, 0) + 1` — the first day of the following month.
-pub fn month_end_projection(today: NaiveDate) -> NaiveDate {
-    let (year, month) = (today.year(), today.month());
+/// `EOMONTH(date, 0) + 1` — the first day of the month after `date`.
+pub fn month_end_projection(date: NaiveDate) -> NaiveDate {
+    let (year, month) = (date.year(), date.month());
     let (year, month) = if month == 12 {
         (year + 1, 1)
     } else {

@@ -34,8 +34,9 @@ fn table_row(line: &Line, balances: Balances, style: Style) -> Row<'static> {
 /// over them would repeat on every column what the footer already says once.
 ///
 /// `scrubbed` marks the Paycheck-Eve date when it is not the date the paycheck
-/// recurring transaction derives. It is the only column that can scrub: the
-/// other two are derived from today.
+/// recurring transaction derives. It is the only column marked: To-Date cannot
+/// scrub, and Month-End is derived from the date the `*` is already on, so a
+/// second mark would say the same thing twice.
 fn column_headers(dates: Dates, scrubbed: bool) -> [String; 3] {
     [
         dates.to_date.to_string(),
@@ -150,11 +151,7 @@ mod tests {
     use chrono::NaiveDate;
 
     fn dates() -> Dates {
-        Dates {
-            to_date: day(2026, 8, 12),
-            adhoc: day(2026, 8, 27),
-            month_end: day(2026, 9, 1),
-        }
+        Dates::new(day(2026, 8, 12), day(2026, 8, 27))
     }
 
     fn add(db: &Db, account_id: AccountId, date: NaiveDate, cents: i64) {

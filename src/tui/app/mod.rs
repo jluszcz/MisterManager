@@ -227,7 +227,7 @@ pub struct App {
     /// Rows dated after this render dim on the Cash and Credit ledgers.
     today: NaiveDate,
     /// The three projection dates as stored. `adhoc` below is the scrubbed
-    /// view of the middle one.
+    /// view of the middle one, which `App::dates` re-derives Month-End from.
     dates: Dates,
     /// The scrubbed ad-hoc date. **View state**: restarting discards it, and
     /// there is nothing that commits it -- moving the baseline means editing
@@ -537,8 +537,8 @@ impl App {
     }
 
     /// Move the Paycheck-Eve date without touching the paycheck recurring
-    /// transaction. To-Date and Month-End are derived from today and cannot
-    /// scrub.
+    /// transaction. To-Date is derived from today and cannot scrub; Month-End
+    /// is derived from this date and moves with it.
     fn scrub(&mut self, step: Step) -> Result<()> {
         self.adhoc = step
             .apply(self.adhoc)
@@ -562,10 +562,7 @@ impl App {
     }
 
     fn dates(&self) -> Dates {
-        Dates {
-            adhoc: self.adhoc,
-            ..self.dates
-        }
+        self.dates.with_adhoc(self.adhoc)
     }
 
     fn reload_overview(&mut self) -> Result<()> {
@@ -1212,6 +1209,22 @@ mod tests {
         shift_press(&mut app, KeyCode::Right);
         assert_eq!(app.adhoc, baseline + chrono::Duration::days(8));
         assert_eq!(app.scrubbed_days(), 8);
+    }
+
+    /// Month-End is derived from the ad-hoc date, so a scrub that carries the
+    /// eve into September carries the column with it. Left on today's month it
+    /// would name 9/1 -- a third column quoting an earlier date than the second.
+    #[test]
+    fn scrubbing_the_eve_past_a_month_boundary_moves_month_end_too() {
+        let mut app = app();
+        assert_eq!(app.overview.dates.month_end, day(2026, 9, 1));
+
+        shift_press(&mut app, KeyCode::Right);
+        shift_press(&mut app, KeyCode::Right);
+        shift_press(&mut app, KeyCode::Right);
+
+        assert_eq!(app.adhoc, day(2026, 9, 5));
+        assert_eq!(app.overview.dates.month_end, day(2026, 10, 1));
     }
 
     /// The week scrub is the day scrub with a bigger step, so it reaches

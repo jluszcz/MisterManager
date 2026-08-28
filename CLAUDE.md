@@ -705,6 +705,18 @@ matches, since nothing but a test ties them together.
   back to today when nothing carries the flag. The
   Overview scrub is pure view state and persists nothing. The one `Cadence → Step` match lives in
   `src/recurring_txn.rs`: `calc` never learns that `biweekly` is a string in a column.
+  - **Month-End is derived from the eve, not from today.** `Dates::new` is the one place that
+    derivation lives and `Dates::with_adhoc` is how a scrub re-runs it, so the two are the same
+    rule read twice rather than a screen recomputing one of them. The three columns are one
+    widening horizon; pinned to today, the third names a date *before* the second the moment the
+    eve crosses a month boundary — `8/28, 9/10, 9/1` — quoting a nearer balance under the name of
+    the furthest column. It is the *later* of the eve and today that the column is derived from,
+    since the scrub runs backwards too and an eve dragged into last month is that same inversion
+    against To-Date; Month-End therefore never retreats behind the date today alone would put it
+    at. `Dates::new` is the only place a `Dates` is built — the fixtures call it rather than
+    writing the three fields out, so no test can pin a pairing the derivation cannot produce. The
+    `*` on the Overview header stays on the ad-hoc column alone, because Month-End moving is that
+    mark's consequence rather than a second scrubbed date.
 - **The scrub reaches Planning, and `plan::compute_from_db` takes the ad-hoc date as an argument
   rather than re-deriving it.** `Excess (Actual)` *is* the checking balance at that date, so a
   waterfall that re-derived it would quote a different day than the Overview column the owner just

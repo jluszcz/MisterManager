@@ -11,7 +11,7 @@ use std::path::Path;
 
 mod common;
 
-use common::{eve_is_comparable, sheet_cents, workbook, workbook_today};
+use common::{eve_is_comparable, month_end_is_comparable, sheet_cents, workbook, workbook_today};
 
 /// The workbook's paycheck, as a recurring transaction -- anchored the day after
 /// `Overview!E2` (Paycheck-Eve), read from the sheet like every other golden
@@ -93,11 +93,13 @@ fn the_overview_screens_net_agrees_with_the_workbook() {
         sheet_cents(&sheet, 28, 2),
         "C29, net to-date"
     );
-    assert_eq!(
-        overview.net.month_end,
-        sheet_cents(&sheet, 29, 2),
-        "C30, net at month-end"
-    );
+    if month_end_is_comparable(today, dates.month_end) {
+        assert_eq!(
+            overview.net.month_end,
+            sheet_cents(&sheet, 29, 2),
+            "C30, net at month-end"
+        );
+    }
     if comparable {
         assert_eq!(
             overview.net.adhoc,

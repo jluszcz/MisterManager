@@ -13,8 +13,39 @@ pub struct Dates {
     /// today, derived from the paycheck recurring transaction. Today when
     /// there is no such recurring transaction.
     pub adhoc: NaiveDate,
-    /// `EOMONTH(today, 0) + 1`.
+    /// `EOMONTH(max(adhoc, to_date), 0) + 1` — the first of the month after
+    /// the last one the columns to its left reach into.
     pub month_end: NaiveDate,
+}
+
+impl Dates {
+    pub fn new(to_date: NaiveDate, adhoc: NaiveDate) -> Dates {
+        Dates {
+            to_date,
+            adhoc,
+            // The later of the two, not the eve alone: the scrub runs
+            // backwards as well, and an eve dragged into last month would put
+            // the third column *before* the first -- the same inversion the
+            // forward case fixes, mirrored. Month-End therefore never retreats
+            // behind the one today derives, which is where it has always sat.
+            month_end: month_end_projection(adhoc.max(to_date)),
+        }
+    }
+
+    /// The same three dates with the ad-hoc column moved -- what the
+    /// Overview's scrub does.
+    ///
+    /// Month-End moves with it rather than being pinned to today, because the
+    /// three columns are one widening horizon and the month a paycheck eve
+    /// falls in is the month the owner is being asked to plan through. Derived
+    /// from today, the third column names a date *before* the second as soon
+    /// as the eve crosses a month boundary -- 8/28, 9/10, 9/1 -- quoting a
+    /// nearer balance under the name of the furthest column. A scrub back past
+    /// the first of the month is that same inversion against To-Date, which is
+    /// what [`Dates::new`] takes the later of the two dates for.
+    pub fn with_adhoc(self, adhoc: NaiveDate) -> Dates {
+        Dates::new(self.to_date, adhoc)
+    }
 }
 
 /// Deriving `adhoc` here rather than in `recurring_txn` keeps the one
@@ -37,11 +68,7 @@ pub fn dates(db: &Db, today: NaiveDate) -> Result<Dates> {
             .checked_sub_days(Days::new(1))
             .context("the day before the next paycheck ran off the calendar")?,
     };
-    Ok(Dates {
-        to_date: today,
-        adhoc,
-        month_end: month_end_projection(today),
-    })
+    Ok(Dates::new(today, adhoc))
 }
 
 #[cfg(test)]
@@ -80,6 +107,42 @@ mod tests {
         assert_eq!(dates.adhoc, day(2026, 8, 27));
         assert_eq!(dates.to_date, day(2026, 8, 14));
         assert_eq!(dates.month_end, day(2026, 9, 1));
+    }
+
+    /// The eve is what Month-End is derived from, so an eve that has crossed
+    /// into September puts the column at the end of *that* month. Derived from
+    /// today it would read 9/1: a third column naming an earlier date than the
+    /// second one.
+    #[test]
+    fn month_end_follows_the_eve_into_the_next_month() {
+        let db = with_paycheck(day(2026, 8, 28));
+        let dates = dates(&db, day(2026, 8, 28)).unwrap();
+        assert_eq!(dates.adhoc, day(2026, 9, 10));
+        assert_eq!(dates.month_end, day(2026, 10, 1));
+    }
+
+    /// The scrub moves Month-End the same way, however far it is pushed: the
+    /// column is a property of the eve rather than of how it got there.
+    #[test]
+    fn scrubbing_the_eve_carries_month_end_with_it() {
+        let dates = dates(&with_paycheck(day(2026, 8, 28)), day(2026, 8, 28)).unwrap();
+
+        let scrubbed = dates.with_adhoc(day(2026, 10, 2));
+
+        assert_eq!(scrubbed.to_date, day(2026, 8, 28));
+        assert_eq!(scrubbed.month_end, day(2026, 11, 1));
+    }
+
+    /// Backwards, the horizon stops widening rather than reversing: an eve
+    /// scrubbed into July would put Month-End before To-Date, which is the
+    /// forward inversion mirrored.
+    #[test]
+    fn scrubbing_the_eve_back_past_the_month_leaves_month_end_where_today_puts_it() {
+        let dates = dates(&with_paycheck(day(2026, 8, 28)), day(2026, 8, 28)).unwrap();
+
+        let scrubbed = dates.with_adhoc(day(2026, 7, 10));
+
+        assert_eq!(scrubbed.month_end, day(2026, 9, 1));
     }
 
     /// A freshly imported database quotes Paycheck-Eve at today until the
