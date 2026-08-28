@@ -391,10 +391,11 @@ still takes effect. What that cannot hide is a misspelled `bucket`, or a misspel
 `[report]`, because neither has a default: the one typo that would leave a feature silently
 switched off is still an error.
 
-The key prefix is not a setting. Objects go under `mistermanager/`, which is fixed in
-`backup::PREFIX` because the IAM policy is scoped to that path and only a `terraform apply` can
-widen it — a knob here could only ever be turned into `AccessDenied`. A `prefix` line in the config
-file is one of those unread keys, and does nothing.
+There is no key prefix. A backup is `money-<timestamp>.db` at the root of the bucket, which the
+application owns outright and which holds nothing else — a prefix would name the only thing in
+there, while being a string `backup::key_for` and the IAM policy each spell separately, with
+`AccessDenied` as the way they announce having come apart. A `prefix` line in the config file is one
+of those unread keys, and does nothing.
 
 One-time setup: `terraform apply` creates the bucket, the IAM user and its access key, and its
 outputs feed the `mistermanager` profile and the config file directly:
@@ -417,7 +418,11 @@ derived one is legible only to whoever already holds the profile. Nothing about 
 public access is blocked four ways, and the only identity pointed at it may `PutObject` and nothing
 else.
 
-Its lifecycle rule deletes objects at 365 days.
+Its lifecycle rules move an object to Standard-Infrequent Access at 30 days and delete it at 365.
+Thirty is IA's own minimum billable duration, so nothing is charged for storage it did not use, and
+IA's retrieval charge is only ever paid on a restore, since nothing reads a backup on a schedule.
+IA also bills a 128 KB floor per object and S3 declines to transition anything under it, so the rule
+is a saving on a database with a ledger in it and a no-op on one without.
 
 The profile must carry static access keys: the AWS SDK is built here with `sso` and
 `credentials-process` support left off along with the default HTTPS client, so an SSO profile or
@@ -426,20 +431,26 @@ one using `credential_process` will not authenticate.
 `mm backup --status` prints the last upload and the next due date; `mm backup --force` uploads
 regardless of the schedule.
 
-To restore, quit `mm` first, then list the prefix and copy the object you want over the database:
+To restore, quit `mm` first, then list the bucket and copy the object you want over the database:
 
 ```bash
-aws s3 ls s3://<bucket>/mistermanager/
+aws s3 ls s3://<bucket>/
 rm -f ~/.local/share/mistermanager/money.db-wal ~/.local/share/mistermanager/money.db-shm
-aws s3 cp s3://<bucket>/mistermanager/money-20260820T140305Z.db ~/.local/share/mistermanager/money.db
+aws s3 cp s3://<bucket>/money-20260820T140305Z.db ~/.local/share/mistermanager/money.db
 ```
+
+Backups written before the prefix was dropped are still under `mistermanager/`, where `aws s3 ls`
+shows them as a single `PRE mistermanager/` line rather than as objects — so until the last of them
+expires at 365 days, the newest backup may be in there rather than at the root, and
+`aws s3 ls s3://<bucket>/mistermanager/` is what lists it. `mm backup --status` names the object it
+last wrote, prefix and all.
 
 The database runs in WAL mode, so a `-wal` file left over from a crash holds writes of its own; if
 it is still there, SQLite replays it into the restored file the next time `mm` opens it, which is
 why it has to go first.
 
 Both commands use your own identity. The `mistermanager` profile can only `PutObject` — it cannot
-read a backup, delete one, or list the prefix.
+read a backup, delete one, or list the bucket.
 
 ## Layout
 

@@ -30,16 +30,19 @@ long-lived and unattended. Both halves are below.
   upload and is correct again as soon as it is rewritten.
 - **The backup identity may only `PutObject`.** The key in the `mistermanager` profile is
   long-lived and unattended, so the policy is what bounds it: it cannot read a backup, delete one,
-  or list the prefix, and restores are done by the owner under their own identity.
+  or list the bucket, and restores are done by the owner under their own identity.
 - **The bucket is this repository's own, and its name is composed rather than configured.**
   `mistermanager-<account id>-<region>-an`, built in `mistermanager.tf` from
   `aws_caller_identity` and `var.aws_region`. A name that had to be *chosen* would say where the
   owner's finances are backed up — the same kind of fact as the workbook path — and would have to
   reach Terraform out of band to stay unsaid; one derived from the profile is safe to commit and
   needs no such step. Owning the bucket is what makes the
-  lifecycle rule declarable at all: `aws_s3_bucket_lifecycle_configuration` is a whole-bucket
-  resource, so two repositories declaring one would revert each other on every apply. The rule
-  expires an object at 365 days.
+  lifecycle rules declarable at all: `aws_s3_bucket_lifecycle_configuration` is a whole-bucket
+  resource, so two repositories declaring one would revert each other on every apply. The rules move
+  an object to Standard-Infrequent Access at 30 days and expire it at 365 — 30 is IA's own minimum
+  billable duration, so an object never pays for storage it did not use, and nothing in this crate
+  ever reads a backup on a schedule, which is what makes IA's retrieval charge a cost of restoring
+  rather than a cost of keeping.
 - **The scheduled check is the default database's, and `--db` opts out of it.** It runs after every
   arm but `backup` itself, and the state file it stamps records *when* an upload last happened
   rather than *what* was uploaded — so a scratch database backed up on the schedule would take the
@@ -49,9 +52,11 @@ long-lived and unattended. Both halves are below.
   whether a file reached S3 is a fact about wall time — `mm --today 2027-01-01` must not fire an
   upload. `run_if_due` therefore takes `now` as `Utc::now()` from the CLI rather than the `today`
   the rest of the application is driven by.
-- **The key prefix is a constant, not a setting, because one end of it is an IAM policy.**
-  `mistermanager` appears in `backup::PREFIX` and in `mistermanager.tf`'s policy resource path, and
-  nothing ties them together — but the policy is what the IAM user is scoped to, and only an AWS
-  apply can change it, so a config knob could only ever be turned into `AccessDenied`. Moving the
-  prefix means editing both, in that order. `Backup` carries no `prefix` field, so a config file
-  asking for another prefix is a line that does nothing.
+- **There is no key prefix, and that is what keeps `key_for` and the IAM policy from disagreeing.**
+  `backup::key_for` writes `money-<timestamp>.db` at the root of the bucket, and the policy is
+  scoped to `<bucket arn>/*`. The bucket is this application's own and holds nothing else, so a
+  prefix would only narrow both to the one thing already in there — while being a string spelled in
+  `key_for` and again in `mistermanager.tf`'s policy resource path, with nothing tying the two
+  together, only an AWS apply able to change the second, and `AccessDenied` as the way a reader
+  would find out they had come apart. `Backup` carries no `prefix` field, so a config file asking
+  for one is a line that does nothing.
