@@ -11,7 +11,7 @@ use std::path::Path;
 
 mod common;
 
-use common::{sheet_cents, workbook, workbook_today};
+use common::{eve_is_comparable, sheet_cents, workbook, workbook_today};
 
 /// The workbook's paycheck, as a recurring transaction -- anchored the day after
 /// `Overview!E2` (Paycheck-Eve), read from the sheet like every other golden
@@ -78,10 +78,13 @@ fn the_overview_screens_net_agrees_with_the_workbook() {
     // it has to exist before any of the three columns lines up with what the
     // sheet quotes.
     let dates = projection::dates(&db, today).unwrap();
-    assert_eq!(
-        dates.adhoc, paycheck_eve,
-        "Paycheck-Eve, derived from the paycheck recurring_txn"
-    );
+    let comparable = eve_is_comparable(today, paycheck_eve);
+    if comparable {
+        assert_eq!(
+            dates.adhoc, paycheck_eve,
+            "Paycheck-Eve, derived from the paycheck recurring_txn"
+        );
+    }
     let overview = Overview::load(&db, dates).unwrap();
 
     let sheet = import::sheet(&mut sheets, "Overview").unwrap();
@@ -95,9 +98,11 @@ fn the_overview_screens_net_agrees_with_the_workbook() {
         sheet_cents(&sheet, 29, 2),
         "C30, net at month-end"
     );
-    assert_eq!(
-        overview.net.adhoc,
-        sheet_cents(&sheet, 13, 6),
-        "G14, net at the ad-hoc date"
-    );
+    if comparable {
+        assert_eq!(
+            overview.net.adhoc,
+            sheet_cents(&sheet, 13, 6),
+            "G14, net at the ad-hoc date"
+        );
+    }
 }

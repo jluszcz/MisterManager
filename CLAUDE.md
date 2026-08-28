@@ -695,7 +695,14 @@ matches, since nothing but a test ties them together.
   not by the reader. `recurring_txn::update` deliberately does not
   touch the flag.
 - **The ad-hoc projection date is derived**, by `projection::dates` through `recurring_txn::next_paycheck`,
-  as the day before the next paycheck; it falls back to today when nothing carries the flag. The
+  as the first paycheck eve **strictly after today** — so the eve is the day the column *rolls
+  over*, naming the eve of the paycheck after rather than naming itself. Derived from today it
+  would collapse onto To-Date for that one day, repeating the balance beside it under another name
+  exactly when the runway it exists to show is shortest; the eve and the payday after it therefore
+  quote the same date, and the rollover happens once per cadence rather than twice. `projection`
+  asks `next_paycheck` from *tomorrow*, which is what keeps that rule in the module that already
+  owns the day-before subtraction: `next_paycheck` goes on meaning the next paycheck. It falls
+  back to today when nothing carries the flag. The
   Overview scrub is pure view state and persists nothing. The one `Cadence → Step` match lives in
   `src/recurring_txn.rs`: `calc` never learns that `biweekly` is a string in a column.
 - **The scrub reaches Planning, and `plan::compute_from_db` takes the ad-hoc date as an argument
