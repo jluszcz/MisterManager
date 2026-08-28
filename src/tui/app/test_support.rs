@@ -16,6 +16,7 @@ use crate::plan_line::{Destination, Line};
 use crate::test_support::{day, walk_until};
 use crate::tui::MIN_WIDTH;
 use crate::tui::form::{TxnField, TxnForm};
+use crate::tui::history::History;
 use crate::tui::picker::Picker;
 use crate::tui::planning::{Target, TransferConfirm};
 use crate::tui::worksheet::Worksheet;
@@ -182,6 +183,7 @@ open_modal!(
     "transfer confirmation"
 );
 open_modal!(picker, Picker, Picker, "picker");
+open_modal!(history, History, History, "allocation history");
 open_modal!(
     destination,
     Destination,

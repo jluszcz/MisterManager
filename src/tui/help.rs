@@ -192,6 +192,10 @@ pub(super) enum Topic {
     Details,
     /// Every confirm dialog: one dialog with a label per confirmation.
     Confirm,
+    /// `Enter` on a Savings row: one goal's allocation rows, in the mode that
+    /// is a list. Editing one is `Topic::Form` and deleting one is
+    /// `Topic::Confirm`, under the guards in `Modal::topic`.
+    History,
     /// The field forms with no description field.
     Form,
     /// The three field forms whose description field raises the autocomplete
@@ -266,7 +270,7 @@ const LEDGER: [Entry; 11] = [
     },
 ];
 
-const SAVINGS: [Entry; 15] = [
+const SAVINGS: [Entry; 16] = [
     Entry::filter(
         ACCOUNT_FILTER,
         "Cycle the container filter: All, then one entry per account that holds goals.",
@@ -330,8 +334,13 @@ const SAVINGS: [Entry; 15] = [
     },
     Entry {
         key: "f",
-        label: Label::Own("fave"),
+        label: Label::Shared("goal"),
         detail: "Mark the selected goal, or take the mark back. A marked goal's row is drawn as a band, and that is the whole of what it does: it does not sort the goal up and it does not survive a filter the goal itself would not.",
+    },
+    Entry {
+        key: "Enter",
+        label: Label::Shared("goal"),
+        detail: "Open the selected goal's allocation rows -- the long form of the balance cell the row already carries. Correcting one and deleting one are that modal's own keys.",
     },
     Entry {
         key: "U",
@@ -725,6 +734,24 @@ const CONFIRM: [Entry; 3] = [
     },
 ];
 
+const HISTORY: [Entry; 3] = [
+    Entry {
+        key: "e",
+        label: Label::Shared("edit"),
+        detail: "Correct the allocation under the cursor: its date, its amount, or the note beside it. Not the goal it belongs to -- a row misdirected at the wrong goal is deleted here and re-entered with 'a' on the goal it belonged to.",
+    },
+    Entry {
+        key: "d",
+        label: Label::Shared("delete"),
+        detail: "Delete the allocation under the cursor, after a confirmation. The goal's balance moves with it, and so does everything measured against it.",
+    },
+    Entry {
+        key: "Esc",
+        label: Label::Hidden,
+        detail: "Close the history. Enter is deliberately unbound here: it commits the editor a keystroke away, and one key that opens an editor in one mode and commits it in the next is the reflex there is no getting back.",
+    },
+];
+
 const FORM: [Entry; 10] = [
     EDITING,
     Entry {
@@ -898,6 +925,7 @@ impl Topic {
             Topic::Worksheet => &WORKSHEET,
             Topic::Picker => &PICKER,
             Topic::Confirm => &CONFIRM,
+            Topic::History => &HISTORY,
             Topic::Form => &FORM,
             Topic::SuggestForm => &SUGGEST_FORM,
             Topic::PlanTransfers => &PLAN_TRANSFERS,
@@ -925,6 +953,7 @@ impl Topic {
             Topic::Worksheet => "Worksheet",
             Topic::Picker => "Recurring goal picker",
             Topic::Confirm => "Confirm",
+            Topic::History => "Allocation history",
             Topic::Form => "Form",
             Topic::SuggestForm => "Form with suggestions",
             Topic::PlanTransfers => "Confirm transfers",
@@ -966,6 +995,7 @@ impl Topic {
             | Topic::Destination
             | Topic::Details
             | Topic::Confirm
+            | Topic::History
             | Topic::Form
             | Topic::SuggestForm
             | Topic::PlanTransfers => false,
@@ -1003,6 +1033,7 @@ impl Topic {
             | Topic::Destination
             | Topic::Details
             | Topic::Confirm
+            | Topic::History
             | Topic::PlanTransfers => false,
         }
     }
@@ -1041,6 +1072,7 @@ impl Topic {
             | Topic::Picker
             | Topic::Destination
             | Topic::Details
+            | Topic::History
             | Topic::Confirm => false,
         }
     }
@@ -1278,7 +1310,7 @@ mod tests {
 
     /// Every topic there is. `SCREENS` stays separate because only those eight
     /// join a footer.
-    const ALL: [Topic; 21] = [
+    const ALL: [Topic; 22] = [
         Topic::Overview,
         Topic::Ledger,
         Topic::Savings,
@@ -1297,6 +1329,7 @@ mod tests {
         Topic::Destination,
         Topic::Details,
         Topic::Confirm,
+        Topic::History,
         Topic::Form,
         Topic::SuggestForm,
         Topic::PlanTransfers,
@@ -1441,7 +1474,7 @@ mod tests {
         );
         assert_eq!(
             Topic::Savings.footer(),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c/K/J goal · f fave · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c/K/J/f/Enter goal · U undo"
         );
         assert_eq!(
             Topic::Planning.footer(),

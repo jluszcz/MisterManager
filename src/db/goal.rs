@@ -397,6 +397,95 @@ pub fn insert_allocation(
     Ok(AllocationId(db.conn.last_insert_rowid()))
 }
 
+/// One row of a goal's allocation history.
+///
+/// Nothing but the history modal reads an allocation back individually: every
+/// other reader wants the sum, through [`balance`] or [`select_goal!`]'s
+/// `with_balance` arm. The `batch_id` is not among the columns, because
+/// nothing that draws a row has anything to say about which posting wrote it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Allocation {
+    pub id: AllocationId,
+    pub goal_id: GoalId,
+    pub date: NaiveDate,
+    pub cents: Cents,
+    pub note: Option<String>,
+}
+
+fn allocation_from_row(row: &Row<'_>) -> rusqlite::Result<Allocation> {
+    Ok(Allocation {
+        id: row.get(0)?,
+        goal_id: row.get(1)?,
+        date: date::parse(&row.get::<_, String>(2)?, 2)?,
+        cents: Cents(row.get(3)?),
+        note: row.get(4)?,
+    })
+}
+
+/// A `SELECT` of the columns [`allocation_from_row`] reads, in the order it
+/// reads them, with `$tail` appended. See [`crate::db`] for the idiom.
+macro_rules! select_allocation {
+    ($tail:literal) => {
+        concat!(
+            "SELECT id, goal_id, date, cents, note
+               FROM allocation ",
+            $tail
+        )
+    };
+}
+
+/// One goal's allocations, oldest first.
+///
+/// `ORDER BY date, id` is the ordering [`crate::db::txn::list`] already uses,
+/// so a day holding several rows reads in the order they were written rather
+/// than in whatever order SQLite hands them back.
+pub fn allocations(db: &Db, goal_id: GoalId) -> Result<Vec<Allocation>> {
+    let mut stmt = db
+        .conn
+        .prepare(select_allocation!("WHERE goal_id = ?1 ORDER BY date, id"))?;
+    let rows = stmt.query_map(params![goal_id], allocation_from_row)?;
+    super::collect_rows(rows)
+}
+
+/// The editable half of an allocation.
+///
+/// Its goal is not among them. A misdirected row is deleted and re-entered
+/// against the right goal rather than re-pointed: within a container that
+/// would be defensible, and across containers it would move a goal's value
+/// with no cash moved between the accounts -- the boundary [`move_value`]
+/// already refuses to cross.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AllocationEdit {
+    pub date: NaiveDate,
+    pub cents: Cents,
+    pub note: Option<String>,
+}
+
+/// Rewrite one allocation.
+///
+/// Errors when no row changed, the way [`update`] does: an id held by a
+/// caller came off a row the history drew, so a miss is a corrupt database
+/// rather than an ordinary absence.
+pub fn update_allocation(db: &Db, id: AllocationId, edit: &AllocationEdit) -> Result<()> {
+    let changed = db.conn.execute(
+        "UPDATE allocation SET date = ?2, cents = ?3, note = ?4 WHERE id = ?1",
+        params![id, iso(edit.date), edit.cents.0, edit.note],
+    )?;
+    ensure!(changed == 1, "no allocation with id {id}");
+    Ok(())
+}
+
+/// Delete one allocation, leaving whatever batch it belonged to alone: a
+/// batch is a group of rows entered together, not a row that has to keep
+/// every member it opened with.
+pub fn delete_allocation(db: &Db, id: AllocationId) -> Result<()> {
+    let changed = db
+        .conn
+        .execute("DELETE FROM allocation WHERE id = ?1", params![id])?;
+    ensure!(changed == 1, "no allocation with id {id}");
+    Ok(())
+}
+
 /// A group of allocations entered together.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Batch {
@@ -1867,5 +1956,184 @@ mod tests {
         insert(&db, &goal).unwrap();
 
         assert!(!has_goal_dated_in_year(&db, entry, 2026).unwrap());
+    }
+    /// The history reads a whole row back, which nothing else in the crate
+    /// does -- every other reader wants the sum. Distinct values in every
+    /// column, so a transposed `select_allocation!` fails here.
+    #[test]
+    fn allocations_read_back_every_column_of_a_goals_rows() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let id = insert_allocation(
+            &db,
+            couch,
+            day(2026, 3, 4),
+            Cents::from_dollars(250),
+            Some("birthday money"),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            allocations(&db, couch).unwrap(),
+            vec![Allocation {
+                id,
+                goal_id: couch,
+                date: day(2026, 3, 4),
+                cents: Cents::from_dollars(250),
+                note: Some("birthday money".to_string()),
+            }]
+        );
+    }
+
+    /// A note is `NULL` where none was given, not an empty string: an
+    /// allocation with nothing said about it draws an em dash rather than a
+    /// blank cell, and `Option` is what carries that difference up.
+    #[test]
+    fn an_allocation_with_no_note_round_trips_as_none() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        insert_allocation(
+            &db,
+            couch,
+            day(2026, 3, 4),
+            Cents::from_dollars(250),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(allocations(&db, couch).unwrap()[0].note, None);
+    }
+
+    /// Oldest first, and two rows on one date read in the order they were
+    /// written -- the tiebreak `ORDER BY date, id` exists for.
+    #[test]
+    fn allocations_are_oldest_first_and_break_a_shared_date_by_insert_order() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let write = |date, note: &str| {
+            insert_allocation(&db, couch, date, Cents::from_dollars(100), Some(note), None).unwrap()
+        };
+        // Out of order, and the middle date written twice.
+        write(day(2026, 5, 1), "third");
+        write(day(2026, 3, 4), "first");
+        write(day(2026, 3, 4), "second");
+
+        let notes: Vec<String> = allocations(&db, couch)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.note.unwrap())
+            .collect();
+        assert_eq!(notes, ["first", "second", "third"]);
+    }
+
+    #[test]
+    fn allocations_of_another_goal_are_not_listed() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let lego = insert(&db, &new_goal("Lego", savings, 500)).unwrap();
+        insert_allocation(
+            &db,
+            lego,
+            day(2026, 3, 4),
+            Cents::from_dollars(250),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(allocations(&db, couch).unwrap().is_empty());
+    }
+
+    /// The correction the modal exists for: all three columns rewritten, and
+    /// the goal's balance following the figure.
+    #[test]
+    fn update_allocation_rewrites_the_date_amount_and_note() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let id = insert_allocation(
+            &db,
+            couch,
+            day(2026, 3, 4),
+            Cents::from_dollars(250),
+            Some("typo"),
+            None,
+        )
+        .unwrap();
+
+        update_allocation(
+            &db,
+            id,
+            &AllocationEdit {
+                date: day(2026, 3, 11),
+                cents: Cents::from_dollars(150),
+                note: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            allocations(&db, couch).unwrap(),
+            vec![Allocation {
+                id,
+                goal_id: couch,
+                date: day(2026, 3, 11),
+                cents: Cents::from_dollars(150),
+                note: None,
+            }]
+        );
+        assert_eq!(balance(&db, couch).unwrap(), Cents::from_dollars(150));
+    }
+
+    /// An id held by a caller came off a row the history drew, so a miss is a
+    /// corrupt database rather than an ordinary absence.
+    #[test]
+    fn updating_or_deleting_a_missing_allocation_is_an_error() {
+        let db = db::open_in_memory().unwrap();
+        let edit = AllocationEdit {
+            date: day(2026, 3, 11),
+            cents: Cents::from_dollars(150),
+            note: None,
+        };
+        assert!(update_allocation(&db, AllocationId(1), &edit).is_err());
+        assert!(delete_allocation(&db, AllocationId(1)).is_err());
+    }
+
+    /// Deleting one row leaves the rest of its batch alone: a batch is a
+    /// group entered together, not a group that has to stay whole.
+    #[test]
+    fn delete_allocation_removes_one_row_and_leaves_its_batch_intact() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let lego = insert(&db, &new_goal("Lego", savings, 500)).unwrap();
+        let batch = insert_allocations(
+            &db,
+            BatchKind::Paycheck,
+            day(2026, 3, 4),
+            &[
+                (couch, Cents::from_dollars(250)),
+                (lego, Cents::from_dollars(100)),
+            ],
+            None,
+        )
+        .unwrap();
+
+        let couch_row = allocations(&db, couch).unwrap()[0].id;
+        delete_allocation(&db, couch_row).unwrap();
+
+        assert!(allocations(&db, couch).unwrap().is_empty());
+        assert_eq!(balance(&db, couch).unwrap(), Cents::ZERO);
+        assert_eq!(
+            batch_shares(&db, batch).unwrap().len(),
+            1,
+            "Lego's row stays"
+        );
     }
 }

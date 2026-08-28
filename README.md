@@ -53,6 +53,16 @@ An allocation's amount takes `/N` for a fraction of the container's
 unallocated remainder — `/2` is half of it, `/12` a twelfth — and the form
 names the remainder it would divide and shows what the fraction comes to
 before it is committed.
+`Enter` opens the selected goal's allocation history: every row its balance is
+the sum of, oldest first, footed by what they come to — which is the balance
+the screen behind it shows, so an audit visibly adds up. `e` corrects the row
+under the cursor and `d` deletes it, so a figure entered wrongly four batches
+ago is rewritten in place rather than offset by a second row. Any row is
+editable, whether a payday, an interest posting or the import wrote it; what a
+row cannot change is the goal it belongs to, since moving one across containers
+would move a goal's value with no cash moved between the accounts. A
+misdirected allocation is deleted here and re-entered with `a` on the right
+goal.
 The month filter opens showing every goal; the first `[` or `]` narrows it to
 the current month, and from there they step across the months the goal dates
 span, the last wrapping back to the first. A goal with no date belongs to no
@@ -452,6 +462,7 @@ read a backup, delete one, or list the prefix.
 | `src/backup/` | The schedule, the snapshot, and the S3 upload. `aws-config`, `aws-sdk-s3` and `tokio` are named only in `src/backup/s3.rs`. |
 | `src/tui/` | The terminal UI: screens, forms, key handling. |
 | `src/tui/fund.rs` | The Funds screen and its form. |
+| `src/tui/history.rs` | One goal's allocation history — the modal `Enter` opens on a Savings row, and the crate's only reader of a single `allocation`. |
 | `src/tui/accounts.rs` | The Accounts screen — creating an account the workbook does not name, and the seven things it does not say about one. |
 
 `ratatui` (which re-exports `crossterm`) is named only inside `src/tui/`, the

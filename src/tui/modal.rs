@@ -17,6 +17,7 @@ use super::form::{self, FormFields, TransferForm, TxnForm, ValueForm};
 use super::fund::{self as fund_screen, FundForm};
 use super::goal_form::{self, AllocationForm, CloseForm, GoalForm};
 use super::help::Topic;
+use super::history::{self, History, Mode as HistoryMode};
 use super::picker::{self, Picker};
 use super::planning::{self, BillForm, Target, TransferConfirm};
 use super::recurring_goal::{self as recurring_goal_screen, RecurringGoalForm};
@@ -29,7 +30,9 @@ use crate::db::goal;
 use crate::db::recurring_goal;
 use crate::db::recurring_txn;
 use crate::db::txn;
-use crate::db::{AccountId, BatchId, BillId, Db, FundId, RecurringGoalId, RecurringTxnId, TxnId};
+use crate::db::{
+    AccountId, AllocationId, BatchId, BillId, Db, FundId, RecurringGoalId, RecurringTxnId, TxnId,
+};
 use anyhow::Result;
 use ratatui::Frame;
 use ratatui::text::Line as TextLine;
@@ -80,6 +83,10 @@ pub(super) enum Modal {
     /// Everything the owner may say about an account, and nothing the
     /// workbook says.
     Account(AccountForm),
+    /// `Enter` on a Savings row: one goal's allocation rows, and the two
+    /// writes that correct one. Its own three modes live inside [`History`]
+    /// rather than as a modal over a modal.
+    History(History),
 }
 
 impl Modal {
@@ -108,6 +115,12 @@ impl Modal {
             Modal::FundValue(_, form) => Some(form),
             Modal::BirthDate(form) => Some(form),
             Modal::Account(form) => Some(form),
+            // Only while the history is editing: in the other two modes it is
+            // a list and a question, neither of which has a field.
+            Modal::History(history) => match history.mode_mut() {
+                HistoryMode::Editing(form) => Some(form),
+                HistoryMode::List | HistoryMode::Confirming { .. } => None,
+            },
         }
     }
 
@@ -137,6 +150,14 @@ impl Modal {
             | Modal::Reconcile(..)
             | Modal::Bill(_)
             | Modal::RecurringGoalEntry(_) => Topic::Form,
+            // Under match guards, the construction `Modal::Worksheet` above
+            // already uses for its search box: the footer follows the mode
+            // without any screen asking it to.
+            Modal::History(h) if matches!(h.mode(), HistoryMode::Editing(_)) => Topic::Form,
+            Modal::History(h) if matches!(h.mode(), HistoryMode::Confirming { .. }) => {
+                Topic::Confirm
+            }
+            Modal::History(_) => Topic::History,
             Modal::PlanTransfers(_) => Topic::PlanTransfers,
             Modal::Fund(_) | Modal::FundValue(..) | Modal::BirthDate(_) => Topic::Form,
             Modal::Account(_) => Topic::Form,
@@ -170,6 +191,9 @@ pub(super) enum Confirm {
     /// Nothing here holds money, but the row's share of the split disappears
     /// with it.
     DeleteFund(FundId),
+    /// One row of a goal's allocation history. The goal's balance moves with
+    /// it, and so does every figure derived from it.
+    DeleteAllocation(AllocationId),
 }
 
 impl Confirm {
@@ -183,6 +207,7 @@ impl Confirm {
             Confirm::DeleteRecurringTxn(_) => "Delete this recurring transaction?",
             Confirm::DeleteRecurringGoal(_) => "Delete this recurring goal?",
             Confirm::DeleteFund(_) => "Delete this fund?",
+            Confirm::DeleteAllocation(_) => "Delete this allocation?",
         }
     }
 
@@ -199,7 +224,8 @@ impl Confirm {
             | Confirm::DeleteBill(_)
             | Confirm::DeleteRecurringTxn(_)
             | Confirm::DeleteRecurringGoal(_)
-            | Confirm::DeleteFund(_) => "y deletes · any other key cancels",
+            | Confirm::DeleteFund(_)
+            | Confirm::DeleteAllocation(_) => "y deletes · any other key cancels",
         }
     }
 
@@ -212,7 +238,8 @@ impl Confirm {
             | Confirm::DeleteBill(_)
             | Confirm::DeleteRecurringTxn(_)
             | Confirm::DeleteRecurringGoal(_)
-            | Confirm::DeleteFund(_) => "delete cancelled",
+            | Confirm::DeleteFund(_)
+            | Confirm::DeleteAllocation(_) => "delete cancelled",
         }
     }
 
@@ -245,6 +272,10 @@ impl Confirm {
             Confirm::DeleteFund(id) => {
                 fund::delete(db, id)?;
                 "fund deleted".to_string()
+            }
+            Confirm::DeleteAllocation(id) => {
+                goal::delete_allocation(db, id)?;
+                "allocation deleted".to_string()
             }
         })
     }
@@ -336,6 +367,27 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
             accounts_screen::render_form(frame, f);
             0
         }
+        // Each mode draws where the app already draws that shape: the form
+        // and the dialog over the top of the list they were opened from.
+        Some(Modal::History(h)) => {
+            viewport = Some(history::render(frame, h));
+            match h.mode() {
+                HistoryMode::List => {}
+                HistoryMode::Editing(form) => goal_form::render_allocation(frame, form),
+                HistoryMode::Confirming { action, label } => {
+                    form::render_fields(
+                        frame,
+                        action.title(),
+                        vec![
+                            TextLine::from(label.clone()),
+                            TextLine::from(""),
+                            TextLine::from(action.prompt()),
+                        ],
+                    );
+                }
+            }
+            0
+        }
         None => 0,
     };
     if let Some(viewport) = viewport {
@@ -343,6 +395,7 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
             Some(Modal::Worksheet(sheet)) => sheet.record_viewport(viewport),
             Some(Modal::Picker(p)) => p.record_viewport(viewport),
             Some(Modal::Destination(chooser)) => chooser.record_viewport(viewport),
+            Some(Modal::History(h)) => h.record_viewport(viewport),
             _ => {}
         }
     }
@@ -369,6 +422,7 @@ mod tests {
             Confirm::DeleteRecurringTxn(RecurringTxnId(1)),
             Confirm::DeleteRecurringGoal(RecurringGoalId(1)),
             Confirm::DeleteFund(FundId(1)),
+            Confirm::DeleteAllocation(AllocationId(1)),
         ] {
             let title = action.title();
             assert!(title.starts_with("Delete this "), "{title}");

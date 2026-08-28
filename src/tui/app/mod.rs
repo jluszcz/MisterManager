@@ -19,6 +19,7 @@ use super::cursor::Scroll;
 use super::form::Step;
 use super::fund::{self as fund_screen, Funds};
 use super::help::{self, Help, Topic};
+use super::history::Mode as HistoryMode;
 use super::ledger::{self as ledger_screen, Ledger};
 use super::modal::{self, Confirm, Modal};
 use super::planning::{self as planning_screen, Planning};
@@ -45,6 +46,7 @@ use std::time::{Duration, Instant};
 
 mod accounts;
 mod funds;
+mod history;
 mod ledger;
 mod planning;
 mod recurring;
@@ -832,6 +834,20 @@ impl App {
             Some(Modal::RecurringTxn(_)) => self.form_key(key, App::commit_recurring_txn),
             Some(Modal::RecurringGoalEntry(_)) => self.form_key(key, App::commit_recurring_goal),
             Some(Modal::Account(_)) => self.form_key(key, App::commit_account),
+            // Three modes over one modal, so the dispatch is one arm with two
+            // guards rather than three variants: `Esc` then peels one layer at
+            // a time with no flag on `App` saying what to return to.
+            Some(Modal::History(ref history))
+                if matches!(history.mode(), HistoryMode::Editing(_)) =>
+            {
+                self.history_edit_key(key)
+            }
+            Some(Modal::History(ref history))
+                if matches!(history.mode(), HistoryMode::Confirming { .. }) =>
+            {
+                self.history_confirm_key(key)
+            }
+            Some(Modal::History(_)) => self.history_key(key),
             Some(Modal::PlanTransfers(_)) => {
                 match key.code {
                     KeyCode::Esc => {
@@ -1583,32 +1599,33 @@ mod tests {
     fn a_demo_leaves_no_figure_on_any_form_a_row_opens() {
         crate::demo::install_with_salt(7);
         for (screen, key) in [
-            ('2', 'a'),
-            ('2', 'e'),
-            ('2', 'r'),
-            ('2', 't'),
-            ('4', 'e'),
-            ('4', 'a'),
-            ('4', 'A'),
-            ('4', 'n'),
-            ('4', 'c'),
-            ('5', 'e'),
-            ('5', 'E'),
-            ('5', 'a'),
-            ('5', 't'),
-            ('6', 'e'),
-            ('6', 'E'),
-            ('7', 'a'),
-            ('7', 's'),
-            ('8', 'a'),
-            ('9', 'e'),
+            ('2', KeyCode::Char('a')),
+            ('2', KeyCode::Char('e')),
+            ('2', KeyCode::Char('r')),
+            ('2', KeyCode::Char('t')),
+            ('4', KeyCode::Char('e')),
+            ('4', KeyCode::Char('a')),
+            ('4', KeyCode::Char('A')),
+            ('4', KeyCode::Char('n')),
+            ('4', KeyCode::Char('c')),
+            ('4', KeyCode::Enter),
+            ('5', KeyCode::Char('e')),
+            ('5', KeyCode::Char('E')),
+            ('5', KeyCode::Char('a')),
+            ('5', KeyCode::Char('t')),
+            ('6', KeyCode::Char('e')),
+            ('6', KeyCode::Char('E')),
+            ('7', KeyCode::Char('a')),
+            ('7', KeyCode::Char('s')),
+            ('8', KeyCode::Char('a')),
+            ('9', KeyCode::Char('e')),
         ] {
             // Screen 6 draws off the `fund` table and `s` on screen 7 off
             // `recurring_goal`; `planning_app` fills neither. Every other
             // screen here has its rows on the fixture that carries the bills
             // screen 5 needs.
             let mut app = match (screen, key) {
-                ('6', _) | ('7', 's') => app_with_two_rows_on_every_list(),
+                ('6', _) | ('7', KeyCode::Char('s')) => app_with_two_rows_on_every_list(),
                 _ => planning_app(),
             };
             press(&mut app, KeyCode::Char(screen));
@@ -1621,26 +1638,36 @@ mod tests {
                 }
                 // `r` reconciles the one account a ledger is narrowed to, and
                 // a ledger opens on `All`.
-                ('2', 'r') => press(&mut app, KeyCode::Tab),
+                ('2', KeyCode::Char('r')) => press(&mut app, KeyCode::Tab),
+                // A history is the rows of the goal under the cursor, and
+                // Savings opens on one that has none -- an empty list draws
+                // no figure, so the pair would pass without ever masking one.
+                // `Roth IRA` carries the fixture's allocation.
+                ('4', KeyCode::Enter) => crate::test_support::walk_until!(
+                    app.savings
+                        .selected()
+                        .is_some_and(|row| row.name == "Roth IRA"),
+                    press(&mut app, KeyCode::Down)
+                ),
                 _ => {}
             }
-            press(&mut app, KeyCode::Char(key));
+            press(&mut app, key);
 
             assert!(
                 app.modal.is_some(),
-                "{key} opened nothing on screen {screen}, so the check below \
+                "{key:?} opened nothing on screen {screen}, so the check below \
                  would pass without a form ever being drawn: {}",
                 app.status
             );
             let drawn = drawn(&mut app);
             let figures: &[&str] = match (screen, key) {
-                ('6', _) | ('7', 's') => &DEMO_FIXTURE_FIGURES,
+                ('6', _) | ('7', KeyCode::Char('s')) => &DEMO_FIXTURE_FIGURES,
                 _ => &["1,200", "300.00", "1,000", "50,000", "5,000"],
             };
             for figure in figures {
                 assert!(
                     !drawn.contains(figure),
-                    "{figure} survived {key} on screen {screen}:\n{drawn}"
+                    "{figure} survived {key:?} on screen {screen}:\n{drawn}"
                 );
             }
         }
@@ -1702,30 +1729,31 @@ mod tests {
     fn a_demo_leaves_no_name_on_any_form_a_row_opens() {
         crate::demo::install_with_salt(7);
         for (screen, key) in [
-            ('2', 'a'),
-            ('2', 'e'),
-            ('2', 'r'),
-            ('2', 't'),
-            ('4', 'e'),
-            ('4', 'a'),
-            ('4', 'A'),
-            ('4', 'n'),
-            ('4', 'c'),
-            ('5', 'e'),
-            ('5', 'E'),
-            ('5', 'a'),
-            ('5', 't'),
-            ('6', 'e'),
-            ('6', 'E'),
-            ('7', 'a'),
-            ('7', 's'),
-            ('8', 'a'),
-            ('9', 'e'),
+            ('2', KeyCode::Char('a')),
+            ('2', KeyCode::Char('e')),
+            ('2', KeyCode::Char('r')),
+            ('2', KeyCode::Char('t')),
+            ('4', KeyCode::Char('e')),
+            ('4', KeyCode::Char('a')),
+            ('4', KeyCode::Char('A')),
+            ('4', KeyCode::Char('n')),
+            ('4', KeyCode::Char('c')),
+            ('4', KeyCode::Enter),
+            ('5', KeyCode::Char('e')),
+            ('5', KeyCode::Char('E')),
+            ('5', KeyCode::Char('a')),
+            ('5', KeyCode::Char('t')),
+            ('6', KeyCode::Char('e')),
+            ('6', KeyCode::Char('E')),
+            ('7', KeyCode::Char('a')),
+            ('7', KeyCode::Char('s')),
+            ('8', KeyCode::Char('a')),
+            ('9', KeyCode::Char('e')),
         ] {
             // Screen 6 draws off the `fund` table and `s` on screen 7 off
             // `recurring_goal`; `planning_app` fills neither.
             let mut app = match (screen, key) {
-                ('6', _) | ('7', 's') => app_with_two_rows_on_every_list(),
+                ('6', _) | ('7', KeyCode::Char('s')) => app_with_two_rows_on_every_list(),
                 _ => planning_app(),
             };
             press(&mut app, KeyCode::Char(screen));
@@ -1736,13 +1764,21 @@ mod tests {
                 ('5', _) => {
                     select_first_bill(&mut app);
                 }
-                ('2', 'r') => press(&mut app, KeyCode::Tab),
+                ('2', KeyCode::Char('r')) => press(&mut app, KeyCode::Tab),
+                // The goal whose history carries a row, for the reason the
+                // figure sweep gives.
+                ('4', KeyCode::Enter) => crate::test_support::walk_until!(
+                    app.savings
+                        .selected()
+                        .is_some_and(|row| row.name == "Roth IRA"),
+                    press(&mut app, KeyCode::Down)
+                ),
                 _ => {}
             }
-            press(&mut app, KeyCode::Char(key));
+            press(&mut app, key);
             assert!(
                 app.modal.is_some(),
-                "{key} opened nothing on screen {screen}, so the check below \
+                "{key:?} opened nothing on screen {screen}, so the check below \
                  would pass without a form ever being drawn: {}",
                 app.status
             );
@@ -1761,7 +1797,7 @@ mod tests {
             // (`src/gate.rs`), which does not contain the goal's full name,
             // so it is checked here rather than excluded.
             let names: &[&str] = match (screen, key) {
-                ('6', _) | ('7', 's') => &DEMO_FIXTURE_NAMES,
+                ('6', _) | ('7', KeyCode::Char('s')) => &DEMO_FIXTURE_NAMES,
                 _ => &[
                     "Everyday",
                     "Rainy Day",
@@ -1777,7 +1813,7 @@ mod tests {
             for name in names {
                 assert!(
                     !drawn.contains(name),
-                    "{name} survived {key} on screen {screen}:\n{drawn}"
+                    "{name} survived {key:?} on screen {screen}:\n{drawn}"
                 );
             }
         }
@@ -1979,10 +2015,11 @@ mod tests {
         );
     }
 
-    /// The ledger footer is the longest of the eight, and grouping `a/t/p`
-    /// under one word is what bought it room for the app-wide keys. Cash is
-    /// the state that gets measured: it is the Credit footer plus `t`, which
-    /// is one key inside that group.
+    /// The ledger footer is the second widest of the eight -- Savings is the
+    /// one closest to the edge -- and grouping `a/t/p` under one word is what
+    /// bought it room for the app-wide keys. Cash is the state that gets
+    /// measured: it is the Credit footer plus `t`, which is one key inside
+    /// that group.
     #[test]
     fn the_ledger_footers_key_hints_fit_the_minimum_width() {
         let mut app = app();
@@ -2045,7 +2082,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '4'),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c/K/J goal · f fave · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c/K/J/f/Enter goal · U undo"
         );
         assert_eq!(
             footer_of(&mut app, '5'),
@@ -2494,7 +2531,7 @@ mod tests {
                 Topic::Savings,
                 &[
                     "Tab", "BackTab", "[ ]", "Esc", "/", "a", "A", "i", "e", "c", "n", "K", "J",
-                    "f", "U",
+                    "f", "U", "Enter",
                 ],
             ),
             (
@@ -2565,9 +2602,9 @@ mod tests {
     /// search boxes, and the transfer-confirmation dialog.
     ///
     /// Written by reading the `match` arms of `worksheet_key`, `picker_key`,
-    /// `destination_key`, `form_key` -- with `popup_key`, which it delegates to --
-    /// `modal_key`'s confirm arms and its `Modal::PlanTransfers` arm, and the
-    /// four `search::search_key` calls: the three branches `dispatch` opens
+    /// `destination_key`, `history_key`, `form_key` -- with `popup_key`, which it
+    /// delegates to -- `modal_key`'s confirm arms and its `Modal::PlanTransfers`
+    /// arm, and the four `search::search_key` calls: the three branches `dispatch` opens
     /// with and the one `destination_key` does. Three families of arm are
     /// deliberately not listed:
     ///
@@ -2591,7 +2628,7 @@ mod tests {
     ///   cancels.
     #[test]
     fn every_key_a_modal_handler_matches_appears_in_its_table() {
-        let handlers: [(Topic, &[&str]); 12] = [
+        let handlers: [(Topic, &[&str]); 13] = [
             (
                 Topic::Worksheet,
                 &[
@@ -2619,6 +2656,7 @@ mod tests {
                 &["Ctrl+A/E/B/F/W/U/K/D", "Enter", "Esc", "Backspace", "F1"],
             ),
             (Topic::Confirm, &["y", "any", "?"]),
+            (Topic::History, &["e", "d", "Esc"]),
             (
                 Topic::Form,
                 &[

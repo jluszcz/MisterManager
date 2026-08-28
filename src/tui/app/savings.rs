@@ -47,6 +47,8 @@ impl App {
             KeyCode::Char('J') => self.move_goal(Move::Down)?,
             KeyCode::Char('f') => self.toggle_favorite()?,
             KeyCode::Char('U') => self.open_undo()?,
+            // The long form of the balance cell the row already carries.
+            KeyCode::Enter => self.open_history()?,
             _ => {}
         }
         Ok(())

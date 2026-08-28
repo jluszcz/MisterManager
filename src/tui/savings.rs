@@ -102,11 +102,14 @@ impl Savings {
         super::Account::named(&self.accounts, id)
     }
 
-    /// The container's name as text, for the one caller that cannot take an
-    /// `Account`: `App::open_allocate`'s prefill for the Allocation modal's
-    /// `container_name`, which draws into that modal's body. It is a
-    /// residual, listed with its reason in `src/tui/CLAUDE.md`'s
-    /// account-color section -- `AllocationForm` is outside this guarantee.
+    /// The container's name as text, for the two callers that cannot take an
+    /// `Account`, both of them filling `AllocationForm`'s `container_name`,
+    /// which draws into the Allocation modal's body: `App::open_allocate`'s
+    /// prefill, and `App::open_history`, which hands the name to `History` so
+    /// that modal's `e` can build the same form without going back to the
+    /// Savings rows. It is a residual, listed with its reason in
+    /// `src/tui/CLAUDE.md`'s account-color section -- `AllocationForm` is
+    /// outside this guarantee.
     pub fn account_name(&self, id: AccountId) -> &str {
         self.accounts
             .iter()

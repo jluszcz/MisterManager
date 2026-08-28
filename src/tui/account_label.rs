@@ -209,11 +209,14 @@ mod tests {
             // a status message is transient prose.
             ("tui/ledger.rs", "map_or(\"?\", |a| a.name.as_str())"),
             // `Savings::account_name` -- the second entry in the residual
-            // list. Its one caller is `open_allocate`'s prefill for the
-            // Allocation modal's body, a real display that stays uncolored
-            // only because `AllocationForm` is outside this guarantee. The
-            // Unallocated footer used to read through here too and now draws
-            // its containers through `Savings::container_account`.
+            // list. Its two callers are `open_allocate`'s prefill for the
+            // Allocation modal's body and `open_history`, which carries the
+            // name into `History` for that modal's `e` to build the same
+            // form from -- one display, reached two ways, that stays
+            // uncolored only because `AllocationForm` is outside this
+            // guarantee. The Unallocated footer used to read through here
+            // too and now draws its containers through
+            // `Savings::container_account`.
             ("tui/savings.rs", "map_or(\"?\", |a| a.name.as_str())"),
             // `account::checking`'s ambiguity error, which the Planning
             // screen draws in place of the plan. Prose rather than a cell, so

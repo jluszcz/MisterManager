@@ -6,12 +6,12 @@
 //! render functions at the bottom drawing only.
 
 use super::form::{
-    Caret, DateField, Field, Focused, FormFields, Step, field_line, field_line_noted, is_share,
-    next_in, parse_share, parse_whole_amount, render_fields, step_index, tax_note,
+    Caret, DateField, Field, Focused, FormFields, Precision, Step, field_line, field_line_noted,
+    is_share, next_in, parse_share, parse_whole_amount, render_fields, step_index, tax_note,
 };
 use super::{Account, Label};
-use crate::db::goal::GoalEdit;
-use crate::db::{AccountId, GoalId};
+use crate::db::goal::{Allocation, AllocationEdit, GoalEdit};
+use crate::db::{AccountId, AllocationId, GoalId};
 use crate::money::Cents;
 use crate::rate::BasisPoints;
 use anyhow::{Context, Result, ensure};
@@ -36,23 +36,37 @@ impl AllocField {
     }
 }
 
-/// A committed allocation, ready for `goal::insert_allocation`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Allocation {
-    pub date: NaiveDate,
-    pub cents: Cents,
-    pub note: Option<String>,
+/// What committing an allocation form does, read off the same field the
+/// border is -- so the write cannot land somewhere the form did not say it
+/// would. The same construction [`GoalTarget`] makes for the goal form.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum AllocTarget {
+    /// `a` on Savings: a row that does not exist yet, against the form's own
+    /// `goal_id`.
+    Insert,
+    /// `e` in a goal's history: the row it opened on.
+    Update(AllocationId),
 }
 
-/// One allocation against one goal. Backs `a`.
+/// One allocation against one goal. Backs `a` on Savings and `e` in a goal's
+/// allocation history.
 ///
 /// The amount is **signed**: a negative is a spend against the goal, which is
 /// what the sheet's hand-accreted `Current` formulas already encode. It also
 /// takes `/N` for a fraction of `unallocated`, which is why the form carries
 /// the container's remainder at all.
+///
+/// A correction reads its typed amount at [`Precision::Cents`] where a new row
+/// reads at [`Precision::WholeDollars`]: the rows most worth correcting are
+/// the ones the import and the interest postings wrote, and those carry cents
+/// the form has just prefilled. `/N` divides the same pot at either -- the
+/// remainder as it stands now, never one the row being edited is folded back
+/// into.
 #[derive(Debug)]
 pub struct AllocationForm {
+    /// The goal the row belongs to, whether or not the row exists yet.
     pub goal_id: GoalId,
+    target: AllocTarget,
     pub focus: AllocField,
     goal_name: String,
     container_name: String,
@@ -75,6 +89,7 @@ impl AllocationForm {
     ) -> AllocationForm {
         AllocationForm {
             goal_id,
+            target: AllocTarget::Insert,
             focus: AllocField::Date,
             goal_name: goal_name.to_string(),
             container_name: container_name.to_string(),
@@ -82,6 +97,44 @@ impl AllocationForm {
             date: DateField::today(today),
             amount: Field::default(),
             note: Field::default(),
+        }
+    }
+
+    /// The same form opened on a row that already exists, prefilled from it.
+    ///
+    /// Every field arrives through `Field::given`, so it counts as the
+    /// owner's own text: these are figures already on screen that nobody
+    /// asked to have rewritten.
+    pub fn edit(
+        row: &Allocation,
+        goal_name: &str,
+        container_name: &str,
+        unallocated: Cents,
+        today: NaiveDate,
+    ) -> AllocationForm {
+        AllocationForm {
+            goal_id: row.goal_id,
+            target: AllocTarget::Update(row.id),
+            focus: AllocField::Date,
+            goal_name: goal_name.to_string(),
+            container_name: container_name.to_string(),
+            unallocated,
+            date: DateField::given(today, Some(row.date)),
+            amount: Field::given(row.cents.to_string()),
+            note: Field::given(row.note.clone().unwrap_or_default()),
+        }
+    }
+
+    pub fn target(&self) -> AllocTarget {
+        self.target
+    }
+
+    /// How a typed figure is read, which is the one thing the two subjects
+    /// disagree about.
+    fn precision(&self) -> Precision {
+        match self.target {
+            AllocTarget::Insert => Precision::WholeDollars,
+            AllocTarget::Update(_) => Precision::Cents,
         }
     }
 
@@ -93,7 +146,7 @@ impl AllocationForm {
     pub fn resolved_share(&self) -> Option<Cents> {
         let raw = self.amount.value().trim();
         is_share(raw)
-            .then(|| parse_share(raw, self.unallocated).ok())
+            .then(|| parse_share(raw, self.unallocated, self.precision()).ok())
             .flatten()
     }
 
@@ -120,8 +173,12 @@ impl AllocationForm {
     }
 
     pub fn title(&self) -> String {
+        let verb = match self.target {
+            AllocTarget::Insert => "Allocate to",
+            AllocTarget::Update(_) => "Edit allocation to",
+        };
         format!(
-            "Allocate to {} — Tab field · Enter save · Esc cancel",
+            "{verb} {} — Tab field · Enter save · Esc cancel",
             crate::demo::text(&self.goal_name)
         )
     }
@@ -141,15 +198,22 @@ impl AllocationForm {
                 true => self.amount.value().to_string(),
                 false => crate::demo::typed(self.amount.value()),
             },
-            AllocField::Note => self.note.value().to_string(),
+            // Prefilled from the stored row by `edit`, so it is owner text the
+            // same as a transaction's description -- and the history behind
+            // this modal draws the same note through `description::render`.
+            AllocField::Note => crate::demo::text(self.note.value()).into_owned(),
         })
     }
 
-    pub fn commit(&self) -> Result<Allocation> {
+    /// The three columns, ready for `goal::insert_allocation` or
+    /// `goal::update_allocation` -- one type rather than a form's own copy of
+    /// the same three fields, so a correction writes back exactly what the
+    /// history read out.
+    pub fn commit(&self) -> Result<AllocationEdit> {
         let note = self.note.value().trim().to_string();
-        Ok(Allocation {
+        Ok(AllocationEdit {
             date: self.date.parse()?,
-            cents: parse_share(self.amount.value(), self.unallocated)?,
+            cents: parse_share(self.amount.value(), self.unallocated, self.precision())?,
             // An empty note is no note, not a note that says nothing.
             note: (!note.is_empty()).then_some(note),
         })
@@ -794,6 +858,33 @@ mod tests {
         assert!(
             text.contains(&crate::demo::typed("1234")),
             "no scrambled amount found: {text}"
+        );
+    }
+
+    /// The note is owner text, and an edit prefills it from the stored row --
+    /// so the field publishes a note the history behind this modal is already
+    /// masking, which is the one place the two could disagree.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_a_note_prefilled_from_the_row_being_corrected() {
+        crate::demo::install_with_salt(7);
+        let row = Allocation {
+            id: AllocationId(3),
+            goal_id: GoalId(7),
+            date: day(2026, 8, 16),
+            cents: Cents(12_300),
+            note: Some("birthday money".to_string()),
+        };
+        let form = AllocationForm::edit(&row, "Lego", "Rainy Day", Cents::ZERO, today());
+        let text = rendered(&form);
+
+        assert!(
+            !text.contains("birthday money"),
+            "the note survived: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::text("birthday money").to_string()),
+            "no scrambled note found: {text}"
         );
     }
 
