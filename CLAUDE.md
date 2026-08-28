@@ -592,17 +592,22 @@ matches, since nothing but a test ties them together.
   reason `account::reorder` does — it renumbers the whole undated block, so "put it third" has a
   result that does not depend on rows the caller never saw. It refuses a dated goal rather than
   renumbering around it.
-- **`goal.favorite` is the owner's, and it is the one owner-set field the import can take away.**
-  `f` on Savings toggles it and `goal::set_favorite` is the column's one writer — not a field on
-  `GoalEdit`, for the reason `recurring_txn::set_paycheck` is not one on `update`: the goal form
-  has no field for it, so an edit that wrote the whole row would clear a mark the owner never
-  touched. The comparison worth drawing is `account.color`, which is also the owner's and also
-  absent from the sheet — but `account` is in `PRESERVED_TABLES` and `goal` is not, so a
-  `--replace` keeps a color and loses every favorite along with the goals themselves. Nothing can
-  fix that: goal names are not unique, so there is no key to re-attach a mark by. What makes it
-  affordable is that a favorite is a highlight and nothing else — it moves no money, gates
-  nothing, and changes no figure on any screen, so losing one costs a keystroke rather than a
-  reconciliation.
+- **`goal.favorite` and `goal.floating` are the owner's, and a `--replace` takes both away.**
+  Neither is a fact the sheet carries and neither is written by any import. `f` on Savings toggles
+  the first, and `goal::set_favorite` is that column's one writer — not a field on `GoalEdit`, for
+  the reason `recurring_txn::set_paycheck` is not one on `update`: the goal form has no field for
+  it, so an edit that wrote the whole row would clear a mark the owner never touched. `floating`
+  *is* a field on that form, and so is on `GoalEdit`, which is the whole difference between the
+  two. The comparison worth drawing is `account.color`, which is also the owner's and also absent
+  from the sheet — but `account` is in `PRESERVED_TABLES` and `goal` is not, so a `--replace` keeps
+  a color and loses both of these along with the goals themselves. Nothing can fix that: goal names
+  are not unique, so there is no key to re-attach either by.
+  - **What the loss costs is not the same for the two.** A favorite is a highlight and nothing
+    else — it moves no money, gates nothing, and changes no figure on any screen, so losing one
+    costs a keystroke. A lost `floating` flag leaves the goal funded towards whatever base the
+    sheet carries, which puts it back in the payday plug's set and back behind every Planning gate
+    it sits under, so it is worth re-setting after a `--replace` rather than re-noticing a payday
+    later.
 - **One worksheet commit is one `batch`.** `goal::insert_allocations` opens the batch itself, so a
   fumbled payday is one `delete_batch` rather than dozens of deletions. `U` undoes the most recent
   batch by insert order and **never an `Import` batch** — that one holds every opening balance in the

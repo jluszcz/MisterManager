@@ -265,8 +265,6 @@ mod tests {
         ]
     }
 
-    /// The target -- derived from a user-editable base -- reaches a divisor.
-    /// A zero target renders `--` rather than dividing.
     /// A goal that is at its target by definition reads full, and the
     /// division that would say so cannot be done: `current / current` is
     /// `0 / 0` on an empty one. So the row states the hundred rather than
@@ -344,6 +342,8 @@ mod tests {
         assert_eq!(rows[0].per_paycheck, None);
     }
 
+    /// The target -- derived from a user-editable base -- reaches a divisor.
+    /// A zero target renders `--` rather than dividing.
     #[test]
     fn a_goal_with_a_zero_target_has_no_percent_rather_than_dividing() {
         assert_eq!(percent_complete(Cents(500), Cents::ZERO), None);
