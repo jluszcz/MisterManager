@@ -56,6 +56,7 @@ long-lived and unattended. Both halves are below.
   `backup::key_for` writes `money-<timestamp>.db` at the root of the bucket, and the policy is
   scoped to `<bucket arn>/*`. The bucket is this application's own and holds nothing else, so a
   prefix would only narrow both to the one thing already in there — while being a string spelled in
-  Rust and again in Terraform with nothing tying the two together, only an AWS apply able to change
-  the second, and `AccessDenied` as the way a reader would find out they had come apart. `Backup`
-  carries no `prefix` field, so a config file asking for one is a line that does nothing.
+  `key_for` and again in `mistermanager.tf`'s policy resource path, with nothing tying the two
+  together, only an AWS apply able to change the second, and `AccessDenied` as the way a reader
+  would find out they had come apart. `Backup` carries no `prefix` field, so a config file asking
+  for one is a line that does nothing.
