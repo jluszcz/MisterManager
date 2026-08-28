@@ -166,3 +166,31 @@ pub fn sheet_cents(
         .and_then(import::cell::as_cents)
         .unwrap_or(mistermanager::money::Cents::ZERO)
 }
+
+/// Whether the sheet's `Overview!E2` is a day the app would quote at all.
+///
+/// The ad-hoc date is the first paycheck eve strictly *after* today, so on the
+/// eve itself the app rolls over to the eve of the paycheck after while the
+/// sheet's hand-typed `E2` still reads today. They disagree by design that one
+/// day in the cycle, and the workbook holds no column quoted at the day the app
+/// means -- so the comparison is dropped for that run rather than pinned
+/// against a figure the sheet does not carry. Everything the other two columns
+/// assert is unaffected.
+///
+/// **Only that day.** An `E2` already in the past is a sheet the owner has not
+/// bumped, which is a real disagreement between the two and goes on failing
+/// loudly: `B29` recalculates and `E2` does not, so a skip there would hide a
+/// stale oracle for a whole cadence at a time.
+///
+/// A loud line on stderr, like every other fixture a run does not have, so the
+/// day it happens is never a silently thinner test.
+pub fn eve_is_comparable(today: NaiveDate, eve: NaiveDate) -> bool {
+    if today != eve {
+        return true;
+    }
+    eprintln!(
+        "skipping the Paycheck-Eve comparison: the workbook's today ({today}) is its own \
+         Overview!E2, which the app rolls past by design"
+    );
+    false
+}

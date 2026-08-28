@@ -119,42 +119,51 @@ fn the_waterfall_reproduces_the_workbooks_transfer_instructions() {
     if import_all(&db, &path, today).is_none() {
         return;
     }
-    add_paycheck_rule(&db, &path);
+    // The sheet's transfer instructions are quoted at its own `Overview!E2`, so
+    // a run on that day -- where the app has already rolled past it -- has no
+    // oracle for them. `lines.total() == excess_used` is not one of those: it
+    // is the waterfall against itself, at whatever date it was quoted at, so it
+    // is asserted either way.
+    let comparable = common::eve_is_comparable(today, add_paycheck_rule(&db, &path));
     let computed = computed_plan(&db, today);
 
-    let planning = import::sheet(&mut sheets, "Planning").unwrap();
-    // The first group's sub-lines, each against its own cell. Without these,
-    // the group total alone cannot catch an error in any one of them: because
-    // `lines.goals` is defined as the plug, the total algebraically reduces
-    // to `excess_used` minus the other two groups, so a bug in `lines.bills`,
-    // `lines.current_housing`, or `lines.roth` would be silently absorbed
-    // and the total would stay unchanged.
-    assert_eq!(computed.lines.bills, sheet_cents(&planning, 29, 3), "D30");
-    assert_eq!(
-        computed.lines.current_housing,
-        sheet_cents(&planning, 30, 3),
-        "D31"
-    );
-    assert_eq!(computed.lines.goals, sheet_cents(&planning, 31, 3), "D32");
-    assert_eq!(computed.lines.roth, sheet_cents(&planning, 32, 3), "D33");
-    assert_eq!(
-        computed.lines.bills
-            + computed.lines.current_housing
-            + computed.lines.goals
-            + computed.lines.roth,
-        sheet_cents(&planning, 28, 3),
-        "D29"
-    );
-    assert_eq!(
-        computed.lines.future_housing + computed.lines.mom_and_dad + computed.lines.emergency_fund,
-        sheet_cents(&planning, 33, 3),
-        "D34"
-    );
-    assert_eq!(
-        computed.lines.retirement + computed.lines.investment,
-        sheet_cents(&planning, 37, 3),
-        "D38"
-    );
+    if comparable {
+        let planning = import::sheet(&mut sheets, "Planning").unwrap();
+        // The first group's sub-lines, each against its own cell. Without these,
+        // the group total alone cannot catch an error in any one of them: because
+        // `lines.goals` is defined as the plug, the total algebraically reduces
+        // to `excess_used` minus the other two groups, so a bug in `lines.bills`,
+        // `lines.current_housing`, or `lines.roth` would be silently absorbed
+        // and the total would stay unchanged.
+        assert_eq!(computed.lines.bills, sheet_cents(&planning, 29, 3), "D30");
+        assert_eq!(
+            computed.lines.current_housing,
+            sheet_cents(&planning, 30, 3),
+            "D31"
+        );
+        assert_eq!(computed.lines.goals, sheet_cents(&planning, 31, 3), "D32");
+        assert_eq!(computed.lines.roth, sheet_cents(&planning, 32, 3), "D33");
+        assert_eq!(
+            computed.lines.bills
+                + computed.lines.current_housing
+                + computed.lines.goals
+                + computed.lines.roth,
+            sheet_cents(&planning, 28, 3),
+            "D29"
+        );
+        assert_eq!(
+            computed.lines.future_housing
+                + computed.lines.mom_and_dad
+                + computed.lines.emergency_fund,
+            sheet_cents(&planning, 33, 3),
+            "D34"
+        );
+        assert_eq!(
+            computed.lines.retirement + computed.lines.investment,
+            sheet_cents(&planning, 37, 3),
+            "D38"
+        );
+    }
     assert_eq!(computed.lines.total(), computed.excess_used, "the lines");
 }
 

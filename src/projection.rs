@@ -9,8 +9,9 @@ use chrono::{Days, NaiveDate};
 pub struct Dates {
     /// Today.
     pub to_date: NaiveDate,
-    /// The day before the next paycheck, derived from the paycheck recurring
-    /// transaction. Today when there is no such recurring transaction.
+    /// The eve of a paycheck: the first day-before-a-paycheck strictly after
+    /// today, derived from the paycheck recurring transaction. Today when
+    /// there is no such recurring transaction.
     pub adhoc: NaiveDate,
     /// `EOMONTH(today, 0) + 1`.
     pub month_end: NaiveDate,
@@ -20,7 +21,15 @@ pub struct Dates {
 /// `Cadence -> Step` match in a single place: `projection` never learns what a
 /// cadence is.
 pub fn dates(db: &Db, today: NaiveDate) -> Result<Dates> {
-    let adhoc = match recurring_txn::next_paycheck(db, today)? {
+    // Asked from tomorrow rather than from today, so that the eve is the day
+    // the column *rolls over*. Asked from today, paycheck eve derives itself:
+    // the next paycheck is tomorrow and the day before it is today, so the
+    // column spends its last day quoting the To-Date balance beside it under
+    // another name -- exactly when the runway it exists to show is shortest.
+    let from = today
+        .checked_add_days(Days::new(1))
+        .context("the day after today ran off the calendar")?;
+    let adhoc = match recurring_txn::next_paycheck(db, from)? {
         // A database with no paycheck recurring transaction is a state to
         // correct, not to guess at.
         None => today,
@@ -83,12 +92,37 @@ mod tests {
         assert_eq!(dates.adhoc, day(2026, 8, 14));
     }
 
+    /// The eve is where the column turns over, not where it collapses. Derived
+    /// from today, the day before the next paycheck *is* today on the eve, and
+    /// the column would repeat the To-Date balance beside it for a day; the
+    /// runway the owner is asked to plan against is the one to the paycheck
+    /// after.
+    #[test]
+    fn on_paycheck_eve_the_adhoc_date_rolls_over_to_the_next_eve() {
+        let db = with_paycheck(day(2026, 8, 28));
+        let dates = dates(&db, day(2026, 8, 27)).unwrap();
+        assert_eq!(dates.adhoc, day(2026, 9, 10));
+        assert_eq!(dates.to_date, day(2026, 8, 27));
+    }
+
+    /// Payday itself quotes the same eve the day before it did: the rollover
+    /// has already happened, so the paycheck landing changes nothing.
     #[test]
     fn on_payday_itself_the_adhoc_date_is_the_eve_of_the_paycheck_after() {
         let db = with_paycheck(day(2026, 8, 28));
         assert_eq!(
             dates(&db, day(2026, 8, 28)).unwrap().adhoc,
             day(2026, 9, 10)
+        );
+    }
+
+    /// Two days out is the last day the column still names the coming eve.
+    #[test]
+    fn the_day_before_paycheck_eve_still_names_that_eve() {
+        let db = with_paycheck(day(2026, 8, 28));
+        assert_eq!(
+            dates(&db, day(2026, 8, 26)).unwrap().adhoc,
+            day(2026, 8, 27)
         );
     }
 }

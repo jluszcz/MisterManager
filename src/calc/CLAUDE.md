@@ -94,6 +94,16 @@ then, against the excess itself:
 `budget` is `excess_used` floored to the dollar. The two caps are what hold
 `lines.total() <= excess_used`; see below for why those two lines and no others.
 
+**`checking@adhoc` is the Overview's Paycheck-Eve column**, and that date is the first paycheck eve
+strictly *after* today. So on the eve itself it has already rolled to the eve of the paycheck after,
+and the excess is quoted at a balance that counts a paycheck which has not landed yet -- the step
+the excess takes each cycle falls on the eve rather than on payday. That is deliberate and it is not
+a second decision: the waterfall quotes the day the Overview shows, and a Planning screen holding
+back a day the Overview had already moved past is the disagreement `plan::compute_from_db` takes the
+date as an argument to prevent. A payday worked the evening before is therefore priced on the money
+it is about to receive, which is what the owner is planning against; where it should not be, the
+scrub moves it and `p` pins the figure shown.
+
 Why this order: the biweekly bills are obligations, so they come out before anything proportional —
 splitting first and paying bills from a share would let a good month fund investments while the
 mortgage went short. `bill_payments` is `min(cap, share)` rather than a flat share so a large excess
