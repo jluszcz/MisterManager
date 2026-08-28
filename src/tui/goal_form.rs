@@ -198,7 +198,10 @@ impl AllocationForm {
                 true => self.amount.value().to_string(),
                 false => crate::demo::typed(self.amount.value()),
             },
-            AllocField::Note => self.note.value().to_string(),
+            // Prefilled from the stored row by `edit`, so it is owner text the
+            // same as a transaction's description -- and the history behind
+            // this modal draws the same note through `description::render`.
+            AllocField::Note => crate::demo::text(self.note.value()).into_owned(),
         })
     }
 
@@ -855,6 +858,33 @@ mod tests {
         assert!(
             text.contains(&crate::demo::typed("1234")),
             "no scrambled amount found: {text}"
+        );
+    }
+
+    /// The note is owner text, and an edit prefills it from the stored row --
+    /// so the field publishes a note the history behind this modal is already
+    /// masking, which is the one place the two could disagree.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_a_note_prefilled_from_the_row_being_corrected() {
+        crate::demo::install_with_salt(7);
+        let row = Allocation {
+            id: AllocationId(3),
+            goal_id: GoalId(7),
+            date: day(2026, 8, 16),
+            cents: Cents(12_300),
+            note: Some("birthday money".to_string()),
+        };
+        let form = AllocationForm::edit(&row, "Lego", "Rainy Day", Cents::ZERO, today());
+        let text = rendered(&form);
+
+        assert!(
+            !text.contains("birthday money"),
+            "the note survived: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::text("birthday money").to_string()),
+            "no scrambled note found: {text}"
         );
     }
 
