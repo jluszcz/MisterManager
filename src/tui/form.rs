@@ -538,6 +538,23 @@ pub(super) fn is_share(raw: &str) -> bool {
     raw.trim().starts_with('/')
 }
 
+/// Whether a typed figure has to land on a whole dollar.
+///
+/// One parameter rather than a strict function and a tolerant twin, the way
+/// [`crate::reading::Reading`] is one parameter over the goal readers: the two
+/// readings differ in nothing but the thing they name.
+///
+/// [`Precision::WholeDollars`] is what `a` on Savings writes, for the reason
+/// [`parse_whole_amount`] gives. [`Precision::Cents`] is what a *correction*
+/// reads by: an allocation the import or an interest posting wrote already
+/// holds cents, and a history that refused to save the row it just prefilled
+/// would refuse exactly the rows most likely to be wrong.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(super) enum Precision {
+    WholeDollars,
+    Cents,
+}
+
 /// A whole amount, or a fraction of `pot` written `/N`.
 ///
 /// `pot` is the container's unallocated remainder, and `/6` is a sixth of it:
@@ -545,15 +562,18 @@ pub(super) fn is_share(raw: &str) -> bool {
 /// reaching for a calculator. Text rather than a keystroke so the divisor can
 /// run past nine -- `/12` is a month's worth.
 ///
-/// The fraction floors to a whole dollar where a *typed* `12.50` is refused,
-/// and the two are not in tension: cents typed into a whole-dollar field are a
-/// typo, while cents left over from a division are arithmetic. They stay in
-/// the remainder, which is where [`parse_whole_amount`] says the drift
-/// collects.
-pub(super) fn parse_share(raw: &str, pot: Cents) -> Result<Cents> {
+/// The fraction floors to a whole dollar whatever the `precision`, and under
+/// [`Precision::WholeDollars`] a *typed* `12.50` is refused: cents typed into
+/// a whole-dollar field are a typo, while cents left over from a division are
+/// arithmetic. They stay in the remainder, which is where
+/// [`parse_whole_amount`] says the drift collects.
+pub(super) fn parse_share(raw: &str, pot: Cents, precision: Precision) -> Result<Cents> {
     let raw = raw.trim();
     let Some(divisor) = raw.strip_prefix('/') else {
-        return parse_whole_amount(raw);
+        return match precision {
+            Precision::WholeDollars => parse_whole_amount(raw),
+            Precision::Cents => parse_amount(raw),
+        };
     };
     let n: i64 = divisor
         .trim()
@@ -1959,12 +1979,21 @@ mod tests {
     }
 
     /// The pot is the container's unallocated remainder, and it carries the
-    /// cents the goals have drifted by. Dividing floors them away.
+    /// cents the goals have drifted by. Dividing floors them away, whichever
+    /// precision a typed figure is read at.
     #[test]
     fn a_share_reads_a_fraction_of_the_pot() {
         let pot = Cents(260_017);
-        assert_eq!(parse_share("/2", pot).unwrap(), Cents::from_dollars(1300));
-        assert_eq!(parse_share("/6", pot).unwrap(), Cents::from_dollars(433));
+        for precision in [Precision::WholeDollars, Precision::Cents] {
+            assert_eq!(
+                parse_share("/2", pot, precision).unwrap(),
+                Cents::from_dollars(1300)
+            );
+            assert_eq!(
+                parse_share("/6", pot, precision).unwrap(),
+                Cents::from_dollars(433)
+            );
+        }
     }
 
     /// The divisor is text rather than a keystroke precisely so it can run
@@ -1972,7 +2001,7 @@ mod tests {
     #[test]
     fn a_share_takes_a_divisor_of_more_than_one_digit() {
         assert_eq!(
-            parse_share("/12", Cents(260_017)).unwrap(),
+            parse_share("/12", Cents(260_017), Precision::WholeDollars).unwrap(),
             Cents::from_dollars(216)
         );
     }
@@ -1980,7 +2009,7 @@ mod tests {
     #[test]
     fn a_share_ignores_the_space_around_it() {
         assert_eq!(
-            parse_share(" /2 ", Cents::from_dollars(100)).unwrap(),
+            parse_share(" /2 ", Cents::from_dollars(100), Precision::WholeDollars).unwrap(),
             Cents::from_dollars(50)
         );
     }
@@ -1988,24 +2017,51 @@ mod tests {
     /// Not a fraction, so the field means what it has always meant.
     #[test]
     fn an_amount_with_no_slash_parses_as_a_whole_amount() {
-        assert_eq!(parse_share("140", Cents::ZERO).unwrap(), Cents(14_000));
-        assert!(parse_share("12.50", Cents::ZERO).is_err());
+        let pot = Cents::ZERO;
+        assert_eq!(
+            parse_share("140", pot, Precision::WholeDollars).unwrap(),
+            Cents(14_000)
+        );
+        assert!(parse_share("12.50", pot, Precision::WholeDollars).is_err());
+    }
+
+    /// The whole of what the second precision changes: a correction may save
+    /// the cents the row it opened on already held.
+    #[test]
+    fn a_typed_amount_read_at_cents_precision_keeps_them() {
+        let pot = Cents::ZERO;
+        assert_eq!(
+            parse_share("12.50", pot, Precision::Cents).unwrap(),
+            Cents(1_250)
+        );
+        assert_eq!(
+            parse_share("140", pot, Precision::Cents).unwrap(),
+            Cents(14_000)
+        );
+        assert!(
+            parse_share("abc", pot, Precision::Cents).is_err(),
+            "text that is no reading of a figure is still refused"
+        );
     }
 
     #[test]
     fn a_share_refuses_a_divisor_that_is_not_a_positive_number() {
         let pot = Cents::from_dollars(100);
-        assert!(parse_share("/0", pot).is_err());
-        assert!(parse_share("/-3", pot).is_err());
-        assert!(parse_share("/", pot).is_err());
-        assert!(parse_share("/x", pot).is_err());
+        for raw in ["/0", "/-3", "/", "/x"] {
+            assert!(
+                parse_share(raw, pot, Precision::WholeDollars).is_err(),
+                "{raw}"
+            );
+        }
     }
 
     /// The message quotes what was typed, the way every other parse error on
     /// these forms does.
     #[test]
     fn a_refused_divisor_says_what_was_typed() {
-        let err = parse_share("/x", Cents::ZERO).unwrap_err().to_string();
+        let err = parse_share("/x", Cents::ZERO, Precision::WholeDollars)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("/x"), "{err}");
     }
 

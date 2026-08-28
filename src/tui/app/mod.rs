@@ -19,6 +19,7 @@ use super::cursor::Scroll;
 use super::form::Step;
 use super::fund::{self as fund_screen, Funds};
 use super::help::{self, Help, Topic};
+use super::history::Mode as HistoryMode;
 use super::ledger::{self as ledger_screen, Ledger};
 use super::modal::{self, Confirm, Modal};
 use super::planning::{self as planning_screen, Planning};
@@ -45,6 +46,7 @@ use std::time::{Duration, Instant};
 
 mod accounts;
 mod funds;
+mod history;
 mod ledger;
 mod planning;
 mod recurring;
@@ -832,6 +834,20 @@ impl App {
             Some(Modal::RecurringTxn(_)) => self.form_key(key, App::commit_recurring_txn),
             Some(Modal::RecurringGoalEntry(_)) => self.form_key(key, App::commit_recurring_goal),
             Some(Modal::Account(_)) => self.form_key(key, App::commit_account),
+            // Three modes over one modal, so the dispatch is one arm with two
+            // guards rather than three variants: `Esc` then peels one layer at
+            // a time with no flag on `App` saying what to return to.
+            Some(Modal::History(ref history))
+                if matches!(history.mode(), HistoryMode::Editing(_)) =>
+            {
+                self.history_edit_key(key)
+            }
+            Some(Modal::History(ref history))
+                if matches!(history.mode(), HistoryMode::Confirming { .. }) =>
+            {
+                self.history_confirm_key(key)
+            }
+            Some(Modal::History(_)) => self.history_key(key),
             Some(Modal::PlanTransfers(_)) => {
                 match key.code {
                     KeyCode::Esc => {
@@ -2565,9 +2581,9 @@ mod tests {
     /// search boxes, and the transfer-confirmation dialog.
     ///
     /// Written by reading the `match` arms of `worksheet_key`, `picker_key`,
-    /// `destination_key`, `form_key` -- with `popup_key`, which it delegates to --
-    /// `modal_key`'s confirm arms and its `Modal::PlanTransfers` arm, and the
-    /// four `search::search_key` calls: the three branches `dispatch` opens
+    /// `destination_key`, `history_key`, `form_key` -- with `popup_key`, which it
+    /// delegates to -- `modal_key`'s confirm arms and its `Modal::PlanTransfers`
+    /// arm, and the four `search::search_key` calls: the three branches `dispatch` opens
     /// with and the one `destination_key` does. Three families of arm are
     /// deliberately not listed:
     ///
@@ -2591,7 +2607,7 @@ mod tests {
     ///   cancels.
     #[test]
     fn every_key_a_modal_handler_matches_appears_in_its_table() {
-        let handlers: [(Topic, &[&str]); 12] = [
+        let handlers: [(Topic, &[&str]); 13] = [
             (
                 Topic::Worksheet,
                 &[
@@ -2619,6 +2635,7 @@ mod tests {
                 &["Ctrl+A/E/B/F/W/U/K/D", "Enter", "Esc", "Backspace", "F1"],
             ),
             (Topic::Confirm, &["y", "any", "?"]),
+            (Topic::History, &["e", "d", "Esc"]),
             (
                 Topic::Form,
                 &[

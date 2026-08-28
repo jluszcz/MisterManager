@@ -593,6 +593,31 @@ matches, since nothing but a test ties them together.
   fumbled payday is one `delete_batch` rather than dozens of deletions. `U` undoes the most recent
   batch by insert order and **never an `Import` batch** — that one holds every opening balance in the
   database. A worksheet is scoped to one container: payday runs it twice.
+- **An allocation is editable whatever wrote it, and a history is scoped to one goal.** `Enter` on a
+  Savings row opens that goal's rows in `tui::history`, where `e` corrects one and `d` deletes one —
+  `goal::allocations`, `update_allocation` and `delete_allocation` are the only readers and writers
+  of a single `allocation` row in the crate; everything else wants the sum. Three things follow, and
+  none of them is visible from the screen:
+  - **Batch rows and the `Import` batch alike are editable.** An allocation is a figure the owner
+    entered, whatever wrote it down, and a history that refused the rows most likely to be wrong
+    would not do its job. Allocations carry no `edited` flag, so `U` still deletes a whole batch
+    including a row corrected inside it; the window is narrow — `U` reaches only the most recent
+    non-`Import` batch — but a correction made and then undone goes with the batch it was in. The
+    `manual` interest prefill rescales the container's last `Interest` batch, so correcting a row in
+    one moves the weights the next posting opens with: the wanted behaviour, simply not obvious from
+    the row being edited.
+  - **A row never leaves its goal.** The form edits the date, the amount and the note, and nothing
+    else. Re-pointing within a container would be defensible and across containers would not — no
+    cash moved between the accounts, the boundary `goal::move_value` already refuses to cross — and
+    a fourth field that can only ever move a row halfway is worth less than the rule. A misdirected
+    allocation is deleted here and re-entered with `a` on the right goal.
+  - **A correction reads its amount at `form::Precision::Cents` where `a` reads at
+    `WholeDollars`.** The rows most worth correcting are the ones the import and the interest
+    postings wrote, and those carry the cents `parse_whole_amount` refuses — a modal that would not
+    save the figure it had just prefilled would refuse exactly the rows it exists for. `a` keeps the
+    stricter reading for the reason `parse_whole_amount` gives: cents typed into a whole-dollar
+    field are a typo, while cents already on a row are arithmetic. One parameter rather than two
+    functions, the shape `reading::Reading` already makes for the goal readers.
 - **The interest prefill is a property of the account, not a setting.** `account.interest_policy` is
   `pro_rata` or `manual` (which is also what `NULL` reads as), because a per-container setting key
   cannot be a `Key<T>` constant. It is set on the Accounts screen and no import ever writes it: which

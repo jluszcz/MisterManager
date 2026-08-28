@@ -54,10 +54,17 @@ not ("are s on screen 7"). `Tab`, `Esc` and `Enter` are unambiguous already and 
 enforces this: the article "a" and the key `a` are the same character, so no test can tell them
 apart.
 
-`Enter` is the one entry above that a screen answers rather than a modal. On Planning it opens the
-full account of an unresolved plan — a screen key, not a row key, because that cursor only ever
-lands on rows `e` acts on, and making the `unresolved` row selectable would park the cursor
-somewhere `e` does nothing with no way to tell that from a key that failed.
+`Enter` is the one entry above that a screen answers rather than a modal, and two screens answer it.
+On Planning it opens the full account of an unresolved plan — a screen key, not a row key, because
+that cursor only ever lands on rows `e` acts on, and making the `unresolved` row selectable would
+park the cursor somewhere `e` does nothing with no way to tell that from a key that failed. On
+Savings it opens the selected goal's allocation history, which is the long form of the balance cell
+that row already carries — the same entry read the other way round, a row key rather than a screen
+key, because a balance is a property of the row the cursor is on.
+
+**Inside that history `Enter` is deliberately unbound.** It commits the editor a keystroke away, and
+one key that opens an editor in one mode and commits it in the next is exactly the reflex-breaking
+case these rules exist to prevent.
 
 ## What the footers and the panel share
 
@@ -159,6 +166,13 @@ eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
 smallest: `a`, which creates an account the workbook does not name, and `e`, over the seven things
 the workbook does not say about one.
 
+`history` is the modal `Enter` opens on a Savings row: one goal's allocation rows, oldest first,
+and the two writes that correct one. It is the only reader of an `allocation` row in the crate —
+everything else wants the sum — and it carries its three modes inside the one type rather than as a
+modal over a modal, so `Esc` peels one layer at a time with no flag on `App` saying what to return
+to. Named `history` and not `allocations` because `Modal::Allocation` is already the form that
+writes one, and two variants a letter apart would be misread on sight.
+
 `month` is the `[`/`]` filter Savings and Recurring Goals share. `style` is where color is decided —
 `ratatui::style::Color` is *decided* there and nowhere else, so no screen grows its own opinion
 about what red means. The helpers that carry one of those decisions to a cell — `tui::tinted`,
@@ -173,9 +187,10 @@ share: the box, its keys, and `Matcher`, which is what a needle *means* on all f
 screen shares lives in `tui/mod.rs`, not in whichever screen needed it first.
 
 `app` is a directory rather than a file, and it is split the same way this section reads: one
-module per screen — `app/ledger.rs`, `app/savings.rs`, `app/planning.rs`, `app/worksheet.rs`,
-`app/funds.rs`, `app/accounts.rs`, `app/recurring.rs` — each an `impl App` block carrying that
-screen's key handler, its `open_*` forms, its `commit_*` writes and its `reload_*`, with its own
+module per screen — `app/ledger.rs`, `app/savings.rs`, `app/planning.rs`, `app/funds.rs`,
+`app/accounts.rs`, `app/recurring.rs` — and one per modal carrying handlers of its own,
+`app/worksheet.rs` and `app/history.rs`. Each is an `impl App` block carrying that screen's or
+modal's key handler, its `open_*` forms, its `commit_*` writes and its `reload_*`, with its own
 tests beneath it. `app/mod.rs` keeps what is about the application rather than about a screen: the
 struct, `dispatch`, `render`, `footer`, `reload`, and the modal, form and help plumbing every
 screen borrows. **The exhaustive `match self.screen` blocks stay there deliberately** — a tenth

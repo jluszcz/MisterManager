@@ -20,6 +20,7 @@ pub mod form;
 pub mod fund;
 pub mod goal_form;
 mod help;
+mod history;
 pub mod ledger;
 mod modal;
 pub mod month;
