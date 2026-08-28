@@ -539,15 +539,29 @@ matches, since nothing but a test ties them together.
   the **same container**) — and it closes the goal itself, in one transaction. The next round of a
   recurring goal is created from the `recurring_goal` table. Crossing containers is refused: no cash moved between
   the accounts, so allowing it would break both reconciliations at once.
-- **A goal's target is derived, never stored.** The table holds `goal.base_cents` and `goal.taxed`;
-  `goal::target` is `base_cents` for an untaxed goal and `calc::tax` of it for a taxed one, the way
-  `calc::fund` turns an age rule into a percentage. A rate that changes must not leave a stored
-  figure behind quoting the old one. **The derived figure is the target everywhere** — the shortfall
+- **A goal's target is derived, never stored.** The table holds `goal.base_cents`, `goal.taxed` and
+  `goal.floating`; `goal::target` is the balance for a floating goal, `base_cents` for an untaxed
+  one and `calc::tax` of it for a taxed one, the way `calc::fund` turns an age rule into a
+  percentage. A rate that changes must not leave a stored figure behind quoting the old one, and
+  neither may a balance that moves. **The derived figure is the target everywhere** — the shortfall
   behind a Planning gate, the percentage complete, `$/Pay`, whether the payday plug still counts the
   goal as short, whether the Savings screen draws it as overdue. The base is shown as itself in
   exactly two places, the goal form and the recurring-goal form, and both say what it comes to
   beside it. A goal that funds to its base comes up short at the register, which is the whole
   reason the column is split in two.
+  - **A floating goal's target is whatever it holds**, which is why `goal::target` takes the
+    balance. `goal.floating` is the owner's answer to "this is a pot rather than a purchase" — a
+    brokerage account, a rainy-day fund, anything never meant to be finished — and it is read
+    *first*, before `taxed` and before the rate is asked for: a target that follows the balance has
+    no base for the lambda to ceiling, so a row carrying both flags resolves rather than erroring.
+    Everything downstream follows from that one branch and nothing else knows the flag exists: the
+    shortfall is zero at every balance, so a Planning gate behind a floating goal never opens and
+    `transfer::spread_goals` never offers it a penny of the payday plug; `$/Pay` is blank and the
+    goal is never overdue, because it is already at its target. The one reader that *does* name the
+    flag is `savings::rows`, which states `100%` rather than dividing `current` by itself — see
+    `src/tui/CLAUDE.md`. The base and the `taxed` flag beside it are kept rather than cleared, so
+    turning the flag off restores the goal the owner was funding towards; the goal form is what
+    puts both fields out of reach while it is on.
   - **A taxed goal with no rate on record is a loud error naming `key::TAX_RATE`**, not a silent
     fallback to the base. An unset key normally means a feature is off, but the flag on the row says
     tax is wanted, and quietly targeting the base would move the waterfall's plug on the strength of
@@ -578,17 +592,22 @@ matches, since nothing but a test ties them together.
   reason `account::reorder` does — it renumbers the whole undated block, so "put it third" has a
   result that does not depend on rows the caller never saw. It refuses a dated goal rather than
   renumbering around it.
-- **`goal.favorite` is the owner's, and it is the one owner-set field the import can take away.**
-  `f` on Savings toggles it and `goal::set_favorite` is the column's one writer — not a field on
-  `GoalEdit`, for the reason `recurring_txn::set_paycheck` is not one on `update`: the goal form
-  has no field for it, so an edit that wrote the whole row would clear a mark the owner never
-  touched. The comparison worth drawing is `account.color`, which is also the owner's and also
-  absent from the sheet — but `account` is in `PRESERVED_TABLES` and `goal` is not, so a
-  `--replace` keeps a color and loses every favorite along with the goals themselves. Nothing can
-  fix that: goal names are not unique, so there is no key to re-attach a mark by. What makes it
-  affordable is that a favorite is a highlight and nothing else — it moves no money, gates
-  nothing, and changes no figure on any screen, so losing one costs a keystroke rather than a
-  reconciliation.
+- **`goal.favorite` and `goal.floating` are the owner's, and a `--replace` takes both away.**
+  Neither is a fact the sheet carries and neither is written by any import. `f` on Savings toggles
+  the first, and `goal::set_favorite` is that column's one writer — not a field on `GoalEdit`, for
+  the reason `recurring_txn::set_paycheck` is not one on `update`: the goal form has no field for
+  it, so an edit that wrote the whole row would clear a mark the owner never touched. `floating`
+  *is* a field on that form, and so is on `GoalEdit`, which is the whole difference between the
+  two. The comparison worth drawing is `account.color`, which is also the owner's and also absent
+  from the sheet — but `account` is in `PRESERVED_TABLES` and `goal` is not, so a `--replace` keeps
+  a color and loses both of these along with the goals themselves. Nothing can fix that: goal names
+  are not unique, so there is no key to re-attach either by.
+  - **What the loss costs is not the same for the two.** A favorite is a highlight and nothing
+    else — it moves no money, gates nothing, and changes no figure on any screen, so losing one
+    costs a keystroke. A lost `floating` flag leaves the goal funded towards whatever base the
+    sheet carries, which puts it back in the payday plug's set and back behind every Planning gate
+    it sits under, so it is worth re-setting after a `--replace` rather than re-noticing a payday
+    later.
 - **One worksheet commit is one `batch`.** `goal::insert_allocations` opens the batch itself, so a
   fumbled payday is one `delete_batch` rather than dozens of deletions. `U` undoes the most recent
   batch by insert order and **never an `Import` batch** — that one holds every opening balance in the

@@ -250,22 +250,38 @@ pub enum GoalField {
     Name,
     Target,
     Date,
+    /// Beside `Taxed`, because the two say what the Target above them means,
+    /// and after the Date, so that the rhythm of typing a goal that has a
+    /// target -- name, target, date -- is the one it has always been.
+    Floating,
     Taxed,
     Interest,
 }
 
 impl GoalField {
-    pub const ORDER: [GoalField; 5] = [
+    /// Every field, which is what a goal funded towards a figure offers.
+    /// [`GoalForm::fields`] is what a form actually walks.
+    pub const ORDER: [GoalField; 6] = [
         GoalField::Name,
         GoalField::Target,
         GoalField::Date,
+        GoalField::Floating,
         GoalField::Taxed,
+        GoalField::Interest,
+    ];
+
+    /// The same list without the two fields that describe a fixed target.
+    const FLOATING: [GoalField; 4] = [
+        GoalField::Name,
+        GoalField::Date,
+        GoalField::Floating,
         GoalField::Interest,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
             GoalField::Name => "Name",
+            GoalField::Floating => "Floating",
             GoalField::Target => "Target",
             GoalField::Date => "Goal Date",
             GoalField::Taxed => "Taxed",
@@ -319,7 +335,13 @@ pub struct GoalForm {
     name: Field,
     target: Field,
     date: DateField,
+    /// The base the form opened on, which is what a suspended Target falls
+    /// back to. Kept because the field cannot always be read back: an
+    /// imported base carries the sheet's cents, and `parse_whole_amount`
+    /// refuses those.
+    opened_base: Cents,
     taxed: bool,
+    floating: bool,
     eligible: bool,
     /// The sales tax rate `Taxed` applies, as it stood when the form
     /// opened. `None` is a database no `Constants` sheet has been imported
@@ -354,7 +376,10 @@ impl GoalForm {
                 Some(date) => DateField::on(today, date),
                 None => DateField::blank(today),
             },
+            // A goal that does not exist yet was funded towards nothing.
+            opened_base: Cents::ZERO,
             taxed: false,
+            floating: false,
             // A goal typed from scratch takes interest, like every goal the
             // sheet ever had.
             eligible: true,
@@ -373,6 +398,7 @@ impl GoalForm {
         date: Option<NaiveDate>,
         interest_eligible: bool,
         taxed: bool,
+        floating: bool,
         rate: Option<BasisPoints>,
         today: NaiveDate,
     ) -> GoalForm {
@@ -384,7 +410,9 @@ impl GoalForm {
             // beside it, in `tax_note`.
             target: Field::given(base.to_string()),
             date: DateField::given(today, date),
+            opened_base: base,
             taxed,
+            floating,
             eligible: interest_eligible,
             rate,
         }
@@ -414,9 +442,26 @@ impl GoalForm {
             GoalField::Name => crate::demo::text(self.name.value()).into_owned(),
             GoalField::Target => crate::demo::typed(self.target.value()),
             GoalField::Date => self.date.display(self.focus == GoalField::Date),
+            GoalField::Floating => if self.floating { "yes" } else { "no" }.to_string(),
             GoalField::Taxed => if self.taxed { "yes" } else { "no" }.to_string(),
             GoalField::Interest => if self.eligible { "yes" } else { "no" }.to_string(),
         })
+    }
+
+    /// The fields this form offers, which is what Tab walks and what
+    /// `render_goal` draws.
+    ///
+    /// A floating goal is funded to whatever it holds, so the Target and the
+    /// Taxed flag describe nothing: both come off the form rather than
+    /// sitting there inviting a figure that would never be read. What they
+    /// already hold is kept -- see [`GoalForm::commit`] -- so turning the
+    /// flag back off restores the goal the form opened on.
+    pub fn fields(&self) -> &'static [GoalField] {
+        if self.floating {
+            &GoalField::FLOATING
+        } else {
+            &GoalField::ORDER
+        }
     }
 
     /// The note beside the Target: what the base in the field comes to once
@@ -434,12 +479,24 @@ impl GoalForm {
     pub fn commit(&self) -> Result<GoalEdit> {
         let name = self.name.value().trim().to_string();
         ensure!(!name.is_empty(), "name must not be empty");
-        let base_cents = parse_whole_amount(self.target.value())?;
+        // Both halves of a fixed target are suspended while `Floating` is on
+        // rather than erased: the fields are unreachable, so what they hold
+        // is what the goal was funded towards, and an edit made for the name
+        // must not spend it. The field is not always readable back -- an
+        // imported base carries the sheet's cents, which `parse_whole_amount`
+        // refuses -- so an unparseable one falls back to the base the form
+        // opened on rather than to zero, which would erase it.
+        let base_cents = match parse_whole_amount(self.target.value()) {
+            Ok(base) => base,
+            Err(_) if self.floating => self.opened_base,
+            Err(e) => return Err(e),
+        };
         // Refused even though nothing here needs the rate any more: letting it
         // through would write precisely the row the read side calls corrupt,
         // and this is the one place that can ask for the rate before there is
-        // a goal to be broken by its absence.
-        if self.taxed {
+        // a goal to be broken by its absence. A floating goal spends no rate,
+        // for the reason `crate::goal::target` reads the flag first.
+        if self.taxed && !self.floating {
             self.rate.context(NO_TAX_RATE)?;
         }
         Ok(GoalEdit {
@@ -449,13 +506,14 @@ impl GoalForm {
             goal_date: self.date.parse_opt()?,
             interest_eligible: self.eligible,
             taxed: self.taxed,
+            floating: self.floating,
         })
     }
 }
 
 impl FormFields for GoalForm {
     fn move_focus(&mut self, step: isize) {
-        self.focus = next_in(&GoalField::ORDER, self.focus, step);
+        self.focus = next_in(self.fields(), self.focus, step);
     }
 
     // Both selectors here hold two values, so both directions are the same
@@ -464,6 +522,7 @@ impl FormFields for GoalForm {
     fn cycle(&mut self, _step: Step) {
         match self.focus {
             GoalField::Taxed => self.taxed = !self.taxed,
+            GoalField::Floating => self.floating = !self.floating,
             GoalField::Interest => self.eligible = !self.eligible,
             GoalField::Name | GoalField::Target | GoalField::Date => {}
         }
@@ -474,7 +533,7 @@ impl FormFields for GoalForm {
             GoalField::Name => Focused::Text(&mut self.name),
             GoalField::Target => Focused::Text(&mut self.target),
             GoalField::Date => Focused::Date(&mut self.date),
-            GoalField::Taxed | GoalField::Interest => Focused::Selector,
+            GoalField::Taxed | GoalField::Floating | GoalField::Interest => Focused::Selector,
         }
     }
 
@@ -483,7 +542,7 @@ impl FormFields for GoalForm {
             GoalField::Name => Caret::in_field(&self.name),
             GoalField::Target => Caret::in_field(&self.target),
             GoalField::Date => Caret::in_field(self.date.text()),
-            GoalField::Taxed | GoalField::Interest => Caret::End,
+            GoalField::Taxed | GoalField::Floating | GoalField::Interest => Caret::End,
         }
     }
 }
@@ -655,7 +714,8 @@ pub fn render_allocation(frame: &mut Frame, form: &AllocationForm) {
 /// Draws the goal modal: `e`'s form, and `n`'s.
 pub fn render_goal(frame: &mut Frame, form: &GoalForm) {
     let note = form.tax_note();
-    let lines: Vec<TextLine> = GoalField::ORDER
+    let lines: Vec<TextLine> = form
+        .fields()
         .iter()
         .map(|f| {
             // The Target field holds the base rather than what the goal is
@@ -1002,6 +1062,7 @@ mod tests {
             None,
             true,
             false,
+            false,
             Some(BasisPoints(625)),
             today(),
         )
@@ -1022,6 +1083,7 @@ mod tests {
             Cents(100_000),
             Some(day(2026, 12, 1)),
             true,
+            false,
             false,
             None,
             today(),
@@ -1049,6 +1111,7 @@ mod tests {
             Cents(100_050),
             None,
             true,
+            false,
             false,
             None,
             today(),
@@ -1078,6 +1141,7 @@ mod tests {
             Some(day(2026, 12, 1)),
             true,
             false,
+            false,
             None,
             today(),
         );
@@ -1097,6 +1161,7 @@ mod tests {
             None,
             true,
             false,
+            false,
             None,
             today(),
         );
@@ -1113,6 +1178,7 @@ mod tests {
             "Down Payment",
             Cents(100_000),
             None,
+            false,
             false,
             false,
             None,
@@ -1136,6 +1202,7 @@ mod tests {
             "Down Payment",
             Cents(100_000),
             None,
+            false,
             false,
             false,
             None,
@@ -1223,6 +1290,7 @@ mod tests {
             None,
             true,
             false,
+            false,
             None,
             today(),
         );
@@ -1240,6 +1308,7 @@ mod tests {
             Cents(100_000),
             None,
             true,
+            false,
             false,
             None,
             today(),
@@ -1279,6 +1348,7 @@ mod tests {
             None,
             true,
             true,
+            false,
             Some(BasisPoints(625)),
             today(),
         );
@@ -1349,6 +1419,7 @@ mod tests {
             None,
             true,
             false,
+            false,
             None,
             today(),
         );
@@ -1393,6 +1464,173 @@ mod tests {
             today(),
         );
         assert_eq!(form.display(GoalField::Taxed).plain_text(), "no");
+    }
+
+    /// The fields the form actually offers, in order, read off the walk
+    /// rather than off `fields()` -- what a test wants to know is what Tab
+    /// reaches.
+    fn walk(form: &mut GoalForm) -> Vec<GoalField> {
+        let first = form.focus;
+        let mut seen = vec![first];
+        loop {
+            form.next_field();
+            if form.focus == first {
+                return seen;
+            }
+            seen.push(form.focus);
+            assert!(
+                seen.len() <= GoalField::ORDER.len(),
+                "{seen:?} does not close"
+            );
+        }
+    }
+
+    /// A floating goal has no target and nothing to tax, so the two fields
+    /// that describe one come off the form rather than sitting there
+    /// unreachable-looking but typeable.
+    #[test]
+    fn turning_a_goal_floating_takes_the_target_and_tax_fields_off_the_form() {
+        let mut form = taxable("Brokerage", Cents(100_000));
+        assert_eq!(
+            walk(&mut form),
+            vec![
+                GoalField::Name,
+                GoalField::Target,
+                GoalField::Date,
+                GoalField::Floating,
+                GoalField::Taxed,
+                GoalField::Interest
+            ]
+        );
+
+        walk_until!(form.focus == GoalField::Floating, form.next_field());
+        form.choice(Step::NEXT);
+        form.next_field();
+
+        assert_eq!(
+            walk(&mut form),
+            vec![
+                GoalField::Interest,
+                GoalField::Name,
+                GoalField::Date,
+                GoalField::Floating
+            ],
+            "Tab walks past the target and the tax flag"
+        );
+    }
+
+    /// The base is suspended rather than erased: the Target field is
+    /// unreachable while the flag is on, so what it holds is what the goal
+    /// was funded towards, and turning the flag back off has to find it
+    /// still there.
+    #[test]
+    fn a_floating_goal_commits_the_flag_and_keeps_the_base_it_opened_with() {
+        let mut form = taxable("Brokerage", Cents(100_000));
+        walk_until!(form.focus == GoalField::Floating, form.next_field());
+        form.choice(Step::NEXT);
+
+        let edit = form.commit().unwrap();
+        assert!(edit.floating);
+        assert_eq!(edit.base_cents, Cents(100_000));
+    }
+
+    /// The Target field is unreachable while the flag is on, so what it holds
+    /// is a figure the form cannot always read back: an imported goal's base
+    /// carries whatever cents the sheet had, and `parse_whole_amount` refuses
+    /// those on purpose. Falling back to zero there would erase the figure the
+    /// goal was funded towards on an edit that never touched it.
+    #[test]
+    fn a_floating_goal_keeps_a_base_the_target_field_cannot_parse() {
+        let mut form = taxable("Brokerage", Cents(100_050));
+        assert_eq!(form.display(GoalField::Target).plain_text(), "1,000.50");
+        assert!(
+            form.commit().is_err(),
+            "the field is refused while it is still reachable"
+        );
+
+        walk_until!(form.focus == GoalField::Floating, form.next_field());
+        form.choice(Step::NEXT);
+
+        assert_eq!(form.commit().unwrap().base_cents, Cents(100_050));
+    }
+
+    /// The one unparseable Target a floating goal can reach: a goal typed
+    /// from scratch, where nothing has been typed into a field the form no
+    /// longer offers. Zero is what an empty field means, and refusing the
+    /// commit over it would make the flag unusable on `n`.
+    #[test]
+    fn a_floating_goal_typed_from_scratch_commits_a_zero_base() {
+        let mut form = GoalForm::add(
+            Account::named(&accounts(), AccountId(1)),
+            Some(BasisPoints(625)),
+            today(),
+        );
+        typed_goal(&mut form, GoalField::Name, "Brokerage");
+        walk_until!(form.focus == GoalField::Floating, form.next_field());
+        form.choice(Step::NEXT);
+
+        let edit = form.commit().unwrap();
+        assert!(edit.floating);
+        assert_eq!(edit.base_cents, Cents::ZERO);
+    }
+
+    /// Nothing about a floating goal spends the sales tax rate, so the
+    /// refusal that guards a stored base does not fire: the flag beside it is
+    /// suspended, not spent, and `crate::goal::target` reads floating first
+    /// for the same reason.
+    #[test]
+    fn a_floating_goal_is_not_refused_for_want_of_a_tax_rate() {
+        let mut form = GoalForm::new(
+            GoalId(7),
+            "Brokerage",
+            Cents(100_000),
+            None,
+            true,
+            true,
+            false,
+            None,
+            today(),
+        );
+        assert!(form.commit().is_err(), "taxed with no rate is refused");
+
+        walk_until!(form.focus == GoalField::Floating, form.next_field());
+        form.choice(Step::NEXT);
+
+        let edit = form.commit().unwrap();
+        assert!(edit.floating);
+        assert!(edit.taxed, "the flag is suspended, not cleared");
+    }
+
+    /// Opening a floating goal with the selector off would fix it to the base
+    /// it has been ignoring, on an edit made for the name.
+    #[test]
+    fn a_form_opened_on_a_floating_goal_opens_with_the_selector_on() {
+        let mut form = GoalForm::new(
+            GoalId(7),
+            "Brokerage",
+            Cents(100_000),
+            None,
+            true,
+            false,
+            true,
+            None,
+            today(),
+        );
+        assert_eq!(form.display(GoalField::Floating).plain_text(), "yes");
+
+        typed_goal(&mut form, GoalField::Name, "!");
+        assert!(form.commit().unwrap().floating);
+    }
+
+    /// Like every other flag on the form: nothing has told it otherwise yet.
+    #[test]
+    fn a_goal_typed_from_scratch_does_not_float() {
+        let form = GoalForm::add(
+            Account::named(&accounts(), AccountId(1)),
+            Some(BasisPoints(625)),
+            today(),
+        );
+        assert_eq!(form.display(GoalField::Floating).plain_text(), "no");
     }
 
     fn siblings() -> Vec<(GoalId, String)> {
@@ -1568,6 +1806,7 @@ mod tests {
             Some(day(2026, 12, 31)),
             true,
             false,
+            false,
             None,
             today(),
         );
@@ -1593,6 +1832,7 @@ mod tests {
             Cents(1_500_000),
             None,
             true,
+            false,
             false,
             None,
             today(),

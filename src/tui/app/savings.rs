@@ -142,6 +142,7 @@ impl App {
             row.goal_date,
             row.interest_eligible,
             row.taxed,
+            row.floating,
             setting::get(&self.db, key::TAX_RATE)?,
             self.today,
         )));
@@ -175,6 +176,7 @@ impl App {
                         interest_eligible: edit.interest_eligible,
                         sort: goal::next_sort(&self.db, container)?,
                         taxed: edit.taxed,
+                        floating: edit.floating,
                     },
                 )?;
                 self.status = format!("created {}", crate::demo::text(&edit.name));
@@ -305,7 +307,7 @@ mod tests {
     use crate::db::goal;
     use crate::money::Cents;
     use crate::rate::Percent;
-    use crate::test_support::day;
+    use crate::test_support::{day, walk_until};
     use crate::tui::app::Screen;
     use crate::tui::app::test_support::*;
     use crate::tui::goal_form;
@@ -369,6 +371,7 @@ mod tests {
                     interest_eligible: true,
                     sort: i as i64,
                     taxed: false,
+                    floating: false,
                 },
             )
             .unwrap();
@@ -825,6 +828,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 0,
                 taxed: true,
+                floating: false,
             },
         )
         .unwrap();
@@ -928,6 +932,15 @@ mod tests {
         assert_eq!(app.savings.rows().len(), 2);
     }
 
+    /// The goal form the app has open, for a test that has to walk its
+    /// fields through the app's own keys.
+    fn app_goal_form(app: &App) -> &goal_form::GoalForm {
+        match &app.modal {
+            Some(Modal::Goal(form)) => form,
+            _ => panic!("no goal form is open"),
+        }
+    }
+
     /// `n` is a free-form goal: a name, a target and a date, in the container
     /// the `Tab` filter names. Creating goals *from* recurring goal entries is
     /// `s` on screen 7, over on the table those entries live in.
@@ -978,6 +991,34 @@ mod tests {
             app.savings.default_container().unwrap(),
             "the new goal landed outside the container the screen defaults to"
         );
+    }
+
+    /// `n` and `e` share a form, so they must share every field of it. The
+    /// flag is the one that decides what the goal's target *is*, so a create
+    /// path dropping it would make a floating goal creatable only by making
+    /// one and then editing it.
+    #[test]
+    fn a_goal_created_floating_arrives_floating_and_reads_full() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('n'));
+        type_str(&mut app, "Brokerage");
+        walk_until!(
+            app_goal_form(&app).focus == goal_form::GoalField::Floating,
+            press(&mut app, KeyCode::Tab)
+        );
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "the form stayed open");
+        let rows = app.savings.rows();
+        let row = rows
+            .iter()
+            .find(|r| r.name == "Brokerage")
+            .expect("the new goal is not on the screen");
+        assert!(row.floating);
+        assert_eq!(row.percent, Some(Percent(100)));
+        assert_eq!(row.goal, Cents::ZERO, "a goal nothing has been put in yet");
     }
 
     /// The same guard `A` and `i` have: with no container there is nowhere for

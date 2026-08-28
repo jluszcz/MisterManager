@@ -276,8 +276,10 @@ pub fn import(
                 // The sheet's goal column holds whatever the owner typed, tax
                 // included where they applied it, and carries no flag beside
                 // it. An imported goal therefore arrives holding its target,
-                // which is what untaxed means.
+                // which is what untaxed means -- and holding one at all,
+                // which is what not floating means.
                 taxed: false,
+                floating: false,
             },
         )?;
         roth.offer(id, &name)?;
@@ -308,6 +310,7 @@ pub fn import(
                 interest_eligible: eligible,
                 sort: report.buckets as i64,
                 taxed: false,
+                floating: false,
             },
         )?;
         emergency.offer(id, &b.name)?;

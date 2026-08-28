@@ -514,6 +514,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 0,
                 taxed: true,
+                floating: false,
             },
         )
         .unwrap();
@@ -569,6 +570,7 @@ mod tests {
                 interest_eligible: true,
                 sort: 0,
                 taxed: false,
+                floating: false,
             },
         )
         .unwrap();
