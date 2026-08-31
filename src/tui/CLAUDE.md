@@ -733,6 +733,17 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     text once rather than joined to itself, and the comparison folds case the way
     `account::by_code` and the index under it do, so `CHK — Chk` is the same word said twice
     too. What the collapsed cell draws is the name, the half the owner typed.
+  - **Both of the two that draw a whole account widen to `Everyday — Cash` when their own
+    spelling names more than one account in the list they were handed.** `Account::distinctly` is
+    the one rule and `coded` and `labelled` both go through it; a screen still chooses which half
+    of an account it shows, but whether that half says *which* account is not the screen's to get
+    wrong. The fallback always separates them, and `UNIQUE (code, kind)` is why: two accounts one
+    code cannot tell apart share that code, so they differ in kind, and two sharing a name and a
+    kind differ in code and never collide in the first place. Reachable on the one screen whose
+    list mixes both kinds — Recurring Transactions and its account selector — and a no-op on
+    every list of one kind, which is every other caller. The widened text stays one segment, for
+    the reason the collapse above is one: the halves name one account between them, and splitting
+    the kind off would leave it reading as chrome beside a colored name.
   - **`Label` is what lets a title carry a tint.** A title cannot be a `String` and be colored,
     and it cannot be a ratatui `Line` because view-state types hold no ratatui. So it is a
     sequence of plain runs and `Account`s: `Savings::title`, `Ledger::title`, `Picker::title`,
@@ -995,6 +1006,14 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   title is a chain of filter terms, and the code is the tighter one. Widening a name column is
   still paid for out of another column on the same screen, so the width tests are the guard — see
   *How wide a screen is* above.
+  - **Which is why screen 8's `Acct` column is the one column in the app whose width is derived
+    from its own content.** A code is not the only thing it holds: this is the one list that mixes
+    both kinds, so a code both kinds hold falls back to `Everyday — Cash`, and a width chosen for
+    a code would truncate exactly the label that exists to say more than one. `RecurringTxns::acct_width`
+    is that derivation — the widest label drawn, or `ACCT_HEADER`, whichever is longer. `Description`
+    is still the screen's one `Constraint::Min`, so the widening is paid for there and out of
+    nothing else, and `a_widened_account_column_is_drawn_whole_at_the_minimum_width` is what holds
+    that up at `MIN_WIDTH`.
 - **A ledger row may have no description, and `description::render` is what draws one that does
   not.** A cash withdrawal, or a card charge whose merchant is on the receipt and nowhere worth
   retyping, is worth having for its amount alone — so `TxnForm::commit` accepts a blank, and a form

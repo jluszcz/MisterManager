@@ -799,7 +799,7 @@ impl TxnForm {
                 Label::from(crate::demo::text(self.description.value()).into_owned())
             }
             TxnField::Account => match self.accounts.get(self.account) {
-                Some(a) => Label::default().account(Account::labelled(a)),
+                Some(a) => Label::default().account(Account::labelled(&self.accounts, a.id)),
                 None => Label::default(),
             },
         }
@@ -1223,7 +1223,7 @@ impl TransferForm {
 
     pub fn display(&self, field: TransferField) -> Label {
         let account = |list: &[account::Account], i: usize| match list.get(i) {
-            Some(a) => Label::default().account(Account::labelled(a)),
+            Some(a) => Label::default().account(Account::labelled(list, a.id)),
             None => Label::default(),
         };
         match field {

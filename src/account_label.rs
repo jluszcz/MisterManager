@@ -44,8 +44,11 @@ impl Account {
     /// `CHK` -- Recurring Transactions, whose other columns pin a row down
     /// already, so the code alone says which account and reads better tight
     /// than padded. Also the ledger title, whose account is a filter term.
+    ///
+    /// `Everyday — Cash` where the code names more than one account in the
+    /// list, under the rule [`Account::distinctly`] states.
     pub fn coded(accounts: &[account::Account], id: AccountId) -> Account {
-        Account::look_up(accounts, id, |a| a.code.as_str().to_string())
+        Account::distinctly(accounts, id, |a| a.code.as_str().to_string())
     }
 
     /// `CHK — Everyday` -- the three form selectors, which have a whole
@@ -65,18 +68,20 @@ impl Account {
     /// under it do: `CHK` and `Chk` are one code as far as an import's match
     /// is concerned, so `CHK — Chk` is the same word said twice. The half
     /// drawn is then the *name*, since that is the one the owner typed.
-    pub fn labelled(account: &account::Account) -> Account {
-        let code = account.code.as_str();
-        let name = account.name.as_str();
-        Account {
-            id: account.id,
-            text: if code.eq_ignore_ascii_case(name) {
+    /// `Everyday — Cash` where both halves together still name more than one
+    /// account in the list, under the rule [`Account::distinctly`] states.
+    /// The collapse above is what makes that reachable: a freshly imported
+    /// pair sharing a code is a pair sharing this label too.
+    pub fn labelled(accounts: &[account::Account], id: AccountId) -> Account {
+        Account::distinctly(accounts, id, |a| {
+            let code = a.code.as_str();
+            let name = a.name.as_str();
+            if code.eq_ignore_ascii_case(name) {
                 name.to_string()
             } else {
                 format!("{code} — {name}")
-            },
-            color: account.color,
-        }
+            }
+        })
     }
 
     /// An account whose row the caller already has -- the transfers a payday
@@ -132,6 +137,46 @@ impl Account {
     #[cfg(test)]
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// [`Account::look_up`], with the text widened to `Name — Kind` when
+    /// another account in the list would draw the very same thing.
+    ///
+    /// The fallback always separates them, and `UNIQUE (code, kind)` is why:
+    /// two accounts one code cannot tell apart share that code, so they
+    /// differ in kind. Two that share a name and a kind differ in code, and
+    /// so never collide here in the first place.
+    ///
+    /// One rule over both spellings rather than a third constructor beside
+    /// them. Which half of an account a screen shows stays the screen's
+    /// business; whether that half says which account is not, and the screen
+    /// that got it wrong is the one screen whose list mixes both kinds.
+    ///
+    /// The widened text stays one segment, for the reason [`Account::labelled`]
+    /// gives about its own two halves: they name one account between them, and
+    /// splitting the kind off would leave it reading as chrome beside a
+    /// colored name.
+    fn distinctly(
+        accounts: &[account::Account],
+        id: AccountId,
+        text: impl Fn(&account::Account) -> String,
+    ) -> Account {
+        let drawn = Account::look_up(accounts, id, &text);
+        let Some(row) = accounts.iter().find(|a| a.id == id) else {
+            return drawn;
+        };
+        // Folded, the way `account::by_code` and the index under it fold: a
+        // code retyped in another case is one code everywhere else.
+        let shared = accounts
+            .iter()
+            .any(|a| a.id != id && text(a).eq_ignore_ascii_case(&drawn.text));
+        match shared {
+            true => Account {
+                text: format!("{} — {}", row.name.as_str(), row.kind.label()),
+                ..drawn
+            },
+            false => drawn,
+        }
     }
 
     fn look_up(
@@ -256,7 +301,7 @@ impl From<String> for Label {
 mod tests {
     use super::*;
     use crate::db::account::{AccountColor, Group, Kind};
-    use crate::test_support::cash;
+    use crate::test_support::{cash, credit};
 
     fn account_row(
         id: i64,
@@ -339,7 +384,10 @@ mod tests {
     /// code reading as chrome in front of a colored name.
     #[test]
     fn a_selectors_label_shows_the_code_and_the_name_as_one_account() {
-        assert_eq!(Account::labelled(&accounts()[0]).text(), "CHK — Everyday");
+        assert_eq!(
+            Account::labelled(&accounts(), AccountId(1)).text(),
+            "CHK — Everyday"
+        );
     }
 
     /// The state every account is imported in: `name = code`, until the owner
@@ -347,9 +395,9 @@ mod tests {
     /// it once rather than joining it to itself.
     #[test]
     fn a_selectors_label_says_a_name_that_is_still_its_code_once() {
-        let mut unnamed = accounts()[0].clone();
-        unnamed.name = unnamed.code.as_str().into();
-        assert_eq!(Account::labelled(&unnamed).text(), "CHK");
+        let mut all = accounts();
+        all[0].name = all[0].code.as_str().into();
+        assert_eq!(Account::labelled(&all, AccountId(1)).text(), "CHK");
     }
 
     /// A code and a name differing only in case are one code everywhere else
@@ -358,9 +406,69 @@ mod tests {
     /// half the owner typed.
     #[test]
     fn a_selectors_label_says_a_name_that_only_cases_its_code_differently_once() {
-        let mut restyled = accounts()[0].clone();
-        restyled.name = "Chk".into();
-        assert_eq!(Account::labelled(&restyled).text(), "Chk");
+        let mut all = accounts();
+        all[0].name = "Chk".into();
+        assert_eq!(Account::labelled(&all, AccountId(1)).text(), "Chk");
+    }
+
+    /// The Recurring Transactions screen is the one list that mixes both
+    /// kinds, and `UNIQUE (code, kind)` is per kind -- so one code can name
+    /// two rows on it. When it does, neither is drawn by the code they share.
+    #[test]
+    fn a_code_two_kinds_share_draws_the_name_and_the_kind_instead() {
+        let all = vec![cash(1, "CHK"), credit(2, "CHK")];
+        assert_eq!(Account::coded(&all, AccountId(1)).text(), "Everyday — Cash");
+        assert_eq!(
+            Account::coded(&all, AccountId(2)).text(),
+            "Everyday Card — Credit"
+        );
+    }
+
+    /// The widening is per account, not per list: a code no other account
+    /// holds is still the tightest thing that names its row.
+    #[test]
+    fn a_code_only_one_account_holds_is_still_drawn_alone() {
+        let all = vec![cash(1, "CHK"), credit(2, "CC1")];
+        assert_eq!(Account::coded(&all, AccountId(1)).text(), "CHK");
+        assert_eq!(Account::coded(&all, AccountId(2)).text(), "CC1");
+    }
+
+    /// Two accounts a code cannot tell apart share that code, and a shared
+    /// code means differing kinds -- so the kind always separates them.
+    #[test]
+    fn a_code_two_kinds_share_case_insensitively_is_still_a_shared_code() {
+        let restyled = account::Account {
+            code: "chk".into(),
+            ..credit(2, "CHK")
+        };
+        let all = vec![cash(1, "CHK"), restyled];
+        assert_eq!(Account::coded(&all, AccountId(1)).text(), "Everyday — Cash");
+    }
+
+    /// The state every account is imported in is the state the collapse in
+    /// `labelled` hides: `name = code` on both rows leaves one word naming
+    /// two accounts, which is the whole reason a selector spanning both kinds
+    /// cannot stop at the code and the name.
+    #[test]
+    fn a_selectors_label_two_kinds_would_share_draws_the_name_and_the_kind_instead() {
+        let unnamed = |a: account::Account| account::Account {
+            name: a.code.as_str().into(),
+            ..a
+        };
+        let all = vec![unnamed(cash(1, "CHK")), unnamed(credit(2, "CHK"))];
+        assert_eq!(Account::labelled(&all, AccountId(1)).text(), "CHK — Cash");
+        assert_eq!(Account::labelled(&all, AccountId(2)).text(), "CHK — Credit");
+    }
+
+    /// Two accounts one code names are still told apart by their names, and
+    /// a selector with the width for both halves says so without the kind.
+    #[test]
+    fn a_selectors_label_no_other_account_would_draw_is_left_alone() {
+        let all = vec![cash(1, "CHK"), credit(2, "CHK")];
+        assert_eq!(
+            Account::labelled(&all, AccountId(1)).text(),
+            "CHK — Everyday"
+        );
     }
 
     /// An id with no account is a corrupt row, not a reason to stop drawing

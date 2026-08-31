@@ -18,13 +18,21 @@ use anyhow::{Result, ensure};
 use chrono::NaiveDate;
 use std::collections::HashMap;
 
+/// What the Account column is headed, and what [`RecurringTxns::acct_width`]
+/// measures against -- one string, so the width cannot be computed for a
+/// header the table does not draw.
+const ACCT_HEADER: &str = "Acct";
+
 /// One recurring transaction as the screen shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     pub recurring_txn_id: RecurringTxnId,
     pub description: String,
     /// The account this row belongs to, as the Account column shows it: its
-    /// code, since the other columns pin the row down already.
+    /// code, since the other columns pin the row down already -- or its name
+    /// and kind, where the code alone names two of them. This is the one
+    /// screen whose list mixes both kinds, so it is the one screen where
+    /// `UNIQUE (code, kind)` leaves a code naming more than one row.
     pub account: super::Account,
     pub cents: Cents,
     pub cadence: Cadence,
@@ -92,6 +100,23 @@ impl RecurringTxns {
 
     pub fn title(&self) -> String {
         format!("Recurring Transactions · {}", self.rows.len())
+    }
+
+    /// How wide the Account column has to be: its header, or the widest label
+    /// drawn under it.
+    ///
+    /// Derived rather than fixed, because a code is not the only thing that
+    /// column holds. A row whose code names two accounts falls back to
+    /// `Name — Kind`, and a width chosen for a code would truncate exactly
+    /// the label that exists to say more than one.
+    pub fn acct_width(&self) -> u16 {
+        let width = |text: &str| text.chars().count();
+        self.rows
+            .iter()
+            .map(|r| r.account.render_with(|text, _| width(text)))
+            .chain(std::iter::once(width(ACCT_HEADER)))
+            .max()
+            .unwrap_or_else(|| width(ACCT_HEADER)) as u16
     }
 }
 
@@ -233,7 +258,7 @@ impl RecurringTxnForm {
                     .display(self.focus == RecurringTxnField::Horizon),
             ),
             RecurringTxnField::Account => match self.accounts.get(self.account) {
-                Some(a) => Label::default().account(super::Account::labelled(a)),
+                Some(a) => Label::default().account(super::Account::labelled(&self.accounts, a.id)),
                 None => Label::default(),
             },
             RecurringTxnField::Cadence => Label::from(Cadence::ALL[self.cadence].as_str()),
@@ -384,7 +409,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> Vie
     let header = TableRow::new(vec![
         Cell::from(" "),
         Cell::from("Description"),
-        Cell::from("Acct"),
+        Cell::from(ACCT_HEADER),
         right_header("Amount"),
         Cell::from("Cadence"),
         Cell::from("Anchor"),
@@ -395,7 +420,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> Vie
     let widths = [
         Constraint::Length(1),
         Constraint::Min(16),
-        Constraint::Length(5),
+        Constraint::Length(list.acct_width()),
         Constraint::Length(12),
         Constraint::Length(9),
         Constraint::Length(11),
@@ -418,7 +443,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> Vie
 mod tests {
     use super::*;
     use crate::db::AccountId;
-    use crate::test_support::{cash, day, walk_until};
+    use crate::test_support::{cash, credit, day, walk_until};
     use crate::tui::MIN_WIDTH;
     use crate::tui::cursor::Scroll;
     use crate::tui::form::{backspace_key, char_key};
@@ -497,6 +522,40 @@ mod tests {
     fn each_row_names_its_rules_account_by_code() {
         let list = screen();
         assert!(list.rows().iter().all(|r| r.account.text() == "CHK"));
+    }
+
+    /// This is the one list that mixes both kinds, so it is the one screen
+    /// where a code can name two rows -- and neither row may be drawn by the
+    /// code they share.
+    #[test]
+    fn a_rule_on_a_code_both_kinds_hold_is_named_by_its_kind_instead() {
+        let mut list = RecurringTxns::new(vec![cash(1, "CHK"), credit(2, "CHK")]);
+        list.set_recurring_txns(
+            vec![recurring_txn(1, "Salary", 500_000, Cadence::Biweekly, true)],
+            HashMap::new(),
+            HashMap::new(),
+        );
+        assert_eq!(list.rows()[0].account.text(), "Everyday — Cash");
+    }
+
+    /// The widened label says less than the code did if the column truncates
+    /// it, so the column is as wide as the widest thing drawn in it.
+    #[test]
+    fn the_account_column_widens_to_fit_a_label_a_code_could_not_carry() {
+        let mut list = RecurringTxns::new(vec![cash(1, "CHK"), credit(2, "CHK")]);
+        list.set_recurring_txns(
+            vec![recurring_txn(1, "Salary", 500_000, Cadence::Biweekly, true)],
+            HashMap::new(),
+            HashMap::new(),
+        );
+        assert_eq!(list.acct_width(), "Everyday — Cash".chars().count() as u16);
+    }
+
+    /// No code names two accounts here, so every row is drawn by its code and
+    /// the header is the widest thing in the column.
+    #[test]
+    fn the_account_column_is_no_wider_than_its_header_when_no_code_is_shared() {
+        assert_eq!(screen().acct_width(), "Acct".chars().count() as u16);
     }
 
     /// An account id with no account is a corrupt row, not a reason to stop
@@ -1016,8 +1075,9 @@ mod tests {
     /// table's `row_highlight_style` is patched over the row *after* the
     /// cells draw -- so `REVERSED` used to turn each tinted cell's padding
     /// into a solid block of background the full width of its column. `Acct`
-    /// is five wide holding three characters and `Amount` twelve holding
-    /// nine, and the two sit side by side here with nothing between them, so
+    /// is its header's four wide holding three characters and `Amount`
+    /// twelve holding nine, and the two sit side by side here with nothing
+    /// between them, so
     /// a negative row read as one wide column of the wrong color. Only
     /// negative rows showed it, because a negative amount is the only figure
     /// in that column carrying a foreground at all.
@@ -1108,5 +1168,25 @@ mod tests {
         );
         assert_eq!(header[2], row[2], "Amount over {:?}", lines[2]);
         assert_eq!(header[6], row[6], "Rows over {:?}", lines[2]);
+    }
+
+    /// The widest this screen's `Acct` column goes: a code both kinds hold,
+    /// so both rows fall back to a name and a kind. Widening a column is
+    /// paid for out of `Description`, the one `Min` on the screen, and the
+    /// right-aligned columns lose their *leading* characters when they are
+    /// cut -- a wrong figure rather than a visible ellipsis.
+    #[test]
+    fn a_widened_account_column_is_drawn_whole_at_the_minimum_width() {
+        let mut list = RecurringTxns::new(vec![cash(1, "CHK"), credit(2, "CHK")]);
+        list.set_recurring_txns(
+            vec![recurring_txn(1, "Salary", 500_000, Cadence::Biweekly, true)],
+            HashMap::from([(RecurringTxnId(1), 9)]),
+            HashMap::from([(RecurringTxnId(1), day(2026, 12, 18))]),
+        );
+        let lines = drawn(&list);
+        assert!(lines[2].contains("Everyday — Cash"), "{:?}", lines[2]);
+        let header = super::super::ends_in_order(&lines[1], &["Amount", "Rows"]);
+        let row = super::super::ends_in_order(&lines[2], &["5,000.00", "9"]);
+        assert_eq!(header, row, "{:?}", lines[2]);
     }
 }

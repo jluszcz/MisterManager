@@ -382,7 +382,7 @@ fn render_table(
     viewport
 }
 
-/// Where each of `labels` ends in `line`, matched left to right.
+/// The *column* each of `labels` ends at in `line`, matched left to right.
 ///
 /// Sequential rather than independent, so a label that also occurs inside a
 /// later one cannot match the wrong column -- the Savings header carries
@@ -391,6 +391,12 @@ fn render_table(
 ///
 /// The header alignment tests compare these against the same reading of a
 /// data row: a right-aligned column and its header end in the same place.
+///
+/// Columns rather than bytes, for the reason [`column_of`] gives: the border
+/// `│` is three bytes and one column, and so is the `—` a widened account
+/// label carries. A header holding neither and a row holding one end in the
+/// same column and two bytes apart, which is a real alignment reported as a
+/// failure.
 #[cfg(test)]
 fn ends_in_order(line: &str, labels: &[&str]) -> Vec<usize> {
     let mut at = 0;
@@ -400,9 +406,9 @@ fn ends_in_order(line: &str, labels: &[&str]) -> Vec<usize> {
             let start = at
                 + line[at..]
                     .find(label)
-                    .unwrap_or_else(|| panic!("no {label:?} after column {at} of {line:?}"));
+                    .unwrap_or_else(|| panic!("no {label:?} past byte {at} of {line:?}"));
             at = start + label.len();
-            at
+            line[..at].chars().count()
         })
         .collect()
 }
