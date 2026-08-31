@@ -162,7 +162,7 @@ mod tests {
             ("account_label.rs", "|a| a.code.as_str().to_string()"),
             ("account_label.rs", "let code = a.code.as_str();"),
             ("account_label.rs", "let name = a.name.as_str();"),
-            ("account_label.rs", "format!(\"{} — {}\", row.name.as_str()"),
+            ("account_label.rs", "elided(row.name.as_str())"),
             // `container_names`, which names the plug's containers in
             // `diagnose`'s text report, and the `diagnose` header above it
             // that counts a container's goals. Both are prose the Planning

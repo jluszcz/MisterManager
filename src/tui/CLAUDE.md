@@ -1014,6 +1014,14 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     is still the screen's one `Constraint::Min`, so the widening is paid for there and out of
     nothing else, and `a_widened_account_column_is_drawn_whole_at_the_minimum_width` is what holds
     that up at `MIN_WIDTH`.
+    - **What bounds it is `account_label::NAME_CAP`, and the name is what gives way rather than the
+      kind.** A name is owner-entered and bounded by nothing, so a long enough one would outgrow
+      the slack `Description` has to give and be truncated — from the right, taking the kind, which
+      is the whole of what the widening adds and would leave the two rows sharing a prefix again.
+      So the name half elides with a `…` instead and the suffix is whole however long the name is.
+      That is the one place in the app where a cell shortens its own text rather than letting the
+      column do it, and it is because this cell is the only one whose *last* characters are what it
+      is drawn for.
 - **A ledger row may have no description, and `description::render` is what draws one that does
   not.** A cash withdrawal, or a card charge whose merchant is on the receipt and nowhere worth
   retyping, is worth having for its amount alone — so `TxnForm::commit` accepts a blank, and a form

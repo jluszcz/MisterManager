@@ -23,6 +23,21 @@
 use crate::db::AccountId;
 use crate::db::account::{self, AccountColor};
 
+/// How many characters of a name a widened label spends before it elides.
+///
+/// A name is owner-entered and bounded by nothing, and a column truncates
+/// from the right -- so a long enough name would push the kind off the end of
+/// the very label the kind is the point of, leaving two rows sharing a prefix
+/// and nothing else. Eliding the name instead keeps the suffix whole however
+/// long the name is.
+///
+/// The number is what leaves the kind, and every other column, whole on the
+/// one screen that draws a widened label at `tui::MIN_WIDTH`;
+/// `a_widened_account_column_keeps_its_kind_when_the_name_is_far_too_long`
+/// is the guard, and it is a screen's test rather than this module's because
+/// it is a screen that has the width.
+const NAME_CAP: usize = 24;
+
 /// An account as a screen shows it: which account, what text, what color.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Account {
@@ -172,7 +187,7 @@ impl Account {
             .any(|a| a.id != id && text(a).eq_ignore_ascii_case(&drawn.text));
         match shared {
             true => Account {
-                text: format!("{} — {}", row.name.as_str(), row.kind.label()),
+                text: format!("{} — {}", elided(row.name.as_str()), row.kind.label()),
                 ..drawn
             },
             false => drawn,
@@ -196,6 +211,21 @@ impl Account {
                 color: None,
             },
         }
+    }
+}
+
+/// A name cut to [`NAME_CAP`] characters, the last of them a `…`.
+///
+/// Characters rather than bytes: the cut lands inside a name the owner typed,
+/// and a byte index would land inside one of its characters.
+fn elided(name: &str) -> String {
+    match name.chars().count() > NAME_CAP {
+        true => name
+            .chars()
+            .take(NAME_CAP - 1)
+            .chain(std::iter::once('…'))
+            .collect(),
+        false => name.to_string(),
     }
 }
 
@@ -458,6 +488,29 @@ mod tests {
         let all = vec![unnamed(cash(1, "CHK")), unnamed(credit(2, "CHK"))];
         assert_eq!(Account::labelled(&all, AccountId(1)).text(), "CHK — Cash");
         assert_eq!(Account::labelled(&all, AccountId(2)).text(), "CHK — Credit");
+    }
+
+    /// The kind is the half that says which of the two an account is, so it
+    /// is the half that has to survive a name too long for the column. Left
+    /// to the column's own truncation the suffix goes first, and two rows
+    /// sharing a long name come back to sharing a prefix and nothing else --
+    /// the state the widening exists to leave.
+    #[test]
+    fn a_widened_label_elides_the_name_rather_than_losing_the_kind() {
+        let all = vec![
+            account::Account {
+                name: "Everyday Household Spending And Bills".into(),
+                ..cash(1, "CHK")
+            },
+            credit(2, "CHK"),
+        ];
+        let text = Account::coded(&all, AccountId(1)).text().to_string();
+        let (name, kind) = text
+            .rsplit_once(" — ")
+            .unwrap_or_else(|| panic!("no kind on {text:?}"));
+        assert_eq!(kind, "Cash");
+        assert_eq!(name.chars().count(), NAME_CAP);
+        assert!(name.ends_with('…'), "{name:?}");
     }
 
     /// Two accounts one code names are still told apart by their names, and

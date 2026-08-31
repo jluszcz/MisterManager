@@ -111,12 +111,9 @@ impl RecurringTxns {
     /// the label that exists to say more than one.
     pub fn acct_width(&self) -> u16 {
         let width = |text: &str| text.chars().count();
-        self.rows
-            .iter()
-            .map(|r| r.account.render_with(|text, _| width(text)))
-            .chain(std::iter::once(width(ACCT_HEADER)))
-            .max()
-            .unwrap_or_else(|| width(ACCT_HEADER)) as u16
+        self.rows.iter().fold(width(ACCT_HEADER), |widest, r| {
+            widest.max(r.account.render_with(|text, _| width(text)))
+        }) as u16
     }
 }
 
@@ -1168,6 +1165,32 @@ mod tests {
         );
         assert_eq!(header[2], row[2], "Amount over {:?}", lines[2]);
         assert_eq!(header[6], row[6], "Rows over {:?}", lines[2]);
+    }
+
+    /// The finding the fixed width hid: a name is owner-entered and bounded
+    /// by nothing, so the widened label could outgrow the slack
+    /// `Description` has to give and be truncated from the right -- taking
+    /// the kind, which is the whole of what the widening adds, and leaving
+    /// two rows sharing a prefix again.
+    #[test]
+    fn a_widened_account_column_keeps_its_kind_when_the_name_is_far_too_long() {
+        let mut list = RecurringTxns::new(vec![
+            Account {
+                name: "Everyday Household Spending And Bills".into(),
+                ..cash(1, "CHK")
+            },
+            credit(2, "CHK"),
+        ]);
+        list.set_recurring_txns(
+            vec![recurring_txn(1, "Salary", 500_000, Cadence::Biweekly, true)],
+            HashMap::from([(RecurringTxnId(1), 9)]),
+            HashMap::from([(RecurringTxnId(1), day(2026, 12, 18))]),
+        );
+        let lines = drawn(&list);
+        assert!(lines[2].contains("… — Cash"), "{:?}", lines[2]);
+        let header = super::super::ends_in_order(&lines[1], &["Amount", "Rows"]);
+        let row = super::super::ends_in_order(&lines[2], &["5,000.00", "9"]);
+        assert_eq!(header, row, "{:?}", lines[2]);
     }
 
     /// The widest this screen's `Acct` column goes: a code both kinds hold,
