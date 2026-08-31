@@ -285,7 +285,7 @@ mod tests {
         );
         // The cached column, which only moves if `reload` refreshes the account
         // list before it re-sets the goals.
-        let cached: Vec<&str> = app
+        let cached: Vec<String> = app
             .savings
             .rows()
             .iter()

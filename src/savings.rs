@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn each_row_names_its_own_goals_container() {
         let rows = rows(goals(), &accounts(), today(), 26).unwrap();
-        let names: Vec<&str> = rows.iter().map(|r| r.container.text()).collect();
+        let names: Vec<String> = rows.iter().map(|r| r.container.text()).collect();
         assert_eq!(names, ["Rainy Day", "Rainy Day", "Rainy Day", "Brokerage"]);
     }
 
