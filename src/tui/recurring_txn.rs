@@ -31,8 +31,10 @@ pub struct Row {
     /// The account this row belongs to, as the Account column shows it: its
     /// code, since the other columns pin the row down already -- or its name
     /// and kind, where the code alone names two of them. This is the one
-    /// screen whose list mixes both kinds, so it is the one screen where
-    /// `UNIQUE (code, kind)` leaves a code naming more than one row.
+    /// *table* that mixes both kinds, so it is the one table where
+    /// `UNIQUE (code, kind)` leaves a code naming more than one row -- the
+    /// transfer form's two selectors are the other place a list spans both,
+    /// and they resolve against each other rather than against a table.
     pub account: super::Account,
     pub cents: Cents,
     pub cadence: Cadence,
@@ -521,7 +523,7 @@ mod tests {
         assert!(list.rows().iter().all(|r| r.account.text() == "CHK"));
     }
 
-    /// This is the one list that mixes both kinds, so it is the one screen
+    /// This is the one table that mixes both kinds, so it is the one table
     /// where a code can name two rows -- and neither row may be drawn by the
     /// code they share.
     #[test]

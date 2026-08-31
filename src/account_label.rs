@@ -22,6 +22,7 @@
 
 use crate::db::AccountId;
 use crate::db::account::{self, AccountColor};
+use std::borrow::Cow;
 
 /// How many characters of a name a widened label spends before it elides.
 ///
@@ -43,6 +44,12 @@ const NAME_CAP: usize = 24;
 pub struct Account {
     id: AccountId,
     text: String,
+    /// The kind a widened label ends in, held here rather than joined into
+    /// `text`, because it is the app's own vocabulary and `text` is not.
+    /// [`Account::render_with`] masks the text and appends this after, so a
+    /// demo scrambles the name the owner typed and leaves `Cash` and
+    /// `Credit` reading as themselves.
+    kind: Option<account::Kind>,
     color: Option<AccountColor>,
 }
 
@@ -111,6 +118,7 @@ impl Account {
         Account {
             id,
             text: text.into(),
+            kind: None,
             color,
         }
     }
@@ -138,11 +146,25 @@ impl Account {
     /// and every sink, so a screen or the report drawing an account through
     /// here draws its pseudonym without asking.
     pub fn render_with<T>(&self, f: impl FnOnce(&str, AccountColor) -> T) -> T {
-        let text = crate::demo::text(&self.text);
+        let text = self.joined(crate::demo::text(&self.text));
         f(
             &text,
             self.color.unwrap_or_else(|| AccountColor::derived(self.id)),
         )
+    }
+
+    /// The text with a widened label's kind on the end of it.
+    ///
+    /// Taken already masked and joined after, which is the whole reason the
+    /// kind is a field rather than part of `text`: `demo::mask::text`
+    /// scrambles every alphanumeric run it is handed, so a `Cash` sitting
+    /// inside the masked string would draw as a pseudoword beside the name
+    /// — and the kind is the whole of what the widening says.
+    fn joined<'a>(&self, text: Cow<'a, str>) -> Cow<'a, str> {
+        match self.kind {
+            Some(kind) => Cow::Owned(format!("{text} — {}", kind.label())),
+            None => text,
+        }
     }
 
     /// The text, for assertions.
@@ -150,8 +172,8 @@ impl Account {
     /// `pub` only in a test build, so it is not a route to an uncolored
     /// account in one that ships.
     #[cfg(test)]
-    pub fn text(&self) -> &str {
-        &self.text
+    pub fn text(&self) -> String {
+        self.joined(Cow::Borrowed(&self.text)).into_owned()
     }
 
     /// [`Account::look_up`], with the text widened to `Name — Kind` when
@@ -164,8 +186,14 @@ impl Account {
     ///
     /// One rule over both spellings rather than a third constructor beside
     /// them. Which half of an account a screen shows stays the screen's
-    /// business; whether that half says which account is not, and the screen
-    /// that got it wrong is the one screen whose list mixes both kinds.
+    /// business; whether that half says which account is not.
+    ///
+    /// Reachable wherever a *list* mixes both kinds, which is the Recurring
+    /// Transactions screen, its account selector, and the transfer form,
+    /// whose two selectors resolve against the union of their lists rather
+    /// than each against its own -- see `TransferForm::spelling` for why
+    /// that union is the collision set and not either list. Every list of
+    /// one kind is a no-op.
     ///
     /// The widened text stays one segment, for the reason [`Account::labelled`]
     /// gives about its own two halves: they name one account between them, and
@@ -187,7 +215,8 @@ impl Account {
             .any(|a| a.id != id && text(a).eq_ignore_ascii_case(&drawn.text));
         match shared {
             true => Account {
-                text: format!("{} — {}", elided(row.name.as_str()), row.kind.label()),
+                text: elided(row.name.as_str()),
+                kind: Some(row.kind),
                 ..drawn
             },
             false => drawn,
@@ -203,11 +232,13 @@ impl Account {
             Some(a) => Account {
                 id,
                 text: text(a),
+                kind: None,
                 color: a.color,
             },
             None => Account {
                 id,
                 text: "?".to_string(),
+                kind: None,
                 color: None,
             },
         }
@@ -488,6 +519,24 @@ mod tests {
         let all = vec![unnamed(cash(1, "CHK")), unnamed(credit(2, "CHK"))];
         assert_eq!(Account::labelled(&all, AccountId(1)).text(), "CHK — Cash");
         assert_eq!(Account::labelled(&all, AccountId(2)).text(), "CHK — Credit");
+    }
+
+    /// The name is the owner's and the kind is the app's own word for what
+    /// the row is, so a demo scrambles the first and leaves the second: a
+    /// widened label ending in a pseudoword says no more than the code it
+    /// replaced.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_a_widened_labels_name_and_leaves_its_kind() {
+        crate::demo::install_with_salt(7);
+        let all = vec![cash(1, "CHK"), credit(2, "CHK")];
+        let drawn = Account::coded(&all, AccountId(1)).render_with(|text, _| text.to_string());
+        let (name, kind) = drawn
+            .rsplit_once(" — ")
+            .unwrap_or_else(|| panic!("no kind on {drawn:?}"));
+        assert_eq!(kind, "Cash");
+        assert_ne!(name, "Everyday");
+        assert_eq!(name.chars().count(), "Everyday".chars().count());
     }
 
     /// The kind is the half that says which of the two an account is, so it

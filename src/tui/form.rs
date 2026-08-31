@@ -1076,6 +1076,13 @@ fn opening_index(accounts: &[account::Account], default: Option<AccountId>) -> u
         .unwrap_or_default()
 }
 
+/// The two selector lists as one, for [`TransferForm::spelling`], which says
+/// why the union rather than either half is what an account is spelled
+/// against.
+fn spelling(from: &[account::Account], to: &[account::Account]) -> Vec<account::Account> {
+    from.iter().chain(to).cloned().collect()
+}
+
 /// Moving money between two accounts. Backs `t` and `p`.
 #[derive(Debug)]
 pub struct TransferForm {
@@ -1088,6 +1095,24 @@ pub struct TransferForm {
     from: usize,
     to_accounts: Vec<account::Account>,
     to: usize,
+    /// The two lists above as one, and the list `display` spells an account
+    /// against.
+    ///
+    /// They are filtered differently: `t` draws its source from cash and its
+    /// destination from every account, and `p` draws them from two lists
+    /// disjoint by kind. So a field resolved against its own list is a modal
+    /// that can spell one account two ways — `CHK` in the cash-only `From`
+    /// and `CHK — Cash` in the mixed `To` — or, under `p`, spell two
+    /// accounts one way, since a code names one account per kind and `p`
+    /// puts one kind in each field. Both are the ambiguity
+    /// `Account::distinctly` exists to remove, arriving through the one door
+    /// it cannot see: the collision set is the list it is handed, and here
+    /// neither list is the set the owner is reading.
+    ///
+    /// A row in both lists is left in rather than deduplicated: `distinctly`
+    /// compares an account against every id but its own, so a second copy of
+    /// the account being spelled is inert.
+    spelling: Vec<account::Account>,
 }
 
 impl TransferForm {
@@ -1138,6 +1163,7 @@ impl TransferForm {
             date,
             amount: Field::default(),
             description: Field::prefilled("Transfer"),
+            spelling: spelling(&cash, &accounts),
             from_accounts: cash,
             from,
             to_accounts: accounts,
@@ -1180,6 +1206,7 @@ impl TransferForm {
             amount: Field::default(),
             description: Field::default(),
             from: opening_index(&cash, default_from),
+            spelling: spelling(&cash, &cards),
             from_accounts: cash,
             to_accounts: cards,
             to: 0,
@@ -1223,7 +1250,9 @@ impl TransferForm {
 
     pub fn display(&self, field: TransferField) -> Label {
         let account = |list: &[account::Account], i: usize| match list.get(i) {
-            Some(a) => Label::default().account(Account::labelled(list, a.id)),
+            // Spelled against both lists, never against the one the field
+            // selects from -- see `TransferForm::spelling`.
+            Some(a) => Label::default().account(Account::labelled(&self.spelling, a.id)),
             None => Label::default(),
         };
         match field {
@@ -1637,7 +1666,7 @@ mod tests {
     use super::*;
     use crate::db::account::Group;
     use crate::db::{AccountId, RecurringTxnId};
-    use crate::test_support::{cash, day, walk_until};
+    use crate::test_support::{cash, credit, day, walk_until};
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::style::Modifier;
 
@@ -2158,6 +2187,47 @@ mod tests {
         let to = form.display(TransferField::To);
         assert_eq!(from.accounts().len(), 1);
         assert_eq!(to.accounts().len(), 1);
+    }
+
+    /// Every account an import has just written is named after its own
+    /// code, which is the state `Account::labelled` collapses to one word --
+    /// so it is the state a code both kinds hold leaves two accounts sharing
+    /// that word.
+    fn imported(a: account::Account) -> account::Account {
+        account::Account {
+            name: a.code.as_str().into(),
+            ..a
+        }
+    }
+
+    /// `t` filters its source to cash and leaves its destination unfiltered,
+    /// so a code both kinds hold collides in `To` and not in `From`.
+    /// Resolved against its own list each, the two lines of one modal spell
+    /// the same account `CHK` and `CHK — Cash`.
+    #[test]
+    fn both_ends_of_a_transfer_spell_one_account_the_same_way() {
+        let all = vec![imported(cash(1, "CHK")), imported(credit(2, "CHK"))];
+        let mut form = TransferForm::transfer(all, DateField::today(today()), None).unwrap();
+        // Onto the source, the one account both selectors can name.
+        walk_until!(form.focus == TransferField::To, form.next_field());
+        form.choice(Step::PREVIOUS);
+        assert_eq!(form.display(TransferField::From).plain_text(), "CHK — Cash");
+        assert_eq!(
+            form.display(TransferField::To).plain_text(),
+            form.display(TransferField::From).plain_text()
+        );
+    }
+
+    /// `p`'s two lists are disjoint by kind, which is the same gap read the
+    /// other way round: neither list holds a collision, so a modal resolving
+    /// each against its own would spell two *different* accounts `CHK` on
+    /// adjacent lines.
+    #[test]
+    fn a_payment_between_a_code_both_kinds_hold_spells_the_two_apart() {
+        let all = vec![imported(cash(1, "CHK")), imported(credit(2, "CHK"))];
+        let form = TransferForm::payment(all, DateField::today(today()), None).unwrap();
+        assert_eq!(form.display(TransferField::From).plain_text(), "CHK — Cash");
+        assert_eq!(form.display(TransferField::To).plain_text(), "CHK — Credit");
     }
 
     #[test]

@@ -272,6 +272,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     A scrambled figure and a pseudonym are each as wide as what they replace — a figure keeps its
     digit count and its punctuation, a pseudonym keeps the name's own length — so a demo draws in
     exactly the widths an ordinary run lays out, and moves no column.
+    - **A string that is part vocabulary and part name is masked in halves, not whole.**
+      `account_label::Account`'s widened `Everyday — Cash` is the case: the name is the owner's and
+      the kind is the app's, so the kind is held in its own field and joined on *after*
+      `render_with` has masked the text. Concatenating first and masking the result is what turns
+      `Cash` into a pseudoword, since the mask scrambles every alphanumeric run it is handed and
+      has no way to tell which of them the owner typed.
     - **The allocation form's amount field is the one field whose text may be either**, so it is the
       one `display(field)` that asks before masking. `/12` is a count and stays; a typed figure goes
       through `demo::typed`. `form::is_share` is the question, beside the `parse_share` that answers
@@ -739,11 +745,27 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     of an account it shows, but whether that half says *which* account is not the screen's to get
     wrong. The fallback always separates them, and `UNIQUE (code, kind)` is why: two accounts one
     code cannot tell apart share that code, so they differ in kind, and two sharing a name and a
-    kind differ in code and never collide in the first place. Reachable on the one screen whose
-    list mixes both kinds — Recurring Transactions and its account selector — and a no-op on
-    every list of one kind, which is every other caller. The widened text stays one segment, for
-    the reason the collapse above is one: the halves name one account between them, and splitting
-    the kind off would leave it reading as chrome beside a colored name.
+    kind differ in code and never collide in the first place. Reachable wherever a *list* mixes
+    both kinds — Recurring Transactions and its account selector, and the transfer form — and a
+    no-op on every list of one kind, which is every other caller. The widened text stays one
+    segment, for the reason the collapse above is one: the halves name one account between them,
+    and splitting the kind off would leave it reading as chrome beside a colored name.
+  - **The transfer form spells both selectors against the union of their two lists, never against
+    the list each selects from.** `t` filters its source to cash and leaves its destination
+    unfiltered; `p` filters the two to kinds disjoint from each other. So neither form's two lists
+    are one collision set, and a field resolved against its own is a modal that spells one account
+    two ways — `CHK` in `t`'s cash-only `From` beside `CHK — Cash` in its mixed `To` — or, under
+    `p`, spells two accounts one way, since a code names one account per kind and `p` puts one
+    kind in each field. `TransferForm::spelling` is that union, built once when the form opens,
+    and it is the only list `display` hands `Account::labelled`. The gap is the one
+    `Account::distinctly` cannot see from where it stands: the collision set is whatever list it
+    is given, and here neither list is the set the owner is reading.
+  - **A widened label's kind never reaches the mask.** `Cash` and `Credit` are the app's own
+    vocabulary, and `demo::mask::text` scrambles every alphanumeric run it is handed — so a kind
+    concatenated into `Account`'s `text` would draw as a pseudoword beside the name, leaving the
+    widened label saying no more than the code it replaced. `Account` holds the kind in its own
+    field instead and `render_with` masks the text and appends the kind after, which is the same
+    split `planning.rs` makes when it draws a `Withdrawal` row's label around `demo::text`.
   - **`Label` is what lets a title carry a tint.** A title cannot be a `String` and be colored,
     and it cannot be a ratatui `Line` because view-state types hold no ratatui. So it is a
     sequence of plain runs and `Account`s: `Savings::title`, `Ledger::title`, `Picker::title`,
