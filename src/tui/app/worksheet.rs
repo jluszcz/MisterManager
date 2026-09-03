@@ -243,7 +243,16 @@ impl App {
             return Ok(());
         };
         let shares = goal::batch_shares(&self.db, batch.id)?;
-        let total: Cents = shares.iter().map(|(_, c)| *c).sum();
+        // What landed, rather than the net. A goal transfer's two legs
+        // cancel, so a net would offer "0.00" as the whole account of what is
+        // about to be deleted -- and on the one batch whose rows are hardest
+        // to reconstruct by hand. Every other kind is all-positive, where the
+        // two readings are the same figure.
+        let total: Cents = shares
+            .iter()
+            .map(|(_, c)| *c)
+            .filter(|c| *c > Cents::ZERO)
+            .sum();
         let label = format!(
             "{} {} · {} goals · {}",
             batch.kind.as_str(),
@@ -623,6 +632,28 @@ mod tests {
         assert!(app.modal.is_none());
         assert_eq!(app.savings.rows()[1].current, before);
         assert!(goal::most_recent_batch(&app.db).unwrap().is_none());
+    }
+
+    /// A goal transfer is the one batch whose legs cancel, so the net is
+    /// zero and describing it that way would offer the owner "$0.00" as the
+    /// whole account of what they are about to delete. What the dialog
+    /// quotes is the money that landed -- unchanged for an all-positive
+    /// batch, which is every other kind.
+    #[test]
+    fn the_undo_dialog_quotes_what_a_transfer_moved_rather_than_its_net() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('t'));
+        type_str(&mut app, "250");
+        press(&mut app, KeyCode::Enter);
+
+        press(&mut app, KeyCode::Char('U'));
+
+        let Some(Modal::Confirm { label, .. }) = &app.modal else {
+            panic!("no confirmation is open: {}", app.status);
+        };
+        assert!(label.ends_with("· 250.00"), "{label}");
     }
 
     /// The confirmation exists because a batch is many rows: anything that is

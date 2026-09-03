@@ -816,6 +816,7 @@ impl App {
             Some(Modal::Allocation(_)) => self.form_key(key, App::commit_allocation),
             Some(Modal::Goal(_)) => self.form_key(key, App::commit_goal),
             Some(Modal::CloseOut(_)) => self.form_key(key, App::commit_close_out),
+            Some(Modal::GoalTransfer(_)) => self.form_key(key, App::commit_goal_transfer),
             Some(Modal::Worksheet(_)) => self.worksheet_key(key),
             Some(Modal::Picker(_)) => self.picker_key(key),
             Some(Modal::Destination(_)) => self.destination_key(key),
@@ -2094,7 +2095,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '4'),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c/K/J/f/Enter goal · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t allocate · n/e/c/K/J/f/Enter goal · U undo"
         );
         assert_eq!(
             footer_of(&mut app, '5'),
@@ -2542,8 +2543,8 @@ mod tests {
             (
                 Topic::Savings,
                 &[
-                    "Tab", "BackTab", "[ ]", "Esc", "/", "a", "A", "i", "e", "c", "n", "K", "J",
-                    "f", "U", "Enter",
+                    "Tab", "BackTab", "[ ]", "Esc", "/", "a", "A", "i", "t", "e", "c", "n", "K",
+                    "J", "f", "U", "Enter",
                 ],
             ),
             (

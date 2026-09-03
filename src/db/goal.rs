@@ -651,6 +651,49 @@ pub fn set_favorite(db: &Db, id: GoalId, favorite: bool) -> Result<()> {
     Ok(())
 }
 
+/// The goal value is moving *out* of, checked: it exists, and it is open.
+///
+/// Both refusals here and in [`open_destination`] land on the status line
+/// verbatim, so the goal names in them are prose a viewer reads. Masked where
+/// the message is built, the way `account::checking`'s ambiguity error is.
+fn open_source(db: &Db, from: GoalId) -> Result<Goal> {
+    let source = get(db, from)?.with_context(|| format!("no goal with id {from}"))?;
+    ensure!(
+        !source.closed,
+        "{:?} is already closed",
+        crate::demo::text(&source.name)
+    );
+    Ok(source)
+}
+
+/// The goal value is moving *into*, checked against where it is coming from.
+///
+/// One reading for both writers: an ending and a transfer differ in what they
+/// move and in whether the source survives, and in nothing about where the
+/// value may land.
+fn open_destination(db: &Db, source: &Goal, to: GoalId) -> Result<Goal> {
+    ensure!(source.id != to, "value cannot move from a goal into itself");
+    let destination = get(db, to)?.with_context(|| format!("no goal with id {to}"))?;
+    // A closed goal is hidden from every listing, so value moved into one
+    // would be money no screen can show. `get` does not filter on `closed`,
+    // so this is the check that keeps the rule true for every caller.
+    ensure!(
+        !destination.closed,
+        "{:?} is closed; pick an open goal or return the value to unallocated",
+        crate::demo::text(&destination.name)
+    );
+    // No cash crosses between containers here, so allowing it would break
+    // both reconciliations at once. Getting money from Rainy Day to Brokerage
+    // is a transfer on the Cash screen, and only then an allocation.
+    ensure!(
+        destination.container_account_id == source.container_account_id,
+        "{:?} and {:?} are in different containers; transfer the cash first",
+        crate::demo::text(&source.name),
+        crate::demo::text(&destination.name)
+    );
+    Ok(destination)
+}
+
 /// End a goal: move its whole balance out and close it.
 ///
 /// `to` is the destination goal, or `None` to return the value to
@@ -658,10 +701,11 @@ pub fn set_favorite(db: &Db, id: GoalId, favorite: bool) -> Result<()> {
 /// they differ only in whether the second allocation is written, so they
 /// share one transaction and one same-container check.
 ///
-/// The amount is the goal's whole balance, never a part of it: a partial move
-/// is two ordinary allocations, and calling it a close-out would leave a goal
-/// closed with money in it. A negative balance is allowed through; refusing it
-/// would leave an overspent goal unclosable.
+/// The amount is the goal's whole balance, never a part of it: calling a
+/// partial move a close-out would leave a goal closed with money in it, and
+/// [`transfer_value`] is the write that moves a part and ends nothing. A
+/// negative balance is allowed through; refusing it would leave an overspent
+/// goal unclosable.
 ///
 /// Both goals must be open. A goal ends once, and value moved into a closed
 /// goal would be money hidden from every listing.
@@ -669,35 +713,9 @@ pub fn set_favorite(db: &Db, id: GoalId, favorite: bool) -> Result<()> {
 /// **Must be called at top level, not inside another [`Db::transaction`].**
 /// Nothing calls it from inside `import::import_all`'s transaction.
 pub fn move_value(db: &Db, from: GoalId, to: Option<GoalId>, date: NaiveDate) -> Result<()> {
-    let source = get(db, from)?.with_context(|| format!("no goal with id {from}"))?;
-    // Each of these three refusals lands on the status line verbatim, so the
-    // goal names in them are prose a viewer reads. Masked where the message
-    // is built, the way `account::checking`'s ambiguity error is.
-    ensure!(
-        !source.closed,
-        "{:?} is already closed",
-        crate::demo::text(&source.name)
-    );
+    let source = open_source(db, from)?;
     if let Some(to) = to {
-        ensure!(from != to, "a close-out needs two different goals");
-        let destination = get(db, to)?.with_context(|| format!("no goal with id {to}"))?;
-        // A closed goal is hidden from every listing, so value moved into one
-        // would be money no screen can show. `get` does not filter on `closed`,
-        // so this is the check that keeps the rule true for every caller.
-        ensure!(
-            !destination.closed,
-            "{:?} is closed; pick an open goal or return the value to unallocated",
-            crate::demo::text(&destination.name)
-        );
-        // No cash crosses between containers here, so allowing it would break
-        // both reconciliations at once. Getting money from Rainy Day to Brokerage
-        // is a transfer on the Cash screen, and only then an allocation.
-        ensure!(
-            destination.container_account_id == source.container_account_id,
-            "{:?} and {:?} are in different containers; transfer the cash first",
-            crate::demo::text(&source.name),
-            crate::demo::text(&destination.name)
-        );
+        open_destination(db, &source, to)?;
     }
     let moved = balance(db, from)?;
     // Plain text: a note is read by a person, like the ones typed by hand.
@@ -712,6 +730,50 @@ pub fn move_value(db: &Db, from: GoalId, to: Option<GoalId>, date: NaiveDate) ->
             insert_allocation(db, to, date, moved, Some(&note), None)?;
         }
         close(db, from)
+    })
+}
+
+/// Move part of a goal's value to another goal in the same container.
+///
+/// The close-out that ends nothing: both goals stay open, and what crosses is
+/// an amount the owner typed rather than the whole balance. Whether the
+/// source is left short is theirs to judge -- an overspent goal is a real
+/// state, the same one [`move_value`] lets through.
+///
+/// Which way the value goes is the destination's to say, so the amount is
+/// positive: a negative one is this same move written backwards, and zero
+/// writes two rows that say nothing.
+///
+/// The pair is one [`BatchKind::Adhoc`] batch, so `U` reverses a fumbled
+/// transfer whole. An ending is deliberately no batch, because an undo could
+/// not reopen the goal it closed; a transfer closes nothing, so nothing here
+/// stands in the way.
+///
+/// **Must be called at top level, not inside another [`Db::transaction`].**
+pub fn transfer_value(
+    db: &Db,
+    from: GoalId,
+    to: GoalId,
+    amount: Cents,
+    date: NaiveDate,
+) -> Result<()> {
+    ensure!(
+        amount > Cents::ZERO,
+        "a transfer moves a positive amount; pick the other goal to send it the other way"
+    );
+    let source = open_source(db, from)?;
+    let destination = open_destination(db, &source, to)?;
+    // Plain text, and each row naming the goal at the other end: these are
+    // read by a person, like the ones typed by hand. Unmasked for the sharper
+    // reason `move_value`'s note gives -- the string is written to the row,
+    // and a pseudonym reaching a write is the one thing a demo must never do.
+    let out = format!("moved to {}", destination.name);
+    let into = format!("moved from {}", source.name);
+    db.transaction(|db| {
+        let batch = insert_batch(db, BatchKind::Adhoc, date)?;
+        insert_allocation(db, from, date, -amount, Some(&out), Some(batch))?;
+        insert_allocation(db, to, date, amount, Some(&into), Some(batch))?;
+        Ok(())
     })
 }
 
@@ -1475,6 +1537,170 @@ mod tests {
             !get(&db, couch).unwrap().unwrap().closed,
             "a refused close-out must not close the goal"
         );
+        assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
+        assert_eq!(balance(&db, rug).unwrap(), Cents::ZERO);
+    }
+
+    /// A transfer is a close-out that does not end anything: value crosses
+    /// between two goals of one container, so no cash moved and the
+    /// reconciliation must not move either. Both goals stay open, which is
+    /// the whole difference from `move_value`.
+    #[test]
+    fn transferring_value_between_goals_leaves_both_open_and_the_excess_unmoved() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
+        insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
+        let before = container_excess(&db, savings).unwrap();
+
+        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16)).unwrap();
+
+        assert_eq!(balance(&db, couch).unwrap(), Cents(35_000));
+        assert_eq!(balance(&db, rug).unwrap(), Cents(25_000));
+        assert!(!get(&db, couch).unwrap().unwrap().closed);
+        assert!(!get(&db, rug).unwrap().unwrap().closed);
+        assert_eq!(container_excess(&db, savings).unwrap(), before);
+    }
+
+    /// The two rows are written together, so they are undone together: `U`
+    /// reaches the most recent batch, and a fumbled amount is one keystroke
+    /// back rather than two hand-corrections in two histories.
+    #[test]
+    fn a_transfer_writes_both_rows_under_one_adhoc_batch() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
+        insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
+
+        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16)).unwrap();
+
+        let batch = last_batch(&db, BatchKind::Adhoc, savings)
+            .unwrap()
+            .expect("the transfer opened a batch");
+        assert_eq!(batch.date, day(2026, 8, 16));
+        let rows: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM allocation WHERE batch_id = ?1",
+                rusqlite::params![batch.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 2);
+
+        delete_batch(&db, batch.id).unwrap();
+        assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
+        assert_eq!(balance(&db, rug).unwrap(), Cents::ZERO);
+    }
+
+    /// Each row names the goal at the other end of the transfer, in plain
+    /// text, for the reason a close-out's note is plain: it is read by a
+    /// person, and a pseudonym reaching a write is the one thing a demo must
+    /// never do.
+    #[test]
+    fn a_transfer_notes_the_goal_at_the_other_end_of_it_in_plain_text() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
+
+        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16)).unwrap();
+
+        let note = |goal: GoalId| -> String {
+            db.conn
+                .query_row(
+                    "SELECT note FROM allocation WHERE goal_id = ?1",
+                    rusqlite::params![goal],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(note(couch), "moved to Rug");
+        assert_eq!(note(rug), "moved from Couch");
+    }
+
+    /// No cash crossed between the accounts, so a transfer across containers
+    /// would break both reconciliations at once. The form restricts the
+    /// destination; this is the backstop.
+    #[test]
+    fn transferring_value_across_containers_is_refused() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let emergency = insert(&db, &new_goal("Emergency Savings", brokerage, 1_066)).unwrap();
+        insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
+
+        let err =
+            transfer_value(&db, couch, emergency, Cents(25_000), day(2026, 8, 16)).unwrap_err();
+        assert!(err.to_string().contains("different containers"), "{err}");
+        assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
+        assert_eq!(balance(&db, emergency).unwrap(), Cents::ZERO);
+    }
+
+    /// A closed goal is hidden from every listing, so value moved into one
+    /// would be money no screen can show -- whichever write moved it.
+    #[test]
+    fn transferring_value_into_a_closed_goal_is_refused() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
+        insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
+        close(&db, rug).unwrap();
+
+        let err = transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16)).unwrap_err();
+        assert!(err.to_string().contains("closed"), "{err}");
+        assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
+        assert_eq!(balance(&db, rug).unwrap(), Cents::ZERO);
+    }
+
+    /// A closed goal is finished. Taking value back out of one would reopen
+    /// the question the ending answered, and leave a closed goal holding a
+    /// balance no listing shows.
+    #[test]
+    fn transferring_value_out_of_a_closed_goal_is_refused() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
+        insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
+        close(&db, couch).unwrap();
+
+        let err = transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16)).unwrap_err();
+        assert!(err.to_string().contains("closed"), "{err}");
+        assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
+        assert_eq!(balance(&db, rug).unwrap(), Cents::ZERO);
+    }
+
+    #[test]
+    fn transferring_value_from_a_goal_into_itself_is_refused() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
+
+        assert!(transfer_value(&db, couch, couch, Cents(25_000), day(2026, 8, 16)).is_err());
+        assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
+    }
+
+    /// Which way the value goes is the destination's to say, so a transfer
+    /// moves a positive amount or none at all: a negative one is the same
+    /// move written backwards, and zero writes two rows that say nothing.
+    #[test]
+    fn a_transfer_of_a_non_positive_amount_is_refused() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
+        insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
+
+        for amount in [Cents::ZERO, Cents(-25_000)] {
+            let err = transfer_value(&db, couch, rug, amount, day(2026, 8, 16)).unwrap_err();
+            assert!(err.to_string().contains("positive"), "{err}");
+        }
         assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
         assert_eq!(balance(&db, rug).unwrap(), Cents::ZERO);
     }

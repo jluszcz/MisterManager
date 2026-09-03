@@ -270,7 +270,7 @@ const LEDGER: [Entry; 11] = [
     },
 ];
 
-const SAVINGS: [Entry; 16] = [
+const SAVINGS: [Entry; 17] = [
     Entry::filter(
         ACCOUNT_FILTER,
         "Cycle the container filter: All, then one entry per account that holds goals.",
@@ -306,6 +306,11 @@ const SAVINGS: [Entry; 16] = [
         key: "i",
         label: Label::Shared("allocate"),
         detail: "Open an interest worksheet. The container's interest policy decides the prefill: pro rata, or a rescale of its previous Interest batch.",
+    },
+    Entry {
+        key: "t",
+        label: Label::Shared("allocate"),
+        detail: "Move part of the selected goal's value to another goal in the same container. Both goals stay open -- 'c' is the ending that closes one -- and the pair is one batch, so 'U' takes the whole transfer back. Crossing containers is refused.",
     },
     Entry {
         key: "n",
@@ -1474,7 +1479,7 @@ mod tests {
         );
         assert_eq!(
             Topic::Savings.footer(),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i allocate · n/e/c/K/J/f/Enter goal · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t allocate · n/e/c/K/J/f/Enter goal · U undo"
         );
         assert_eq!(
             Topic::Planning.footer(),

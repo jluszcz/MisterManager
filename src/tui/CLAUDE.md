@@ -4,8 +4,8 @@ There is no mouse and no command line: every action in the app is one keystroke,
 every screen in a sitting. What that buys is reflexes — the hand that knows `d` deletes the
 selected thing does not stop to read the footer — and reflexes are built across screens, not within
 one. So the rule the screens are held to runs in one direction: **the same action takes the same
-key.** Moving money between accounts is `t` wherever a screen offers it, whether that is one row on
-the cash ledger or every row a plan calls for.
+key.** Moving money is `t` wherever a screen offers it, whether that is one row on the cash ledger,
+every row a plan calls for, or a figure crossing from one savings goal to another.
 
 The converse does not follow, and holding to it would cost more than it buys. A key is only ever
 pressed on one screen, so a letter may mean unrelated things on two of them without ever making the
@@ -21,7 +21,7 @@ whoever presses the key.
 | Key | Means |
 |---|---|
 | `a` / `e` / `d` | add, edit, delete — the selected row, or the thing the screen is about |
-| `t` | move money between accounts |
+| `t` | move money from one place to another: between accounts on the ledgers and on Planning, between two goals of one container on Savings |
 | `p` | pay a card on the ledgers, pin a plan on Planning — unrelated actions, so the letter is free to serve both |
 | `P` | unpin a plan on Planning, mark the paycheck on Recurring Txns — likewise |
 | `r` | reconcile the ledgers' filtered account against a statement |
@@ -119,10 +119,11 @@ the `acct` every screen's `Tab` takes. What neither of them does is drop a key: 
 advertises is a key nobody presses, so `Label::Hidden` stays for the entries a footer word would
 only say twice, `BackTab` being the one.
 
-**Savings' footer is the one closest to the edge**, at three columns of slack, so the next key that
+**Savings' footer is the one closest to the edge**, at one column of slack, so the next key that
 needs a group is likelier to be its than any other screen's — and its lever is spent: every key it
-has that acts on one goal is already inside `n/e/c/K/J/f/Enter goal`, which is what bought `Enter`
-its place there. The ledgers' is the next widest, and both of *its* levers are spent too, the
+has that writes or acts on one goal is already inside `a/A/i/t allocate` or
+`n/e/c/K/J/f/Enter goal`, which is what bought `Enter` and `t` their places there. The ledgers' is
+the next widest, and both of *its* levers are spent too, the
 grouping on `a/t/p` and the shorter word on `Tab`. A footer that overflows has nothing left to fall
 back on but a shorter word somewhere.
 
@@ -157,7 +158,9 @@ dispatch beneath it have to widen together, or a key the app answers earns no fr
 
 `overview` is the first screen; `ledger` backs both the second and the third, Cash and Credit, from
 one type. `savings` and `goal_form` are the fourth screen and its forms, the goal
-form serving `e` and `n` alike; `worksheet` backs `A`/`i`, and `picker` backs `s` on the seventh
+form serving `e` and `n` alike and `GoalTransferForm` backing `t` — named apart from
+`form::TransferForm`, the cash transfer the ledgers open, since one moves money between accounts and
+the other moves none at all; `worksheet` backs `A`/`i`, and `picker` backs `s` on the seventh
 screen. `planning` is the fifth screen, its `Target` and `Editable` enums, its bill form,
 `Enter`, which opens the long form of a plan that will not resolve, and
 `t`, which confirms a computed plan, writes its payday through `transfer::execute`, and opens the
