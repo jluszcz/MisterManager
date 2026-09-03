@@ -680,6 +680,149 @@ impl FormFields for CloseForm {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GoalTransferField {
+    Date,
+    Amount,
+    Destination,
+}
+
+impl GoalTransferField {
+    pub const ORDER: [GoalTransferField; 3] = [
+        GoalTransferField::Date,
+        GoalTransferField::Amount,
+        GoalTransferField::Destination,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GoalTransferField::Date => "Date",
+            GoalTransferField::Amount => "Amount",
+            GoalTransferField::Destination => "To",
+        }
+    }
+}
+
+/// A committed transfer, ready for `goal::transfer_value`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GoalTransfer {
+    pub date: NaiveDate,
+    pub cents: Cents,
+    pub to: GoalId,
+}
+
+/// Moving part of a goal's value to another goal. Backs `t` on Savings.
+///
+/// A close-out that ends nothing, so it differs from [`CloseForm`] in exactly
+/// the two ways the ending does: the amount is typed rather than being the
+/// whole balance, and the destination is a goal rather than a goal *or*
+/// unallocated. Returning value to unallocated is `a` with a negative amount;
+/// a second spelling of it here would be a second spelling of an ending.
+///
+/// Named apart from `form::TransferForm`, which is the cash transfer `t`
+/// opens on the ledgers: one moves money between accounts and the other moves
+/// none at all.
+#[derive(Debug)]
+pub struct GoalTransferForm {
+    pub goal_id: GoalId,
+    pub focus: GoalTransferField,
+    goal_name: String,
+    balance: Cents,
+    date: DateField,
+    amount: Field,
+    /// Never empty: `App::open_goal_transfer` refuses to open the form over a
+    /// container whose only open goal is the one the cursor is on.
+    destinations: Vec<(GoalId, String)>,
+    destination: usize,
+}
+
+impl GoalTransferForm {
+    /// `siblings` are the *open goals of the same container*, minus this one.
+    /// Crossing containers would break both reconciliations at once, since no
+    /// cash moved between the accounts.
+    pub fn new(
+        goal_id: GoalId,
+        goal_name: &str,
+        balance: Cents,
+        siblings: Vec<(GoalId, String)>,
+        today: NaiveDate,
+    ) -> GoalTransferForm {
+        GoalTransferForm {
+            goal_id,
+            // The amount is the decision, the way it is on the allocation
+            // form: the date is almost always today, and the destination is
+            // one arrow away.
+            focus: GoalTransferField::Amount,
+            goal_name: goal_name.to_string(),
+            balance,
+            date: DateField::today(today),
+            amount: Field::default(),
+            destinations: siblings,
+            destination: 0,
+        }
+    }
+
+    pub fn title(&self) -> String {
+        format!(
+            "Move value out of {} ({}) — ←/→ destination · Enter save · Esc cancel",
+            crate::demo::text(&self.goal_name),
+            crate::demo::figure(self.balance)
+        )
+    }
+
+    pub fn display(&self, field: GoalTransferField) -> Label {
+        Label::plain(match field {
+            GoalTransferField::Date => self.date.display(self.focus == GoalTransferField::Date),
+            GoalTransferField::Amount => crate::demo::typed(self.amount.value()),
+            GoalTransferField::Destination => self
+                .destinations
+                .get(self.destination)
+                .map(|(_, name)| crate::demo::text(name).into_owned())
+                .unwrap_or_default(),
+        })
+    }
+
+    pub fn commit(&self) -> Result<GoalTransfer> {
+        let (to, _) = self
+            .destinations
+            .get(self.destination)
+            .context("a transfer form opens only over a container with another open goal")?;
+        Ok(GoalTransfer {
+            date: self.date.parse()?,
+            cents: parse_whole_amount(self.amount.value())?,
+            to: *to,
+        })
+    }
+}
+
+impl FormFields for GoalTransferForm {
+    fn move_focus(&mut self, step: isize) {
+        self.focus = next_in(&GoalTransferField::ORDER, self.focus, step);
+    }
+
+    // `←`/`→` step the date on one field and cycle the destination on
+    // another, and neither may reach across.
+    fn cycle(&mut self, step: Step) {
+        self.destination = step_index(self.destination, self.destinations.len(), step.direction());
+    }
+
+    fn focused(&mut self) -> Focused<'_> {
+        match self.focus {
+            GoalTransferField::Date => Focused::Date(&mut self.date),
+            GoalTransferField::Amount => Focused::Text(&mut self.amount),
+            GoalTransferField::Destination => Focused::Selector,
+        }
+    }
+
+    fn caret(&self) -> Caret {
+        match self.focus {
+            GoalTransferField::Date => Caret::in_field(self.date.text()),
+            GoalTransferField::Amount => Caret::in_field(&self.amount),
+            GoalTransferField::Destination => Caret::End,
+        }
+    }
+}
+
 use ratatui::Frame;
 use ratatui::text::Line as TextLine;
 
@@ -731,6 +874,21 @@ pub fn render_goal(frame: &mut Frame, form: &GoalForm) {
                 form.display(*f),
                 (form.focus == *f).then(|| form.caret()),
                 note,
+            )
+        })
+        .collect();
+    render_fields(frame, form.title(), lines);
+}
+
+/// Draws the move-value-to-another-goal modal: `t`'s form.
+pub fn render_goal_transfer(frame: &mut Frame, form: &GoalTransferForm) {
+    let lines: Vec<TextLine> = GoalTransferField::ORDER
+        .iter()
+        .map(|f| {
+            field_line(
+                f.label(),
+                form.display(*f),
+                (form.focus == *f).then(|| form.caret()),
             )
         })
         .collect();
@@ -1754,6 +1912,109 @@ mod tests {
         assert_eq!(drawn, crate::demo::text("Rug"));
         // The buffer is untouched: the id, not the name, is what commits.
         assert_eq!(form.commit().unwrap().to, Some(GoalId(8)));
+    }
+
+    fn transfer() -> GoalTransferForm {
+        GoalTransferForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(60_000),
+            siblings(),
+            day(2026, 8, 16),
+        )
+    }
+
+    fn typed_transfer(form: &mut GoalTransferForm, field: GoalTransferField, text: &str) {
+        walk_until!(form.focus == field, form.next_field());
+        for c in text.chars() {
+            form.edit(char_key(c));
+        }
+    }
+
+    /// The amount is the decision here, the way it is on the allocation form
+    /// -- unlike a close-out, where the amount is the whole balance and the
+    /// destination is all there is to choose.
+    #[test]
+    fn a_goal_transfer_opens_on_the_amount() {
+        assert_eq!(transfer().focus, GoalTransferField::Amount);
+    }
+
+    /// Whole dollars, the reading `a` takes: this is an amount typed by hand,
+    /// and cents typed into it are a typo rather than arithmetic.
+    #[test]
+    fn a_goal_transfer_reads_its_amount_in_whole_dollars() {
+        let mut form = transfer();
+        typed_transfer(&mut form, GoalTransferField::Amount, "250");
+        assert_eq!(form.commit().unwrap().cents, Cents(25_000));
+
+        let mut form = transfer();
+        typed_transfer(&mut form, GoalTransferField::Amount, "250.50");
+        assert!(form.commit().is_err(), "cents are a typo in a whole field");
+    }
+
+    /// A transfer needs somewhere for the value to land, so the selector
+    /// holds only goals -- returning value to unallocated is what `a` with a
+    /// negative amount is for, and offering it here would be a second way to
+    /// spell an ending.
+    #[test]
+    fn a_goal_transfer_cycles_through_the_containers_other_goals_and_nothing_else() {
+        let mut form = transfer();
+        typed_transfer(&mut form, GoalTransferField::Amount, "250");
+        assert_eq!(
+            form.display(GoalTransferField::Destination).plain_text(),
+            "Rug"
+        );
+        assert_eq!(form.commit().unwrap().to, GoalId(8));
+
+        walk_until!(
+            form.focus == GoalTransferField::Destination,
+            form.next_field()
+        );
+        form.choice(Step::NEXT);
+        assert_eq!(
+            form.display(GoalTransferField::Destination).plain_text(),
+            "Lamp"
+        );
+        assert_eq!(form.commit().unwrap().to, GoalId(9));
+
+        form.choice(Step::NEXT);
+        assert_eq!(
+            form.display(GoalTransferField::Destination).plain_text(),
+            "Rug",
+            "the cycle wraps through goals alone"
+        );
+    }
+
+    /// The balance is not what moves here -- the typed amount is -- so the
+    /// title is where it is read, and it bounds nothing: an overspent goal is
+    /// a real state, and `transfer_value` lets one through the way
+    /// `move_value` already does.
+    #[test]
+    fn a_goal_transfer_names_the_goal_the_value_is_leaving_and_what_it_holds() {
+        let form = transfer();
+        assert!(form.title().contains("Couch"), "{}", form.title());
+        assert!(form.title().contains("600.00"), "{}", form.title());
+    }
+
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_the_balance_and_the_names_a_goal_transfer_draws() {
+        crate::demo::install_with_salt(7);
+        let mut form = transfer();
+        assert!(!form.title().contains("600.00"), "{}", form.title());
+        assert!(!form.title().contains("Couch"), "{}", form.title());
+        assert!(
+            form.title().contains(&crate::demo::figure(Cents(60_000))),
+            "no scrambled balance found: {}",
+            form.title()
+        );
+
+        let drawn = form.display(GoalTransferField::Destination).plain_text();
+        assert_ne!(drawn, "Rug");
+        assert_eq!(drawn, crate::demo::text("Rug"));
+        // The buffer is untouched: the id, not the name, is what commits.
+        typed_transfer(&mut form, GoalTransferField::Amount, "250");
+        assert_eq!(form.commit().unwrap().to, GoalId(8));
     }
 
     /// Every date field in the app steps a day at a time under `←`/`→`, and

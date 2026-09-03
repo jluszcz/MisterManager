@@ -539,6 +539,14 @@ matches, since nothing but a test ties them together.
   the **same container**) — and it closes the goal itself, in one transaction. The next round of a
   recurring goal is created from the `recurring_goal` table. Crossing containers is refused: no cash moved between
   the accounts, so allowing it would break both reconciliations at once.
+  - **`goal::transfer_value` is the same move without the ending**, and `t` on Savings is where it
+    is pressed: a typed amount rather than the whole balance, and both goals still open afterwards.
+    The two share their refusals — `open_source` and `open_destination` — so where value may land is
+    one rule read twice rather than two that can drift. What it does *not* share is the batch: a
+    transfer's two rows are one `BatchKind::Adhoc` batch, so `U` reverses it whole, while an ending
+    is deliberately no batch because an undo could not reopen the goal it closed. Returning part of
+    a goal's value to unallocated has no key of its own: that is `a` with a negative amount, and a
+    second spelling of it on the transfer form would be a second spelling of an ending.
 - **A goal's target is derived, never stored.** The table holds `goal.base_cents`, `goal.taxed` and
   `goal.floating`; `goal::target` is the balance for a floating goal, `base_cents` for an untaxed
   one and `calc::tax` of it for a taxed one, the way `calc::fund` turns an age rule into a

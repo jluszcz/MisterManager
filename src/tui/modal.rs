@@ -15,7 +15,7 @@ use super::cursor::Scroll;
 use super::destination;
 use super::form::{self, FormFields, TransferForm, TxnForm, ValueForm};
 use super::fund::{self as fund_screen, FundForm};
-use super::goal_form::{self, AllocationForm, CloseForm, GoalForm};
+use super::goal_form::{self, AllocationForm, CloseForm, GoalForm, GoalTransferForm};
 use super::help::Topic;
 use super::history::{self, History, Mode as HistoryMode};
 use super::picker::{self, Picker};
@@ -44,6 +44,10 @@ pub(super) enum Modal {
     Allocation(AllocationForm),
     Goal(GoalForm),
     CloseOut(CloseForm),
+    /// `t` on a Savings row: part of that goal's value into another goal of
+    /// the same container. Named apart from `Transfer`, which moves cash
+    /// between accounts.
+    GoalTransfer(GoalTransferForm),
     Worksheet(Worksheet),
     Picker(Picker),
     /// `d` and `U`: the last chance to back out of a write. `label` is the row
@@ -100,6 +104,7 @@ impl Modal {
             Modal::Allocation(form) => Some(form),
             Modal::Goal(form) => Some(form),
             Modal::CloseOut(form) => Some(form),
+            Modal::GoalTransfer(form) => Some(form),
             Modal::Worksheet(_) => None,
             Modal::Picker(_) => None,
             Modal::Confirm { .. } => None,
@@ -146,6 +151,7 @@ impl Modal {
             Modal::Allocation(_)
             | Modal::Goal(_)
             | Modal::CloseOut(_)
+            | Modal::GoalTransfer(_)
             | Modal::Value(..)
             | Modal::Reconcile(..)
             | Modal::Bill(_)
@@ -300,6 +306,10 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
         }
         Some(Modal::Goal(f)) => {
             goal_form::render_goal(frame, f);
+            0
+        }
+        Some(Modal::GoalTransfer(f)) => {
+            goal_form::render_goal_transfer(frame, f);
             0
         }
         Some(Modal::CloseOut(f)) => {

@@ -45,6 +45,9 @@ goal with the container it belongs to:
 balances and targets, `a`
 allocates against the selected goal, `e` edits it, and `c` ends it — returning
 its value to unallocated, or moving it to another goal in the same container.
+`t` moves part of a goal's value to another goal in that container without
+ending anything: an amount, a destination, and both goals still open afterwards.
+The two rows it writes are one batch, so `U` takes the whole transfer back.
 Goals with no date lead the list, in an order you set with `K` and `J`; goals
 with one follow, soonest first, since a deadline decides a goal's place for it.
 `f` marks a goal, drawing its row as a band so it stands out among the rest;

@@ -12,7 +12,7 @@ use crate::goal as goal_engine;
 use crate::money::Cents;
 use crate::reading::Reading;
 use crate::tui::cursor;
-use crate::tui::goal_form::{AllocationForm, CloseForm, GoalForm, GoalTarget};
+use crate::tui::goal_form::{AllocationForm, CloseForm, GoalForm, GoalTarget, GoalTransferForm};
 use crate::tui::modal::Modal;
 use crate::tui::search::{self, Search};
 use anyhow::{Context, Result};
@@ -40,6 +40,7 @@ impl App {
             KeyCode::Char('a') => self.open_allocate()?,
             KeyCode::Char('A') => self.open_payday()?,
             KeyCode::Char('i') => self.open_interest()?,
+            KeyCode::Char('t') => self.open_goal_transfer()?,
             KeyCode::Char('e') => self.open_goal_edit()?,
             KeyCode::Char('c') => self.open_close_out()?,
             KeyCode::Char('n') => self.open_new_goal()?,
@@ -258,6 +259,54 @@ impl App {
         let (id, favorite) = (row.goal_id, row.favorite);
         goal::set_favorite(&self.db, id, !favorite)?;
         self.reload_savings()
+    }
+
+    /// `t`: part of the selected goal's value into another goal of the same
+    /// container.
+    ///
+    /// The siblings come from the container rather than from the screen's
+    /// filtered rows, the reason `open_close_out` gives: a search must not
+    /// narrow where value may land. A container holding nothing else open is
+    /// refused here rather than opening a form over an empty selector --
+    /// returning value to unallocated is `a` with a negative amount, and
+    /// ending the goal is `c`.
+    fn open_goal_transfer(&mut self) -> Result<()> {
+        let Some(row) = self.savings.selected() else {
+            return self.nothing_selected();
+        };
+        let (goal_id, name, container, current) = (
+            row.goal_id,
+            row.name.clone(),
+            row.container.id(),
+            row.current,
+        );
+        let siblings: Vec<(GoalId, String)> = goal::list_with_balances(&self.db, container)?
+            .into_iter()
+            .filter(|g| g.goal.id != goal_id)
+            .map(|g| (g.goal.id, g.goal.name))
+            .collect();
+        if siblings.is_empty() {
+            self.status = "this container has no other open goal to move value to".to_string();
+            return Ok(());
+        }
+        self.modal = Some(Modal::GoalTransfer(GoalTransferForm::new(
+            goal_id, &name, current, siblings, self.today,
+        )));
+        Ok(())
+    }
+
+    /// Unlike `a` and `c`, `U` really does undo this one: the two rows are
+    /// one batch -- the same promise `A` and `i` make -- so the status line
+    /// says so rather than saying what `U` will not reach.
+    pub(super) fn commit_goal_transfer(&mut self) -> Result<()> {
+        let Some(Modal::GoalTransfer(form)) = &self.modal else {
+            return Ok(());
+        };
+        let moved = form.commit()?;
+        goal::transfer_value(&self.db, form.goal_id, moved.to, moved.cents, moved.date)?;
+        self.status = format!("moved {} · U undoes it", crate::demo::figure(moved.cents));
+        self.close_modal();
+        self.reload()
     }
 
     fn open_close_out(&mut self) -> Result<()> {
@@ -803,6 +852,88 @@ mod tests {
         assert_eq!(rows[0].name, "Couch");
         assert_eq!(rows[0].current, Cents(1_025_000));
         assert_eq!(app.savings.excess()[0].1, before);
+    }
+
+    /// A transfer moves part of one goal into another inside one container,
+    /// so both goals survive it and the reconciliation must not move. The
+    /// form opens on the amount with the container's one other goal already
+    /// selected, which is what keeps it to `t`, a figure and `Enter`.
+    #[test]
+    fn t_moves_part_of_the_selected_goals_value_into_another_goal() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
+        let before = app.savings.excess()[0].1;
+
+        press(&mut app, KeyCode::Char('t'));
+        type_str(&mut app, "250");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        let rows = app.savings.rows();
+        assert_eq!(rows[0].name, "Couch");
+        assert_eq!(rows[0].current, Cents(50_000));
+        assert_eq!(rows[1].name, "Vacation 2027");
+        assert_eq!(rows[1].current, Cents(975_000));
+        assert_eq!(app.savings.excess()[0].1, before);
+    }
+
+    /// The form draws what it is about to do: which goal the value is
+    /// leaving, the three fields, and the goal it would land in.
+    #[test]
+    fn t_draws_the_transfer_form_over_the_screen() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('t'));
+
+        let drawn = drawn(&mut app);
+        assert!(drawn.contains("Vacation 2027"), "{drawn}");
+        assert!(drawn.contains("Amount"), "{drawn}");
+        assert!(drawn.contains("To"), "{drawn}");
+        assert!(drawn.contains("Couch"), "{drawn}");
+    }
+
+    /// The pair is one batch, so a fumbled amount is one keystroke back
+    /// rather than two hand-corrections in two histories. A close-out is
+    /// deliberately no batch; a transfer closes nothing, so nothing stands in
+    /// the way of undoing it whole.
+    #[test]
+    fn a_goal_transfer_is_one_batch_so_capital_u_reverses_it() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('t'));
+        type_str(&mut app, "250");
+        press(&mut app, KeyCode::Enter);
+
+        press(&mut app, KeyCode::Char('U'));
+        press(&mut app, KeyCode::Char('y'));
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        assert_eq!(app.savings.rows()[0].current, Cents(25_000));
+        assert_eq!(app.savings.rows()[1].current, Cents(1_000_000));
+    }
+
+    /// There is nowhere for the value to go, so the form does not open over a
+    /// selector with nothing in it. Returning value to unallocated is `a`
+    /// with a negative amount, and ending the goal is `c`.
+    #[test]
+    fn t_refuses_a_container_whose_only_open_goal_is_the_selected_one() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('c'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.savings.rows().len(),
+            1,
+            "one goal left in the container"
+        );
+
+        press(&mut app, KeyCode::Char('t'));
+
+        assert!(app.modal.is_none());
+        assert!(app.status.contains("no other open goal"), "{}", app.status);
     }
 
     /// The guards above are what keep a taxed goal with no rate out of the
