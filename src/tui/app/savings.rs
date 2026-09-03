@@ -309,12 +309,11 @@ impl App {
     /// `t`: part of the selected goal's value into another goal of the same
     /// container.
     ///
-    /// The siblings come from the container rather than from the screen's
-    /// filtered rows, the reason `open_close_out` gives: a search must not
-    /// narrow where value may land. A container holding nothing else open is
-    /// refused here rather than opening a form over an empty selector --
-    /// returning value to unallocated is `a` with a negative amount, and
-    /// ending the goal is `c`.
+    /// Where the destinations come from is [`App::selected_goal_with_siblings`]'s
+    /// to say. What is this opener's own is the refusal: a container holding
+    /// nothing else open gets a status line rather than a form over an empty
+    /// selector, since returning value to unallocated is `a` with a negative
+    /// amount and ending the goal is `c`.
     fn open_goal_transfer(&mut self) -> Result<()> {
         let Some(goal) = self.selected_goal_with_siblings()? else {
             return Ok(());
@@ -933,7 +932,7 @@ mod tests {
         );
     }
 
-    /// The three goal forms draw through one function, so each of them needs
+    /// The four goal forms draw through one function, so each of them needs
     /// a test that reads its fields off the screen rather than only its
     /// border: a render that dropped every line would still be drawing a
     /// titled box.
