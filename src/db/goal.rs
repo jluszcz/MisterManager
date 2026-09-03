@@ -40,6 +40,31 @@ impl BatchKind {
             BatchKind::Import => "import",
         }
     }
+
+    /// What a batch of this kind says for its rows when the writer has nothing
+    /// more specific to say.
+    ///
+    /// `as_str` is the token the column holds and is pinned by the schema's
+    /// `CHECK (kind IN (...))`; this is the sentence a person reads, the same
+    /// shape as [`move_value`]'s `closed out of <goal>`. The two coincide for
+    /// `paycheck` and `interest` and are still two functions, because one of
+    /// them cannot change without a migration and the other is free prose. A
+    /// batch carries its kind and an allocation does not, so without this the
+    /// history modal draws every worksheet row as the em dash it draws a row
+    /// nobody said anything about -- and the rows most worth telling apart
+    /// there are the ones written a dozen at a time.
+    ///
+    /// A writer that *can* say more does, and does not come through here:
+    /// [`transfer_value`] writes a [`BatchKind::Adhoc`] pair naming the goal
+    /// at the other end, which is why that arm is the one no caller reaches.
+    pub fn note(self) -> &'static str {
+        match self {
+            BatchKind::Paycheck => "paycheck",
+            BatchKind::Interest => "interest",
+            BatchKind::Adhoc => "one-off allocation",
+            BatchKind::Import => "imported balance",
+        }
+    }
 }
 
 impl FromStr for BatchKind {
@@ -838,6 +863,23 @@ mod tests {
     fn batch_kind_as_str_and_from_str_round_trip() {
         for kind in BatchKind::ALL {
             assert_eq!(kind.as_str().parse::<BatchKind>().unwrap(), kind);
+        }
+    }
+
+    /// `as_str` is the discriminant the column holds and `note` is the
+    /// sentence a person reads back, so two kinds sharing a note would put
+    /// one word over two different operations in a goal's history. They are
+    /// allowed to coincide with `as_str` -- "paycheck" is both the token and
+    /// the word -- but never with each other.
+    #[test]
+    fn every_batch_kind_notes_itself_distinctly() {
+        let notes: Vec<&str> = BatchKind::ALL.iter().map(|k| k.note()).collect();
+        assert!(notes.iter().all(|n| !n.is_empty()), "{notes:?}");
+        for (i, note) in notes.iter().enumerate() {
+            assert!(
+                !notes[i + 1..].contains(note),
+                "{note:?} names two kinds: {notes:?}"
+            );
         }
     }
 
