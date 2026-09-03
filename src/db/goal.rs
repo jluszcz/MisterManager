@@ -44,15 +44,18 @@ impl BatchKind {
     /// What a batch of this kind says for its rows when the writer has nothing
     /// more specific to say.
     ///
-    /// `as_str` is the token the column holds; this is the sentence a person
-    /// reads, the same shape as [`move_value`]'s `closed out of <goal>`. A
+    /// `as_str` is the token the column holds and is pinned by the schema's
+    /// `CHECK (kind IN (...))`; this is the sentence a person reads, the same
+    /// shape as [`move_value`]'s `closed out of <goal>`. The two coincide for
+    /// `paycheck` and `interest` and are still two functions, because one of
+    /// them cannot change without a migration and the other is free prose. A
     /// batch carries its kind and an allocation does not, so without this the
     /// history modal draws every worksheet row as the em dash it draws a row
     /// nobody said anything about -- and the rows most worth telling apart
     /// there are the ones written a dozen at a time.
     ///
     /// A writer that *can* say more does, and does not come through here:
-    /// [`transfer_value`] writes an [`BatchKind::Adhoc`] pair naming the goal
+    /// [`transfer_value`] writes a [`BatchKind::Adhoc`] pair naming the goal
     /// at the other end, which is why that arm is the one no caller reaches.
     pub fn note(self) -> &'static str {
         match self {
