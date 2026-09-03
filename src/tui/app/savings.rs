@@ -18,6 +18,15 @@ use crate::tui::search::{self, Search};
 use anyhow::{Context, Result};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
+/// A goal on the Savings screen and where its value may go, read together.
+struct SelectedGoal {
+    id: GoalId,
+    name: String,
+    balance: Cents,
+    /// The container's other open goals, whatever the screen is filtered to.
+    siblings: Vec<(GoalId, String)>,
+}
+
 impl App {
     pub(super) fn savings_key(&mut self, key: KeyEvent) -> Result<()> {
         if cursor::scroll_key(&mut self.savings, key.code) {
@@ -261,36 +270,64 @@ impl App {
         self.reload_savings()
     }
 
-    /// `t`: part of the selected goal's value into another goal of the same
-    /// container.
+    /// The selected goal and the other open goals of its container: what `c`
+    /// and `t` both open over.
     ///
-    /// The siblings come from the container rather than from the screen's
-    /// filtered rows, the reason `open_close_out` gives: a search must not
-    /// narrow where value may land. A container holding nothing else open is
-    /// refused here rather than opening a form over an empty selector --
-    /// returning value to unallocated is `a` with a negative amount, and
-    /// ending the goal is `c`.
-    fn open_goal_transfer(&mut self) -> Result<()> {
+    /// **The siblings come from the container, never from the rows on
+    /// screen.** A search narrows what the owner is looking at, and it must
+    /// not narrow where their money may go -- on the transfer form a narrowed
+    /// read would not merely hide a destination, it would make the container
+    /// look as though it held no other open goal and refuse to open at all.
+    /// One read rather than one per opener, so the two cannot come to
+    /// disagree about which goals those are.
+    ///
+    /// `None` is "nothing selected", already on the status line.
+    fn selected_goal_with_siblings(&mut self) -> Result<Option<SelectedGoal>> {
         let Some(row) = self.savings.selected() else {
-            return self.nothing_selected();
+            self.nothing_selected()?;
+            return Ok(None);
         };
-        let (goal_id, name, container, current) = (
+        let (id, name, container, balance) = (
             row.goal_id,
             row.name.clone(),
             row.container.id(),
             row.current,
         );
-        let siblings: Vec<(GoalId, String)> = goal::list_with_balances(&self.db, container)?
+        let siblings = goal::list_with_balances(&self.db, container)?
             .into_iter()
-            .filter(|g| g.goal.id != goal_id)
+            .filter(|g| g.goal.id != id)
             .map(|g| (g.goal.id, g.goal.name))
             .collect();
-        if siblings.is_empty() {
+        Ok(Some(SelectedGoal {
+            id,
+            name,
+            balance,
+            siblings,
+        }))
+    }
+
+    /// `t`: part of the selected goal's value into another goal of the same
+    /// container.
+    ///
+    /// Where the destinations come from is [`App::selected_goal_with_siblings`]'s
+    /// to say. What is this opener's own is the refusal: a container holding
+    /// nothing else open gets a status line rather than a form over an empty
+    /// selector, since returning value to unallocated is `a` with a negative
+    /// amount and ending the goal is `c`.
+    fn open_goal_transfer(&mut self) -> Result<()> {
+        let Some(goal) = self.selected_goal_with_siblings()? else {
+            return Ok(());
+        };
+        if goal.siblings.is_empty() {
             self.status = "this container has no other open goal to move value to".to_string();
             return Ok(());
         }
         self.modal = Some(Modal::GoalTransfer(GoalTransferForm::new(
-            goal_id, &name, current, siblings, self.today,
+            goal.id,
+            &goal.name,
+            goal.balance,
+            goal.siblings,
+            self.today,
         )));
         Ok(())
     }
@@ -310,24 +347,15 @@ impl App {
     }
 
     fn open_close_out(&mut self) -> Result<()> {
-        let Some(row) = self.savings.selected() else {
-            return self.nothing_selected();
+        let Some(goal) = self.selected_goal_with_siblings()? else {
+            return Ok(());
         };
-        let (goal_id, name, container, current) = (
-            row.goal_id,
-            row.name.clone(),
-            row.container.id(),
-            row.current,
-        );
-        // Built from the container, not from the screen's filtered rows: a
-        // search must not narrow what a close-out may move value into.
-        let siblings = goal::list_with_balances(&self.db, container)?
-            .into_iter()
-            .filter(|g| g.goal.id != goal_id)
-            .map(|g| (g.goal.id, g.goal.name))
-            .collect();
         self.modal = Some(Modal::CloseOut(CloseForm::new(
-            goal_id, &name, current, siblings, self.today,
+            goal.id,
+            &goal.name,
+            goal.balance,
+            goal.siblings,
+            self.today,
         )));
         Ok(())
     }
@@ -852,6 +880,93 @@ mod tests {
         assert_eq!(rows[0].name, "Couch");
         assert_eq!(rows[0].current, Cents(1_025_000));
         assert_eq!(app.savings.excess()[0].1, before);
+    }
+
+    /// The destinations come from the container, never from the rows on
+    /// screen: a search narrows what the owner is looking at, and it must not
+    /// narrow where their money may go. Stated as a comment on both openers
+    /// before it was stated as a test on either.
+    #[test]
+    fn a_search_does_not_narrow_where_a_close_out_may_move_value() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "Couch");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(savings_names(&app), ["Couch"], "the sibling is off screen");
+
+        press(&mut app, KeyCode::Char('c'));
+        // Past "— unallocated —", which is always first.
+        press(&mut app, KeyCode::Right);
+
+        let Some(Modal::CloseOut(form)) = &app.modal else {
+            panic!("no close-out form is open: {}", app.status);
+        };
+        assert_eq!(
+            form.display(goal_form::CloseField::Destination)
+                .plain_text(),
+            "Vacation 2027"
+        );
+    }
+
+    /// The same rule on the transfer form, where a narrowed read would not
+    /// merely hide a destination: the container would look as though it held
+    /// no other open goal, and the form would refuse to open at all.
+    #[test]
+    fn a_search_does_not_narrow_where_a_transfer_may_move_value() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "Couch");
+        press(&mut app, KeyCode::Enter);
+
+        press(&mut app, KeyCode::Char('t'));
+
+        let Some(Modal::GoalTransfer(form)) = &app.modal else {
+            panic!("no transfer form is open: {}", app.status);
+        };
+        assert_eq!(
+            form.display(goal_form::GoalTransferField::Destination)
+                .plain_text(),
+            "Vacation 2027"
+        );
+    }
+
+    /// The four goal forms draw through one function, so each of them needs
+    /// a test that reads its fields off the screen rather than only its
+    /// border: a render that dropped every line would still be drawing a
+    /// titled box.
+    #[test]
+    fn c_draws_the_close_out_forms_fields_over_the_screen() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('c'));
+
+        let drawn = drawn(&mut app);
+        assert!(drawn.contains("Close out"), "{drawn}");
+        assert!(drawn.contains("Date"), "{drawn}");
+        assert!(drawn.contains("To"), "{drawn}");
+        assert!(drawn.contains("— unallocated —"), "{drawn}");
+    }
+
+    #[test]
+    fn e_draws_the_goal_forms_fields_over_the_screen() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('e'));
+
+        let drawn = drawn(&mut app);
+        for label in [
+            "Name",
+            "Target",
+            "Goal Date",
+            "Floating",
+            "Taxed",
+            "Interest",
+        ] {
+            assert!(drawn.contains(label), "no {label:?} field drawn: {drawn}");
+        }
     }
 
     /// A transfer moves part of one goal into another inside one container,
