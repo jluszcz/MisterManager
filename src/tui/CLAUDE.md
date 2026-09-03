@@ -1300,6 +1300,15 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   on the screen would leave the column quoting the cadence the app opened with. `App` holds no copy
   either -- `App::periods_per_year` reads it. The days between two paydays are
   `calc::period_days` of that count rather than a setting of their own; see the root `CLAUDE.md`.
+- **A filter narrows what is *looked at*, never where value may go.** The Savings title above
+  counts the visible rows because that is the question it asks; the destination lists `c` and `t`
+  offer are the opposite call. Both open through `App::selected_goal_with_siblings`, which reads
+  the container's other open goals out of the database rather than off the screen — one read, so
+  the two openers cannot come to disagree about which goals those are. On the close-out form a
+  narrowed read would quietly hide a destination; on the transfer form it is worse, since a
+  container whose siblings are all filtered out looks like a container holding no other open goal,
+  and the form refuses to open at all. `a_search_does_not_narrow_where_a_close_out_may_move_value`
+  and its transfer twin are what hold it up.
 - **The Savings title foots the `$/Pay` column, and the figure follows every filter.** `Savings ·
   Rainy Day · Aug 2026 · /a · $14/paycheck` — the sum over the *visible* rows, so `Tab`, `[`/`]`
   and `/` all move it. That is the opposite call the Recurring Goals title below makes, and for
@@ -1557,6 +1566,14 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   taller without anyone restating the arithmetic. It returns the `Rect` it took, which is what the
   forms with autocomplete hand to `render_popup`. `FundForm`'s variable field list needs nothing
   special: it passes its own `fields()`.
+  - **The four forms in `goal_form` build those lines through `form::field_stack`**, which is one
+    `field_line` per field in the order the form walks them, the caret on whichever is focused, and
+    a note past the value of whichever carry one. `c`'s form and `t`'s were byte-identical bodies,
+    and `a`'s and `e`'s each buried their note rule in an `if` inside the map — where a
+    *declaration* says it better, since which field earns a note is a fact about the form rather
+    than a step in drawing it. What a render still writes is only what its own form has: which
+    fields (`form.fields()` where the list is variable), how it spells one, and the extra line `a`
+    pushes past its stack.
 - **Every confirmation is one dialog, and `Modal::Confirm`'s `action` is what tells them apart.**
   `d` and `U` open the same 64×5 box over the same lines — the row as its screen describes it, a
   blank, and the verb. What differs is carried by the `Confirm` variant: the border's question, the

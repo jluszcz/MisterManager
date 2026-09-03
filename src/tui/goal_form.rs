@@ -6,8 +6,8 @@
 //! render functions at the bottom drawing only.
 
 use super::form::{
-    Caret, DateField, Field, Focused, FormFields, Precision, Step, field_line, field_line_noted,
-    is_share, next_in, parse_share, parse_whole_amount, render_fields, step_index, tax_note,
+    Caret, DateField, Field, Focused, FormFields, Precision, Step, field_stack, is_share, next_in,
+    parse_share, parse_whole_amount, render_fields, step_index, tax_note,
 };
 use super::{Account, Label};
 use crate::db::goal::{Allocation, AllocationEdit, GoalEdit};
@@ -834,22 +834,14 @@ pub fn render_allocation(frame: &mut Frame, form: &AllocationForm) {
         .resolved_share()
         .map(|cents| format!("= {}", crate::demo::whole_figure(cents)))
         .unwrap_or_default();
-    let mut lines: Vec<TextLine> = AllocField::ORDER
-        .iter()
-        .map(|f| {
-            let note = if *f == AllocField::Amount {
-                share.as_str()
-            } else {
-                ""
-            };
-            field_line_noted(
-                f.label(),
-                form.display(*f),
-                (form.focus == *f).then(|| form.caret()),
-                note,
-            )
-        })
-        .collect();
+    let mut lines = field_stack(
+        &AllocField::ORDER,
+        form.focus,
+        form.caret(),
+        AllocField::label,
+        |f| form.display(f),
+        &[(AllocField::Amount, share.as_str())],
+    );
     lines.push(TextLine::from(format!("  {}", form.unallocated_line())));
     render_fields(frame, form.title(), lines);
 }
@@ -857,56 +849,43 @@ pub fn render_allocation(frame: &mut Frame, form: &AllocationForm) {
 /// Draws the goal modal: `e`'s form, and `n`'s.
 pub fn render_goal(frame: &mut Frame, form: &GoalForm) {
     let note = form.tax_note();
-    let lines: Vec<TextLine> = form
-        .fields()
-        .iter()
-        .map(|f| {
-            // The Target field holds the base rather than what the goal is
-            // funded to, so the note says what it comes to beside the figure
-            // it is derived from rather than beside itself.
-            let note = if *f == GoalField::Target {
-                note.as_str()
-            } else {
-                ""
-            };
-            field_line_noted(
-                f.label(),
-                form.display(*f),
-                (form.focus == *f).then(|| form.caret()),
-                note,
-            )
-        })
-        .collect();
+    let lines = field_stack(
+        form.fields(),
+        form.focus,
+        form.caret(),
+        GoalField::label,
+        |f| form.display(f),
+        // The Target field holds the base rather than what the goal is funded
+        // to, so the note says what it comes to beside the figure it is
+        // derived from rather than beside itself.
+        &[(GoalField::Target, note.as_str())],
+    );
     render_fields(frame, form.title(), lines);
 }
 
 /// Draws the move-value-to-another-goal modal: `t`'s form.
 pub fn render_goal_transfer(frame: &mut Frame, form: &GoalTransferForm) {
-    let lines: Vec<TextLine> = GoalTransferField::ORDER
-        .iter()
-        .map(|f| {
-            field_line(
-                f.label(),
-                form.display(*f),
-                (form.focus == *f).then(|| form.caret()),
-            )
-        })
-        .collect();
+    let lines = field_stack(
+        &GoalTransferField::ORDER,
+        form.focus,
+        form.caret(),
+        GoalTransferField::label,
+        |f| form.display(f),
+        &[],
+    );
     render_fields(frame, form.title(), lines);
 }
 
 /// Draws the close-out-a-goal modal: `c`'s form.
 pub fn render_close(frame: &mut Frame, form: &CloseForm) {
-    let lines: Vec<TextLine> = CloseField::ORDER
-        .iter()
-        .map(|f| {
-            field_line(
-                f.label(),
-                form.display(*f),
-                (form.focus == *f).then(|| form.caret()),
-            )
-        })
-        .collect();
+    let lines = field_stack(
+        &CloseField::ORDER,
+        form.focus,
+        form.caret(),
+        CloseField::label,
+        |f| form.display(f),
+        &[],
+    );
     render_fields(frame, form.title(), lines);
 }
 
