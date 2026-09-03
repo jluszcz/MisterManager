@@ -295,9 +295,9 @@ impl App {
         Ok(())
     }
 
-    /// Unlike every other write on this screen, `U` really does undo this
-    /// one: the two rows are one batch, so the status line says so rather
-    /// than saying what `U` will not reach.
+    /// Unlike `a` and `c`, `U` really does undo this one: the two rows are
+    /// one batch -- the same promise `A` and `i` make -- so the status line
+    /// says so rather than saying what `U` will not reach.
     pub(super) fn commit_goal_transfer(&mut self) -> Result<()> {
         let Some(Modal::GoalTransfer(form)) = &self.modal else {
             return Ok(());

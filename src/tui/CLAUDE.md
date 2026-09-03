@@ -111,7 +111,7 @@ own last keys with nothing on screen to say a word went missing.
 halves plus the separator; `app`'s two own width tests measure what `App::footer` composes at
 runtime, which a `Topic` alone does not see. The first lever when a screen runs out of room is
 `Label::Shared`: several keys join under one word naming what they act *on* — `E/a/d bill` on
-Planning, `a/A/i allocate` and `n/e/c/K/J/f/Enter goal` on Savings, `a/t/p money` on the ledgers,
+Planning, `a/A/i/t allocate` and `n/e/c/K/J/f/Enter goal` on Savings, `a/t/p money` on the ledgers,
 where the three keys that write new rows join against the `e` and `d` that act on the one selected —
 which buys back a whole item's separator per key absorbed, and the verbs it costs are a keystroke
 away in the panel, which has room for them. A shorter word is the smaller adjustment beside it —
