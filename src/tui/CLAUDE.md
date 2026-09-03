@@ -1119,6 +1119,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   unallocated remainder — which is the figure the Savings footer reports, through
   `savings::unallocated`. The worksheet is not part of this: its lines are prefilled by `per_paycheck` and
   `pro_rata`, not typed.
+- **The worksheet has no Note field, and that is the difference between it and `AllocationForm`.**
+  `a` books one row a person is thinking about, so it asks what to say about it; `A` and `i` book a
+  dozen at once, and a note typed once over all of them can only say what the sheet already knows.
+  So the description is `BatchKind::note`, passed by `commit_worksheet` — one write path for both
+  keys, which is what stops the two from coming to describe themselves differently.
 - **The worksheet's cursor and its focus are two marks, not one.** `> ` is where the line cursor
   sits and is drawn whatever has focus, since the scroll keys move it from the amount and date
   fields too. The reversed bar is the *focus*, and it belongs to `Focus::Lines` alone: every

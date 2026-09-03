@@ -620,6 +620,12 @@ matches, since nothing but a test ties them together.
   fumbled payday is one `delete_batch` rather than dozens of deletions. `U` undoes the most recent
   batch by insert order and **never an `Import` batch** — that one holds every opening balance in the
   database. A worksheet is scoped to one container: payday runs it twice.
+  **Every row it writes carries `BatchKind::note` as its description**, because a batch knows its
+  kind and an allocation does not: the history modal shows a note, so a payday row with none reads
+  as the same em dash as a row nobody said anything about. `as_str` is the token the column holds
+  and `note` is the sentence a person reads — they may coincide, as `paycheck` does, but no two
+  kinds may share a note, and `import` writes its rows through the same constant rather than a
+  literal of its own.
 - **An allocation is editable whatever wrote it, and a history is scoped to one goal.** `Enter` on a
   Savings row opens that goal's rows in `tui::history`, where `e` corrects one and `d` deletes one —
   `goal::allocations`, `update_allocation` and `delete_allocation` are the only readers and writers

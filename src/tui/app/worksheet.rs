@@ -216,7 +216,13 @@ impl App {
         let committed = sheet.commit()?;
         let kind = sheet.kind();
         let total: Cents = committed.shares.iter().map(|(_, c)| *c).sum();
-        goal::insert_allocations(&self.db, kind, committed.date, &committed.shares, None)?;
+        goal::insert_allocations(
+            &self.db,
+            kind,
+            committed.date,
+            &committed.shares,
+            Some(kind.note()),
+        )?;
         self.status = format!(
             "posted {} across {} goals · U undoes it",
             crate::demo::figure(total),
@@ -319,6 +325,57 @@ mod tests {
         let batch = goal::most_recent_batch(&app.db).unwrap().unwrap();
         assert_eq!(batch.kind, goal::BatchKind::Paycheck);
         assert_eq!(goal::batch_shares(&app.db, batch.id).unwrap().len(), 1);
+    }
+
+    /// Every row a worksheet writes carries the kind that wrote it, because
+    /// the history modal shows a note and not a batch: a payday row with none
+    /// reads as the same em dash as a row nobody said anything about.
+    #[test]
+    fn committing_a_payday_notes_every_row_with_the_kind_that_wrote_it() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        // Row 1 is Vacation 2027, the only goal the prefill asks anything of.
+        let funded = app.savings.rows()[1].goal_id;
+        press(&mut app, KeyCode::Char('A'));
+        press(&mut app, KeyCode::Enter);
+
+        let written = goal::allocations(&app.db, funded).unwrap();
+        assert_eq!(
+            written.last().unwrap().note.as_deref(),
+            Some("paycheck"),
+            "{written:?}"
+        );
+    }
+
+    /// The same for the other kind, on the other key: the two are one write
+    /// path, and this is what says the note it passes is the sheet's own kind
+    /// rather than a constant that happens to read right on a payday.
+    #[test]
+    fn committing_an_interest_posting_notes_every_row_with_the_kind_that_wrote_it() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        write(
+            &app.db,
+            app.savings.excess()[0].0,
+            day(2026, 8, 15),
+            1_100_000,
+            "Interest",
+        );
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Enter);
+
+        // The fixture's own allocations carry no note, so what is left is
+        // exactly what the posting wrote.
+        let notes: Vec<String> = app
+            .savings
+            .rows()
+            .iter()
+            .flat_map(|row| goal::allocations(&app.db, row.goal_id).unwrap())
+            .filter_map(|a| a.note)
+            .collect();
+        assert!(!notes.is_empty(), "the posting wrote rows");
+        assert!(notes.iter().all(|note| note == "interest"), "{notes:?}");
     }
 
     /// `/` then a digit is the fraction operator; `/` then anything else is

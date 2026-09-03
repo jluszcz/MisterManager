@@ -290,7 +290,7 @@ pub fn import(
             id,
             today,
             current,
-            Some("imported balance"),
+            Some(goal::BatchKind::Import.note()),
             Some(batch),
         )?;
         report.goals += 1;
@@ -321,7 +321,7 @@ pub fn import(
             id,
             today,
             b.current,
-            Some("imported balance"),
+            Some(goal::BatchKind::Import.note()),
             Some(batch),
         )?;
         report.buckets += 1;
