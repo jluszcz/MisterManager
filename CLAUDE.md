@@ -536,9 +536,13 @@ matches, since nothing but a test ties them together.
 - **Sign conventions differ per ledger.** Cash rows are signed naturally (positive is inflow); credit
   rows are signed as debt (positive is a charge). Balances are always `SUM(cents) WHERE date <= X`,
   with future-dated rows pre-entered — that is what makes projection and to-date the same query.
-- **User-editable settings reach divisors.** `div_ceil` rejects a non-positive divisor as an error
-  rather than a `debug_assert!`; callers clamp with `.max(1)` where a nonsense setting should not take
-  down a whole screen. Don't reintroduce a bare divide.
+- **User-editable settings reach divisors, and the clamp lives with the divide.** `div_ceil` rejects
+  a non-positive divisor as an error rather than a `debug_assert!`, and each function that divides by
+  `periods_per_year` clamps its own denominator with `.max(1)` — `calc::biweekly`, `period_days`,
+  `per_paycheck_over_years`, `calc::planning::compute` — so a nonsense setting cannot take down a
+  whole screen. A caller does not clamp again on the way in: a second clamp in front of one of those
+  is a protection that cannot fire, and it reads as though the one behind it were not there. Don't
+  reintroduce a bare divide.
 - **A goal ends; it never becomes its successor.** `goal::move_value` is both endings — abandon
   (`to: None`, value back to unallocated) and close out (`to: Some(id)`, value to another goal in
   the **same container**) — and it closes the goal itself, in one transaction. The next round of a
