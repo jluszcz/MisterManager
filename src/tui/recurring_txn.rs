@@ -723,12 +723,15 @@ mod tests {
         );
     }
 
+    /// The fixture is deliberately biweekly, which `add` does *not* open on:
+    /// a monthly one would read the same whether `edit` prefilled from the row
+    /// or fell back to that default.
     #[test]
     fn a_rule_form_opened_on_a_rule_prefills_every_field() {
         let form = RecurringTxnForm::edit(
             accounts(),
             today(),
-            &recurring_txn(2, "Mortgage", -120_000, Cadence::Monthly, false),
+            &recurring_txn(2, "Mortgage", -120_000, Cadence::Biweekly, false),
         )
         .unwrap();
         assert_eq!(form.editing, Some(RecurringTxnId(2)));
@@ -746,7 +749,7 @@ mod tests {
         );
         assert_eq!(
             form.display(RecurringTxnField::Cadence).plain_text(),
-            "monthly"
+            "biweekly"
         );
         assert_eq!(
             form.display(RecurringTxnField::Anchor).plain_text(),
