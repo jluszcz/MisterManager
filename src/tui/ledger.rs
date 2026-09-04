@@ -469,20 +469,25 @@ fn title_line(ledger: &Ledger) -> TextLine<'static> {
     TextLine::from(spans)
 }
 
-/// The delta, green above the target and red below it, and a bare `-` when
+/// The delta, green above the target and red below it, and a check when
 /// there is none.
 ///
 /// Not [`super::money_span`]: that colors a figure by its sign, which leaves
 /// a surplus in the same no-color as every other positive number on screen.
 /// Here the sign is the answer, so both directions are worth a color.
 ///
-/// The dash is a state to see rather than a figure to read -- `$0.00` says
+/// The mark is a state to see rather than a figure to read -- `$0.00` says
 /// "reconciled" only to whoever stops to compare it with the two figures to
 /// its left.
+///
+/// **It carries a trailing space**, because it is the only thing this title
+/// ever ends in that is not a digit: [`title_line`] is drawn flush into a
+/// bordered block, so the glyph after it is a border rule, and a mark set
+/// against that run reads as one shape with it rather than as an answer.
 fn delta_span(delta: Cents) -> Span<'static> {
     match super::style::delta_color(delta) {
         Some(color) => Span::styled(money_text(delta), Style::default().fg(color)),
-        None => Span::raw("-"),
+        None => Span::raw("✓ "),
     }
 }
 
@@ -1549,10 +1554,13 @@ mod tests {
         );
     }
 
-    /// `$0.00` is a figure to read; a dash is a state to see at a glance, and
+    /// `$0.00` is a figure to read; a mark is a state to see at a glance, and
     /// seeing it is the whole point of typing the target.
+    ///
+    /// The space after it is half the assertion: the delta is the last term in
+    /// the title, and the title is drawn flush into the block's top border.
     #[test]
-    fn a_reconciled_balance_draws_its_delta_as_a_dash() {
+    fn a_reconciled_balance_draws_a_check_clear_of_the_border() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
@@ -1571,8 +1579,7 @@ mod tests {
 
         let buffer = terminal.backend().buffer();
         let row: String = (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect();
-        assert!(row.contains("Target $1,200.00 · Δ -"), "{row}");
-        assert!(!row.contains("Δ -$"), "not a figure: {row}");
+        assert!(row.contains("Target $1,200.00 · Δ ✓ ─"), "{row}");
         assert!(!row.contains("$0.00"), "not a figure: {row}");
     }
 

@@ -1428,8 +1428,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   figure it cannot check. The delta is `Today − Target` on **both** ledgers — Credit renders as
   stored like every other figure on it — and it is the app's one green figure, through
   `style::delta_color` rather than `amount_color`, which would leave a surplus in the same no-color
-  as every other positive number. Zero renders as a bare `-`: a state to see at a glance, where
-  `$0.00` is a figure to compare with the two beside it. The form is the same `ValueForm` the
+  as every other positive number. Zero renders as a `✓`: a state to see at a glance, where
+  `$0.00` is a figure to compare with the two beside it. **It carries a trailing space**, because
+  the delta is the title's last term and the title is drawn flush into the block's top border: it
+  is the one thing that border ever meets that is not a digit, and a mark set against a `─` run
+  reads as one shape with it rather than as an answer. The form is the same `ValueForm` the
   Planning and Funds prompts use; an empty field clears the target, and `Esc` means what it means
   everywhere else — leave the figure alone. With no target the border is exactly what it always was.
 - **Cash and Credit share one month, and it is a window, not a `MonthCycle`.** The ledgers' window
