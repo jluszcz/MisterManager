@@ -49,7 +49,7 @@ impl App {
     fn open_plan_transfers(&mut self) -> Result<()> {
         let settings = plan::settings_from_db(&self.db)?;
         let plan = plan::compute_from_db(&self.db, &settings, self.adhoc)?;
-        let rows = match transfer::plan(&self.db, &plan.lines) {
+        let rows = match transfer::plan(&self.db, &plan.lines, None) {
             Ok(rows) => rows,
             Err(e) => {
                 self.status = format!("{e:#}");
@@ -125,8 +125,10 @@ impl App {
         date: NaiveDate,
         rows: &[transfer::Row],
     ) -> Result<Vec<WorksheetPrefill>> {
-        let spread_container = transfer::spread_container(&self.db)?;
         let spread = self.spread_asks()?;
+        // The container off the set just priced, rather than a second read
+        // of the same goals: this path wants both halves.
+        let spread_container = spread.container(&self.db)?;
         let mut out = Vec::new();
         for row in rows {
             let transfer::Row::Transfer {
@@ -146,6 +148,7 @@ impl App {
                     Destination::Spread => {
                         if spread_container == Some(*to) && *amount != Cents::ZERO {
                             let asks: Vec<(i64, Cents)> = spread
+                                .priced()
                                 .iter()
                                 .filter(|(goal, _)| goal.container_account_id == *to)
                                 .map(|(goal, ask)| (goal.id.0, *ask))
@@ -232,7 +235,7 @@ impl App {
     /// what this adds to [`transfer::spread_asks`]: the set and its pricing
     /// are that function's, so the Planning screen's coverage check and the
     /// prefill `t` writes cannot come to disagree about either.
-    pub(super) fn spread_asks(&self) -> Result<Vec<(goal::Goal, Cents)>> {
+    pub(super) fn spread_asks(&self) -> Result<transfer::Asks> {
         transfer::spread_asks(&self.db, self.today, self.periods_per_year()?)
     }
 
@@ -488,13 +491,7 @@ impl App {
     fn planning_view(&self) -> Result<planning_screen::View> {
         let settings = plan::settings_from_db(&self.db)?;
         let plan = plan::compute_from_db(&self.db, &settings, self.adhoc)?;
-        // A misconfigured destination is reported on the screen, not thrown:
-        // every figure above the transfer block is still right.
-        let (transfers, transfer_error) = match transfer::plan(&self.db, &plan.lines) {
-            Ok(rows) => (rows, None),
-            Err(e) => (Vec::new(), Some(format!("{e:#}"))),
-        };
-        // The asks are read on their own, never chained to the call above.
+        // The asks are read on their own, never chained to `transfer::plan`.
         // The payday `Unmet Asks` exists for is the one where every line is
         // zero, and that is exactly the payday `transfer::plan` refuses with
         // `NOTHING_TO_TRANSFER` -- a read sharing its failure would go silent
@@ -505,16 +502,30 @@ impl App {
         // rate on record trips, and it would take the whole screen down over
         // an annotation the screen can simply omit. Zero draws no row, which
         // is what a gap nothing can measure should look like.
-        let spread_ask_total = self
-            .spread_asks()
-            .map(|asks| asks.iter().map(|(_, ask)| *ask).sum())
+        // The same read `transfer::plan` resolves the plug's container from,
+        // handed over rather than made twice. A read that failed hands over
+        // nothing, which leaves `plan` to make it and fail on its own terms
+        // -- and only where the plug is nonzero, which is the only place it
+        // wants the set at all.
+        let asks = self.spread_asks();
+        let spread_ask_total = asks
+            .as_ref()
+            .map(transfer::Asks::total)
             .unwrap_or(Cents::ZERO);
-        // Copied out before the struct literal below moves `plan` into it.
-        let plan_lines = plan.lines;
+        let planned = transfer::plan(&self.db, &plan.lines, asks.as_ref().ok());
+        let wired = transfer::wiring(&self.db)?;
+        // A misconfigured destination is reported on the screen, not thrown:
+        // every figure above the transfer block is still right.
+        let transfer_detail =
+            transfer::diagnose(&self.db, &plan.lines, &wired, planned.as_ref().err())?;
+        let (transfers, transfer_error) = match planned {
+            Ok(rows) => (rows, None),
+            Err(e) => (Vec::new(), Some(format!("{e:#}"))),
+        };
         Ok(planning_screen::View {
             plan,
             settings,
-            wiring: transfer::wiring(&self.db)?,
+            wiring: wired.lines,
             housing: bill::list(&self.db, bill::Category::Housing)?,
             other_bills: bill::list(&self.db, bill::Category::Other)?,
             pinned: setting::get(&self.db, key::PINNED_EXCESS)?,
@@ -523,7 +534,7 @@ impl App {
             transfers,
             spread_ask_total,
             transfer_error,
-            transfer_detail: transfer::diagnose(&self.db, &plan_lines)?,
+            transfer_detail,
         })
     }
 }
@@ -1745,7 +1756,7 @@ mod tests {
     fn payday_landed_on(app: &App, date: NaiveDate) {
         let from = transfer::source(&app.db).unwrap();
         let plan = computed_plan(app, app.adhoc);
-        let rows = transfer::plan(&app.db, &plan.lines).unwrap();
+        let rows = transfer::plan(&app.db, &plan.lines, None).unwrap();
         transfer::execute(&app.db, from, date, &rows).unwrap();
     }
 
@@ -2021,14 +2032,15 @@ mod tests {
         let app = App::new(db, today()).unwrap();
         let asks = app.spread_asks().unwrap();
         let (_, ask) = asks
-            .into_iter()
+            .priced()
+            .iter()
             .find(|(g, _)| g.id == id)
             .unwrap_or_else(|| panic!("no plug entry for the taxed goal"));
 
         // 1,000 taxed at 6.25% is 1,062.50, carried up to 1,065 by the
         // lambda's $5 increment. Funded to the base, the goal still lacks
         // the $65 of tax.
-        assert_eq!(ask, Cents::from_dollars(65));
+        assert_eq!(*ask, Cents::from_dollars(65));
     }
 
     /// An undated goal has no runway to divide, so it asks for nothing and

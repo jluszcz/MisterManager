@@ -440,7 +440,12 @@ matches, since nothing but a test ties them together.
     figure, and a copy of the unpacking in each is how they stop being.
   - **The plug's set and its pricing come off one read, `transfer::spread_asks`**, so the figure the
     Planning screen measures the Goals line against and the asks `calc::fit` is about to divide it
-    by cannot be answers to two different questions about which goals.
+    by cannot be answers to two different questions about which goals. `transfer::plan` resolves the
+    plug's *container* from that same read where its caller already holds one, which is what keeps a
+    Planning view to one read of the goals rather than one per question asked about them. That is
+    what `Asks` is: the type `spread_asks` returns and the only thing `plan` accepts, because the
+    refusals a dangling key and a rateless taxed goal earn are made where the set is read, and a set
+    assembled any other way would place a payday in a container nothing had validated.
   - **The Planning screen says when the plug will not cover those asks, and nothing else does.** An
     `Unmet Asks` row foots the transfers block, and is absent when the plug covers them.
     `transfer::unmet_asks` is the one place that condition is stated — the screen draws it in a

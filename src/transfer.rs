@@ -93,6 +93,41 @@ pub fn spread_goals(db: &Db, reading: Reading) -> Result<Vec<Goal>> {
     Ok(cloned(shares_of(&unclaimed_with_balances(db, reading)?)))
 }
 
+/// The plug's set and its pricing, as one strict read left them.
+///
+/// A type rather than a bare `Vec<(Goal, Cents)>` because [`plan`] resolves a
+/// real payday's destination from one of these and does not read the goals
+/// again. The refusals a dangling key and a rateless taxed goal earn are made
+/// where the set is *read*, so a set assembled any other way would place
+/// money in a container nothing had validated. [`spread_asks`] is the only
+/// constructor, and it reads [`Reading::Strict`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Asks(Vec<(Goal, Cents)>);
+
+impl Asks {
+    /// Each goal and what it asks of this paycheck, in the order the Savings
+    /// screen lists them.
+    pub fn priced(&self) -> &[(Goal, Cents)] {
+        &self.0
+    }
+
+    /// The sum [`unmet_asks`] measures the Goals line against.
+    pub fn total(&self) -> Cents {
+        self.0.iter().map(|(_, ask)| *ask).sum()
+    }
+
+    /// The container this set spreads into, the answer [`spread_container`]
+    /// reads for itself.
+    ///
+    /// On the set rather than beside it, because the caller holding one has
+    /// already paid for the read: a Planning view prices the plug and then
+    /// plans off it, and two reads of the same goals are two chances to send
+    /// a payday somewhere the screen did not say it was going.
+    pub fn container(&self, db: &Db) -> Result<Option<AccountId>> {
+        spread_container_of(db, self.0.iter().map(|(goal, _)| goal))
+    }
+}
+
 /// The plug's set, with what each of its goals asks of this paycheck.
 ///
 /// The set and its pricing off one read, because they answer one question:
@@ -104,14 +139,14 @@ pub fn spread_goals(db: &Db, reading: Reading) -> Result<Vec<Goal>> {
 /// A goal with nothing to ask -- undated, or already at its target -- comes
 /// back at zero rather than dropping out: it is in the set, and `fit` reads
 /// a zero ask as "hand this one nothing".
-pub fn spread_asks(db: &Db, today: NaiveDate, periods_per_year: i64) -> Result<Vec<(Goal, Cents)>> {
+pub fn spread_asks(db: &Db, today: NaiveDate, periods_per_year: i64) -> Result<Asks> {
     let unclaimed = unclaimed_with_balances(db, Reading::Strict)?;
     let mut priced = Vec::new();
     for funding in shares_of(&unclaimed) {
         let ask = crate::savings::paycheck_ask(funding, today, periods_per_year)?;
         priced.push((funding.goal.clone(), ask.unwrap_or(Cents::ZERO)));
     }
-    Ok(priced)
+    Ok(Asks(priced))
 }
 
 /// What a plan with nothing in any line reports.
@@ -195,7 +230,7 @@ fn shares_of(unclaimed: &[goal_engine::Funding]) -> Vec<&goal_engine::Funding> {
 
 /// The distinct containers the plug's goals sit in, in the order the Savings
 /// screen lists them.
-fn spread_containers(goals: &[Goal]) -> Vec<AccountId> {
+fn spread_containers<'a>(goals: impl IntoIterator<Item = &'a Goal>) -> Vec<AccountId> {
     let mut containers: Vec<AccountId> = Vec::new();
     for g in goals {
         if !containers.contains(&g.container_account_id) {
@@ -247,7 +282,20 @@ fn ambiguous_plug(containers: &[String]) -> String {
 /// the containers, because the owner reading it has to find the goal in the
 /// wrong one to act on it.
 pub fn spread_container(db: &Db) -> Result<Option<AccountId>> {
-    let containers = spread_containers(&spread_goals(db, Reading::Strict)?);
+    spread_container_of(db, &spread_goals(db, Reading::Strict)?)
+}
+
+/// The same answer over a set the caller has already read.
+///
+/// The rule itself lives here; [`spread_container`] is it with the read in
+/// front, and [`Asks::container`] is it over a read the caller has already
+/// paid for. Private, so the set reaching it is one of those two rather than
+/// any list of goals a caller cares to build.
+fn spread_container_of<'a>(
+    db: &Db,
+    goals: impl IntoIterator<Item = &'a Goal>,
+) -> Result<Option<AccountId>> {
+    let containers = spread_containers(goals);
     if containers.len() > 1 {
         bail!("{}", ambiguous_plug(&container_names(db, &containers)?));
     }
@@ -337,12 +385,29 @@ pub struct Wiring {
     pub suggestion: Option<Goal>,
 }
 
+/// Every line's destination, and the plug's own set behind them.
+///
+/// One value rather than a bare list, because the plug's landing is a
+/// *summary* of that set -- one container, several, or none -- and
+/// [`diagnose`] has to name the goals behind an ambiguous one. Handing the
+/// set back is what lets the panel explain the landing this pass resolved
+/// instead of reading the goals again and risking a breakdown that
+/// contradicts the row above it.
+pub struct Wired {
+    /// One entry per [`Line::ALL`], in that order.
+    pub lines: Vec<Wiring>,
+    /// The goals the plug spreads over, as this pass read them --
+    /// tolerantly, which is why it is [`diagnose`]'s alone and not something
+    /// [`plan`] could be handed.
+    spread: Vec<Goal>,
+}
+
 /// Every line's destination, for the screen that shows them.
 ///
 /// Two passes, because the plug's landing depends on which goals the other
 /// lines claim -- and the claims are read tolerantly here, so one dangling
 /// key is reported as itself rather than taking the whole block down.
-pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
+pub fn wiring(db: &Db) -> Result<Wired> {
     let accounts = account::list(db)?;
     let container_of = |id: AccountId| {
         accounts.iter().find(|a| a.id == id).map(|a| Container {
@@ -397,8 +462,9 @@ pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
     // failure that costs.
     let with_balances = unclaimed_with_balances(db, Reading::Tolerant)?;
     let unclaimed: Vec<Goal> = with_balances.iter().map(|g| g.goal.clone()).collect();
-    let containers = spread_containers(&cloned(shares_of(&with_balances)));
-    let spread = match containers.len() {
+    let spread = cloned(shares_of(&with_balances));
+    let containers = spread_containers(&spread);
+    let plug = match containers.len() {
         0 => Landing::Nowhere,
         1 => match container_of(containers[0]) {
             Some(container) => Landing::Spread { container },
@@ -409,11 +475,11 @@ pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
         },
     };
 
-    Line::ALL
+    let lines = Line::ALL
         .iter()
         .map(|line| {
             let landing = match line.destination() {
-                Destination::Spread => spread.clone(),
+                Destination::Spread => plug.clone(),
                 _ => landings
                     .iter()
                     .find(|(l, _)| l == line)
@@ -434,7 +500,9 @@ pub fn wiring(db: &Db) -> Result<Vec<Wiring>> {
                 suggestion,
             })
         })
-        .collect()
+        .collect::<Result<Vec<Wiring>>>()?;
+
+    Ok(Wired { lines, spread })
 }
 
 /// The one unclaimed goal `line`'s import substring matches, or `None` when
@@ -454,6 +522,7 @@ fn suggestion_for(line: Line, unclaimed: &[Goal]) -> Option<&Goal> {
 /// What one line's name would suggest, for the picker that opens on it.
 pub fn suggest(db: &Db, line: Line) -> Result<Option<Goal>> {
     Ok(wiring(db)?
+        .lines
         .into_iter()
         .find(|w| w.line == line)
         .and_then(|w| w.suggestion))
@@ -466,18 +535,29 @@ pub fn suggest(db: &Db, line: Line) -> Result<Option<Goal>> {
 /// is nothing to open. The refusal itself is the last resort: every case with
 /// something specific to say says it, and anything else falls back to the
 /// message `plan` produced rather than to silence.
-pub fn diagnose(db: &Db, lines: &Lines) -> Result<Vec<String>> {
+///
+/// The wiring and the refusal are handed in rather than read here, the same
+/// way [`unmet_asks`] takes the plug and the asks it compares: both are what
+/// the screen drew the row with, so a panel opened on that row explains the
+/// database the row reports rather than a second reading of it. `refusal` is
+/// [`plan`]'s own for these `lines` and nothing else -- a caller withholding
+/// one it holds empties the panel, and an empty panel is what the screen
+/// reads as "the transfers resolve".
+pub fn diagnose(
+    db: &Db,
+    lines: &Lines,
+    wired: &Wired,
+    refusal: Option<&anyhow::Error>,
+) -> Result<Vec<String>> {
     // Not `plan`'s refusal alone. A landing that `Landing::breaks_the_plan`
     // paints red must have something to say when `Enter` asks, and two of
     // them survive a `plan` that resolves: `plan` skips a zero-amount line
     // before ever resolving its destination, while `t` goes on to refuse an
     // ambiguous plug whatever the amount. A screen that alarms and then
     // denies the alarm is worse than either signal alone.
-    let refusal = plan(db, lines).err();
-    let wiring = wiring(db)?;
     let mut out: Vec<String> = Vec::new();
 
-    for w in &wiring {
+    for w in &wired.lines {
         if let Landing::Dangling { key } = &w.landing {
             out.push(format!("{} points at a row that is gone.", w.line.label()));
             out.push(format!(
@@ -490,7 +570,7 @@ pub fn diagnose(db: &Db, lines: &Lines) -> Result<Vec<String>> {
     }
 
     let plug = crate::demo::figure(Line::Goals.amount(lines));
-    if let Some(w) = wiring.iter().find(|w| w.line == Line::Goals) {
+    if let Some(w) = wired.lines.iter().find(|w| w.line == Line::Goals) {
         match &w.landing {
             Landing::Ambiguous { containers } => {
                 out.push(format!(
@@ -509,7 +589,7 @@ pub fn diagnose(db: &Db, lines: &Lines) -> Result<Vec<String>> {
                     .map(|c| crate::demo::text(c).into_owned())
                     .collect();
                 out.push(format!("{}:", capitalized(&ambiguous_plug(&containers))));
-                out.extend(unclaimed_by_container(db)?);
+                out.extend(unclaimed_by_container(db, &wired.spread)?);
                 out.push(String::new());
                 out.push(
                     "The plug is one amount and there is no rule for dividing it. Point a line at \
@@ -545,13 +625,16 @@ pub fn diagnose(db: &Db, lines: &Lines) -> Result<Vec<String>> {
 /// The plug's goals rather than every unclaimed one, because those are what
 /// put the containers in disagreement -- naming a met goal here would send
 /// the owner after a goal that is not in play.
-fn unclaimed_by_container(db: &Db) -> Result<Vec<String>> {
+///
+/// `goals` is [`Wired::spread`]: the set the landing this explains was
+/// summarised from, so the breakdown counts the same goals the row above it
+/// called ambiguous.
+fn unclaimed_by_container(db: &Db, goals: &[Goal]) -> Result<Vec<String>> {
     /// Past this many, the names stop being an aid and start being a list.
     const NAMED: usize = 5;
 
-    let goals = spread_goals(db, Reading::Tolerant)?;
     let mut out = Vec::new();
-    for id in spread_containers(&goals) {
+    for id in spread_containers(goals) {
         let names: Vec<String> = goals
             .iter()
             .filter(|g| g.container_account_id == id)
@@ -703,7 +786,13 @@ fn merge_transfer(
 /// transfer between them is a database nobody has pointed at anything. That
 /// is the exact boundary the refusal below draws: it fires on zero transfers
 /// *and* more than one stranded withdrawal, never on a single one.
-pub fn plan(db: &Db, lines: &Lines) -> Result<Vec<Row>> {
+///
+/// `spread` is [`Asks`] where the caller has already read it and `None`
+/// where it has not. Optional rather than required, because the read is what
+/// refuses a dangling key and it is made here only when the plug is nonzero:
+/// demanding it up front would refuse a plan that resolves today, on the
+/// strength of a key belonging to a line moving nothing.
+pub fn plan(db: &Db, lines: &Lines, spread: Option<&Asks>) -> Result<Vec<Row>> {
     let mut transfers: Vec<Row> = Vec::new();
     let mut withdrawals: Vec<Row> = Vec::new();
     let mut plug_error: Option<anyhow::Error> = None;
@@ -714,16 +803,22 @@ pub fn plan(db: &Db, lines: &Lines) -> Result<Vec<Row>> {
             continue;
         }
         match line.destination() {
-            Destination::Spread => match spread_container(db)? {
-                Some(to) => merge_transfer(&mut transfers, db, to, line, cents)?,
-                None => {
-                    plug_error = Some(anyhow!(
-                        "the Goals plug is {} but no unallocated goal exists to \
-                         spread it over",
-                        crate::demo::figure(cents)
-                    ));
+            Destination::Spread => {
+                let container = match spread {
+                    Some(asks) => asks.container(db)?,
+                    None => spread_container(db)?,
+                };
+                match container {
+                    Some(to) => merge_transfer(&mut transfers, db, to, line, cents)?,
+                    None => {
+                        plug_error = Some(anyhow!(
+                            "the Goals plug is {} but no unallocated goal exists to \
+                             spread it over",
+                            crate::demo::figure(cents)
+                        ));
+                    }
                 }
-            },
+            }
             _ => match destination_account(db, line)? {
                 Some(to) => merge_transfer(&mut transfers, db, to, line, cents)?,
                 None => withdrawals.push(Row::Withdrawal { line, cents }),
@@ -1041,8 +1136,9 @@ mod tests {
 
         let priced: Vec<(String, Cents)> = spread_asks(&db, day(2026, 8, 22), 26)
             .unwrap()
-            .into_iter()
-            .map(|(g, ask)| (g.name, ask))
+            .priced()
+            .iter()
+            .map(|(g, ask)| (g.name.clone(), *ask))
             .collect();
 
         assert_eq!(
@@ -1337,9 +1433,18 @@ mod tests {
         assert!(suggest(&db, Line::Bills).unwrap().is_none());
     }
 
+    /// `diagnose` the way the Planning screen calls it: the wiring and the
+    /// refusal read once and handed in.
+    fn diagnosed(db: &db::Db, lines: &Lines) -> Result<Vec<String>> {
+        let wired = wiring(db)?;
+        let refusal = plan(db, lines, None).err();
+        diagnose(db, lines, &wired, refusal.as_ref())
+    }
+
     fn landing_of(db: &db::Db, line: Line) -> Landing {
         wiring(db)
             .unwrap()
+            .lines
             .into_iter()
             .find(|w| w.line == line)
             .expect("every line is wired")
@@ -1397,7 +1502,7 @@ mod tests {
                 key: key_of(Line::Bills).name().to_string()
             }
         );
-        assert!(plan(&db, &lines()).is_err(), "plan still refuses");
+        assert!(plan(&db, &lines(), None).is_err(), "plan still refuses");
     }
 
     /// The same asymmetry over a goal that cannot derive a target. `plan` is
@@ -1430,10 +1535,10 @@ mod tests {
             }
         );
         assert!(
-            diagnose(&db, &lines()).is_ok(),
+            diagnosed(&db, &lines()).is_ok(),
             "the detail panel draws too"
         );
-        assert!(plan(&db, &lines()).is_err(), "plan still refuses");
+        assert!(plan(&db, &lines(), None).is_err(), "plan still refuses");
     }
 
     #[test]
@@ -1474,7 +1579,7 @@ mod tests {
         insert_goal(&db, brokerage, "Sabbatical");
         setting::set(&db, key_of(Line::Bills), GoalId(9_999)).unwrap();
 
-        let text = diagnose(&db, &lines()).unwrap().join("\n");
+        let text = diagnosed(&db, &lines()).unwrap().join("\n");
         assert!(text.contains("bill_payments_id"), "{text}");
         assert!(text.contains("Brokerage"), "{text}");
     }
@@ -1496,13 +1601,14 @@ mod tests {
 
         let ambiguous = wiring(&db)
             .unwrap()
+            .lines
             .into_iter()
             .find(|w| w.line == Line::Goals)
             .unwrap();
         assert!(ambiguous.landing.breaks_the_plan(), "the row is red");
-        assert!(plan(&db, &zero).is_ok(), "and yet the plan resolves");
+        assert!(plan(&db, &zero, None).is_ok(), "and yet the plan resolves");
         assert!(
-            !diagnose(&db, &zero).unwrap().is_empty(),
+            !diagnosed(&db, &zero).unwrap().is_empty(),
             "so Enter must not answer \"nothing to explain\""
         );
     }
@@ -1514,7 +1620,7 @@ mod tests {
         let (db, _, _) = configured();
         setting::clear(&db, key_of(Line::MomAndDad)).unwrap();
 
-        let text = diagnose(&db, &lines()).unwrap().join("\n");
+        let text = diagnosed(&db, &lines()).unwrap().join("\n");
         assert!(text.contains("Rainy Day"), "{text}");
         assert!(text.contains("Brokerage"), "{text}");
         assert!(text.contains("Mom & Dad"), "{text}");
@@ -1530,7 +1636,7 @@ mod tests {
         let (db, _, _) = configured();
         setting::clear(&db, key_of(Line::MomAndDad)).unwrap();
 
-        let text = diagnose(&db, &lines()).unwrap().join("\n");
+        let text = diagnosed(&db, &lines()).unwrap().join("\n");
         assert!(!text.contains("4,832"), "the plug survived: {text}");
         assert!(
             text.contains(&crate::demo::figure(Cents::from_dollars(4_832))),
@@ -1554,7 +1660,7 @@ mod tests {
         let (db, _, _) = configured();
         setting::clear(&db, key_of(Line::MomAndDad)).unwrap();
 
-        let text = diagnose(&db, &lines()).unwrap().join("\n");
+        let text = diagnosed(&db, &lines()).unwrap().join("\n");
         assert!(!text.contains("Lego"), "{text}");
         assert!(!text.contains("Brokerage"), "{text}");
         assert!(
@@ -1572,7 +1678,7 @@ mod tests {
     #[test]
     fn diagnose_of_a_resolved_plan_is_empty() {
         let (db, _, _) = configured();
-        assert!(diagnose(&db, &lines()).unwrap().is_empty());
+        assert!(diagnosed(&db, &lines()).unwrap().is_empty());
     }
 
     /// Four lines land in Rainy Day and three in Brokerage, and each account gets
@@ -1580,7 +1686,7 @@ mod tests {
     #[test]
     fn lines_sharing_a_destination_make_one_transfer() {
         let (db, savings, brokerage) = configured();
-        let rows = plan(&db, &lines()).unwrap();
+        let rows = plan(&db, &lines(), None).unwrap();
 
         assert_eq!(
             transfer_to(&rows, savings),
@@ -1603,7 +1709,7 @@ mod tests {
     #[test]
     fn each_unconfigured_line_is_its_own_withdrawal() {
         let (db, _, _) = configured();
-        let rows = plan(&db, &lines()).unwrap();
+        let rows = plan(&db, &lines(), None).unwrap();
         assert_eq!(
             withdrawals(&rows),
             vec![
@@ -1632,7 +1738,7 @@ mod tests {
         goal::close(&db, down_payment).unwrap();
         setting::clear(&db, key).unwrap();
 
-        let rows = plan(&db, &lines()).unwrap();
+        let rows = plan(&db, &lines(), None).unwrap();
 
         assert_eq!(
             transfer_to(&rows, brokerage),
@@ -1655,7 +1761,7 @@ mod tests {
         };
         setting::set(&db, key, GoalId(9_999)).unwrap();
 
-        let err = plan(&db, &lines()).unwrap_err();
+        let err = plan(&db, &lines(), None).unwrap_err();
         let text = err.to_string();
         assert!(text.contains("planning.goal.mom_and_dad_id"), "{text}");
     }
@@ -1670,7 +1776,7 @@ mod tests {
         };
         setting::set(&db, key, AccountId(9_999)).unwrap();
 
-        let err = plan(&db, &lines()).unwrap_err();
+        let err = plan(&db, &lines(), None).unwrap_err();
         let text = err.to_string();
         assert!(text.contains("planning.account.retirement_id"), "{text}");
     }
@@ -1689,6 +1795,35 @@ mod tests {
             .map(|g| g.name)
             .collect();
         assert_eq!(names, vec!["Lego".to_string(), "Dropbox".to_string()]);
+    }
+
+    /// The set handed in and the set read here are one set. A Planning view
+    /// prices the plug through `spread_asks` and then plans off those same
+    /// goals, so a plan that resolved the plug differently from the row the
+    /// screen drew beside it would be the screen and `t` disagreeing about
+    /// where a payday lands.
+    #[test]
+    fn a_handed_in_spread_set_plans_the_same_as_one_read_here() {
+        let (db, _, _) = configured();
+        let asks = spread_asks(&db, day(2026, 8, 22), 26).unwrap();
+        assert_eq!(
+            plan(&db, &lines(), Some(&asks)).unwrap(),
+            plan(&db, &lines(), None).unwrap()
+        );
+    }
+
+    /// And the same where the plug has nowhere single to land: a set read by
+    /// the caller must refuse in the same words, or the screen would report
+    /// an ambiguity `t` did not.
+    #[test]
+    fn a_handed_in_spread_set_refuses_an_ambiguous_plug_the_same_way() {
+        let (db, _, brokerage) = configured();
+        insert_goal(&db, brokerage, "Sabbatical");
+        let asks = spread_asks(&db, day(2026, 8, 22), 26).unwrap();
+        assert_eq!(
+            format!("{:#}", plan(&db, &lines(), Some(&asks)).unwrap_err()),
+            format!("{:#}", plan(&db, &lines(), None).unwrap_err())
+        );
     }
 
     /// The plug is a single amount and there is no rule for dividing it, so
@@ -1714,7 +1849,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = format!("{:#}", plan(&db, &lines()).unwrap_err());
+        let err = format!("{:#}", plan(&db, &lines(), None).unwrap_err());
         assert!(
             err.contains("Rainy Day") && err.contains("Brokerage"),
             "{err}"
@@ -1746,7 +1881,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = format!("{:#}", plan(&db, &lines()).unwrap_err());
+        let err = format!("{:#}", plan(&db, &lines(), None).unwrap_err());
         assert!(!err.contains("Rainy Day"), "a container survived: {err}");
         assert!(!err.contains("Brokerage"), "a container survived: {err}");
         assert!(err.contains(&crate::demo::text("Rainy Day").to_string()));
@@ -1765,7 +1900,7 @@ mod tests {
             ..Lines::default()
         };
 
-        let err = plan(&db, &l).unwrap_err();
+        let err = plan(&db, &l, None).unwrap_err();
         assert!(err.to_string().contains("no unallocated goal"), "{err}");
     }
 
@@ -1775,7 +1910,7 @@ mod tests {
     #[test]
     fn a_plan_with_every_line_zero_is_refused_as_nothing_to_transfer() {
         let (db, _, _) = configured();
-        let rows = plan(&db, &Lines::default()).unwrap_err();
+        let rows = plan(&db, &Lines::default(), None).unwrap_err();
         // Every line zero means every group zero, which is the unconfigured
         // case below -- asserted there. Here, only that it does not silently
         // produce rows.
@@ -1789,7 +1924,7 @@ mod tests {
     #[test]
     fn a_zero_line_among_non_zero_ones_is_absent_from_its_transfers_lines() {
         let (db, savings, _) = configured();
-        let rows = plan(&db, &lines()).unwrap();
+        let rows = plan(&db, &lines(), None).unwrap();
 
         let savings_lines = rows
             .iter()
@@ -1813,7 +1948,7 @@ mod tests {
         let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
 
-        let err = plan(&db, &lines()).unwrap_err();
+        let err = plan(&db, &lines(), None).unwrap_err();
         assert!(err.to_string().contains("no Planning destination"), "{err}");
     }
 
@@ -1830,7 +1965,7 @@ mod tests {
             ..Lines::default()
         };
 
-        let rows = plan(&db, &l).unwrap();
+        let rows = plan(&db, &l, None).unwrap();
         assert_eq!(
             withdrawals(&rows),
             vec![(Line::Retirement, Cents::from_dollars(100))]
@@ -1850,7 +1985,7 @@ mod tests {
             ..Lines::default()
         };
 
-        let err = plan(&db, &l).unwrap_err();
+        let err = plan(&db, &l, None).unwrap_err();
         assert!(err.to_string().contains("no Planning destination"), "{err}");
     }
 
@@ -1950,7 +2085,7 @@ mod tests {
     fn a_payday_writes_both_legs_of_each_transfer_and_one_row_per_withdrawal() {
         let (db, _, _) = configured();
         let checking = source(&db).unwrap();
-        let rows = plan(&db, &lines()).unwrap();
+        let rows = plan(&db, &lines(), None).unwrap();
 
         execute(&db, checking, day(2026, 8, 20), &rows).unwrap();
 
@@ -1969,7 +2104,7 @@ mod tests {
     fn a_withdrawal_is_described_by_its_line() {
         let (db, _, _) = configured();
         let checking = source(&db).unwrap();
-        let rows = plan(&db, &lines()).unwrap();
+        let rows = plan(&db, &lines(), None).unwrap();
 
         execute(&db, checking, day(2026, 8, 20), &rows).unwrap();
 
@@ -2000,7 +2135,7 @@ mod tests {
     fn a_payday_already_on_the_ledger_is_detected() {
         let (db, _, _) = configured();
         let checking = source(&db).unwrap();
-        let rows = plan(&db, &lines()).unwrap();
+        let rows = plan(&db, &lines(), None).unwrap();
         let date = day(2026, 8, 20);
 
         assert!(
@@ -2027,7 +2162,7 @@ mod tests {
     fn only_the_dates_that_clash_come_back_and_in_the_order_asked() {
         let (db, _, _) = configured();
         let checking = source(&db).unwrap();
-        let rows = plan(&db, &lines()).unwrap();
+        let rows = plan(&db, &lines(), None).unwrap();
         let scanned = [
             day(2026, 8, 19),
             day(2026, 8, 20),
