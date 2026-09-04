@@ -453,7 +453,7 @@ const RECURRING_TXNS: [Entry; 7] = [
     Entry {
         key: "a",
         label: Label::Own("add"),
-        detail: "Add a recurring transaction: an account, an amount, a cadence and an anchor date.",
+        detail: "Add a recurring transaction: an account, an amount, a cadence and a start date.",
     },
     Entry {
         key: "e",
@@ -468,7 +468,7 @@ const RECURRING_TXNS: [Entry; 7] = [
     Entry {
         key: "g",
         label: Label::Own("regen"),
-        detail: "Regenerate the selected one's rows out to the horizon. Idempotent: running it twice produces identical rows, and hand-corrected rows are left alone.",
+        detail: "Regenerate the selected one's rows. One run reaches three months ahead by default — an end date only ever cuts that short, and 'x' is what pushes further out. Idempotent: running it twice produces identical rows, and hand-corrected rows are left alone.",
     },
     Entry {
         key: "G",

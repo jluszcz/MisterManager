@@ -586,9 +586,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     them. It is the *confirmed* date rather than the two-business-day default, since the owner may
     step it before committing. `A` and `i` open a worksheet of their own and stay on today, which
     is what they are entering.
-  - A recurring transaction's `Horizon` and the birth-date prompt open blank, because blank is a
+  - A recurring transaction's `End` field and the birth-date prompt open blank, because blank is a
     supported state in both — a rule that does not end, and a date not on record — and `parse_opt`
     is what reads the first of those back.
+  - The cadence selector opens on `monthly` rather than on `Cadence::ALL[0]`. A two-option selector
+    has no neutral setting, so it opens on the commoner answer: nearly every recurring transaction
+    is monthly, and the biweekly one is the paycheck, entered once.
 
   A field **editing** an existing row is not an exception and takes `DateField::given`: it opens on
   that row's own date, which is what editing one means. `given` marks it touched for the same
@@ -1610,6 +1613,17 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   count from the same source — so the column is `—` until the first `g`, and it is the number `x`
   moves. The end date stays editable in the `e` form: a cap the owner sets belongs with the rest of
   the fields, not in a table of what the schedule has actually produced.
+  **The two date fields are labelled `Start` and `End`**, over the columns `anchor_date` and
+  `horizon`. `End` is the load-bearing rename: two different bounds would otherwise share one word,
+  since `recurring_txn.horizon` is where the *rule* stops while `key::RECURRING_TXN_HORIZON_MONTHS`
+  is how far ahead a run *generates*. Generation takes the lesser of the two, so a row's end date
+  only ever cuts a run short and never lengthens one — and a field carrying the window's own name
+  read as though it did, which is the reading `x` exists to answer. `Start` follows it because the
+  pair is read together and `Anchor` names the mechanism rather than the question the owner is
+  answering; it is still `anchor_date`, the date the cadence counts from, which may sit in the past
+  while generation begins at today. The list's column beside them stays `Last`, a third thing
+  again: where the rows actually reached. That list heads its own column `Start` too — one field
+  cannot be called two things across the screen that lists it and the form that edits it.
 - **The Funds screen asks for the birth date, because nothing else has anywhere to.** The bond
   row's target is `(age − 30)` points and the age comes from `setting::key::BIRTH_DATE`, which the
   import writes and no screen owns. Entering the screen with an age row and no birth date on record
