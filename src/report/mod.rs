@@ -193,10 +193,15 @@ fn plan_view(db: &Db, today: NaiveDate, adhoc: NaiveDate) -> Result<PlanView> {
     // on record trips the strict target reader and would take the whole tab
     // down -- and it is reachable, since `plan` never touches that reader
     // when the plug is zero and so returns `Ok` where this call does not.
-    let spread_ask_total = transfer::spread_asks(db, today, periods)
-        .map(|asks| asks.iter().map(|(_, ask)| *ask).sum())
+    // The read just made, handed on rather than made again: `plan` resolves
+    // the plug's container off exactly these goals. A read that failed hands
+    // over nothing and leaves `plan` to fail on its own terms.
+    let asks = transfer::spread_asks(db, today, periods);
+    let spread_ask_total = asks
+        .as_ref()
+        .map(transfer::Asks::total)
         .unwrap_or(Cents::ZERO);
-    let transfers = match transfer::plan(db, &plan.lines) {
+    let transfers = match transfer::plan(db, &plan.lines, asks.as_ref().ok()) {
         Ok(rows) => Ok(plan_rows::transfers(&rows)),
         Err(e) => Err(format!("{e:#}")),
     };

@@ -441,7 +441,7 @@ fn the_transfer_rows_sum_to_the_excess_used() {
         .unwrap()
         .expect("the workbook carries its own today");
     let computed = computed_plan(&db, today);
-    let rows = transfer::plan(&db, &computed.lines).unwrap();
+    let rows = transfer::plan(&db, &computed.lines, None).unwrap();
     let total: Cents = rows.iter().map(|r| r.cents()).sum();
     assert_eq!(total, computed.excess_used);
     assert_eq!(computed.lines.total(), computed.excess_used);
