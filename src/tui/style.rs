@@ -143,7 +143,7 @@ pub fn amount_color(cents: Cents) -> Option<Color> {
 
 /// The color for a reconciliation delta, or `None` for the reconciled case.
 ///
-/// Zero is not a third color: the border draws it as a dash, and a color there
+/// Zero is not a third color: the border draws it as a check, and a color there
 /// would read as one of the two states it is the absence of.
 pub fn delta_color(cents: Cents) -> Option<Color> {
     match cents.cmp(&Cents::ZERO) {
@@ -373,7 +373,7 @@ mod tests {
     }
 
     /// A reconciled account is neither a gain nor a warning, and the border
-    /// draws it as a plain dash. Coloring zero would make "done" look like
+    /// draws it as a plain check. Coloring zero would make "done" look like
     /// one of the two states it is the absence of.
     #[test]
     fn a_reconciled_delta_takes_no_color_of_its_own() {
