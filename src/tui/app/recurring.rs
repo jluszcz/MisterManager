@@ -675,7 +675,6 @@ mod tests {
         type_str(app, "-1200.00");
         press(app, KeyCode::Tab);
         press(app, KeyCode::Tab);
-        press(app, KeyCode::Right); // monthly
         press(app, KeyCode::Tab);
         for _ in 0..10 {
             press(app, KeyCode::Backspace);
@@ -837,6 +836,9 @@ mod tests {
         type_str(&mut app, "5000.00");
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Tab);
+        // A paycheck is biweekly, not the form's monthly default -- and this
+        // is the app-level press that keeps `←`/`→` reaching `commit`.
+        press(&mut app, KeyCode::Right);
         press(&mut app, KeyCode::Tab);
         for _ in 0..10 {
             press(&mut app, KeyCode::Backspace);
@@ -847,6 +849,11 @@ mod tests {
         press(&mut app, KeyCode::Char('P'));
 
         assert!(app.recurring_txn.rows()[0].is_paycheck);
+        assert_eq!(
+            crate::db::recurring_txn::list(&app.db).unwrap()[0].cadence,
+            crate::db::recurring_txn::Cadence::Biweekly,
+            "the selector press reached the write"
+        );
         assert_eq!(app.dates.adhoc, day(2026, 8, 27));
         assert_eq!(
             app.adhoc,
@@ -875,6 +882,9 @@ mod tests {
         type_str(&mut app, "5000.00");
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Tab);
+        // A paycheck is biweekly, not the form's monthly default -- and this
+        // is the app-level press that keeps `←`/`→` reaching `commit`.
+        press(&mut app, KeyCode::Right);
         press(&mut app, KeyCode::Tab);
         for _ in 0..10 {
             press(&mut app, KeyCode::Backspace);

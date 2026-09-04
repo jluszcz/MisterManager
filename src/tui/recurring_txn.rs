@@ -147,8 +147,8 @@ impl RecurringTxnField {
             RecurringTxnField::Amount => "Amount",
             RecurringTxnField::Account => "Account",
             RecurringTxnField::Cadence => "Cadence",
-            RecurringTxnField::Anchor => "Anchor",
-            RecurringTxnField::Horizon => "Horizon",
+            RecurringTxnField::Anchor => "Start",
+            RecurringTxnField::Horizon => "End",
         }
     }
 }
@@ -191,7 +191,12 @@ impl RecurringTxnForm {
             accounts,
             account: 0,
             account_touched: false,
-            cadence: 0,
+            // Monthly is what nearly every recurring transaction is; the
+            // biweekly one is the paycheck, entered once.
+            cadence: Cadence::ALL
+                .iter()
+                .position(|c| *c == Cadence::Monthly)
+                .unwrap_or(0),
         })
     }
 
@@ -411,7 +416,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> Vie
         Cell::from(ACCT_HEADER),
         right_header("Amount"),
         Cell::from("Cadence"),
-        Cell::from("Anchor"),
+        Cell::from("Start"),
         Cell::from("Last"),
         right_header("Rows"),
     ])
@@ -671,7 +676,9 @@ mod tests {
         assert_eq!(new.description, "Mortgage");
         assert_eq!(new.cents, Cents(-120_000));
         assert_eq!(new.account_id, AccountId(2));
-        assert_eq!(new.cadence, Cadence::Monthly);
+        // The one press off `monthly`, which the form opens on: asserting the
+        // default would hold whether the selector reached `commit` or not.
+        assert_eq!(new.cadence, Cadence::Biweekly);
         assert_eq!(new.anchor_date, day(2026, 9, 1));
         assert_eq!(new.horizon, Some(day(2026, 12, 1)));
     }
@@ -956,11 +963,6 @@ mod tests {
         walk_until!(form.focus == RecurringTxnField::Cadence, form.next_field());
         assert_eq!(
             form.display(RecurringTxnField::Cadence).plain_text(),
-            "biweekly"
-        );
-        form.choice(Step::NEXT);
-        assert_eq!(
-            form.display(RecurringTxnField::Cadence).plain_text(),
             "monthly"
         );
         form.choice(Step::NEXT);
@@ -968,7 +970,7 @@ mod tests {
             form.display(RecurringTxnField::Cadence).plain_text(),
             "biweekly"
         );
-        form.choice(Step::PREVIOUS);
+        form.choice(Step::NEXT);
         assert_eq!(
             form.display(RecurringTxnField::Cadence).plain_text(),
             "monthly"
@@ -977,6 +979,11 @@ mod tests {
         assert_eq!(
             form.display(RecurringTxnField::Cadence).plain_text(),
             "biweekly"
+        );
+        form.choice(Step::PREVIOUS);
+        assert_eq!(
+            form.display(RecurringTxnField::Cadence).plain_text(),
+            "monthly"
         );
     }
 
@@ -1039,7 +1046,7 @@ mod tests {
         );
         assert_eq!(
             form.display(RecurringTxnField::Cadence).plain_text(),
-            "biweekly"
+            "monthly"
         );
 
         form.choice(Step::PREVIOUS);
@@ -1049,7 +1056,7 @@ mod tests {
         );
         assert_eq!(
             form.display(RecurringTxnField::Cadence).plain_text(),
-            "biweekly"
+            "monthly"
         );
     }
 
@@ -1148,7 +1155,7 @@ mod tests {
                 "Acct",
                 "Amount",
                 "Cadence",
-                "Anchor",
+                "Start",
                 "Last",
                 "Rows",
             ],
