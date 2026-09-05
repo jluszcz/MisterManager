@@ -1747,7 +1747,7 @@ mod tests {
     /// `DEMO_FIXTURE_NAMES`. `Coworking`, the fixture's third bill, stays on
     /// the list: `select_first_bill` always lands on `Mortgage`, so no
     /// iteration here ever opens a form on `Coworking` -- what actually
-    /// covers it is `tui::planning::build`'s `bills` closure, which masks
+    /// covers it is `tui::planning::view::build`'s `bills` closure, which masks
     /// every bill's label before the table behind the modal is ever drawn,
     /// `Coworking` included. `BillField::Label`'s own form-field masking is
     /// covered by `a_demo_scrambles_the_amount_capital_e_opens_a_bill_on` and

@@ -6,7 +6,7 @@ Every function here reproduces something the workbook computes: a named lambda, 
 record **what** the answer is. This file records the derivations they don't show — why a formula
 has the shape it has, and which of its edges are load-bearing.
 
-No database, no I/O. `plan.rs` feeds these from `db`; `tui/planning.rs` renders the result.
+No database, no I/O. `plan.rs` feeds these from `db`; `tui/planning/` renders the result.
 
 ## The lambdas
 

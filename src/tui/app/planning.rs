@@ -192,7 +192,7 @@ impl App {
             Some((Some(planning_screen::Editable::Constant(target)), label, prefill)) => {
                 // A percentage and a count of pay periods open the same
                 // modal a target does, and only one of the three is money.
-                // A bill's label arrives already masked: `tui::planning::build`'s
+                // A bill's label arrives already masked: `tui::planning::view::build`'s
                 // `bills` closure masks `plan_rows::Bill.label` before this row
                 // is ever built, so a second mask here would scramble the
                 // pseudonym itself rather than the name -- the double-mask
@@ -894,7 +894,7 @@ mod tests {
     }
 
     /// `e` opens the same bill through a different path -- `open_value_edit`,
-    /// which reads the row `tui::planning::build` already produced. Its
+    /// which reads the row `tui::planning::view::build` already produced. Its
     /// `bills` closure masks `plan_rows::Bill.label` before `Row::bill` ever
     /// sees it, so `open_value_edit` must not mask a second time -- doing so
     /// would scramble the pseudonym instead of the name. The sweep cannot
