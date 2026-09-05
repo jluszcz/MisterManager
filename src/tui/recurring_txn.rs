@@ -6,7 +6,9 @@
 
 use super::Label;
 use super::cursor::{Cursor, Viewport, impl_scroll};
-use super::form::{DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index};
+use super::form::{
+    AccountChoice, DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index,
+};
 use crate::db::RecurringTxnId;
 use crate::db::account::Account;
 use crate::db::recurring_txn::{Cadence, NewRecurringTxn, RecurringTxn};
@@ -167,9 +169,7 @@ pub struct RecurringTxnForm {
     amount: Field,
     anchor: DateField,
     horizon: DateField,
-    accounts: Vec<Account>,
-    account: usize,
-    account_touched: bool,
+    account: AccountChoice,
     cadence: usize,
 }
 
@@ -186,9 +186,7 @@ impl RecurringTxnForm {
             amount: Field::default(),
             anchor: DateField::today(today),
             horizon: DateField::blank(today),
-            accounts,
-            account: 0,
-            account_touched: false,
+            account: AccountChoice::untouched(accounts),
             // Monthly is what nearly every recurring transaction is; the
             // biweekly one is the paycheck, entered once.
             cadence: Cadence::ALL
@@ -207,10 +205,6 @@ impl RecurringTxnForm {
             !accounts.is_empty(),
             "there is no account to write a recurring transaction against"
         );
-        let account = accounts
-            .iter()
-            .position(|a| a.id == txn.account_id)
-            .unwrap_or(0);
         Ok(RecurringTxnForm {
             editing: Some(txn.id),
             focus: RecurringTxnField::Description,
@@ -218,12 +212,7 @@ impl RecurringTxnForm {
             amount: Field::given(txn.cents.to_string()),
             anchor: DateField::given(today, Some(txn.anchor_date)),
             horizon: DateField::given(today, txn.horizon),
-            accounts,
-            account,
-            // The recurring transaction's own account, which the user can see
-            // and did not ask to change: a suggestion leaves it alone, as
-            // `Field::given` does for the text fields beside it.
-            account_touched: true,
+            account: AccountChoice::given(accounts, txn.account_id),
             cadence: Cadence::ALL
                 .iter()
                 .position(|c| *c == txn.cadence)
@@ -259,18 +248,15 @@ impl RecurringTxnForm {
                 self.horizon
                     .display(self.focus == RecurringTxnField::Horizon),
             ),
-            RecurringTxnField::Account => match self.accounts.get(self.account) {
-                Some(a) => Label::default().account(super::Account::labelled(&self.accounts, a.id)),
-                None => Label::default(),
-            },
+            RecurringTxnField::Account => self.account.display(),
             RecurringTxnField::Cadence => Label::from(Cadence::ALL[self.cadence].as_str()),
         }
     }
 
     pub fn commit(&self) -> Result<NewRecurringTxn> {
         let account = self
-            .accounts
-            .get(self.account)
+            .account
+            .selected()
             .map(|a| a.id)
             .ok_or_else(|| anyhow::anyhow!("no account is selected"))?;
         let description = self.description.value().trim().to_string();
@@ -298,10 +284,7 @@ impl FormFields for RecurringTxnForm {
 
     fn cycle(&mut self, step: Step) {
         match self.focus {
-            RecurringTxnField::Account => {
-                self.account = step_index(self.account, self.accounts.len(), step.direction());
-                self.account_touched = true;
-            }
+            RecurringTxnField::Account => self.account.step(step),
             RecurringTxnField::Cadence => {
                 self.cadence = step_index(self.cadence, Cadence::ALL.len(), step.direction())
             }
@@ -339,11 +322,7 @@ impl FormFields for RecurringTxnForm {
         if !self.amount.is_touched() {
             self.amount.fill(hit.cents.to_string());
         }
-        if !self.account_touched
-            && let Some(i) = self.accounts.iter().position(|a| a.id == hit.account_id)
-        {
-            self.account = i;
-        }
+        self.account.take(hit);
     }
 }
 

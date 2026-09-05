@@ -12,7 +12,9 @@
 use super::Account;
 use super::Label;
 use super::autocomplete::Autocomplete;
-use super::form::{DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index};
+use super::form::{
+    AccountChoice, DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index,
+};
 use super::widget::{field_stack, render_fields, render_popup};
 use crate::db::account::{self, Kind};
 use crate::db::txn::{NewTxn, Suggestion, Txn};
@@ -72,21 +74,15 @@ pub struct TxnForm {
     date: DateField,
     amount: Field,
     description: Field,
-    accounts: Vec<account::Account>,
-    account: usize,
-    account_touched: bool,
+    account: AccountChoice,
 }
 
 impl TxnForm {
     /// `preselected` is the account the ledger is filtered to, if any, so `a`
     /// opens on the account being looked at rather than always on the first.
     ///
-    /// A filter is the owner saying which account they are entering rows for,
-    /// so it arrives as a *choice* rather than a default: an accepted
-    /// suggestion fills the description and the amount and leaves the account
-    /// alone, the way it already leaves an amount that was typed. Under the
-    /// `All` filter nothing has been said, and the selector opens on the first
-    /// account as a bare default a suggestion is free to move.
+    /// What a filter means to a suggestion afterwards is
+    /// [`AccountChoice::preselected`]'s to say.
     ///
     /// The date arrives already built rather than as a day to open on,
     /// because a `DateField` carries *two* dates -- the day it shows and the
@@ -103,16 +99,13 @@ impl TxnForm {
             !accounts.is_empty(),
             "there is no account of this kind to add a transaction to"
         );
-        let filtered = preselected.and_then(|id| accounts.iter().position(|a| a.id == id));
         Ok(TxnForm {
             editing: None,
             focus: TxnField::Description,
             date,
             amount: Field::default(),
             description: Field::default(),
-            accounts,
-            account: filtered.unwrap_or(0),
-            account_touched: filtered.is_some(),
+            account: AccountChoice::preselected(accounts, preselected),
         })
     }
 
@@ -125,19 +118,13 @@ impl TxnForm {
             !accounts.is_empty(),
             "there is no account of this kind to edit a transaction into"
         );
-        let account = accounts
-            .iter()
-            .position(|a| a.id == txn.account_id)
-            .unwrap_or(0);
         Ok(TxnForm {
             editing: Some(txn.id),
             focus: TxnField::Description,
             date: DateField::given(today, Some(txn.date)),
             amount: Field::given(txn.cents.to_string()),
             description: Field::given(txn.description.clone()),
-            accounts,
-            account,
-            account_touched: true,
+            account: AccountChoice::given(accounts, txn.account_id),
         })
     }
 
@@ -152,18 +139,12 @@ impl TxnForm {
             TxnField::Description => {
                 Label::from(crate::demo::text(self.description.value()).into_owned())
             }
-            TxnField::Account => match self.accounts.get(self.account) {
-                Some(a) => Label::default().account(Account::labelled(&self.accounts, a.id)),
-                None => Label::default(),
-            },
+            TxnField::Account => self.account.display(),
         }
     }
 
     pub fn commit(&self) -> Result<NewTxn> {
-        let account = self
-            .accounts
-            .get(self.account)
-            .context("no account is selected")?;
+        let account = self.account.selected().context("no account is selected")?;
         // A blank description is a supported state, not a half-entered row:
         // some rows are worth having for their amount alone. `tui::description`
         // is what draws it. Still trimmed, so nothing downstream has to ask
@@ -197,8 +178,7 @@ impl FormFields for TxnForm {
     }
 
     fn cycle(&mut self, step: Step) {
-        self.account = step_index(self.account, self.accounts.len(), step.direction());
-        self.account_touched = true;
+        self.account.step(step);
     }
 
     fn suggestion_prefix(&self) -> Option<&str> {
@@ -217,11 +197,7 @@ impl FormFields for TxnForm {
         if !self.amount.is_touched() {
             self.amount.fill(hit.cents.to_string());
         }
-        if !self.account_touched
-            && let Some(i) = self.accounts.iter().position(|a| a.id == hit.account_id)
-        {
-            self.account = i;
-        }
+        self.account.take(hit);
     }
 }
 
