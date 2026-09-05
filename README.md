@@ -420,11 +420,12 @@ read a backup, delete one, or list the bucket.
 
 ## Layout
 
-A Rust crate whose layering is enforced by module privacy rather than by convention: no dependency
-is reachable outside the module that owns it — which is what lets `calamine` be optional and a
-default build carry no spreadsheet parser at all — everything outside `src/db/` reaches the database
-through the query modules rather than a connection, ids are one type per table, and `Cents` is the
-only money type in it. `CLAUDE.md` carries the path-by-path map and states each of those rules in
+A Rust crate whose layering is enforced by module privacy rather than by convention: the
+dependencies that would otherwise reach everywhere are confined by name — `ratatui` to `src/tui/`,
+`rusqlite` to `src/db/`, `calamine` to `src/import/`, which is what lets that last one be optional
+and a default build carry no spreadsheet parser at all — everything outside `src/db/` reaches the
+database through the query modules rather than a connection, ids are one type per table, and
+`Cents` is the only money type in it. `CLAUDE.md` carries the path-by-path map and states each of those rules in
 full; the module `CLAUDE.md` files under `src/import/`, `src/calc/`, `src/tui/`, `src/report/` and
 `src/backup/` go a level below it.
 
