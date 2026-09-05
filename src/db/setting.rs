@@ -178,6 +178,16 @@ pub fn clear<T>(db: &Db, key: Key<T>) -> Result<()> {
 /// the same [`Key`] constants the table is, so this buys the round-trips back
 /// without giving up what [`key`] exists for. A key absent from the map is a
 /// key that is unset, which is the state every reader already handles.
+///
+/// **It is a read, not a view.** The rows are the ones the `SELECT` saw, and
+/// nothing refreshes them, so a snapshot outliving the call that took it
+/// quotes settings the database has since moved off. `PAY_PERIODS_PER_YEAR`
+/// is one of the ten it carries and is editable on the Planning screen, which
+/// is the same hazard "nothing holds the pay cadence across a reload" already
+/// names for a *field* -- and a snapshot is the more convenient way to make
+/// it, since it holds every other key beside it. Take one where the work is
+/// done and drop it there; `plan::settings_from_db` builds and spends one
+/// inside a single call, which is the shape to copy.
 pub struct Snapshot(HashMap<String, String>);
 
 impl Snapshot {
