@@ -161,6 +161,10 @@ impl DateField {
     /// A field that takes `YYYY-MM-DD` and nothing else. It needs no `today`,
     /// which is the distinction made visible: the shorthand is the reading
     /// that depends on when you are.
+    ///
+    /// The birth-date prompt is what wants it. Every `M/D` reading is present
+    /// or future and a birth date is decades past, so a shorthand there could
+    /// only ever resolve to a wrong year that nothing refuses.
     pub(super) fn iso_only(prefill: &str) -> DateField {
         DateField {
             field: Field::given(prefill),

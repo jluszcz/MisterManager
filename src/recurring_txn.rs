@@ -210,8 +210,24 @@ pub fn regenerate_all(db: &Db, today: NaiveDate) -> Result<Regenerated> {
     })
 }
 
-/// Release, adopt, insert -- and open no transaction, because both public
-/// forms already have.
+/// Release, skip, adopt, insert -- and open no transaction, because both
+/// public forms already have.
+///
+/// **Regenerating twice must produce identical rows.** Every step below is
+/// there to hold that, and the tests pin it directly.
+///
+/// Releasing a correction the schedule no longer produces is what the second
+/// step exists for: without it, moving one -- by editing the anchor or the
+/// cadence, or by moving the row itself in the ledger -- leaves it owned at a
+/// date the schedule has stopped producing while that date gets a fresh
+/// insert. Four rows for three occurrences, every projected balance one
+/// payment out, and stable from the second run on, so nothing downstream ever
+/// catches it.
+///
+/// Skipping an occurrence already owned is the other half. `adopt`'s
+/// `recurring_txn_id IS NULL` guard would refuse such a row anyway, and the
+/// refusal reads as "nothing to adopt" -- which ends in a duplicate insert for
+/// a date already accounted for.
 fn regenerate_within(
     db: &Db,
     recurring_txn: &RecurringTxn,

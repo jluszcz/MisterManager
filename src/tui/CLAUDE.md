@@ -16,6 +16,11 @@ on before it can act. Reaching for a fresh key because the obvious one is "not q
 is the way that happens: the distinction is real to whoever writes the screen and invisible to
 whoever presses the key.
 
+**What belongs in this file is what spans screens.** A rule enforced at one item — what a constant
+is for, what a form's own prefill does, why one function refuses — is written on that item and
+named here, never restated. Two copies of a sentence are two places to edit and one place to
+forget, and the copy that goes stale is always the one further from the code.
+
 ## The vocabulary a new screen picks from
 
 | Key | Means |
@@ -170,15 +175,14 @@ allocation worksheets prefilled; `destination` is the list `e` opens on one of i
 rows. `fund` is the sixth screen, its form, and the birth-date prompt the age row needs and no
 other screen owns. `recurring_goal` is the seventh screen and `recurring_txn` the
 eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
-smallest: `a`, which creates an account the workbook does not name, and `e`, over the seven things
-the workbook does not say about one.
+smallest: `a`, which creates an account the workbook does not name, and `e`, over everything the
+workbook does not say about one.
 
 `history` is the modal `Enter` opens on a Savings row: one goal's allocation rows, oldest first,
 and the two writes that correct one. It is the only reader of an `allocation` row in the crate —
 everything else wants the sum — and it carries its three modes inside the one type rather than as a
 modal over a modal, so `Esc` peels one layer at a time with no flag on `App` saying what to return
-to. Named `history` and not `allocations` because `Modal::Allocation` is already the form that
-writes one, and two variants a letter apart would be misread on sight.
+to.
 
 `month` is the `[`/`]` filter Savings and Recurring Goals share. `style` is where color is decided —
 `ratatui::style::Color` is *decided* there and nowhere else, so no screen grows its own opinion
@@ -221,10 +225,9 @@ rather than a set of headings, and the screens title themselves in full the mome
 
 ## How wide a screen is
 
-`tui::MIN_WIDTH` is the narrowest terminal the screens are laid out for. Nothing enforces it at
-runtime — a narrower terminal still draws, and ratatui truncates whatever no longer fits. What the
-number is for is the width tests: each screen renders one row of its widest plausible content at
-`MIN_WIDTH` and asserts nothing is cut. Write `MIN_WIDTH`, never the number, so the contract is
+`tui::MIN_WIDTH` is the narrowest terminal the screens are laid out for, and its own doc says what
+that does and does not enforce. What matters across screens is that every one of them is held to
+it by a width test, and that a test writes `MIN_WIDTH` and never the number — so the contract is
 stated once and the next retarget is a one-line edit.
 
 Every table gives its fixed columns a `Constraint::Length` sized for their true content — dates at
@@ -572,9 +575,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   means once focus leaves, computed at render rather than written back, so there is no blur hook
   for the next form to forget and no half-typed date rewritten under the cursor.
   The Funds birth-date prompt is the one field built `DateField::iso_only`, and it needs no `today`
-  at all — which is the distinction made visible. Every `M/D` reading is present or future and a
-  birth date is decades past, so a shorthand there could only ever be a wrong year that nothing
-  refuses.
+  at all — which is the distinction made visible, and `DateField::iso_only` is where the reason
+  for it is written down.
 - **A date field entering something new opens on today, and the ones that do not each say why.**
   `DateField::today` is the default and most fields take it. The exceptions:
   - The three forms that write a ledger row — `a`, `t` and `p` — open on `App::entry_date` through
@@ -633,11 +635,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     the usual "same verb, wider object" — it is the *inverse* of `p`. It is named on the footer
     only while something is pinned, through `footer_without`, though the key is live either way
     and says "nothing pinned" rather than failing silently.
-  - **`p` is refused with no live view and `P` is not.** `set_unavailable` leaves `excess_actual`
-    holding whatever the last successful view left there, so pinning against it would freeze a
-    number belonging to a plan the screen has just said it cannot compute. `P` only clears two
-    keys and reads nothing off the view — refusing there would strand a pin behind a footer still
-    offering to remove it.
+  - **`p` is refused with no live view and `P` is not.** The asymmetry is the point: `P` clears two
+    keys and reads nothing off the view, so refusing there would strand a pin behind a footer still
+    offering to remove it. What `p` would be freezing instead is `App::pin`'s to say.
   - **`e` on `Excess (Used)` pins too, and it is the only way to pin a figure nothing computed.**
     `p` freezes the floored actual; the row takes an arbitrary one. That is the sheet's hand-typed
     `Excess (Fixed)` cell, back as a row — the need it answers is the payday whose excess the owner
@@ -907,9 +907,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   - **The extra cell takes a tone of its own, `Row::extra_tone`, and it outranks the tint the same
     way.** A second field rather than a second reader of `tone`, because the two cells say
     different things about one row: the Goals line's figure is right while the gap beside it is the
-    problem, and a single tone over both would paint the amount red for the plan's sake. Only ever
-    `Tone::Negative` — the one thing that cell reports rather than states is a gap the money will
-    not cover.
+    problem, and a single tone over both would paint the amount red for the plan's sake.
 - **A section of one band draws no band subtotals.** The Overview stacks accounts in bands
   (`account::Group`) inside sections (`account::Kind`): cash breaks into Checking and Savings,
   credit does not break at all. A single band's subtotal and its section's total are the same
@@ -935,12 +933,14 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     sheet. The form bounds the code at `CODE_WIDTH`, the `Code` column's own width: that column is
     the only place a code is ever drawn, so a code too wide for it would be stored whole and read
     cut, leaving the owner unable to check the string the next import matches the row against.
-  - **`e` asks the seven things the sheet does *not* say** — the name, the color, the band, the
-    position, how an interest posting against it is divided, which block of the `Savings` sheet
-    it is the container for, and which of the two money forms open their `From` on it — and none of
-    them is touched by an import after the row's first insert. All seven are *placements*: an
+  - **`e` asks what the sheet does *not* say** — the name, the color, the band, the position, how
+    an interest posting against it is divided, which block of the `Savings` sheet it is the
+    container for, and which of the two money forms open their `From` on it — and none of them is
+    touched by an import after the row's first insert. Every one of them is a *placement*: an
     account is created by `a` and placed by `e`, which is why the kind decides an edit form's
-    fields and decides nothing on an add form.
+    fields and decides nothing on an add form. The list is the count: `AccountForm::fields` hands
+    back a different number per kind, so a doc that stated one would be wrong for the other kind
+    and wrong again for the next field added.
   - **The code and the kind are on `a` and deliberately absent from `e`.** They are what
     `account::by_code` matches the next import against, so choosing them is the whole of creating
     an account and editing either would orphan the row from the sheet that produced it. An account
@@ -1000,7 +1000,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   - **The `Color` field draws its own value in the color it names**, through
     `widget::field_line_tinted` — the one field on any form whose text is a name for something the
     form could not otherwise show, and `Teal` in black is not an answer to "what will this look
-    like". Only the value: the label and the caret are the form's chrome. It resolves through
+    like". It resolves through
     `style::account_color` with the account's own id, so `—` shows the **derived** shade the row
     will actually take rather than nothing at all — which is the whole reason that choice is worth
     drawing rather than leaving plain. An id is what it needs, which is the other half of why the
@@ -1121,13 +1121,35 @@ derive it from `MIN_WIDTH` rather than write the offset out.
 - **Every figure a goal carries is typed in whole dollars.** A goal's target, a recurring goal's
   base, and the allocations booked against them all parse through `form::parse_whole_amount`, which
   *refuses* cents rather than flooring them — `1800.5` typed for `1800.50` is a typo, and booking
-  $1,800 for it hides the slip in a figure that looks deliberate. The edit prefill stays the stored
-  figure with its cents, so a goal imported off a fractional cell shows what it really holds and is
-  rounded by hand rather than silently moved the first time its form is opened. The cents a goal
+  $1,800 for it hides the slip in a figure that looks deliberate. An edit prefills the stored
+  figure with its cents, for the reason `GoalForm::edit` gives. The cents a goal
   drifts by therefore come only from interest and rounding, and they collect in the container's
   unallocated remainder — which is the figure the Savings footer reports, through
   `savings::unallocated`. The worksheet is not part of this: its lines are prefilled by `per_paycheck` and
   `pro_rata`, not typed.
+  - **A correction on the history screen reads its amount at `form::Precision::Cents` where `a`
+    reads at `WholeDollars`.** The rows most worth correcting are the ones the import and the
+    interest postings wrote, and those carry the cents `parse_whole_amount` refuses — a modal that
+    would not save the figure it had just prefilled would refuse exactly the rows it exists for.
+    `a` keeps the stricter reading, because cents typed into a whole-dollar field are a typo while
+    cents already on a row are arithmetic. One parameter rather than two functions, the shape
+    `reading::Reading` already makes for the goal readers.
+- **The history modal edits every row it lists, including the ones no person typed.** A row written
+  by a payday batch, by an interest posting or by the `Import` batch is as editable as one `a`
+  wrote: an allocation is a figure the owner entered whatever wrote it down, and a history that
+  refused the rows most likely to be wrong would not do its job. Two consequences neither screen
+  shows:
+  - Allocations carry no `edited` flag, so `U` still deletes a whole batch including a row corrected
+    inside it. The window is narrow — `U` reaches only the most recent non-`Import` batch — but a
+    correction made and then undone goes with the batch it was in.
+  - The `manual` interest prefill rescales the container's last `Interest` batch, so correcting a
+    row in one moves the weights the next posting opens with. That is the wanted behaviour, simply
+    not obvious from the row being edited.
+- **The history form edits the date, the amount and the note, and offers no way to re-point a row.**
+  Moving one within a container would be defensible and across containers would not — no cash moved
+  between the accounts, the boundary `goal::move_value` already refuses to cross — and a fourth
+  field that can only ever move a row halfway is worth less than the rule. A misdirected allocation
+  is deleted here and re-entered with `a` on the right goal.
 - **The worksheet has no Note field, and that is the difference between it and `AllocationForm`.**
   `a` books one row a person is thinking about, so it asks what to say about it; `A` and `i` book a
   dozen at once, and a note typed once over all of them can only say what the sheet already knows.
@@ -1279,13 +1301,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     the row the read side calls corrupt, and the form is the one place that can ask for the rate
     before there is a goal to be broken by its absence.
   - **The note is empty wherever there is nothing to say**, and never a guess: the flag is off, the
-    Target is not a whole figure yet, or no rate is on record. It is drawn through
-    `demo::whole_figure`, so `--demo` scrambles it like every other absolute figure on a form.
+    Target is not a whole figure yet, or no rate is on record.
   - **The `Base` field carries the same note the goal form's `Target` does.** `RecurringGoalForm::tax_note`
     puts `(1,065 w/ tax)` past the caret whenever the `Taxed` selector is on and the field holds a whole
-    figure, so both forms that edit a base answer the same question in the same words. This form asks
-    nothing about the rate — an entry writes no goal, and it is `App::commit_picker`, the picker that
-    turns a taxed entry into one, that refuses when no rate is on record.
+    figure, so both forms that edit a base answer the same question in the same words. *This* form
+    asks nothing about the rate: an entry writes no goal, so the refusal falls to
+    `App::commit_picker`, the picker that turns a taxed entry into one.
 - **`Floating` takes the Target and the Taxed fields off the form rather than blanking them.** A
   floating goal is funded to whatever it holds — `goal.floating`, read first by
   `crate::goal::target` — so a target and a tax on it describe nothing, and `GoalForm::fields` is
@@ -1397,8 +1418,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     place it appears. That is what the filter is *for*, not an edge case.
   - **The cycle is the span, not the set of months that have rows.** Recurring Goals steps all
     twelve months; Savings steps every month from its earliest `goal_date` to its latest, empty ones
-    included, so stepping never skips. No dated goals leaves the cycle empty, and an empty cycle
-    cannot be stepped out of All.
+    included, so stepping never skips.
   - **`MonthCycle` stores the selected month, not a position in the cycle.** Savings rebuilds its
     cycle on every reload; an index would silently come to mean a different month. A rebuild that
     lost the selected month falls back to All.
@@ -1449,8 +1469,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   reach; what `Esc` clears *to* is the panel's to say. `[`, `]`, and `Esc` all step the active ledger and then go through
   `App::sync_month`, which copies the resulting window onto the other and re-anchors both cursors —
   so `2` and `3` always compare the same weeks. It re-queries both ledgers, because a synced window
-  over stale rows shows one month's rows under another's heading. Purely view state: nothing
-  persists it, and both ledgers reopen on the window around today. Anything that must reach both
+  over stale rows shows one month's rows under another's heading. Anything that must reach both
   goes through `App::ledgers_mut`, which iterates the pair rather than naming `cash` and `credit`
   in two lines one of which is later forgotten.
   - **`Esc` clears the account filter too**, in the same press, for the reason it does on Savings:
@@ -1514,11 +1533,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   `cursor::viewport_offset` holds the view still until the cursor comes within
   `MARGIN` rows of an edge and then moves it by exactly what that costs, so a
   screen the cursor has moved a few rows into has not scrolled at all and the
-  context follows the direction of travel. Keeping the cursor centred instead
-  would move the list from the halfway row onwards, which takes Planning's
-  transfers off the top on the way down to a constant a dozen rows below them —
-  on a screen whose whole point is that the block at the top is what the owner
-  acts on. The margin is what stops the cursor riding the edge it is moving towards,
+  context follows the direction of travel — `viewport_offset` carries what a
+  centred cursor would cost instead. The margin is what stops the cursor riding the edge it is moving towards,
   where the viewport shows only rows already behind it; it gives way at the ends
   of the list and on a viewport too short to hold it.
   - **A row the cursor cannot reach is still the view's to reach.** Planning is
@@ -1585,10 +1601,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   special: it passes its own `fields()`.
   - **The four forms in `goal_form` build those lines through `widget::field_stack`**, which is one
     `field_line` per field in the order the form walks them, the caret on whichever is focused, and
-    a note past the value of whichever carry one. `c`'s form and `t`'s were byte-identical bodies,
-    and `a`'s and `e`'s each buried their note rule in an `if` inside the map — where a
-    *declaration* says it better, since which field earns a note is a fact about the form rather
-    than a step in drawing it. What a render still writes is only what its own form has: which
+    a note past the value of whichever carry one. Which field earns a note is *declared* rather
+    than decided in an `if` inside the map, since it is a fact about the form rather than a step in
+    drawing it. What a render still writes is only what its own form has: which
     fields (`form.fields()` where the list is variable), how it spells one, and the extra line `a`
     pushes past its stack.
 - **Every confirmation is one dialog, and `Modal::Confirm`'s `action` is what tells them apart.**

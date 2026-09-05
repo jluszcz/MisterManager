@@ -45,11 +45,10 @@ pub(super) fn field_line(label: &str, value: Label, caret: Option<Caret>) -> Tex
 ///
 /// The four forms in `goal_form` are one stack over four field enums, so the
 /// shape is stated here and each render says only what its own form has:
-/// which fields, how it spells one, and which of them earns a note. Two of
-/// them were byte-identical bodies, and the other two each buried their note
-/// rule in an `if` inside the map -- where a *declaration* says it better,
-/// since which field carries the note is a fact about the form rather than a
-/// step in drawing it.
+/// which fields, how it spells one, and which of them earns a note. That last
+/// one is *declared* rather than decided in an `if` inside the map, since
+/// which field carries a note is a fact about the form rather than a step in
+/// drawing it.
 pub(super) fn field_stack<F: Copy + PartialEq>(
     fields: &[F],
     focus: F,
