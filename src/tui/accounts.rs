@@ -591,7 +591,7 @@ impl AccountForm {
     }
 }
 
-use super::form::{field_line, field_line_tinted, render_fields};
+use super::widget::{field_line, field_line_tinted, render_fields};
 use super::{Chrome, account_cell, render_table};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};

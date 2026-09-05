@@ -360,7 +360,7 @@ impl FormFields for RecurringTxnForm {
 }
 
 use super::autocomplete::Autocomplete;
-use super::form::{field_line, render_fields, render_popup};
+use super::widget::{field_line, render_fields, render_popup};
 use super::{Chrome, account_cell, amount, render_table, right_header};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};

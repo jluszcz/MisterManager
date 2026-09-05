@@ -7,11 +7,11 @@
 use super::Label;
 use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::form::{
-    Caret, Field, Focused, FormFields, Step, field_line_noted, next_in, parse_whole_amount,
-    step_index, tax_note,
+    Caret, Field, Focused, FormFields, Step, next_in, parse_whole_amount, step_index, tax_note,
 };
 use super::month::MonthCycle;
 use super::search::{Search, SearchBox};
+use super::widget::field_line_noted;
 use crate::db::RecurringGoalId;
 use crate::db::recurring_goal::{Cadence, Entry, NewEntry};
 use crate::money::Cents;
@@ -431,7 +431,7 @@ impl FormFields for RecurringGoalForm {
     }
 }
 
-use super::form::render_fields;
+use super::widget::render_fields;
 use super::{Chrome, amount, month_name, render_table, right_header};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};

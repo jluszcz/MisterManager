@@ -15,8 +15,9 @@
 //! [`Ledger`]: super::ledger::Ledger
 
 use super::Label;
-use super::form::{Caret, Step, value_spans};
+use super::form::{Caret, Step};
 use super::text::{self, Edit, TextBuffer};
+use super::widget::value_spans;
 use crate::money::Cents;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::text::Span;

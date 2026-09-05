@@ -12,9 +12,10 @@ use crate::description;
 use crate::money::Cents;
 use crate::tui::autocomplete::Autocomplete;
 use crate::tui::cursor;
-use crate::tui::form::{self, DateField, TransferForm, TxnForm, ValueForm};
+use crate::tui::form::{self, DateField, ValueForm};
 use crate::tui::ledger::Ledger;
-use crate::tui::modal::{Confirm, Modal};
+use crate::tui::ledger_form::{TransferForm, TxnForm};
+use crate::tui::modal::{Confirm, Modal, ValueTarget};
 use crate::tui::search::{self, Search};
 use anyhow::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
@@ -40,6 +41,15 @@ impl App {
     /// decaying into a pair of lines one of which is later forgotten.
     pub(super) fn ledgers_mut(&mut self) -> [&mut Ledger; 2] {
         [&mut self.cash, &mut self.credit]
+    }
+
+    /// The same pair, for the half of a refresh that only reads: a ledger's
+    /// filter, and the balance [`App::ledger_total`] quotes beside it. Both
+    /// take the shared borrow that a `&mut` from [`App::ledgers_mut`] would
+    /// rule out, which is why the reload queries through this one and writes
+    /// through that one rather than naming the two ledgers itself.
+    pub(super) fn ledgers(&self) -> [&Ledger; 2] {
+        [&self.cash, &self.credit]
     }
 
     pub(super) fn ledger_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -106,7 +116,10 @@ impl App {
         };
         let label = Label::plain("Target · ").account(Account::named(ledger.accounts(), id));
         let prefill = ledger.target().map(|t| t.to_string()).unwrap_or_default();
-        self.modal = Some(Modal::Reconcile(id, ValueForm::money(label, &prefill)));
+        self.modal = Some(Modal::Value(
+            ValueTarget::Reconcile(id),
+            ValueForm::money(label, &prefill),
+        ));
     }
 
     /// An empty field clears the target: that is how one goes away, since
@@ -116,7 +129,7 @@ impl App {
     /// and everything typed into it. Nothing is written and nothing is
     /// reloaded -- the target lives on the `Ledger` until the app quits.
     pub(super) fn commit_reconcile(&mut self) -> Result<()> {
-        let Some(Modal::Reconcile(id, form)) = &self.modal else {
+        let Some(Modal::Value(ValueTarget::Reconcile(id), form)) = &self.modal else {
             return Ok(());
         };
         let (id, raw) = (*id, form.value().trim().to_string());
@@ -316,8 +329,8 @@ mod tests {
     use crate::money::Cents;
     use crate::test_support::day;
     use crate::tui::app::test_support::*;
-    use crate::tui::form::{TransferField, TxnField};
-    use crate::tui::modal::Modal;
+    use crate::tui::ledger_form::{TransferField, TxnField};
+    use crate::tui::modal::{Modal, ValueTarget};
     use crate::tui::search::Search;
     use ratatui::crossterm::event::KeyCode;
 
@@ -910,7 +923,7 @@ mod tests {
 
         press(&mut app, KeyCode::Char('r'));
 
-        let Some(Modal::Reconcile(_, form)) = &app.modal else {
+        let Some(Modal::Value(ValueTarget::Reconcile(_), form)) = &app.modal else {
             panic!("r must reopen the form: {:?}", app.status);
         };
         assert_eq!(form.value(), "1,200.00");

@@ -13,16 +13,18 @@ use super::accounts::{self as accounts_screen, AccountForm};
 use super::autocomplete::Autocomplete;
 use super::cursor::Scroll;
 use super::destination;
-use super::form::{self, FormFields, TransferForm, TxnForm, ValueForm};
+use super::form::{self, FormFields, ValueForm};
 use super::fund::{self as fund_screen, FundForm};
 use super::goal_form::{self, AllocationForm, CloseForm, GoalForm, GoalTransferForm};
 use super::help::Topic;
 use super::history::{self, History, Mode as HistoryMode};
+use super::ledger_form::{self, TransferForm, TxnForm};
 use super::picker::{self, Picker};
 use super::planning::{self, BillForm, Target, TransferConfirm};
 use super::recurring_goal::{self as recurring_goal_screen, RecurringGoalForm};
 use super::recurring_txn::{self as recurring_txn_screen, RecurringTxnForm};
 use super::search::Search;
+use super::widget;
 use super::worksheet::{self, Worksheet};
 use crate::db::bill;
 use crate::db::fund;
@@ -57,13 +59,9 @@ pub(super) enum Modal {
         action: Confirm,
         label: String,
     },
-    /// `e` on the Planning screen: one prefilled field, parsed by the
-    /// `Target` it was opened for.
-    Value(Target, ValueForm),
-    /// `r` on a ledger narrowed to one account: the balance a statement says
-    /// that account holds. Session state on the `Ledger`, so committing it
-    /// writes nothing and reloads nothing.
-    Reconcile(AccountId, ValueForm),
+    /// One prefilled field, and the [`ValueTarget`] saying what it is being
+    /// collected for.
+    Value(ValueTarget, ValueForm),
     Bill(BillForm),
     RecurringTxn(RecurringTxnForm),
     /// `e` on a Planning destination row: the goals this line could be
@@ -77,12 +75,6 @@ pub(super) enum Modal {
     /// confirmed before anything is written.
     PlanTransfers(TransferConfirm),
     Fund(FundForm),
-    /// `e` on a fund row: one prefilled field, the value that fund holds.
-    FundValue(FundId, ValueForm),
-    /// The Funds screen has an age row and no birth date on record. One
-    /// field, and `Esc` dismisses it -- the screen still draws, with the
-    /// age row's target as `—`.
-    BirthDate(ValueForm),
     /// `e` on an account row: its name, band, position and interest policy.
     /// Everything the owner may say about an account, and nothing the
     /// workbook says.
@@ -109,7 +101,6 @@ impl Modal {
             Modal::Picker(_) => None,
             Modal::Confirm { .. } => None,
             Modal::Value(_, form) => Some(form),
-            Modal::Reconcile(_, form) => Some(form),
             Modal::Bill(form) => Some(form),
             Modal::RecurringTxn(form) => Some(form),
             Modal::Destination(_) => None,
@@ -117,8 +108,6 @@ impl Modal {
             Modal::RecurringGoalEntry(form) => Some(form),
             Modal::PlanTransfers(_) => None,
             Modal::Fund(form) => Some(form),
-            Modal::FundValue(_, form) => Some(form),
-            Modal::BirthDate(form) => Some(form),
             Modal::Account(form) => Some(form),
             // Only while the history is editing: in the other two modes it is
             // a list and a question, neither of which has a field.
@@ -153,7 +142,6 @@ impl Modal {
             | Modal::CloseOut(_)
             | Modal::GoalTransfer(_)
             | Modal::Value(..)
-            | Modal::Reconcile(..)
             | Modal::Bill(_)
             | Modal::RecurringGoalEntry(_) => Topic::Form,
             // Under match guards, the construction `Modal::Worksheet` above
@@ -165,10 +153,40 @@ impl Modal {
             }
             Modal::History(_) => Topic::History,
             Modal::PlanTransfers(_) => Topic::PlanTransfers,
-            Modal::Fund(_) | Modal::FundValue(..) | Modal::BirthDate(_) => Topic::Form,
+            Modal::Fund(_) => Topic::Form,
             Modal::Account(_) => Topic::Form,
         }
     }
+}
+
+/// What a [`Modal::Value`] is collecting: one prefilled field, and the thing
+/// on the far side of it.
+///
+/// Four screens edit a single figure through this one modal, and the only
+/// thing that differs between them is where `Enter` writes. A variant per
+/// screen carrying an identical `ValueForm` would spell that difference out
+/// four times over -- in `fields_mut`, in `topic`, in `render` and in
+/// `modal_key`, three of which have nothing to say about it. Carried here,
+/// only the handler asks.
+///
+/// One variant per thing that can be edited, for the reason [`Confirm`] is
+/// one per thing that can be confirmed: a fifth figure cannot be added
+/// without saying what commits it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(super) enum ValueTarget {
+    /// `e` on the Planning screen, parsed by the [`Target`] it was opened
+    /// for.
+    Planning(Target),
+    /// `r` on a ledger narrowed to one account: the balance a statement says
+    /// that account holds. Session state on the `Ledger`, so committing it
+    /// writes nothing and reloads nothing.
+    Reconcile(AccountId),
+    /// `e` on a fund row: the value that fund holds.
+    Fund(FundId),
+    /// The Funds screen has an age row and no birth date on record. `Esc`
+    /// dismisses it -- the screen still draws, with the age row's target as
+    /// `—`.
+    BirthDate,
 }
 
 /// What a [`Modal::Confirm`] is asking about: the row `y` writes to, and
@@ -298,8 +316,8 @@ impl Confirm {
 pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autocomplete) -> usize {
     let mut viewport = None;
     let drawn = match &*modal {
-        Some(Modal::Txn(f)) => form::render_txn(frame, f, popup),
-        Some(Modal::Transfer(f)) => form::render_transfer(frame, f, popup),
+        Some(Modal::Txn(f)) => ledger_form::render_txn(frame, f, popup),
+        Some(Modal::Transfer(f)) => ledger_form::render_transfer(frame, f, popup),
         Some(Modal::Allocation(f)) => {
             goal_form::render_allocation(frame, f);
             0
@@ -333,7 +351,7 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
             0
         }
         Some(Modal::Confirm { action, label }) => {
-            form::render_fields(
+            widget::render_fields(
                 frame,
                 action.title(),
                 vec![
@@ -344,7 +362,7 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
             );
             0
         }
-        Some(Modal::Value(_, f)) | Some(Modal::Reconcile(_, f)) => {
+        Some(Modal::Value(_, f)) => {
             form::render_value(frame, f);
             0
         }
@@ -365,14 +383,6 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
             fund_screen::render_form(frame, f);
             0
         }
-        Some(Modal::FundValue(_, f)) => {
-            form::render_value(frame, f);
-            0
-        }
-        Some(Modal::BirthDate(f)) => {
-            form::render_value(frame, f);
-            0
-        }
         Some(Modal::Account(f)) => {
             accounts_screen::render_form(frame, f);
             0
@@ -385,7 +395,7 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
                 HistoryMode::List => {}
                 HistoryMode::Editing(form) => goal_form::render_allocation(frame, form),
                 HistoryMode::Confirming { action, label } => {
-                    form::render_fields(
+                    widget::render_fields(
                         frame,
                         action.title(),
                         vec![

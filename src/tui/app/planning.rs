@@ -12,7 +12,7 @@ use crate::money::Cents;
 use crate::plan_line::{Destination, Line};
 use crate::tui::cursor;
 use crate::tui::form::ValueForm;
-use crate::tui::modal::{Confirm, Modal};
+use crate::tui::modal::{Confirm, Modal, ValueTarget};
 use crate::tui::planning::{self as planning_screen, BillForm, Target, TransferConfirm};
 use crate::tui::search::{self, Search};
 use crate::{calc, plan, transfer};
@@ -205,7 +205,7 @@ impl App {
                 } else {
                     ValueForm::new(label, &prefill)
                 };
-                self.modal = Some(Modal::Value(target, form));
+                self.modal = Some(Modal::Value(ValueTarget::Planning(target), form));
             }
             Some((Some(planning_screen::Editable::Destination(line)), _, _)) => {
                 self.open_destination(line)?
@@ -336,7 +336,7 @@ impl App {
     }
 
     pub(super) fn commit_value(&mut self) -> Result<()> {
-        let Some(Modal::Value(target, form)) = &self.modal else {
+        let Some(Modal::Value(ValueTarget::Planning(target), form)) = &self.modal else {
             return Ok(());
         };
         // Parsed before the modal closes, so a rejected edit keeps the form
@@ -555,6 +555,8 @@ mod tests {
     use crate::tui::cursor::Scroll;
     use crate::tui::help::Topic;
     use crate::tui::modal::Modal;
+    #[cfg(feature = "demo")]
+    use crate::tui::modal::ValueTarget;
     use crate::tui::planning::{self as planning_screen, Target};
     use crate::tui::search::Search;
     use crate::{db, plan, transfer};
@@ -910,7 +912,7 @@ mod tests {
 
         press(&mut app, KeyCode::Char('e'));
 
-        let Some(Modal::Value(target, form)) = &app.modal else {
+        let Some(Modal::Value(ValueTarget::Planning(target), form)) = &app.modal else {
             panic!("no value form is open");
         };
         assert_eq!(*target, Target::Bill(bill.id));

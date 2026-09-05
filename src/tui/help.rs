@@ -36,7 +36,7 @@
 //! [`Topic`] fills the left. Their guard is
 //! `app::tests::the_app_wide_keys_work_from_every_screen`.
 
-use super::form;
+use super::widget;
 use ratatui::Frame;
 use ratatui::text::Line as TextLine;
 use ratatui::widgets::{Block, Clear, Paragraph};
@@ -1289,7 +1289,7 @@ pub(super) fn render(frame: &mut Frame, help: &Help) -> (u16, u16) {
     // Taken before the Vec moves into the Paragraph.
     let count = lines.len() as u16;
     let height = (count + 2).min(full.height.saturating_sub(2));
-    let area = form::centered(full, width, height);
+    let area = widget::centered(full, width, height);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines).scroll((help.offset(), 0)).block(

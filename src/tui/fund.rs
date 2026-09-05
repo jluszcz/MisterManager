@@ -284,7 +284,7 @@ impl FormFields for FundForm {
     }
 }
 
-use super::form::{field_line, render_fields};
+use super::widget::{field_line, render_fields};
 use super::{Chrome, render_table, right_header, style, whole_amount};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
