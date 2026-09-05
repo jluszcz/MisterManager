@@ -379,11 +379,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     worksheet, and `t`'s confirmation — read the modifier and the brackets. A selector steps **one**
     choice under `Shift` rather than none: it has no week to move, and a modified arrow the terminal
     delivers and the app drops is a dead key with nothing on screen to say why.
-    - **The unit is why a step is not a number of days.** A month is 28 to 31 of them depending on
-      where it is stepped from, so `Step::apply` is the one place a date moves and `Days`/`Months`
-      travel with the amount rather than being flattened at the constant. The day is clamped into
-      the month it lands in — the 31st becomes the 30th, and stepping back does not return to the
-      31st — because the alternative is inventing a 31st of September.
+    - **The unit is why a step is not a number of days**, which `form::Step` and `Step::apply` say
+      between them: a month is 28 to 31 of them depending on where it is stepped from.
   - **`[`/`]` reach a date *field*, and only a field.** The bracket is an ordinary character
     everywhere else — a description may hold one — so `FormFields::step_month` reports whether there
     was a date under the caret and the handler types the key when there was not. That is the whole
@@ -514,19 +511,13 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     what makes `c` `←`/`→` `Enter` rather than `c` `Tab` `←`/`→` `Enter`, and the date is one
     `Shift`+`Tab` away on the rounds it is wrong.
 - **`a`, `t` and `p` on a ledger open on the date the last row *added* this session was written
-  for.**
-  `App::entry_date` is view state beside `adhoc` — `None` until the first add, which is what leaves
-  today as the answer for the first row without a second rule saying so, and restarting is what
-  returns it there. Entering a statement is a run of rows landing on the same few days, so the day
-  the last one was written for is a better guess than today, and moving off today is how the owner
-  says which days those are. **Only an add writes it**: `e` is a correction to a row already
-  written rather than a statement about the day being worked on, and a fix to something months back
-  that dragged the next new row there with it would be worse than no memory at all. One field
-  serves both ledgers, because what it records is the day being entered for and a statement and the
-  card rows on it are one sitting — and it serves all three keys, because the card payment at the
-  bottom of a statement belongs to the same sitting as the rows above it. `App::entry_field` is
-  the one place the fallback to today is written, so a form cannot open on a different answer than
-  the one beside it.
+  for.** `App::entry_date` is view state beside `adhoc`, and says at its declaration what `None`
+  means and why one field serves both ledgers and all three keys. Entering a statement is a run of
+  rows landing on the same few days, so the day the last one was written for is a better guess than
+  today. **Only an add writes it**: `e` is a correction to a row already written rather than a
+  statement about the day being worked on, and a fix to something months back that dragged the next
+  new row there with it would be worse than no memory at all. `App::entry_field` is the one place
+  the fallback to today is written, so two forms cannot open on different answers.
   - **The confirmation names the date, whatever it is.** The form opens on `Description` rather
     than on the date, so a row can be written without a keystroke ever visiting the date field,
     and the status line is the only place the day it landed on appears — which matters most
@@ -535,12 +526,10 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     spoke up only when the date was surprising is a line the eye learns to skip on the rounds it
     says nothing.
   - **The day a form opens on and the day its `M/D` shorthand resolves against are two different
-    facts.** `DateField` has carried both since it existed, and they part company the moment a form
-    opens on anything but today: `9/10` typed in August is this September, and read off a December
-    prefill it would land a year out in silence. So `TxnForm::add` takes an already-built
-    `DateField` rather than a day to open on — two adjacent `NaiveDate` parameters would be one
-    transposition away from exactly that. `Worksheet::on` takes one for the same reason;
-    `Worksheet::new`, which opens on today and has only the one day to be told, builds it.
+    facts**, which is why `TxnForm::add` and `Worksheet::on` take an already-built `DateField`
+    rather than a day to open on. What goes wrong with two adjacent `NaiveDate` parameters is
+    `TxnForm::add`'s to say.
+
 - **`t` and `p` open their `From` on the account the owner named on screen 9, and `t` opens its
   `To` off it.** `default_source::Source` is the pair of `setting` keys; `App::open_transfer` and
   `open_payment` read one each. Two keys rather than one, because paying a card and moving savings
@@ -572,18 +561,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   screen to say why.
   `Ctrl` always means **editing the text under the caret**, and never anything else — see the
   editing-keys invariant below. Nothing reads `Alt`.
-- **A date is typed as `YYYY-MM-DD` or as the `M/D` shorthand, and the year turns on the month
-  alone.** `M/D` takes the next year that month occurs in: typed in August, `9/10` is this
-  September and `3/4` is next March. It is deliberately **not** "the next time that date comes
-  round" — `8/1` typed in August is the first of this August, a fortnight back, because backdating
-  a ledger row a week or two is the commonest thing the shorthand is typed for and a rule that
-  always resolved forward could not express it at all. `YYYY-MM-DD` stays the display date:
-  `DateField::display` shows the text as typed while the caret is in the field and the date it
-  means once focus leaves, computed at render rather than written back, so there is no blur hook
-  for the next form to forget and no half-typed date rewritten under the cursor.
-  The Funds birth-date prompt is the one field built `DateField::iso_only`, and it needs no `today`
-  at all — which is the distinction made visible, and `DateField`'s `shorthand_from` is where the
-  reason a birth date is the field that wants it is written down.
+- **A date is typed as `YYYY-MM-DD` or as the `M/D` shorthand, and every rule about either is
+  `form::DateField`'s.** Which year the shorthand takes is `parse_shorthand`'s to say, how the two
+  spellings share one field is `DateField::display`'s, and the one field built `iso_only` — the
+  Funds birth-date prompt — says at `shorthand_from` why a birth date is the field that wants no
+  shorthand at all.
 - **A date field entering something new opens on today, and the ones that do not each say why.**
   `DateField::today` is the default and most fields take it. The exceptions:
   - The three forms that write a ledger row — `a`, `t` and `p` — open on `App::entry_date` through
@@ -628,23 +610,13 @@ derive it from `MIN_WIDTH` rather than write the offset out.
 - **`p` always pins, and `P` is the only way out of a pin.** The pin freezes `excess_used` so the
   waterfall holds still while a payday's legs are entered — transfers land *before* the ad-hoc
   date, so each leg entered collapses `Excess (Actual)` with the rest still to go, which is the
-  whole reason the pin exists (see `src/calc/CLAUDE.md`). Two things follow.
-  - **`p` is not a toggle.** The press after a forgotten pin is the *next* payday's, and a `p`
-    answering it with "unpinned" makes the press that matters the second one every time. Worse,
-    mid-payday a toggle press does the actively wrong thing — it clears the pin protecting the
-    figure being worked against. Re-pinning is the only thing a second press can sensibly mean:
-    the drift line exists to say a pin has gone stale, and a fresh pin is the answer to that. The
-    status line says `re-pinned` rather than `pinned` so a press that replaced a pin does not read
-    as one that made the first.
-  - **Unpinning is a real operation, not an undo**, and it is why `P` earns a key rather than
-    being dropped. It puts the waterfall back on the live balance; without it a pin is permanent
-    and `excess_used` runs off a frozen figure that never tracks reality again. The capital is not
-    the usual "same verb, wider object" — it is the *inverse* of `p`. It is named on the footer
-    only while something is pinned, through `footer_without`, though the key is live either way
-    and says "nothing pinned" rather than failing silently.
-  - **`p` is refused with no live view and `P` is not.** The asymmetry is the point: `P` clears two
-    keys and reads nothing off the view, so refusing there would strand a pin behind a footer still
-    offering to remove it. What `p` would be freezing instead is `App::pin`'s to say.
+  whole reason the pin exists (see `src/calc/CLAUDE.md`). `App::pin` and `App::unpin` each say why
+  theirs is not a toggle, why the two keys move together, and why only one of them is refused
+  without a live view. What belongs here is the vocabulary: the capital is the *inverse* of `p`
+  rather than the usual "same verb, wider object", and it is named on the footer only while
+  something is pinned, through `footer_without`, though the key is live either way and says
+  "nothing pinned" rather than failing silently. The status line says `re-pinned` rather than
+  `pinned`, so a press that replaced a pin does not read as one that made the first.
   - **`e` on `Excess (Used)` pins too, and it is the only way to pin a figure nothing computed.**
     `p` freezes the floored actual; the row takes an arbitrary one. That is the sheet's hand-typed
     `Excess (Fixed)` cell, back as a row — the need it answers is the payday whose excess the owner
@@ -652,11 +624,6 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     it goes through the one `Target::write`, which is what keeps both pin keys moving together here
     as well. Whole dollars, refused below zero, and an empty field does not parse — so the row can
     create or replace a pin and never clear one.
-  - **Both keys move together.** `PINNED_EXCESS` and `PINNED_AT` are written and cleared as a
-    pair: a date with no amount would render a line about a plan that is not pinned. A re-pin
-    therefore advances the date to today, and the drift falls back to the cents the whole-dollar
-    floor drops — never to zero, which is what makes a *fresh* pin distinguishable from one that
-    happens to sit exactly on the excess.
 - **Planning leads with the transfers, not with the sheet's first row.** The rows `t` would write
   head the screen; `Planning!C1:G41` follows underneath, Target and Buffer first. That order is
   `plan_rows::rows` and not this file's: the report's Planning tab draws the same list, and
@@ -708,31 +675,21 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   unset line with nothing to suggest is drawn plain, because a warning that is always on is a
   warning nobody reads.
 - **A tinted cell colors its characters, never its padding and never its indent.** `tui::tinted`
-  is the one place that happens; `account_cell`, `money_cell`, `savings::percent`,
-  `fund::tinted_percent`, Planning's three columns and `widget::field_line_tinted` all go through it
-  or its rule. **A `Cell::style` carrying an `fg` anywhere under `src/tui/` is this bug**, and the
-  sweep is one line: `grep -rn '.style(Style::default().fg(' src/tui/` should match nothing outside
-  `mod.rs` and `style.rs`. A `Cell`'s own style — and a
-  `Line`'s — covers the cell's whole area, and a table's `row_highlight_style` is patched over the
-  row *after* its cells have drawn, so `Style::patch` leaves each cell's foreground in place and
-  `REVERSED` turns it into a background. A colored cell on the cursor row therefore drew as a solid
-  block the full width of its column, and two colored columns side by side read as one column of
-  the wrong width — which is what Recurring Transactions showed, `Acct` and `Amount` being adjacent
-  there with nothing between them. Styling the *spans* leaves the padding to the row: an ordinary
-  row is unchanged, since padding has no glyphs to color. The leading indent is split off the first
-  span for the same reason — Planning indents its labels to show nesting, and an indent is
-  structure rather than content.
-  - **The colors these tests read back are at a *column*, and `str::find` answers in bytes.** Every
-    screen draws inside a border, and `│` is three bytes and one column, so a byte offset lands two
-    columns right of the word asked for — which for a word longer than two characters is still
-    inside it, so the mistake passes and the test quietly stops checking what it says. `column_of`
-    in `mod.rs` is what the color tests use instead.
+  is the one place that happens, and says at its own definition what a `Cell::style` does instead;
+  `account_cell`, `money_cell`, `savings::percent`, `fund::tinted_percent`, Planning's three
+  columns and `widget::field_line_tinted` all go through it or its rule. **A `Cell::style` carrying
+  an `fg` anywhere under `src/tui/` is this bug**, and the sweep is one line:
+  `grep -rn '.style(Style::default().fg(' src/tui/` should match nothing outside `mod.rs` and
+  `style.rs`.
   - **A `Row::style` is the exception, and it is a different thing rather than the same bug
     tolerated.** The rule above is about a *cell* coloring the column it sits in; a row style is
     the row's base, which every cell then patches over, so it is the one place a color may cover
     padding — and covering the padding is the whole point where what is marked is the row.
     `ledger`'s `future` dim and `savings`'s favorite band are the two, and both reach their style
     through `style` rather than naming a `Color`, so the sweep above still finds nothing.
+  - **The colors these tests read back are at a *column*, not a byte offset**, which is what
+    `tui::column_of` is for. Its definition says what `str::find` gets wrong here and why the
+    mistake passes rather than fails.
 - **An account is one color everywhere, and the owner picks it.** `account.color` is an
   `AccountColor` — a name in a `TEXT` column with the schema's `CHECK` behind it, the same
   construction as `kind`, `grp` and `interest_policy`, so that reordering a palette array cannot
@@ -748,37 +705,18 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   `report::html` is the other one in the crate. One layer down, `db::account::AccountName` and
   `AccountCode` have no `Display`, so an account cannot become a `String` on the way to a
   `format!` either.
-  - **`Account::named`, `Account::coded` and `Account::labelled` are one per caller.** The
-    ledgers' rows, Savings, Overview and Accounts show a name; Recurring Transactions and the
-    ledger *title* show a code, the one because its other columns pin the row down already and
-    the other because a title is a chain of filter terms; the three form selectors show
-    `CHK — Everyday` as one segment, because both halves name the same account and splitting
-    them would leave the code reading as chrome in front of a colored name. An account still
-    named after its own code — which is every account an import has just written — shows that
-    text once rather than joined to itself, and the comparison folds case the way
-    `account::by_code` and the index under it do, so `CHK — Chk` is the same word said twice
-    too. What the collapsed cell draws is the name, the half the owner typed.
-  - **Both of the two that draw a whole account widen to `Everyday — Cash` when their own
-    spelling names more than one account in the list they were handed.** `Account::distinctly` is
-    the one rule and `coded` and `labelled` both go through it; a screen still chooses which half
-    of an account it shows, but whether that half says *which* account is not the screen's to get
-    wrong. The fallback always separates them, and `UNIQUE (code, kind)` is why: two accounts one
-    code cannot tell apart share that code, so they differ in kind, and two sharing a name and a
-    kind differ in code and never collide in the first place. Reachable wherever a *list* mixes
-    both kinds — Recurring Transactions and its account selector, and the transfer form — and a
-    no-op on every list of one kind, which is every other caller. The widened text stays one
-    segment, for the reason the collapse above is one: the halves name one account between them,
-    and splitting the kind off would leave it reading as chrome beside a colored name.
+  - **Which of the three an account reaches a screen through is a property of the *cell*, not of
+    the screen.** `Account::named` for a column with room, `Account::coded` where the other
+    columns pin the row down already, `Account::labelled` for the three form selectors, which
+    have a whole field's width. Each says at its own definition which callers it is for and what
+    it does about an account still named after its own code; `Account::distinctly` is the one rule
+    the last two widen by when their own spelling names more than one account in the list they
+    were handed, and `UNIQUE (code, kind)` is why that fallback can always separate them.
   - **The transfer form spells both selectors against the union of their two lists, never against
-    the list each selects from.** `t` filters its source to cash and leaves its destination
-    unfiltered; `p` filters the two to kinds disjoint from each other. So neither form's two lists
-    are one collision set, and a field resolved against its own is a modal that spells one account
-    two ways — `CHK` in `t`'s cash-only `From` beside `CHK — Cash` in its mixed `To` — or, under
-    `p`, spells two accounts one way, since a code names one account per kind and `p` puts one
-    kind in each field. `TransferForm::spelling` is that union, built once when the form opens,
-    and it is the only list `display` hands `Account::labelled`. The gap is the one
-    `Account::distinctly` cannot see from where it stands: the collision set is whatever list it
-    is given, and here neither list is the set the owner is reading.
+    the list each selects from.** `TransferForm::spelling` is that union and the only list
+    `display` hands `Account::labelled`; what goes wrong without it is stated on the field. This
+    is the one gap `Account::distinctly` cannot see from where it stands — the collision set is
+    whatever list it is given, and here neither list is the set the owner is reading.
   - **A widened label's kind never reaches the mask.** `Cash` and `Credit` are the app's own
     vocabulary, and `demo::mask::text` scrambles every alphanumeric run it is handed — so a kind
     concatenated into `Account`'s `text` would draw as a pseudoword beside the name, leaving the
@@ -897,24 +835,16 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     clause pins `Label::plain_text`, the escape for a `Label` rather than an `AccountName`: it
     flattens whatever accounts a label carries and is meant for wording assertions, never a draw.
 - **Every Planning row that names an account is tinted by it, and the tone outranks the tint.** A
-  `Row` carries **one** `Tint`, which says which of the three cells holds the name — `Column::Label`
-  for a transfer, which heads its own account; `Column::Value` for the two account-backed
-  destination lines; `Column::Extra` for a goal's container or the plug's. One field rather than
-  one per column because a row naming *two* accounts is not a state this screen has, and making
-  that unrepresentable is cheaper than checking it. A destination row's id and color reach the
-  screen on `transfer::Container`, because `wiring` has the account row in hand and the screen does
-  not. A transfer's head is the one that does not: its label is a `plan_rows::RowLabel::Account`,
-  and `Row::of` builds the tint inside `render_with`, so the shade it carries is the *resolved*
-  one — an account the owner has never colored still reaches the row in the shade its id derives. Red and amber carry
-  *instructions* where a tint only says which account, so `render` reads the tone first. Three
-  states carry no tint at all, for the same reason each time — nothing single is named: an
-  ambiguous plug spans several containers, a withdrawal leaves the tracked system, and a suggestion
-  **displaces** the container so that cell holds a goal's name. The lines *under* a transfer are
-  plain too: the account is said once, at the head of the group it heads.
-  - **The extra cell takes a tone of its own, `Row::extra_tone`, and it outranks the tint the same
-    way.** A second field rather than a second reader of `tone`, because the two cells say
-    different things about one row: the Goals line's figure is right while the gap beside it is the
-    problem, and a single tone over both would paint the amount red for the plan's sake.
+  `Row` carries **one** `Tint`, which says which of its three cells holds the name — the label for
+  a transfer, which heads its own account; the value for the two account-backed destination lines;
+  the extra for a goal's container or the plug's. One field rather than one per column because a
+  row naming *two* accounts is not a state this screen has, and making that unrepresentable is
+  cheaper than checking it. Red and amber carry *instructions* where a tint only says which
+  account, so `render` reads the tone first; `Row::extra_tone` is a second field for the same
+  reason and says so at its declaration. Three states carry no tint at all, each because nothing
+  single is named: an ambiguous plug, a withdrawal, and a suggestion, which displaces the
+  container. The lines *under* a transfer are plain too — the account is said once, at the head of
+  the group it heads.
 - **A section of one band draws no band subtotals.** The Overview stacks accounts in bands
   (`account::Group`) inside sections (`account::Kind`): cash breaks into Checking and Savings,
   credit does not break at all. A single band's subtotal and its section's total are the same
@@ -923,121 +853,25 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   accounts come back in: an unplaced account sorts last and taking the scan order would let it
   split its own band in two. A subtotal is set apart by weight alone — every label starts in the
   same column, and the subtotals are the only bold rows. Blank rows separate sections, not bands.
-- **The Accounts screen has `a` and `e` and no `d`, and the two it has ask disjoint questions.**
-  Deleting an account would orphan every transaction, goal and recurring rule pointing at it, and
-  the next import would put a sheet's account straight back — so there is no `d`, and a code typed
-  wrongly is corrected by renaming around it rather than by starting over.
-  - **`a` asks the code, the kind and the name, and stops.** Those are the two an account cannot be
-    given afterwards, plus the one it needs to draw as a row. A new account takes its kind's
-    default band, no color, no interest policy, no `Savings` block, and the last place among the
-    accounts of its kind — the row `mm import` writes for a code it has just met, which is what
-    makes an account the sheet does not name indistinguishable from one it does.
-    `account::insert` refuses a code the kind already holds, naming it as the database spells it:
-    the schema's `account_code_kind` is the backstop, but a constraint failure names an index
-    where the owner needs to be told which code they just retyped. Per kind, because the index is
-    — one code naming both a cash account and the card drawn on it is the shape it exists for —
-    and case-insensitively, because a code typed here has to meet the same code read off the
-    sheet. The form bounds the code at `CODE_WIDTH`, the `Code` column's own width: that column is
-    the only place a code is ever drawn, so a code too wide for it would be stored whole and read
-    cut, leaving the owner unable to check the string the next import matches the row against.
-  - **`e` asks what the sheet does *not* say** — the name, the color, the band, the position, how
-    an interest posting against it is divided, which block of the `Savings` sheet it is the
-    container for, and which of the two money forms open their `From` on it — and none of them is
-    touched by an import after the row's first insert. Every one of them is a *placement*: an
-    account is created by `a` and placed by `e`, which is why the kind decides an edit form's
-    fields and decides nothing on an add form. The list is the count: `AccountForm::fields` hands
-    back a different number per kind, so a doc that stated one would be wrong for the other kind
-    and wrong again for the next field added.
-  - **The code and the kind are on `a` and deliberately absent from `e`.** They are what
-    `account::by_code` matches the next import against, so choosing them is the whole of creating
-    an account and editing either would orphan the row from the sheet that produced it. An account
-    created here whose code the workbook later grows is therefore *adopted* by the import rather
-    than duplicated, since `import::constants` skips a code the kind already holds. `AccountForm`
-    carries both modes with `editing: Option<AccountId>`, the shape `FundForm` and
-    `RecurringTxnForm` carry, and `edit` leaves the code field blank rather than seeding it from
-    the account — a field nobody sees is not worth reading an account's text as a bare string for,
-    which is what `nothing_that_draws_an_account_reads_its_name_as_bare_text` would catch.
-  - **All but the name and the code are selectors, cycled with `←`/`→` like every other selector in the app.**
-    A band the schema's `CHECK` would refuse, a position off the end of its kind, a policy that is
-    not a policy, a kind that is not a kind, and an account claiming *both* `Savings` blocks are all
-    unrepresentable rather than validated. `Kind::ALL` is what the add form's kind selector offers,
-    beside the enum for `InterestPolicy::ALL`'s reason. `Group::bands` is what the band selector
-    offers, and it offers exactly what `account::set_group` accepts; the `Savings` selector holds
-    one value per account, which is what makes the both-blocks state impossible to type.
-  - **The `Savings` selector names the block's contents, not its columns.** `Block::label` is
-    `goals` and `buckets`: `Savings!A:E` and `Savings!I:K` are what the *import* tells the two
-    blocks apart by, and the owner pointing a container at one is choosing between two sets of
-    goals rather than between two spans of a spreadsheet.
-  - **The `Savings` field is the one thing on this screen the import reads.** Until both blocks
-    have been pointed at a container, `mm import` writes the accounts and stops — the sheet names
-    its blocks by position and carries no account code, so there is nowhere else to learn it from.
-    Moving an account *off* a block clears that block's key rather than leaving it naming an account
-    that no longer answers for it, and a key naming another account is left alone, so editing one
-    row never disturbs the other block's mapping.
-  - **The `Default` selector is a *set*, where the `Savings` one beside it is a value.** It cycles
-    every subset of `default_source::Source::ALL` — neither form, each on its own, then both —
-    generated from `ALL` rather than written out, the way the `Savings` choices are. Two blocks of
-    one sheet cannot share a container, so that field holds one value and the both-blocks state is
-    unrepresentable; the account a card is paid from and the account savings leave are unrelated
-    decisions, and one account answering for both is ordinary. `defaults_label` is what the field
-    and the table's `Default` column both read the set through, so a choice cycled in the modal and
-    the row behind it are recognisably the same answer.
-    - **Each key holds one id, so at most one account answers for each form**, without anything
-      having to enforce it: pointing a source at a second account is a `setting::set`, which takes
-      it off the first. Dropping a source from the set clears that key only when *this* account is
-      the one it names, which is `set_savings_block`'s rule and is what keeps editing one row from
-      disturbing another's defaults.
-    - **A key naming an account that is gone is not an error here**, unlike the `Savings` block's.
-      Nothing is spent on the answer: the form opens on the head of its list, which the owner can
-      see before pressing Enter, and refusing to open it would take away the screen the setting is
-      corrected from. Unset and stale are one state, and it is the state every database starts in.
-  - **Which fields an *edit* shows depends on the kind**, the way `FundForm`'s depend on the target.
-    Credit does not split into bands, so there is nothing for a band selector to cycle; only a cash
-    account holds the goals an interest posting is divided among or a `Savings` block fills, and
-    only a cash account can be what `t` and `p` take their `From` from — so only a cash account is
-    asked about any of the three. A card's edit form is three fields. An add form is three whatever
-    the kind says, because none of the six a kind decides is on it.
-  - **`Color` is the one of the seven every kind is asked, and no kind is asked on `a`.** An account
-    that does not exist yet has no id, so there is no derived shade for `—` to stand for and
-    nothing for the field to draw itself in; a new account is drawn in its derivation until `e`
-    says otherwise. A card is named on the Credit
-    ledger and on Recurring Transactions, so it is tinted there like any other account, and what it
-    looks like is not a fact about cash. It sits beside the name because the two are one decision:
-    what this account looks like wherever it is named.
-  - **The `Color` field draws its own value in the color it names**, through
-    `widget::field_line_tinted` — the one field on any form whose text is a name for something the
-    form could not otherwise show, and `Teal` in black is not an answer to "what will this look
-    like". It resolves through
-    `style::account_color` with the account's own id, so `—` shows the **derived** shade the row
-    will actually take rather than nothing at all — which is the whole reason that choice is worth
-    drawing rather than leaving plain. An id is what it needs, which is the other half of why the
-    field is `e`'s alone.
-  - **It opens on the color the account is *being drawn in*, not on what it has stored.** An
-    account nobody has picked for opens on `AccountColor::derived(id)`, named, rather than on `—`.
-    Opening on `—` put the selector somewhere the row behind the modal visibly contradicted, and
-    made the first `→` a jump to the head of the palette instead of a step off the current color —
-    and stepping off a color is only a nudge if you start on it. `—` stays in the cycle, one step
-    back, so the derivation is recoverable. The cost is that Enter on an untouched form writes the
-    derived shade down: nothing on screen changes, because it is the shade already drawn, and what
-    it gives up is the stored difference between "not chosen" and "chosen to be exactly what it
-    already was" — which no screen shows.
-  - **Which variant an id derives is `AccountColor::derived`, in `db::account`, not in `style`.**
-    It is a fact about the enum — which of its variants an id lands on — and says nothing about
-    what a variant looks like. `style::account_color` is where the two halves meet, and the
-    Accounts screen reads the derivation directly, without reaching for a color at all.
-  - **`Order` reads one-based and commits zero-based.** It is a place in a list to whoever reads it
-    and an index to `account::reorder`, which renumbers the whole kind so that what the screen
-    shows is what is stored.
+- **The Accounts screen has `a` and `e` and no `d`, and the two ask disjoint questions.** Deleting
+  an account would orphan every transaction, goal and recurring rule pointing at it, and the next
+  import would put a sheet's account straight back — so there is no `d`, and a code typed wrongly is
+  corrected by renaming around it rather than by starting over. `a` asks the code, the kind and the
+  name — the two an account cannot be given afterwards, plus the one it needs to draw as a row —
+  and `e` asks the seven things the sheet does not say. Which fields each shows, and why the split
+  falls there, are `AccountForm::fields`' to state; the count is deliberately not written down
+  anywhere, since it differs by kind.
+  - **The `Savings` field is the one thing on this screen an import *reads*.** Every other field is
+    a placement the import leaves alone; this one gates it, because the sheet names its two blocks
+    by position and carries no account code, so until both are pointed at a container `mm import`
+    writes the accounts and stops. What that means for the import is the root `CLAUDE.md`'s to say
+    and what a block *is* is `savings_block::Block`'s.
   - **A rename has to reach the screens holding their own account list.** `Ledger` and `Savings`
-    each cache a `Vec<Account>`, so `App::reload_accounts` re-sets both — otherwise a name changed
-    here would not appear on the ledgers or Savings until a restart. `Ledger::set_accounts` carries
-    the `Tab` filter across by **id**: the filter is a position in that list, and this screen can
-    reorder, so an index kept across the swap would silently point at another account.
-    `App::reload` runs it **first**, ahead of every screen that copies out of that list: a Savings
-    row snapshots its container's name at `set_goals` time and a ledger reads its `filter` out of
-    the accounts it was last handed, so a reload that refreshed the list last would leave the
-    Savings `Acct` column on the old name while the title and the `Unallocated` footer, which
-    resolve live, already showed the new one.
+    each cache a `Vec<Account>`, so a name changed here would not appear on either until a restart
+    without `App::reload_accounts`, and `Ledger::set_accounts` carries the `Tab` filter across by
+    **id** rather than by index, since this screen can reorder. `App::reload` runs it ahead of every
+    screen that copies out of that list, and says at the call why the order is load-bearing.
+
 - **Only Recurring Transactions' row and a filtered ledger's title show an account code.** Every
   other account display — Overview, both ledgers' rows, Savings, and the worksheet and picker
   titles — shows `account.name`, through `Account::named`. Screen 8's `Acct` column goes through
@@ -1294,26 +1128,18 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   `goal.taxed` and `crate::goal::target` derives the figure from it on every read, so a goal saved
   at `1,000` taxed reopens holding `1,000` with the selector still on — flipping it off is how it
   is untaxed, and nothing can tax a taxed figure twice. What makes the derived figure visible
-  before Enter rather than after is the **note beside the Target**: `GoalForm::tax_note` puts
-  `(1,065 w/ tax)` past the caret — the same place, and for the same reason, that the allocation
-  form shows what a `/N` share comes to. The Recurring Goals form's `Base` field carries the same
-  note, so the two forms answer the same question the same way.
+  before Enter is the note beside the field: `form::tax_note` is the one sentence both this form's
+  `Target` and the Recurring Goals form's `Base` draw past the caret, and it says at its own
+  definition when it is empty.
   - **The Target field's label stays `Target`, not `Base`.** `Base` would match the other form
     exactly, but this field is the goal's target for every goal that is not taxed, which is most of
     them, and the note is what disambiguates the ones that are.
-  - **The rate is read when the form opens, not when it commits.** The note has to be drawable on
-    every keystroke. `None` — a database no `Constants` sheet has reached — still opens the form and
-    draws no note, and the commit still **refuses a taxed goal** with `goal::NO_TAX_RATE`, even
-    though it no longer needs the rate to compute anything: letting it through would write precisely
-    the row the read side calls corrupt, and the form is the one place that can ask for the rate
-    before there is a goal to be broken by its absence.
-  - **The note is empty wherever there is nothing to say**, and never a guess: the flag is off, the
-    Target is not a whole figure yet, or no rate is on record.
-  - **The `Base` field carries the same note the goal form's `Target` does.** `RecurringGoalForm::tax_note`
-    puts `(1,065 w/ tax)` past the caret whenever the `Taxed` selector is on and the field holds a whole
-    figure, so both forms that edit a base answer the same question in the same words. *This* form
-    asks nothing about the rate: an entry writes no goal, so the refusal falls to
-    `App::commit_picker`, the picker that turns a taxed entry into one.
+  - **The rate is read when the form opens, not when it commits**, because the note has to be
+    drawable on every keystroke. A database with no rate still opens the form, draws no note, and
+    still **refuses a taxed goal** on commit with `goal::NO_TAX_RATE` — the form is the one place
+    that can ask before there is a goal to be broken by the absence. The Recurring Goals form asks
+    nothing about the rate at all: an entry writes no goal, so that refusal falls to
+    `App::commit_picker`.
 - **`Floating` takes the Target and the Taxed fields off the form rather than blanking them.** A
   floating goal is funded to whatever it holds — `goal.floating`, read first by
   `crate::goal::target` — so a target and a tax on it describe nothing, and `GoalForm::fields` is
@@ -1351,16 +1177,10 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   container whose siblings are all filtered out looks like a container holding no other open goal,
   and the form refuses to open at all. `a_search_does_not_narrow_where_a_close_out_may_move_value`
   and its transfer twin are what hold it up.
-- **The Savings title foots the `$/Pay` column, and the figure follows every filter.** `Savings ·
-  Rainy Day · Aug 2026 · /a · $14/paycheck` — the sum over the *visible* rows, so `Tab`, `[`/`]`
-  and `/` all move it. That is the opposite call the Recurring Goals title below makes, and for
-  the opposite reason: a cadence's cost is a fact about the whole year, while this answers "what
-  do *these* goals cost me a paycheck", and narrowing to a container or a month is asking that of
-  the container or the month. It counts exactly what the column shows — an undated goal has no
-  runway and a met one needs nothing, and `savings::Row::per_paycheck` is `None` for both — so a
-  filter leaving only those says nothing rather than `$0/paycheck`, the same call the column makes
-  when it draws an em dash. It sits last, past the needle, where the ledgers put their `Today`,
-  `Target` and `Δ`.
+- **The Savings title foots the `$/Pay` column, and the figure follows every filter** — `Savings ·
+  Rainy Day · Aug 2026 · /a · $14/paycheck`, so `Tab`, `[`/`]` and `/` all move it. That is the
+  opposite call the Recurring Goals title below makes, and `Savings::title` is where the two are
+  told apart. It sits last, past the needle, where the ledgers put their `Today`, `Target` and `Δ`.
 - **The Recurring Goals title totals the year rather than counting the rows.** Unfiltered it names
   what each cadence comes to and what that costs a payday — `Recurring Goals · All · $1,240
   Annually ($48/paycheck) · $96 Biennially ($2/paycheck)` — over every entry, and a cadence nothing
@@ -1504,11 +1324,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   both, so clearing Cash's filter leaves Credit's alone — `sync_month` is only on the other half of
   the branch.
 - **A needle matches a row's text *and* the figures the row is about**, and what that means is
-  `search::Matcher` rather than four `contains` calls. It folds the needle once, treats an empty
-  one as "match everything", and compares against `search::searchable_amount` — the figure as
-  `Cents` prints it with the thousands separators taken back out, so `1234` finds `$1,234.56` and
-  the sign survives for `-50` to find a withdrawal. What a screen decides is which figures it
-  hands over:
+  `search::Matcher` rather than four `contains` calls — it and `search::searchable_amount` say at
+  their definitions how a figure is compared. What each screen decides is which figures it hands
+  over, and the five answers differ:
   - Savings offers **Current and Goal**. `%` and `$/Pay` are derived from those two and are
     deliberately withheld — a needle reaching a readout narrows through a column nobody was
     searching — and the goal date has `[`/`]` already.
@@ -1537,42 +1355,20 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   undocumented keys, with nothing on screen to say they ever worked. The
   Overview is the one screen where they do nothing, and it holds no list.
 - **A list scrolls only when the cursor runs out of room, and the draw is what decides it.**
-  `cursor::viewport_offset` holds the view still until the cursor comes within
-  `MARGIN` rows of an edge and then moves it by exactly what that costs, so a
-  screen the cursor has moved a few rows into has not scrolled at all and the
-  context follows the direction of travel — `viewport_offset` carries what a
-  centred cursor would cost instead. The margin is what stops the cursor riding the edge it is moving towards,
-  where the viewport shows only rows already behind it; it gives way at the ends
-  of the list and on a viewport too short to hold it.
-  - **A row the cursor cannot reach is still the view's to reach.** Planning is
-    the one screen whose rows are not all selectable, and `Up` from `Target`
-    moves the cursor nowhere — so a rule that only ever followed the cursor
-    would leave the transfers above it scrolled off for the rest of the
-    session. `Scroll::context_row` is what says so: the run of rows above the
-    selection that the cursor can never rest on comes into view with it. It is
-    the selection itself everywhere else, so the default costs the other
-    screens nothing. Context rather than a second cursor — a run taller than
-    the viewport gives way, since the row the cursor is on has to be drawn.
-  - **The run at the *end* of the list has nothing below it to travel with.**
-    Every other unreachable run comes into view with the editable row beneath
-    it, so `context_row` alone covers them; the rows after Planning's last
-    editable one have no such row, and a view that only followed the cursor
-    would leave them off the bottom for good. `Scroll::tail_row` is the mirror
-    that says so, and Planning is again the one screen that overrides it. The
-    tail asks for no margin under itself — it is the end of a run rather than a
-    cursor about to move past it — and it wins over the context above, since
-    the two can only disagree at the foot of the list. How long that run is
-    depends on the plan and how short the terminal is: `MARGIN` shrinks on a
-    viewport too small to hold it, so a screen may not assume the last few rows
-    ride in on the cursor's own margin.
-  - **The rule needs where the last draw left the list, and the draw is the only
-    place the height is known** — so both come back out of it as a
-    `cursor::Viewport`, which `record_viewport` writes to the cursor beside the
-    page height it already carried. One rule, in one function, resolved once per
-    frame: a screen that kept a scroll offset of its own would be a second
-    answer to the same question. `table_state` is where every list reaches it,
-    and every list but the worksheet reaches *that* through `tui::render_table`,
-    which is what keeps a new screen on the same rule by construction.
+  `cursor::viewport_offset` is the one rule and says at its definition what the margin is for and
+  where it gives way. What is worth holding before touching a screen is the shape around it:
+  - **A row the cursor cannot reach is still the view's to reach.** Planning is the one screen
+    whose rows are not all selectable, so a rule that only ever followed the cursor would leave the
+    transfers above it, and the rows past its last editable one, scrolled off for the rest of the
+    session. `Scroll::context_row` and `Scroll::tail_row` are the two halves that say otherwise,
+    and Planning is the one screen that overrides either.
+  - **The rule needs where the last draw left the list, and the draw is the only place the height
+    is known** — so both come back out of it as a `cursor::Viewport`, which `record_viewport`
+    writes to the cursor beside the page height. One rule, in one function, resolved once per
+    frame: a screen keeping a scroll offset of its own would be a second answer to the same
+    question. `table_state` is where every list reaches it, and every list but the worksheet
+    reaches *that* through `tui::render_table`, which keeps a new screen on the rule by
+    construction.
 
 - **Every list is drawn by `tui::render_table`, and its `Chrome` is what the rows pay for.** The
   reversed highlight and the `> ` marker are written once, because they are what a cursor has to
@@ -1599,13 +1395,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     *How wide a screen is* budgets per screen, and the bolding of its own header. The Overview is
     outside all of this — it holds no list and no cursor, so it has no `Scroll` to hand over.
 
-- **Every form is drawn by `widget::render_fields`, and its height is its lines.** The centered
-  `FORM_WIDTH` box, the border and its title, and one row per line are written once; the callers
-  only build their lines. Height is `lines + 2`, which is what makes the forms that add a line past
-  their fields — the allocation form's pot, the transfer confirmation's date and prompt — a row
-  taller without anyone restating the arithmetic. It returns the `Rect` it took, which is what the
-  forms with autocomplete hand to `render_popup`. `FundForm`'s variable field list needs nothing
-  special: it passes its own `fields()`.
+- **Every form is drawn by `widget::render_fields`**, which owns the centered `FORM_WIDTH` box, the
+  border and its title, and the arithmetic that makes a form's height its own lines; the callers
+  only build the lines.
   - **Every form built over a field enum builds those lines through `widget::field_stack`**, which
     is one `field_line` per field in the order the form walks them, the caret on whichever is
     focused, and a note past the value of whichever carry one. What a render still writes is only
