@@ -858,9 +858,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   import would put a sheet's account straight back — so there is no `d`, and a code typed wrongly is
   corrected by renaming around it rather than by starting over. `a` asks the code, the kind and the
   name — the two an account cannot be given afterwards, plus the one it needs to draw as a row —
-  and `e` asks the seven things the sheet does not say. Which fields each shows, and why the split
-  falls there, are `AccountForm::fields`' to state; the count is deliberately not written down
-  anywhere, since it differs by kind.
+  and `e` asks what the sheet does not say. Which fields each shows, and why the split falls there,
+  are `AccountForm::fields`' to state, including why an edit form's length depends on the kind: no
+  count is written down here, because there is no one number to write.
   - **The `Savings` field is the one thing on this screen an import *reads*.** Every other field is
     a placement the import leaves alone; this one gates it, because the sheet names its two blocks
     by position and carries no account code, so until both are pointed at a container `mm import`
