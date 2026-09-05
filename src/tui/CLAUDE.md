@@ -168,11 +168,14 @@ are the fourth screen and its forms, the goal form serving `e` and `n` alike and
 `GoalTransferForm` backing `t` — named apart from `ledger_form::TransferForm`, the cash transfer
 the ledgers open, since one moves money between accounts and the other moves none at all;
 `worksheet` backs `A`/`i`, and `picker` backs `s` on the seventh screen. `planning` is the fifth
-screen, its `Target` and `Editable` enums, its bill form, `Enter`, which opens the long form of a
-plan that will not resolve, and
-`t`, which confirms a computed plan, writes its payday through `transfer::execute`, and opens the
-allocation worksheets prefilled; `destination` is the list `e` opens on one of its destination
-rows. `fund` is the sixth screen, its form, and the birth-date prompt the age row needs and no
+screen, and the one screen that is a directory rather than a file: `planning/mod.rs` is the screen
+state and the cursor that walks it, `planning/view.rs` the waterfall as rows, `planning/target.rs`
+what a constant may be edited to and where it lands, and `planning/bill.rs` and
+`planning/confirm.rs` the two modals it opens -- `Enter`, which opens the long form of a plan that
+will not resolve, and `t`, which confirms a computed plan, writes its payday through
+`transfer::execute`, and opens the allocation worksheets prefilled. `planning/test_support.rs` is
+the one plan and wiring the other four test against, for the reason `app/test_support.rs` is one
+fixture rather than nine. `destination` is the list `e` opens on one of its destination rows. `fund` is the sixth screen, its form, and the birth-date prompt the age row needs and no
 other screen owns. `recurring_goal` is the seventh screen and `recurring_txn` the
 eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
 smallest: `a`, which creates an account the workbook does not name, and `e`, over everything the
@@ -781,7 +784,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     concatenated into `Account`'s `text` would draw as a pseudoword beside the name, leaving the
     widened label saying no more than the code it replaced. `Account` holds the kind in its own
     field instead and `render_with` masks the text and appends the kind after, which is the same
-    split `planning.rs` makes when it draws a `Withdrawal` row's label around `demo::text`.
+    split `planning/confirm.rs` makes when it draws a `Withdrawal` row's label around `demo::text`.
   - **`Label` is what lets a title carry a tint.** A title cannot be a `String` and be colored,
     and it cannot be a ratatui `Line` because view-state types hold no ratatui. So it is a
     sequence of plain runs and `Account`s: `Savings::title`, `Ledger::title`, `Picker::title`,
@@ -817,7 +820,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
       `Savings::account_name`, whose two callers both fill this one field: `open_allocate`'s
       prefill, and `open_history`, which carries the name into `History` so that modal's `e`
       builds the same form without going back to the Savings rows.
-    - **The payday confirmation's destination column**, in `planning.rs`'s `render_transfers`:
+    - **The payday confirmation's destination column**, in `planning/confirm.rs`'s `render_transfers`:
       `transfer::Row::Transfer`'s own `name`, drawn as the left half of a plain `TextLine` because
       the modal is a preview of the ledger rows rather than a table. `transfer::plan` carries that
       name unmasked — it is also the description the row is written under, and

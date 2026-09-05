@@ -367,7 +367,7 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   `editing_the_pay_period_count_moves_…` test.
 - **The Planning waterfall is one ordered list, read twice.** `plan_rows::rows` is the sequence —
   which blocks there are, what they are headed, what each row is called, and which of them the two
-  footers sit under. `tui::planning::build` maps it into a terminal `Row` and `report::html::planning`
+  footers sit under. `tui::planning::view::build` maps it into a terminal `Row` and `report::html::planning`
   into a `<tr>`, and neither may add, drop, rename or reorder one: what a sink adds is only what its
   own medium has, which is a cursor, a tint and an editor for the screen and a class for the page.
   The two were hand-transcriptions of each other until they read one list, and they had already come
