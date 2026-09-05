@@ -33,6 +33,7 @@ use crate::rate::{BasisPoints, Percent};
 use anyhow::{Context, Result, anyhow};
 use chrono::NaiveDate;
 use rusqlite::{OptionalExtension, params};
+use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -164,6 +165,53 @@ pub fn clear<T>(db: &Db, key: Key<T>) -> Result<()> {
     db.conn
         .execute("DELETE FROM setting WHERE key = ?1", params![key.name])?;
     Ok(())
+}
+
+/// Every setting in the database, read in one query.
+///
+/// [`get`] prepares a statement per key, which is what a caller wanting one
+/// setting should pay. `plan::settings_from_db` wants ten, and it sits on the
+/// path every Planning render takes -- the screen and the report both -- so
+/// the ten round-trips were ten answers to one question.
+///
+/// The keys are still not written at call sites: a snapshot is read through
+/// the same [`Key`] constants the table is, so this buys the round-trips back
+/// without giving up what [`key`] exists for. A key absent from the map is a
+/// key that is unset, which is the state every reader already handles.
+///
+/// **It is a read, not a view.** The rows are the ones the `SELECT` saw, and
+/// nothing refreshes them, so a snapshot outliving the call that took it
+/// quotes settings the database has since moved off. `PAY_PERIODS_PER_YEAR`
+/// is one of the ten it carries and is editable on the Planning screen, which
+/// is the same hazard "nothing holds the pay cadence across a reload" already
+/// names for a *field* -- and a snapshot is the more convenient way to make
+/// it, since it holds every other key beside it. Take one where the work is
+/// done and drop it there; `plan::settings_from_db` builds and spends one
+/// inside a single call, which is the shape to copy.
+pub struct Snapshot(HashMap<String, String>);
+
+impl Snapshot {
+    /// [`get`], against the rows already read.
+    pub fn get<T: Value>(&self, key: Key<T>) -> Result<Option<T>> {
+        match self.0.get(key.name) {
+            None => Ok(None),
+            Some(raw) => T::decode(raw)
+                .map(Some)
+                .with_context(|| format!("setting {key}")),
+        }
+    }
+
+    /// [`get_or`], against the rows already read.
+    pub fn get_or<T: Value>(&self, key: Key<T>, default: T) -> Result<T> {
+        Ok(self.get(key)?.unwrap_or(default))
+    }
+}
+
+/// Read the whole `setting` table at once, for a caller wanting several keys.
+pub fn all(db: &Db) -> Result<Snapshot> {
+    let mut stmt = db.conn.prepare("SELECT key, value FROM setting")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+    Ok(Snapshot(super::collect_rows(rows)?.into_iter().collect()))
 }
 
 fn get_raw(db: &Db, key: &str) -> Result<Option<String>> {
@@ -329,6 +377,58 @@ mod tests {
 
         set_raw(&db, key::PLANNING_TARGET.name(), "rubbish").unwrap();
         assert!(get_or(&db, key::PLANNING_TARGET, Cents::from_dollars(10_000)).is_err());
+    }
+
+    /// A snapshot answers the same questions [`get`] does, so a caller
+    /// batching its reads gets the same values it would one at a time --
+    /// including the decoding, which is where the `Key<T>` pairing earns its
+    /// place.
+    #[test]
+    fn a_snapshot_reads_the_same_values_one_key_at_a_time_would() {
+        let db = db::open_in_memory().unwrap();
+        let d = NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
+        set(&db, key::PLANNING_TARGET, Cents::from_dollars(10_000)).unwrap();
+        set(&db, key::PAY_PERIODS_PER_YEAR, 26).unwrap();
+        set(&db, key::SPLIT_RETIREMENT_PCT, Percent(15)).unwrap();
+        set(&db, key::PINNED_AT, d).unwrap();
+
+        let snapshot = all(&db).unwrap();
+
+        assert_eq!(
+            snapshot.get(key::PLANNING_TARGET).unwrap(),
+            Some(Cents::from_dollars(10_000))
+        );
+        assert_eq!(snapshot.get(key::PAY_PERIODS_PER_YEAR).unwrap(), Some(26));
+        assert_eq!(
+            snapshot.get(key::SPLIT_RETIREMENT_PCT).unwrap(),
+            Some(Percent(15))
+        );
+        assert_eq!(snapshot.get(key::PINNED_AT).unwrap(), Some(d));
+    }
+
+    /// A key absent from the map is a key that is unset, which is the state
+    /// every reader already handles -- and a stored value that cannot be
+    /// decoded is still an error naming its key, exactly as it is through
+    /// [`get_or`]. A snapshot that quietly defaulted a corrupt setting would
+    /// be a second reading of the table.
+    #[test]
+    fn a_snapshot_defaults_an_absent_key_and_refuses_a_malformed_one() {
+        let db = db::open_in_memory().unwrap();
+        assert_eq!(
+            all(&db)
+                .unwrap()
+                .get_or(key::PLANNING_TARGET, Cents::from_dollars(10_000))
+                .unwrap(),
+            Cents::from_dollars(10_000)
+        );
+
+        set_raw(&db, key::PLANNING_TARGET.name(), "rubbish").unwrap();
+
+        let err = all(&db)
+            .unwrap()
+            .get_or(key::PLANNING_TARGET, Cents::from_dollars(10_000))
+            .unwrap_err();
+        assert!(err.to_string().contains("planning.target"), "{err}");
     }
 
     #[test]

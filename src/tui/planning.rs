@@ -569,9 +569,6 @@ pub struct View {
 /// The transfers `t` would write, then `Planning!C1:G41` top to bottom under
 /// them.
 fn build(view: &View) -> Result<Vec<Row>> {
-    // The same clamp `compute` makes, for the same reason: a nonsense count
-    // must not take the screen down.
-    let periods = view.settings.periods_per_year.max(1);
     let bills = |list: &[Bill]| -> Result<Vec<plan_rows::Bill>> {
         list.iter()
             .map(|b| {
@@ -579,7 +576,12 @@ fn build(view: &View) -> Result<Vec<Row>> {
                     id: b.id,
                     label: crate::demo::text(&b.label).into_owned(),
                     monthly: b.cents,
-                    biweekly: calc::biweekly(b.cents, periods)?,
+                    // Unclamped: `calc::biweekly` clamps its own denominator,
+                    // so a nonsense count is already prevented from taking the
+                    // screen down. A second clamp here would be a protection
+                    // that cannot fire, and the report's copy of this mapping
+                    // does not make it either.
+                    biweekly: calc::biweekly(b.cents, view.settings.periods_per_year)?,
                 })
             })
             .collect()
@@ -1491,6 +1493,23 @@ mod tests {
             transfer_error: None,
             transfer_detail: Vec::new(),
         }
+    }
+
+    /// The pay-period count is user-editable, so a zero reaches this screen's
+    /// bill mapping. `build` divides by the setting as stored -- the only
+    /// clamp is `calc::biweekly`'s own, the twin of
+    /// `a_zero_pay_period_count_still_produces_a_plan` a layer down -- so this
+    /// is what says the screen still draws rather than surfacing `div_ceil`'s
+    /// error. The figures are not meaningful here; building the rows is.
+    #[test]
+    fn a_zero_pay_period_count_still_builds_the_screen() {
+        let mut v = view(None, None);
+        v.settings.periods_per_year = 0;
+        let mut planning = Planning::new();
+
+        planning.set_view(v).unwrap();
+
+        assert!(!planning.rows().is_empty());
     }
 
     /// The Overview marks its scrubbed column and this screen has no column

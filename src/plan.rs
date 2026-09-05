@@ -35,17 +35,23 @@ fn remaining(db: &Db, gate: Gate) -> Result<Cents> {
 /// read twice to draw one screen.
 pub fn settings_from_db(db: &Db) -> Result<PlanSettings> {
     let dollars = Cents::from_dollars;
+    // Ten keys off one `SELECT` rather than ten prepared statements. Both
+    // sinks that draw the waterfall come through here on every render, and
+    // ten round-trips were ten answers to one question -- `setting::Snapshot`
+    // is read through the same `Key<T>` constants, so nothing about which key
+    // holds which type is given up to buy them back.
+    let s = setting::all(db)?;
     Ok(PlanSettings {
-        target: setting::get_or(db, key::PLANNING_TARGET, dollars(10_000))?,
-        buffer: setting::get_or(db, key::PLANNING_BUFFER, dollars(5_000))?,
-        periods_per_year: setting::get_or(db, key::PAY_PERIODS_PER_YEAR, 26)?,
-        bill_payment_cap: setting::get_or(db, key::BILL_PAYMENT_CAP, dollars(1_800))?,
-        bill_payment_pct: setting::get_or(db, key::BILL_PAYMENT_PCT, Percent(40))?,
-        mom_and_dad_annual: setting::get_or(db, key::MOM_AND_DAD_ANNUAL, dollars(12_000))?,
-        goals_floor: setting::get_or(db, key::GOALS_FLOOR, dollars(400))?,
-        future_housing_pct: setting::get_or(db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(30))?,
-        retirement_pct: setting::get_or(db, key::SPLIT_RETIREMENT_PCT, Percent(20))?,
-        investment_pct: setting::get_or(db, key::SPLIT_INVESTMENT_PCT, Percent(10))?,
+        target: s.get_or(key::PLANNING_TARGET, dollars(10_000))?,
+        buffer: s.get_or(key::PLANNING_BUFFER, dollars(5_000))?,
+        periods_per_year: s.get_or(key::PAY_PERIODS_PER_YEAR, 26)?,
+        bill_payment_cap: s.get_or(key::BILL_PAYMENT_CAP, dollars(1_800))?,
+        bill_payment_pct: s.get_or(key::BILL_PAYMENT_PCT, Percent(40))?,
+        mom_and_dad_annual: s.get_or(key::MOM_AND_DAD_ANNUAL, dollars(12_000))?,
+        goals_floor: s.get_or(key::GOALS_FLOOR, dollars(400))?,
+        future_housing_pct: s.get_or(key::SPLIT_FUTURE_HOUSING_PCT, Percent(30))?,
+        retirement_pct: s.get_or(key::SPLIT_RETIREMENT_PCT, Percent(20))?,
+        investment_pct: s.get_or(key::SPLIT_INVESTMENT_PCT, Percent(10))?,
     })
 }
 

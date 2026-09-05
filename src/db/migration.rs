@@ -178,6 +178,23 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // somebody typed, which is exactly what `floating = 0` reads as.
         data: None,
     },
+    Migration {
+        version: 8,
+        // The date alone. `txn::list` asks for a window -- `a.kind = ? AND
+        // t.date BETWEEN ? AND ?`, ordered by date -- and usually names no
+        // account, so the baseline's `txn_account_date` is only reachable
+        // through the join: one probe per account of that kind, and the union
+        // of them re-sorted in a temp B-tree because no single probe comes out
+        // in the window's order. Led by the date, the window is one range scan
+        // already in the order the screen wants. `date_range` reads `[` and
+        // `]`'s bounds off its two ends rather than scanning the table.
+        //
+        // Not unique: several transactions a day is the ordinary case, and
+        // `list` breaks the tie by `t.id` rather than expecting the date to.
+        sql: "CREATE INDEX txn_date ON txn (date)",
+        // Nothing to move: an index is derived from the rows already there.
+        data: None,
+    },
 ];
 
 /// The version this build's chain leaves a database at.

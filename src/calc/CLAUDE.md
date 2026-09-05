@@ -247,10 +247,15 @@ total, and a sign flip means the caller picked up a withdrawal rather than an in
 ## Settings reach divisors
 
 `periods_per_year` (`Constants!G2`) is user-editable — on the Planning screen as well as by import —
-and lands in denominators. Call sites clamp with `.max(1)` where a nonsense value should not take
-down a whole screen; `div_ceil` returns an error for a non-positive divisor in *every* build,
-release included. A `debug_assert!` would compile out of the one build where dividing by zero
-actually matters. Don't reintroduce a bare divide.
+and lands in denominators. **The clamp lives with the divide**: `biweekly`, `period_days`,
+`per_paycheck_over_years` and `planning::compute` each `.max(1)` their own denominator, so a nonsense
+value cannot take down a whole screen and a caller has nothing left to clamp. Re-clamping in front of
+one of them is a protection that cannot fire, and it reads as though the one behind it were not
+there — `tui::planning::parse_percent`'s neighbour `parse_periods` is the other half, refusing the
+value as it is typed so the clamps here are only ever the backstop for a database that already holds
+one. `div_ceil` returns an error for a non-positive divisor in *every* build, release included: a
+`debug_assert!` would compile out of the one build where dividing by zero actually matters. Don't
+reintroduce a bare divide.
 
 **The days between two paydays are `period_days` of that same count, never a setting of their
 own.** The sheet carries both (`G2` and `H2`) and the two can disagree; one setting has nothing to
