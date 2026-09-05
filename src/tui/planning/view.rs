@@ -60,7 +60,7 @@ pub struct Row {
     ///
     /// A tone rather than the `Cents` themselves because this column is
     /// heterogeneous -- a figure, a count, a gate's verdict, a destination --
-    /// so there is no amount to hand [`super::amount`]. Only
+    /// so there is no amount to hand [`crate::tui::amount`]. Only
     /// [`plan_rows::Value::Money`] is read as an amount, which is why a count
     /// can never render red.
     pub tone: Tone,
@@ -457,8 +457,6 @@ mod tests {
 
     use crate::tui::planning::Planning;
     use crate::tui::planning::test_support::*;
-
-    // `setting`, `key`, and `Line` already come in through `super::*`.
 
     /// One waterfall row in this medium. These tests are about the mapper
     /// rather than the list it maps, so the row is built by hand: what
