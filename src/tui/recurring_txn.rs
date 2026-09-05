@@ -360,7 +360,7 @@ impl FormFields for RecurringTxnForm {
 }
 
 use super::autocomplete::Autocomplete;
-use super::widget::{field_line, render_fields, render_popup};
+use super::widget::{field_stack, render_fields, render_popup};
 use super::{Chrome, account_cell, amount, render_table, right_header};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
@@ -371,16 +371,14 @@ use ratatui::widgets::{Cell, Row as TableRow};
 /// Returns how many suggestion rows the popup drew, for
 /// `Autocomplete::set_visible`.
 pub fn render_form(frame: &mut Frame, form: &RecurringTxnForm, popup: &Autocomplete) -> usize {
-    let lines: Vec<TextLine> = RecurringTxnField::ORDER
-        .iter()
-        .map(|f| {
-            field_line(
-                f.label(),
-                form.display(*f),
-                (form.focus == *f).then(|| form.caret()),
-            )
-        })
-        .collect();
+    let lines = field_stack(
+        &RecurringTxnField::ORDER,
+        form.focus,
+        form.caret(),
+        RecurringTxnField::label,
+        |f| form.display(f),
+        &[],
+    );
     let area = render_fields(frame, form.title(), lines);
     render_popup(frame, area, popup)
 }

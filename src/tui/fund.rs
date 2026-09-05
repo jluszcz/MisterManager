@@ -284,7 +284,7 @@ impl FormFields for FundForm {
     }
 }
 
-use super::widget::{field_line, render_fields};
+use super::widget::{field_stack, render_fields};
 use super::{Chrome, render_table, right_header, style, whole_amount};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
@@ -310,17 +310,14 @@ fn tinted_percent(bp: Option<BasisPoints>, color: Option<style::Color>) -> Cell<
 }
 
 pub fn render_form(frame: &mut Frame, form: &FundForm) {
-    let lines: Vec<TextLine> = form
-        .fields()
-        .iter()
-        .map(|f| {
-            field_line(
-                f.label(),
-                form.display(*f),
-                (form.focus == *f).then(|| form.caret()),
-            )
-        })
-        .collect();
+    let lines = field_stack(
+        &form.fields(),
+        form.focus,
+        form.caret(),
+        FundField::label,
+        |f| form.display(f),
+        &[],
+    );
     render_fields(frame, form.title(), lines);
 }
 

@@ -15,7 +15,7 @@ use super::autocomplete::Autocomplete;
 use super::form::{
     Caret, DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index,
 };
-use super::widget::{field_line, render_fields, render_popup};
+use super::widget::{field_stack, render_fields, render_popup};
 use crate::db::account::{self, Kind};
 use crate::db::txn::{NewTxn, Suggestion, Txn};
 use crate::db::{AccountId, TxnId};
@@ -23,7 +23,6 @@ use crate::money::Cents;
 use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
 use ratatui::Frame;
-use ratatui::text::Line as TextLine;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TxnField {
@@ -590,16 +589,14 @@ pub fn render_txn(frame: &mut Frame, form: &TxnForm, popup: &Autocomplete) -> us
     } else {
         "Add transaction — Tab field · Enter save · Esc cancel"
     };
-    let lines: Vec<TextLine> = TxnField::ORDER
-        .iter()
-        .map(|f| {
-            field_line(
-                f.label(),
-                form.display(*f),
-                (form.focus == *f).then(|| form.caret()),
-            )
-        })
-        .collect();
+    let lines = field_stack(
+        &TxnField::ORDER,
+        form.focus,
+        form.caret(),
+        TxnField::label,
+        |f| form.display(f),
+        &[],
+    );
     let area = render_fields(frame, title, lines);
     render_popup(frame, area, popup)
 }
@@ -607,16 +604,14 @@ pub fn render_txn(frame: &mut Frame, form: &TxnForm, popup: &Autocomplete) -> us
 /// Returns how many suggestion rows the popup drew, for
 /// `Autocomplete::set_visible`.
 pub fn render_transfer(frame: &mut Frame, form: &TransferForm, popup: &Autocomplete) -> usize {
-    let lines: Vec<TextLine> = TransferField::ORDER
-        .iter()
-        .map(|f| {
-            field_line(
-                f.label(),
-                form.display(*f),
-                (form.focus == *f).then(|| form.caret()),
-            )
-        })
-        .collect();
+    let lines = field_stack(
+        &TransferField::ORDER,
+        form.focus,
+        form.caret(),
+        TransferField::label,
+        |f| form.display(f),
+        &[],
+    );
     let area = render_fields(frame, form.title(), lines);
     render_popup(frame, area, popup)
 }

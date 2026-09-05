@@ -11,7 +11,6 @@ use super::form::{
 };
 use super::month::MonthCycle;
 use super::search::{Search, SearchBox};
-use super::widget::field_line_noted;
 use crate::db::RecurringGoalId;
 use crate::db::recurring_goal::{Cadence, Entry, NewEntry};
 use crate::money::Cents;
@@ -431,7 +430,7 @@ impl FormFields for RecurringGoalForm {
     }
 }
 
-use super::widget::render_fields;
+use super::widget::{field_stack, render_fields};
 use super::{Chrome, amount, month_name, render_table, right_header};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
@@ -441,25 +440,17 @@ use ratatui::widgets::{Cell, Row as TableRow};
 
 pub fn render_form(frame: &mut Frame, form: &RecurringGoalForm) {
     let note = form.tax_note();
-    let lines: Vec<TextLine> = RecurringGoalField::ORDER
-        .iter()
-        .map(|f| {
-            // The Base field holds the pre-tax figure, so `Taxed` says what it
-            // comes to beside the figure it applies to rather than beside
-            // itself -- the goal form's Target does the same.
-            let note = if *f == RecurringGoalField::Amount {
-                note.as_str()
-            } else {
-                ""
-            };
-            field_line_noted(
-                f.label(),
-                form.display(*f),
-                (form.focus == *f).then(|| form.caret()),
-                note,
-            )
-        })
-        .collect();
+    let lines = field_stack(
+        &RecurringGoalField::ORDER,
+        form.focus,
+        form.caret(),
+        RecurringGoalField::label,
+        |f| form.display(f),
+        // The Base field holds the pre-tax figure, so `Taxed` says what it
+        // comes to beside the figure it applies to rather than beside
+        // itself -- the goal form's Target does the same.
+        &[(RecurringGoalField::Amount, note.as_str())],
+    );
     render_fields(frame, form.title(), lines);
 }
 

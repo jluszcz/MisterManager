@@ -1599,11 +1599,13 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   taller without anyone restating the arithmetic. It returns the `Rect` it took, which is what the
   forms with autocomplete hand to `render_popup`. `FundForm`'s variable field list needs nothing
   special: it passes its own `fields()`.
-  - **The four forms in `goal_form` build those lines through `widget::field_stack`**, which is one
+  - **Every form builds those lines through `widget::field_stack`**, which is one
     `field_line` per field in the order the form walks them, the caret on whichever is focused, and
     a note past the value of whichever carry one. What a render still writes is only what its own
     form has: which fields (`form.fields()` where the list is variable), how it spells one, and the
-    extra line `a` pushes past its stack.
+    extra line `a` pushes past its stack. The Accounts screen's is the one exception, and it is the
+    `Color` field that makes it one: that field draws through `widget::field_line_tinted`, so its
+    render runs a `match` per field rather than one map over all of them.
 - **Every confirmation is one dialog, and `Modal::Confirm`'s `action` is what tells them apart.**
   `d` and `U` open the same 64×5 box over the same lines — the row as its screen describes it, a
   blank, and the verb. What differs is carried by the `Confirm` variant: the border's question, the
