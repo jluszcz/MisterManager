@@ -15,7 +15,7 @@
 
 use super::Label;
 use super::cursor::{Cursor, Viewport, impl_scroll};
-use super::form::{Caret, Field, Focused, FormFields, Step, next_in, step_index};
+use super::form::{Field, Focused, FormFields, Step, next_in, step_index};
 use crate::db::AccountId;
 use crate::db::account::{Account, AccountColor, Group, InterestPolicy, Kind};
 use crate::default_source::Source;
@@ -546,20 +546,6 @@ impl FormFields for AccountForm {
             | AccountField::Default => Focused::Selector,
         }
     }
-
-    fn caret(&self) -> Caret {
-        match self.focus {
-            AccountField::Code => Caret::in_field(&self.code),
-            AccountField::Name => Caret::in_field(&self.name),
-            AccountField::Kind
-            | AccountField::Color
-            | AccountField::Band
-            | AccountField::Order
-            | AccountField::Interest
-            | AccountField::Savings
-            | AccountField::Default => Caret::End,
-        }
-    }
 }
 
 impl AccountForm {
@@ -599,7 +585,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line as TextLine;
 use ratatui::widgets::{Cell, Row as TableRow};
 
-pub fn render_form(frame: &mut Frame, form: &AccountForm) {
+pub fn render_form(frame: &mut Frame, form: &mut AccountForm) {
+    let caret = form.caret();
     let lines: Vec<TextLine> = form
         .fields()
         .iter()
@@ -624,9 +611,9 @@ pub fn render_form(frame: &mut Frame, form: &AccountForm) {
                         focused,
                         super::style::account_color(id, form.color_choice()),
                     ),
-                    None => field_line(f.label(), value, focused.then(|| form.caret())),
+                    None => field_line(f.label(), value, focused.then(|| caret.clone())),
                 },
-                _ => field_line(f.label(), value, focused.then(|| form.caret())),
+                _ => field_line(f.label(), value, focused.then(|| caret.clone())),
             }
         })
         .collect();
@@ -1147,12 +1134,12 @@ mod tests {
 
         let mut account = account(2, "Rainy Day", Kind::Cash, Group::Savings);
         account.color = Some(AccountColor::Violet);
-        let form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None, &[]);
+        let mut form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None, &[]);
 
         let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 16)).unwrap();
         terminal
             .draw(|frame| {
-                render_form(frame, &form);
+                render_form(frame, &mut form);
             })
             .unwrap();
         let buffer = terminal.backend().buffer();

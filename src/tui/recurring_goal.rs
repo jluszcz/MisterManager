@@ -7,7 +7,7 @@
 use super::Label;
 use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::form::{
-    Caret, Field, Focused, FormFields, Step, next_in, parse_whole_amount, step_index, tax_note,
+    Field, Focused, FormFields, Step, next_in, parse_whole_amount, step_index, tax_note,
 };
 use super::month::MonthCycle;
 use super::search::{Search, SearchBox};
@@ -418,16 +418,6 @@ impl FormFields for RecurringGoalForm {
             }
         }
     }
-
-    fn caret(&self) -> Caret {
-        match self.focus {
-            RecurringGoalField::Name => Caret::in_field(&self.name),
-            RecurringGoalField::Amount => Caret::in_field(&self.amount),
-            RecurringGoalField::Month | RecurringGoalField::Taxed | RecurringGoalField::Cadence => {
-                Caret::End
-            }
-        }
-    }
 }
 
 use super::widget::{field_stack, render_fields};
@@ -438,12 +428,13 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line as TextLine;
 use ratatui::widgets::{Cell, Row as TableRow};
 
-pub fn render_form(frame: &mut Frame, form: &RecurringGoalForm) {
+pub fn render_form(frame: &mut Frame, form: &mut RecurringGoalForm) {
     let note = form.tax_note();
+    let caret = form.caret();
     let lines = field_stack(
         &RecurringGoalField::ORDER,
         form.focus,
-        form.caret(),
+        caret,
         RecurringGoalField::label,
         |f| form.display(f),
         // The Base field holds the pre-tax figure, so `Taxed` says what it

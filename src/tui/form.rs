@@ -615,8 +615,19 @@ pub(super) trait FormFields {
     /// answered that question twice would answer it differently twice.
     fn focused(&mut self) -> Focused<'_>;
 
-    /// The same field, for the draw, which has no `&mut` to ask with.
-    fn caret(&self) -> Caret;
+    /// Where the caret goes, for the draw: whichever of the three kinds
+    /// [`FormFields::focused`] names. Derived rather than answered a second
+    /// time, because a form that stated the two separately could gain a field,
+    /// list it in `focused`, forget it here, and still compile -- with the
+    /// caret drawn in the wrong place. That is why every `render_*` takes its
+    /// form by `&mut` for a draw that changes nothing.
+    fn caret(&mut self) -> Caret {
+        match self.focused() {
+            Focused::Text(field) => Caret::in_field(field),
+            Focused::Date(date) => Caret::in_field(date.text()),
+            Focused::Selector => Caret::End,
+        }
+    }
 
     /// Cycle the focused selector by `step`. Only reached when [`Focused::Selector`]
     /// has the caret, so a form with no selector in it leaves this alone --
@@ -796,20 +807,14 @@ impl FormFields for ValueForm {
             Entry::Date(date) => Focused::Date(date),
         }
     }
-
-    fn caret(&self) -> Caret {
-        match &self.entry {
-            Entry::Figure(field) | Entry::Money(field) => Caret::in_field(field),
-            Entry::Date(date) => Caret::in_field(date.text()),
-        }
-    }
 }
 
-pub fn render_value(frame: &mut Frame, form: &ValueForm) {
+pub fn render_value(frame: &mut Frame, form: &mut ValueForm) {
+    let caret = form.caret();
     let lines = vec![field_line_labeled(
         form.label(),
         Label::from(form.display()),
-        Some(form.caret()),
+        Some(caret),
     )];
     render_fields(frame, form.title(), lines);
 }
@@ -1264,10 +1269,12 @@ mod tests {
 
         let all = accounts();
         let label = Label::plain("Target · ").account(Account::named(&all, AccountId(1)));
-        let form = ValueForm::new(label, "1,200.00");
+        let mut form = ValueForm::new(label, "1,200.00");
 
         let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
-        terminal.draw(|frame| render_value(frame, &form)).unwrap();
+        terminal
+            .draw(|frame| render_value(frame, &mut form))
+            .unwrap();
         let buffer = terminal.backend().buffer();
 
         // The field label, not the border title: the title also says

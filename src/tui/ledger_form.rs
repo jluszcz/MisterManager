@@ -12,9 +12,7 @@
 use super::Account;
 use super::Label;
 use super::autocomplete::Autocomplete;
-use super::form::{
-    Caret, DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index,
-};
+use super::form::{DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index};
 use super::widget::{field_stack, render_fields, render_popup};
 use crate::db::account::{self, Kind};
 use crate::db::txn::{NewTxn, Suggestion, Txn};
@@ -195,15 +193,6 @@ impl FormFields for TxnForm {
             TxnField::Amount => Focused::Text(&mut self.amount),
             TxnField::Description => Focused::Text(&mut self.description),
             TxnField::Account => Focused::Selector,
-        }
-    }
-
-    fn caret(&self) -> Caret {
-        match self.focus {
-            TxnField::Date => Caret::in_field(self.date.text()),
-            TxnField::Amount => Caret::in_field(&self.amount),
-            TxnField::Description => Caret::in_field(&self.description),
-            TxnField::Account => Caret::End,
         }
     }
 
@@ -544,15 +533,6 @@ impl FormFields for TransferForm {
         }
     }
 
-    fn caret(&self) -> Caret {
-        match self.focus {
-            TransferField::Date => Caret::in_field(self.date.text()),
-            TransferField::Amount => Caret::in_field(&self.amount),
-            TransferField::Description => Caret::in_field(&self.description),
-            TransferField::From | TransferField::To => Caret::End,
-        }
-    }
-
     fn cycle(&mut self, step: Step) {
         match self.focus {
             TransferField::From => {
@@ -583,16 +563,17 @@ impl FormFields for TransferForm {
 
 /// Returns how many suggestion rows the popup drew, for
 /// `Autocomplete::set_visible`.
-pub fn render_txn(frame: &mut Frame, form: &TxnForm, popup: &Autocomplete) -> usize {
+pub fn render_txn(frame: &mut Frame, form: &mut TxnForm, popup: &Autocomplete) -> usize {
     let title = if form.editing.is_some() {
         "Edit transaction — Tab field · Enter save · Esc cancel"
     } else {
         "Add transaction — Tab field · Enter save · Esc cancel"
     };
+    let caret = form.caret();
     let lines = field_stack(
         &TxnField::ORDER,
         form.focus,
-        form.caret(),
+        caret,
         TxnField::label,
         |f| form.display(f),
         &[],
@@ -603,11 +584,12 @@ pub fn render_txn(frame: &mut Frame, form: &TxnForm, popup: &Autocomplete) -> us
 
 /// Returns how many suggestion rows the popup drew, for
 /// `Autocomplete::set_visible`.
-pub fn render_transfer(frame: &mut Frame, form: &TransferForm, popup: &Autocomplete) -> usize {
+pub fn render_transfer(frame: &mut Frame, form: &mut TransferForm, popup: &Autocomplete) -> usize {
+    let caret = form.caret();
     let lines = field_stack(
         &TransferField::ORDER,
         form.focus,
-        form.caret(),
+        caret,
         TransferField::label,
         |f| form.display(f),
         &[],
@@ -1494,7 +1476,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
         terminal
             .draw(|frame| {
-                render_txn(frame, &form, &Autocomplete::default());
+                render_txn(frame, &mut form, &Autocomplete::default());
             })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
@@ -1546,12 +1528,12 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
+        let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
 
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal
             .draw(|frame| {
-                render_txn(frame, &form, &Autocomplete::default());
+                render_txn(frame, &mut form, &Autocomplete::default());
             })
             .unwrap();
         let buffer = terminal.backend().buffer();

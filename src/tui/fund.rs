@@ -6,7 +6,7 @@
 
 use super::Label;
 use super::cursor::{Cursor, Viewport, impl_scroll};
-use super::form::{self, Caret, Field, Focused, FormFields, Step, next_in, step_index};
+use super::form::{self, Field, Focused, FormFields, Step, next_in, step_index};
 use crate::db::FundId;
 use crate::db::fund::{Fund, FundEdit, Target};
 use crate::fund::Allocation;
@@ -273,15 +273,6 @@ impl FormFields for FundForm {
             FundField::Kind => Focused::Selector,
         }
     }
-
-    fn caret(&self) -> Caret {
-        match self.focus {
-            FundField::Name => Caret::in_field(&self.name),
-            FundField::Share => Caret::in_field(&self.share),
-            FundField::Actual => Caret::in_field(&self.actual),
-            FundField::Kind => Caret::End,
-        }
-    }
 }
 
 use super::widget::{field_stack, render_fields};
@@ -309,11 +300,12 @@ fn tinted_percent(bp: Option<BasisPoints>, color: Option<style::Color>) -> Cell<
     super::tinted(TextLine::from(text).right_aligned(), color)
 }
 
-pub fn render_form(frame: &mut Frame, form: &FundForm) {
+pub fn render_form(frame: &mut Frame, form: &mut FundForm) {
+    let caret = form.caret();
     let lines = field_stack(
         &form.fields(),
         form.focus,
-        form.caret(),
+        caret,
         FundField::label,
         |f| form.display(f),
         &[],
