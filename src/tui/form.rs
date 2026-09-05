@@ -9,9 +9,12 @@
 //! open are [`super::ledger_form`]. This module is what both of them, and
 //! every screen's own form, are written against.
 
+use super::Account;
 use super::Label;
 use super::text::{self, Edit, TextBuffer};
 use super::widget::{field_line_labeled, render_fields};
+use crate::db::AccountId;
+use crate::db::account;
 use crate::db::txn::Suggestion;
 use crate::money::Cents;
 use crate::rate::BasisPoints;
@@ -448,6 +451,100 @@ pub(super) fn step_index(index: usize, len: usize, step: isize) -> usize {
         return 0;
     }
     ((index as isize + step).rem_euclid(len as isize)) as usize
+}
+
+/// The account selector a form carries: the accounts it may pick from, which
+/// one is picked, and whether that pick is the owner's.
+///
+/// One type rather than three fields sitting beside each other, because the
+/// third is what the first two *mean*. An untouched selector is a default,
+/// which an accepted suggestion is free to move; a touched one is an answer,
+/// which it is not. Held apart, the two forms that carry one wrote that rule
+/// out twice -- once in `cycle` and once in `apply_suggestion` -- and a third
+/// form would have written it a third time, with nothing to notice if it
+/// wrote it differently.
+#[derive(Debug)]
+pub(super) struct AccountChoice {
+    accounts: Vec<account::Account>,
+    index: usize,
+    touched: bool,
+}
+
+impl AccountChoice {
+    /// A selector opening on the first account as a bare default: nothing has
+    /// been said about which account this is, so a suggestion may say it.
+    pub(super) fn untouched(accounts: Vec<account::Account>) -> AccountChoice {
+        AccountChoice {
+            accounts,
+            index: 0,
+            touched: false,
+        }
+    }
+
+    /// A selector opening on the account of the row being edited, marked
+    /// touched: it is an account the owner can see and did not ask to change,
+    /// the way [`Field::given`] leaves the text beside it alone.
+    ///
+    /// An id no account in the list carries opens on the first one and is
+    /// touched all the same -- a row whose account has gone is not an
+    /// invitation for a suggestion to choose another.
+    pub(super) fn given(accounts: Vec<account::Account>, id: AccountId) -> AccountChoice {
+        let index = accounts.iter().position(|a| a.id == id).unwrap_or(0);
+        AccountChoice {
+            accounts,
+            index,
+            touched: true,
+        }
+    }
+
+    /// A selector opening on `preselected` where there is one. A ledger's
+    /// filter is the owner saying which account they are entering rows for,
+    /// so it arrives as a choice rather than a default; with no filter, this
+    /// is [`AccountChoice::untouched`].
+    pub(super) fn preselected(
+        accounts: Vec<account::Account>,
+        preselected: Option<AccountId>,
+    ) -> AccountChoice {
+        match preselected.and_then(|id| accounts.iter().position(|a| a.id == id)) {
+            Some(index) => AccountChoice {
+                accounts,
+                index,
+                touched: true,
+            },
+            None => AccountChoice::untouched(accounts),
+        }
+    }
+
+    /// The account picked, or `None` where the form was handed an empty list.
+    pub(super) fn selected(&self) -> Option<&account::Account> {
+        self.accounts.get(self.index)
+    }
+
+    /// The selector as a form draws it -- `CHK — Everyday`, colored -- and
+    /// nothing at all where there is no account to draw.
+    pub(super) fn display(&self) -> Label {
+        match self.selected() {
+            Some(a) => Label::default().account(Account::labelled(&self.accounts, a.id)),
+            None => Label::default(),
+        }
+    }
+
+    /// `←`/`→`: cycle, and the cycling is itself the touch.
+    pub(super) fn step(&mut self, step: Step) {
+        self.index = step_index(self.index, self.accounts.len(), step.direction());
+        self.touched = true;
+    }
+
+    /// Move to the suggestion's account, unless the owner has already chosen
+    /// one. A suggestion naming an account this form was not handed moves
+    /// nothing.
+    pub(super) fn take(&mut self, hit: &Suggestion) {
+        if !self.touched
+            && let Some(index) = self.accounts.iter().position(|a| a.id == hit.account_id)
+        {
+            self.index = index;
+        }
+    }
 }
 
 /// A date written the way a field holds it, which is the way it is typed.

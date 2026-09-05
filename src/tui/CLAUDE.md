@@ -465,8 +465,10 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   been said: entering rows from one account's ledger is a statement about where they land, so the
   suggestion brings its description and its amount and leaves the selector alone, exactly as it
   already leaves an amount that was typed. `All` names no account, so there the selector is a bare
-  default and the suggestion's own account is the better guess. `TransferForm` takes no account
-  from a suggestion at all — a one-sided row's account says nothing about which side of a transfer
+  default and the suggestion's own account is the better guess. The account half of that rule is
+  `form::AccountChoice` — the selector and the "has the hand said anything yet" flag as one value,
+  so the two forms that carry one cannot come to answer it differently. `TransferForm` takes no
+  account from a suggestion at all — a one-sided row's account says nothing about which side of a transfer
   it belongs on.
 - **A form's prefilled fields lead, and it opens on the first field the hand has to fill.** Those
   are two rules, and on `TxnForm` they point at different fields: the account arrives from the

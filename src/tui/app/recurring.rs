@@ -8,7 +8,7 @@
 use super::{Account, App, NOTHING_SELECTED};
 use crate::db::recurring_goal::{self, Entry};
 use crate::db::setting::{self, key};
-use crate::db::{RecurringGoalId, account, goal, recurring_txn};
+use crate::db::{RecurringGoalId, RecurringTxnId, account, goal, recurring_txn};
 use crate::goal as goal_engine;
 use crate::recurring_txn::{self as recurring_engine, Extended};
 use crate::tui::cursor;
@@ -103,14 +103,28 @@ impl App {
         }
     }
 
+    /// The selected recurring transaction as the three keys that act on one
+    /// need it: its id, and its description already masked and owned.
+    ///
+    /// Owned rather than borrowed because every one of those keys writes
+    /// `self.status` afterwards, which the row's own borrow of
+    /// `self.recurring_txn` would hold off -- and masked because the status
+    /// line is a place a figure or a name reaches a human. `g`, `x` and `P`
+    /// each said that twice; the refusal itself stays at the call site, since
+    /// `nothing_selected` is what every other screen's guard reads as too.
+    fn selected_recurring_txn(&self) -> Option<(RecurringTxnId, String)> {
+        self.recurring_txn.selected().map(|row| {
+            (
+                row.recurring_txn_id,
+                crate::demo::text(&row.description).into_owned(),
+            )
+        })
+    }
+
     fn regenerate_selected(&mut self) -> Result<()> {
-        let Some(row) = self.recurring_txn.selected() else {
+        let Some((id, description)) = self.selected_recurring_txn() else {
             return self.nothing_selected();
         };
-        let (id, description) = (
-            row.recurring_txn_id,
-            crate::demo::text(&row.description).into_owned(),
-        );
         let report = recurring_engine::regenerate(&self.db, id, self.today)?;
         self.status = format!("{description}: {report}");
         self.reload()
@@ -128,13 +142,9 @@ impl App {
     /// Both refusals name the date that binds, because "nothing happened" on
     /// a screen whose whole subject is future rows reads as a bug.
     fn extend_selected(&mut self) -> Result<()> {
-        let Some(row) = self.recurring_txn.selected() else {
+        let Some((id, description)) = self.selected_recurring_txn() else {
             return self.nothing_selected();
         };
-        let (id, description) = (
-            row.recurring_txn_id,
-            crate::demo::text(&row.description).into_owned(),
-        );
         self.status = match recurring_engine::extend(&self.db, id, self.today)? {
             Extended::Through { through, report } => {
                 format!("{description} extended through {through}: {report}")
@@ -150,13 +160,9 @@ impl App {
     }
 
     fn make_paycheck(&mut self) -> Result<()> {
-        let Some(row) = self.recurring_txn.selected() else {
+        let Some((id, description)) = self.selected_recurring_txn() else {
             return self.nothing_selected();
         };
-        let (id, description) = (
-            row.recurring_txn_id,
-            crate::demo::text(&row.description).into_owned(),
-        );
         recurring_txn::set_paycheck(&self.db, id)?;
         self.status = format!("{description} is now the paycheck transaction");
         self.reload()
