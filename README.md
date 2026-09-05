@@ -420,26 +420,14 @@ read a backup, delete one, or list the bucket.
 
 ## Layout
 
-`CLAUDE.md` carries the path-by-path map of the crate, and the module
-`CLAUDE.md` files under `src/import/`, `src/calc/`, `src/tui/`, `src/report/`
-and `src/backup/` go a level below it. What is worth knowing before opening
-any of them is that the layering is enforced by module privacy rather than by
-convention.
-
-`ratatui` (which re-exports `crossterm`) is named only inside `src/tui/`,
-`rusqlite` only inside `src/db/`, `calamine` only inside `src/import/`, `serde`
-and `toml` in `src/config.rs` and `src/backup/state.rs`, and `aws-config`,
-`aws-sdk-s3` and `tokio` only in `src/backup/s3.rs`. One module naming a
-dependency is one `cfg` to put it behind, which is what lets `calamine` be
-optional and a default build carry no spreadsheet parser at all.
-
-Everything outside `src/db/` holds a `db::Db`, whose connection is private, and
-reaches the database through `db::{account, bill, goal, recurring_goal,
-recurring_txn, setting, txn}`. Multi-statement writes go through
-`Db::transaction`, which commits only if its closure returns `Ok`. Row ids are
-one type per table (`db::AccountId`, `db::GoalId`, …), so an id cannot be
-passed where a different table's belongs, and `Cents` is the only money type in
-the crate — there are no floats anywhere in it.
+A Rust crate whose layering is enforced by module privacy rather than by convention: the
+dependencies that would otherwise reach everywhere are confined by name — `ratatui` to `src/tui/`,
+`rusqlite` to `src/db/`, `calamine` to `src/import/`, which is what lets that last one be optional
+and a default build carry no spreadsheet parser at all — everything outside `src/db/` reaches the
+database through the query modules rather than a connection, ids are one type per table, and
+`Cents` is the only money type in it. `CLAUDE.md` carries the path-by-path map and states each of those rules in
+full; the module `CLAUDE.md` files under `src/import/`, `src/calc/`, `src/tui/`, `src/report/` and
+`src/backup/` go a level below it.
 
 ## Development
 
@@ -450,37 +438,28 @@ pull request.
 
 ## Tests
 
-`cargo test`. The integration tests read the workbook `MM_WORKBOOK` points at
-and assert against its own cached values rather than hardcoded balances, since
-it is a live document the owner keeps editing. It is personal financial data,
-it is never committed, and there is deliberately no default path to it.
-
-They skip, printing why, when the variable is unset or the file is absent, so a
-clean checkout passes. `MM_REQUIRE_WORKBOOK=1` turns either into a hard failure
-instead. Three accounts are named by no cell of the workbook — the current
-account and the two `Savings` block containers — so their codes are read from
-the environment as well:
+`cargo test` runs everything a clean checkout can run. The integration tests assert against a live
+workbook rather than hardcoded balances, and skip — printing why — when they cannot find it, so
+running them for real takes three variables:
 
 ```bash
 MM_REQUIRE_WORKBOOK=1 MM_WORKBOOK=path/to/Money.xlsx \
   MM_ACCOUNTS=<checking>,<goals>,<buckets> cargo test --features import
 ```
 
-`--features import` is part of that invocation rather than an extra on it:
-every one of these binaries is behind the feature, so without it they compile
-to nothing and the run goes green having asserted nothing. CI runs the suite
-twice, once on the default features and once on all of them.
+`MM_WORKBOOK` is the path to the workbook, `MM_ACCOUNTS` the three accounts no cell of it names —
+the current account and the two `Savings` block containers — and `MM_REQUIRE_WORKBOOK=1` turns a
+skip into a failure. `--features import` is part of that invocation rather than an extra on it:
+every one of these binaries is behind the feature, so without it they compile to nothing and the
+run goes green having asserted nothing.
 
-`tests/common/mod.rs` is what reads those variables, configures a database the
-way screen `9` would, and runs the two-pass first import. Why there is no
-fallback path, and what `MM_REQUIRE_WORKBOOK` exists to prevent, are in
-`CLAUDE.md` under "The workbook is the test oracle".
+Why there is no default path, and the rest of what that sentence is protecting, are in `CLAUDE.md`
+under "The workbook is the test oracle". `tests/common/mod.rs` is what reads the three variables.
 
 ## No real data in the repository
 
-This repository is public and the owner's finances are not. Nothing committed
-here carries a real balance, a real institution, a real account code, or a goal
-name traceable to a real person — in source, tests, fixtures or docs alike. The
-tests that do assert against real figures read them out of the untracked
-workbook at run time rather than restating them. `CLAUDE.md` states the rule in
-full and carries the invented-fixture vocabulary a new test copies from.
+This repository is public and the owner's finances are not. Nothing committed here carries a real
+balance, a real institution, a real account code, or a goal name traceable to a real person, and the
+tests that do assert against real figures read them out of the untracked workbook at run time.
+`CLAUDE.md` states the rule in full and carries the invented-fixture vocabulary a new test copies
+from.
