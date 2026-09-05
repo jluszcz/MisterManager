@@ -413,8 +413,8 @@ impl AccountForm {
 
     /// The fields this form shows, which is also its tab order.
     ///
-    /// An add form asks three and stops, and the kind decides none of them:
-    /// the six it would decide are all *placements*, and an account is
+    /// An add form asks the code, the kind and the name, and stops. Every
+    /// field the kind would decide is a *placement*, and an account is
     /// placed by `e` once it exists.
     pub fn fields(&self) -> Vec<AccountField> {
         if self.editing.is_none() {

@@ -408,7 +408,10 @@ impl GoalForm {
             focus: GoalField::Name,
             name: Field::given(name),
             // The base, which is what the table holds. What it comes to is
-            // beside it, in `tax_note`.
+            // beside it, in `tax_note`. Prefilled with its cents rather than
+            // rounded: a goal imported off a fractional cell has to show what
+            // it really holds, so that the owner rounds it by hand instead of
+            // the form moving it the first time it is opened.
             target: Field::given(base.to_string()),
             date: DateField::given(today, date),
             opened_base: base,

@@ -11,185 +11,148 @@ mm report     # write the HTML report without opening the application
 mm import ... # load a Money.xlsx workbook (needs --features import)
 ```
 
-Screens are `1` Overview, `2` Cash, `3` Credit, `4` Savings, `5` Planning,
-`6` Funds, `7` Recurring Goals, `8` Recurring Txns, `9` Accounts; `q` quits.
-Accounts read by the name you gave them — `Everyday`, `Rainy Day` — everywhere
-but Recurring Txns, whose columns leave room only for the code, and each one in
-the color you gave it on screen `9`.
-Tabs `7` and `8` are abbreviated because the bar is a row of shortcuts; each
-screen's own title spells its name out. The screens are laid out for a terminal
-at least 120 columns wide. Overview stacks the accounts in bands — checking, then
-savings, then the cards — with a subtotal under each and a total under each
-kind; its `←`/`→` scrub the Paycheck-Eve date against the baseline derived
-from the paycheck transaction — a day always still ahead of today while a
-transaction is marked, so on the eve itself the column names the eve of the
-paycheck after rather than naming today, and it reads today until you mark one — `Shift+←`/`Shift+→` move it a week, as they do on
-every date in the app — and
-Planning quotes its excess at whatever that scrub leaves it at. Cash and Credit share one month: `[` and `]`
-step both so the two always compare the same weeks, and `Esc` returns them to
-the month around today — and the account filter to All with them, since the
-screen narrows two ways and the key is the one way out of either. Each title
-ends with the balance of whatever `Tab`
-narrows the screen to — `Cash · Aug 2026 · All · Today $42,000.00` — which is
-the same to-date figure the Overview quotes, so neither the month on show nor a
-`/` search moves it. A search matches a row's description or its amount, typed
-without the separators the column draws — `1234` finds `$1,234.56` — and
-`Enter` keeps it while `Esc` gives the whole list back. Narrowed to one account, `r` takes the balance a statement
-says that account holds, and the title carries it with the difference after it —
-`… · Today $1,160.00 · Target $1,200.00 · Δ -$40.00`, green above the target,
-red below it, a dash when they match — so a typo or a missed row shows up while
-the rows are still being entered. Nothing is written: quitting forgets every
-target. Savings lists every open
-goal with the container it belongs to:
-`Tab` filters by container, `[` and `]` filter by goal date, `/` searches names,
-balances and targets, `a`
-allocates against the selected goal, `e` edits it, and `c` ends it — returning
-its value to unallocated, or moving it to another goal in the same container.
-`t` moves part of a goal's value to another goal in that container without
-ending anything: an amount, a destination, and both goals still open afterwards.
-The two rows it writes are one batch, so `U` takes the whole transfer back.
-Goals with no date lead the list, in an order you set with `K` and `J`; goals
-with one follow, soonest first, since a deadline decides a goal's place for it.
-`f` marks a goal, drawing its row as a band so it stands out among the rest;
-that is all it does, so a marked goal keeps its place under every filter and
-sort. The mark is stored on the goal, so unlike an account's color it does not
-survive a `--replace`.
-An allocation's amount takes `/N` for a fraction of the container's
-unallocated remainder — `/2` is half of it, `/12` a twelfth — and the form
-names the remainder it would divide and shows what the fraction comes to
-before it is committed.
-`Enter` opens the selected goal's allocation history: every row its balance is
-the sum of, oldest first, footed by what they come to — which is the balance
-the screen behind it shows, so an audit visibly adds up. `e` corrects the row
-under the cursor and `d` deletes it, so a figure entered wrongly four batches
-ago is rewritten in place rather than offset by a second row. Any row is
-editable, whether a payday, an interest posting or the import wrote it; what a
-row cannot change is the goal it belongs to, since moving one across containers
-would move a goal's value with no cash moved between the accounts. A
-misdirected allocation is deleted here and re-entered with `a` on the right
-goal.
-The month filter opens showing every goal; the first `[` or `]` narrows it to
-the current month, and from there they step across the months the goal dates
-span, the last wrapping back to the first. A goal with no date belongs to no
-month, so it shows only unfiltered. `Esc` shows every goal again, clearing the
-container filter along with the month — the screen narrows two ways, and one
-key out of either saves working out which of them is hiding the goal you are
+Screens are `1` Overview, `2` Cash, `3` Credit, `4` Savings, `5` Planning, `6` Funds,
+`7` Recurring Goals, `8` Recurring Txns, `9` Accounts; `q` quits. **`?` opens the key reference for
+whichever screen you are on**, and it is where every key is spelled out — what follows is the part
+of the app a list of keys cannot tell you. The screens are laid out for a terminal at least 120
+columns wide. Accounts read by the name and color you gave them on screen `9`, everywhere but
+Recurring Txns, whose columns leave room only for the code.
+
+Three things hold across every screen that offers them. `t` moves money, wherever that is: one row
+on a ledger, every row a plan calls for, or a figure crossing between savings goals. `/` searches
+the list, matching amounts typed without the separators the column draws — `1234` finds
+`$1,234.56`. And `Esc` gives back everything the screen is narrowed by in one press, because a
+screen that narrows two ways should not make you work out which of them is hiding the row you are
 looking for.
 
-`A` opens the allocation worksheet for the container — one amount, a line per
-goal, and a live remaining counter; `Space` ticks the goals a posting funds and
-`z` clears every other visible line to free the pot for them, `/N` divides the
-amount onto the targeted lines, `s` spreads what is left across them by largest
-remainder, `w` spreads it in the proportions they were prefilled with, and
-`Enter` commits the whole thing as one batch. `i` posts interest from the container's
-unallocated remainder, `n` opens a blank goal — a name, a target, a date, in
-the container `Tab` names — and `U` undoes the last batch. (`n`, not `a`,
-which this screen spends on the allocation it is mostly used for.)
+### `1` Overview
 
-`5` Planning leads with the transfer instructions — one per destination
-account — and shows the waterfall that worked them out underneath: the
-excess, the monthly bill block with its biweekly column, the gates, the
-split, and where each line lands. `↑`/`↓` move between the editable constants
-and skip everything computed; `e` edits the selected one, `E` opens a bill's
-whole row — label, amount, and category — `a` adds a bill, `d` deletes the
-selected bill, and `p` pins the excess so the plan stops moving underneath a
-payday — pressing it again re-pins at whatever the excess reads now, and `P`
-unpins. `Excess (Used)` is an editable constant like any other, so a figure
-typed there pins that instead of the one `p` computed. The transfers never
-total more than the excess: on a payday too small for the fixed bills, housing
-is paid first and the line that gave way carries the gap beside it. The excess
-is the checking balance at
-Paycheck-Eve, so the Overview's `←`/`→` move the whole waterfall with it; a
-scrubbed plan names its date beside `Excess (Actual)`, and `t` and `p` act on
-the figures shown rather than on the derived date.
+Accounts stacked in bands — checking, then savings, then the cards — with a subtotal under each and
+a total under each kind.
 
-`6` Funds is the target/actual split across the funds — `Target %`,
-`Actual %`, `Delta`, and the whole-dollar `Actual Value`, with a `Total` row
-under them. One fund's target isn't a stored figure; it tracks the owner's
-age directly — a percentage point past thirty for every year — and the rest
-split whatever share of the target that leaves. Whichever row sits
-furthest below its own target draws in bold: that's where the next
-contribution belongs, and nothing is marked once every fund is at or above
-its target. `a` adds a fund, `e` edits just the figure on the selected row —
-the value it holds now — `E` opens the whole row, and `d` deletes it after a
-confirmation; nothing here moves money, so a delete moves no balance either.
-Entering the screen with an age-tracked fund and no birth date on record
-opens a one-field form asking for it; `Esc` leaves that fund's target blank
-rather than guessing, and the screen asks again the next time it has no
-answer.
+`←`/`→` scrub the Paycheck-Eve column against the date derived from the paycheck transaction, which
+is always a day still ahead of today: on the eve itself the column names the eve of the paycheck
+*after* rather than naming today, and it reads today until a transaction is marked on screen `8`.
+`Shift` with them moves a week, as it does on every date in the app. **The scrub reaches Planning**,
+whose excess is quoted at whatever the column is left at.
 
-`8` Recurring Transactions holds the rows whose amount and date are known in
-advance — the paycheck and the monthlies. `a` adds one, `e` edits, and
-`d` deletes it and *releases* its ledger rows rather than deleting them. `g`
-regenerates the selected one and `G` every one, and `P` marks the transaction
-the Paycheck-Eve column is derived from. Regeneration adopts a matching
-unclaimed row before inserting, so the first `g` after an import claims what
-the workbook already held instead of duplicating it, and a row it owns on a
-date the schedule no longer produces — the mortgage moved by hand from the
-1st to the 5th — is
-*released* back to the ledger rather than deleted. It reports
-`removed / released / adopted / inserted` so all of that is visible.
+### `2` Cash and `3` Credit
 
-`7` Recurring Goals is the table each round of goals is created from: `a`,
-`e`, and `d`, with `d` refused while any goal still references the entry, and
-`s`, which opens the picker — `Space` toggles an entry, `Enter` creates every
-ticked one as a goal in the container the Savings screen's `Tab` names, all in
-one transaction. It opens showing every entry; the first `[` or `]` narrows it
-to the current month, and from there they step through the calendar — entries
-carry a month of the year and no date, so December wraps to January. `/`
-searches names and bases, the same box the ledgers and Savings open, and `Esc`
-clears a kept search before it shows every entry again. Most months hold
-nothing, so an empty table there is the answer rather than a fault.
+The two ledgers share one month, so `[` and `]` step both and the two always compare the same weeks.
+Each title ends with the balance of whatever `Tab` narrows the screen to — `Cash · Aug 2026 · All ·
+Today $42,000.00` — and that figure is the to-date balance the Overview quotes, so neither the month
+on show nor a search moves it.
 
-The month filter is also what `s` ticks: whatever the screen is showing opens
-already selected and sorted to the top, so the entries about to be created are
-the ones the list opens on — a tick alone is easy to miss in a list dozens
-long. Every entry is still listed below them, so the filter is a starting
-point rather than a cage, and an entry that already has an open goal is left
-unticked and sinks with the rest — `Space` still adds it, since a second open
-goal against one entry is legitimate.
+Narrowed to one account, `r` takes the balance a statement says that account holds and the title
+carries the difference after it — `… · Today $1,160.00 · Target $1,200.00 · Δ -$40.00`, green above,
+red below, a dash when they match — so a typo or a missed row shows up while the rows are still
+being entered. Nothing is written: quitting forgets every target.
 
-Every box that takes text — a form field, a `/` search, the worksheet's date —
-edits the same way, with the readline keys: `Ctrl`+`A` and `Ctrl`+`E` jump to
-the ends of the line, `Ctrl`+`B` and `Ctrl`+`F` move a character, `Ctrl`+`W`
-deletes the word before the caret, `Ctrl`+`U` and `Ctrl`+`K` delete back to the
-start or on to the end, and `Ctrl`+`D` takes the character the caret is on, as
-`Delete` does. `←`/`→` move the caret too, in a field that holds text rather
-than a date or a choice. `Ctrl` means editing text and nothing else anywhere in
-the app; `Alt` is unused, since macOS sends `Option` as `Meta` only where the
-terminal has been told to.
+### `4` Savings
 
-Every date the app asks for is typed as `YYYY-MM-DD` or as `M/D`, which takes
-the next year that month comes round — typed in August, `9/10` is this
-September and `3/4` is next March. The year turns on the month alone, so `8/1`
-in August is the first of this August, which is what makes backdating a row a
-fortnight a three-keystroke job. A field shows what was typed while the caret
-is in it and the date it means once focus leaves. `←`/`→` nudge a date a day
-wherever there is one, `Shift` with them a week, and `[`/`]` a month — the same
-brackets a screen's month filter takes. A month is not a fixed number of days,
-so the day is clamped into the month it lands in: the 30th of January steps to
-the 28th of February and stays a 28th on the way back out. A date field stays
-typeable either way. A form editing a row opens on that row's own date; one
-entering something new opens on today, bar a handful. The three that write a
-ledger row — `a`, `t` and `p` — open on the date the last row added this
-session was written for, since entering a statement is a run of rows landing on
-the same few days; today, until a row is added, and restarting returns them
-there. A new goal's opens on the first of the next month, since a goal date is
-a deadline. `t`'s confirmation opens two business days out, dated for when the
-transfers land rather than for when the plan was read — weekends skipped,
-holidays not, which is part of why that date is editable. The worksheets it
-queues behind that confirmation open on the date it wrote, whatever the owner
-confirmed there: an allocation is the transfer read from the container's side,
-so both carry the one date. A recurring transaction's end date and the Funds
-birth-date prompt open blank, because blank means something in both — a rule
-that does not end, and a date not on record.
+Every open goal with the container it belongs to. `Tab` filters by container, `[` and `]` by goal
+date, `a` allocates against the selected goal, `e` edits it, `t` moves part of its value to another
+goal in the same container, and `c` ends it — returning its value to unallocated, or moving it to
+another goal in that container.
 
-Each goal is dated for the year ahead: a year past the next occurrence of the
-entry's month, so a September entry created in August 2026 is dated September
-2027, and a March one — already past this year, and so next occurring in March
-2027 — is dated March 2028. A biennial entry that already has a goal dated this
-year steps two years instead, skipping the year between rather than filling it;
-one that does not is due, and lands a year out like any other.
+Goals with no date lead the list, in an order you set with `K` and `J`; goals with one follow,
+soonest first, since a deadline decides a goal's place for it. `f` marks a goal for the eye only;
+the mark is stored on the goal, so unlike an account's color it does not survive a `--replace`.
+
+An allocation's amount takes `/N` for a fraction of the container's unallocated remainder — `/2` is
+half of it, `/12` a twelfth — and the form names the remainder it would divide before committing.
+
+`Enter` opens the selected goal's allocation history: every row its balance is the sum of, footed by
+what they come to, so an audit visibly adds up. A figure entered wrongly four batches ago is
+rewritten in place rather than offset by a second row, and any row is editable whether a payday, an
+interest posting or the import wrote it. What a row cannot change is the goal it belongs to: moving
+one across containers would move a goal's value with no cash moved between the accounts. A
+misdirected allocation is deleted here and re-entered with `a` on the right goal.
+
+`A` opens the allocation worksheet for the container — one amount, a line per goal, and a live
+remaining counter, committed as a single batch that `U` takes back whole. `i` posts interest from
+the container's unallocated remainder, and `n` opens a blank goal (`n`, not `a`, which this screen
+spends on the allocation it is mostly used for).
+
+### `5` Planning
+
+The transfer instructions first — one per destination account — over the waterfall that worked them
+out: the excess, the monthly bill block with its biweekly column, the gates, the split, and where
+each line lands. `↑`/`↓` move between the editable constants and skip everything computed.
+
+`p` pins the excess so the plan stops moving underneath a payday; pressing it again re-pins at
+whatever the excess reads now, and `P` unpins. `Excess (Used)` is an editable constant like any
+other, so a figure typed there pins that instead of the one `p` computed.
+
+**The transfers never total more than the excess.** On a payday too small for the fixed bills,
+housing is paid first and the line that gave way carries the gap beside it. The excess is the
+checking balance at Paycheck-Eve, so a scrubbed plan names its date beside `Excess (Actual)`, and
+`t` and `p` act on the figures shown rather than on the derived date.
+
+### `6` Funds
+
+The target/actual split across the funds, with a `Total` row under them. One fund's target is not a
+stored figure: it tracks the owner's age directly — a percentage point past thirty for every year —
+and the rest split whatever share of the target that leaves. Whichever row sits furthest below its
+own target draws in bold, which is where the next contribution belongs; nothing is marked once every
+fund is at or above its target. Nothing here moves money, so a delete moves no balance either.
+
+Entering the screen with an age-tracked fund and no birth date on record opens a one-field form
+asking for it. `Esc` leaves that fund's target blank rather than guessing, and the screen asks again
+the next time it has no answer.
+
+### `7` Recurring Goals
+
+The table each round of goals is created from. `s` opens the picker, where `Space` toggles an entry
+and `Enter` creates every ticked one as a goal in the container the Savings screen's `Tab` names,
+all in one transaction.
+
+Whatever the month filter is showing opens already ticked and sorted to the top, since a tick alone
+is easy to miss in a list dozens long. Every entry is still listed below, so the filter is a
+starting point rather than a cage; an entry that already has an open goal opens unticked, and
+`Space` still adds it, because a second open goal against one entry is legitimate.
+
+**Each goal is dated for the year ahead**: a year past the next occurrence of the entry's month, so
+a September entry created in August 2026 is dated September 2027, and a March one — already past
+this year — is dated March 2028. A biennial entry that already has a goal dated this year steps two
+years instead, skipping the year between rather than filling it.
+
+### `8` Recurring Transactions
+
+The rows whose amount and date are known in advance — the paycheck and the monthlies. `P` marks the
+transaction the Paycheck-Eve column is derived from. `g` regenerates the selected one and `G` every
+one, reporting `removed / released / adopted / inserted`.
+
+Regeneration adopts a matching unclaimed row before inserting, so the first `g` after an import
+claims what the workbook already held instead of duplicating it. A row it owns on a date the
+schedule no longer produces — the mortgage moved by hand from the 1st to the 5th — is *released*
+back to the ledger rather than deleted, and so are every one of a rule's rows when `d` deletes it. A
+delete never moves a balance.
+
+### Typing
+
+Every box that takes text edits with the readline keys — `Ctrl`+`A`/`E`/`B`/`F`/`W`/`U`/`K`/`D`, as
+a shell binds them. `Ctrl` means editing text and nothing else anywhere in the app; `Alt` is unused,
+since macOS sends `Option` as `Meta` only where the terminal has been told to.
+
+Every date is typed as `YYYY-MM-DD` or as `M/D`, which takes the next year that month comes round —
+typed in August, `9/10` is this September and `3/4` is next March. The year turns on the month
+alone, so `8/1` in August is the first of *this* August, which is what makes backdating a row a
+fortnight a three-keystroke job. `←`/`→` nudge a date a day, `Shift` with them a week, and `[`/`]` a
+month, with the day clamped into the month it lands in: the 30th of January steps to the 28th of
+February and stays a 28th on the way back out.
+
+A form editing a row opens on that row's own date, and one entering something new opens on today —
+bar a handful that open somewhere more useful. The three that write a ledger row open on the date
+the last row added this session was written for, since entering a statement is a run of rows landing
+on the same few days. A new goal's opens on the first of the next month, since a goal date is a
+deadline. `t`'s confirmation opens two business days out, dated for when the transfers land rather
+than for when the plan was read, and the worksheets it queues behind that confirmation open on the
+date it wrote — an allocation is the transfer read from the container's side, so both carry the one
+date. And a recurring transaction's end date and the Funds birth-date prompt open blank, because
+blank means something in both: a rule that does not end, and a date not on record.
+
+## Importing a workbook
 
 ```bash
 mm import path/to/Money.xlsx
@@ -209,8 +172,8 @@ A default build has no `import` subcommand and none of the code behind it,
 and `calamine` — named nowhere else in the crate — is not compiled at all.
 The workbook is a document the owner imports from once per edit of it, not
 something the application reads to open a database, so the binary that runs
-day to day need not carry a spreadsheet parser. Everything below describes
-that build.
+day to day need not carry a spreadsheet parser. The rest of this section
+describes that build.
 
 **The first import against an empty database takes two runs of that same
 command.** The `Savings` sheet identifies its two blocks by position and
@@ -457,45 +420,26 @@ read a backup, delete one, or list the bucket.
 
 ## Layout
 
-| Path | Responsibility |
-|---|---|
-| `src/money.rs` | `Cents` — the only money type. No floats. |
-| `src/rate.rs` | `Percent` and `BasisPoints` — the two scalings, kept apart. |
-| `src/calc/` | Pure formulas: tax, biweekly, per-paycheck, pro-rata, the Planning waterfall, the fund allocation, and `schedule` — when a recurring thing happens. No database. |
-| `src/db/` | The schema and the queries — one module per aggregate. |
-| `src/db/bill.rs` | The monthly bill block, labelled — the `Planning!C6:E12` rows. |
-| `src/db/fund.rs` | The `fund` table — the asset-allocation block of `Planning!I1:M5`. |
-| `src/db/recurring_txn.rs` | The `recurring_txn` table — rows whose amount and date are known in advance. |
-| `src/import/` | Reads `Money.xlsx`. Behind the `import` feature, which is what lets `calamine` be an optional dependency. |
-| `src/import/fund.rs` | Reads the fund block, `Planning!I2:M<n>`, into `db::fund`. |
-| `src/gate.rs` | `Gate` — the Planning gates, key and name substring together. |
-| `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the key naming its container account. |
-| `src/plan_line.rs` | Every Planning line: its label, its amount, and the key saying where it lands. |
-| `src/plan.rs` | Runs the Planning waterfall against imported settings. |
-| `src/fund.rs` | Feeds the fund table and the birth date to the fund-allocation derivation. |
-| `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, and regeneration. |
-| `src/config.rs` | The TOML config file — the `[backup]` and `[report]` sections, unset means the feature is off. |
-| `src/backup/` | The schedule, the snapshot, and the S3 upload. `aws-config`, `aws-sdk-s3` and `tokio` are named only in `src/backup/s3.rs`. |
-| `src/tui/` | The terminal UI: screens, forms, key handling. |
-| `src/tui/fund.rs` | The Funds screen and its form. |
-| `src/tui/history.rs` | One goal's allocation history — the modal `Enter` opens on a Savings row, and the crate's only reader of a single `allocation`. |
-| `src/tui/accounts.rs` | The Accounts screen — creating an account the workbook does not name, and the seven things it does not say about one. |
+`CLAUDE.md` carries the path-by-path map of the crate, and the module
+`CLAUDE.md` files under `src/import/`, `src/calc/`, `src/tui/`, `src/report/`
+and `src/backup/` go a level below it. What is worth knowing before opening
+any of them is that the layering is enforced by module privacy rather than by
+convention.
 
-`ratatui` (which re-exports `crossterm`) is named only inside `src/tui/`, the
-same discipline that confines `rusqlite` to `src/db/`, `calamine` to
-`src/import/` — which is what makes `calamine` optional, since one module
-naming it is one `cfg` to put it behind — `serde` and `toml` to `src/config.rs` (and again in
-`src/backup/state.rs`), and `aws-config`, `aws-sdk-s3` and `tokio` to
-`src/backup/s3.rs`.
+`ratatui` (which re-exports `crossterm`) is named only inside `src/tui/`,
+`rusqlite` only inside `src/db/`, `calamine` only inside `src/import/`, `serde`
+and `toml` in `src/config.rs` and `src/backup/state.rs`, and `aws-config`,
+`aws-sdk-s3` and `tokio` only in `src/backup/s3.rs`. One module naming a
+dependency is one `cfg` to put it behind, which is what lets `calamine` be
+optional and a default build carry no spreadsheet parser at all.
 
-`rusqlite` is named only inside `src/db/`. Everything else holds a `db::Db`,
-whose connection is private, and reaches the database through
-`db::{account, bill, goal, recurring_goal, recurring_txn, setting, txn}`.
-Multi-statement writes go through `Db::transaction`, which commits only if
-its closure returns `Ok`.
-
-Row ids are one type per table (`db::AccountId`, `db::GoalId`, …), so an id
-cannot be passed where a different table's id belongs.
+Everything outside `src/db/` holds a `db::Db`, whose connection is private, and
+reaches the database through `db::{account, bill, goal, recurring_goal,
+recurring_txn, setting, txn}`. Multi-statement writes go through
+`Db::transaction`, which commits only if its closure returns `Ok`. Row ids are
+one type per table (`db::AccountId`, `db::GoalId`, …), so an id cannot be
+passed where a different table's belongs, and `Cents` is the only money type in
+the crate — there are no floats anywhere in it.
 
 ## Development
 
@@ -506,52 +450,37 @@ pull request.
 
 ## Tests
 
-`cargo test`. Integration tests read the workbook `MM_WORKBOOK` points at and
-skip (printing a message explaining why) when that variable is unset or the
-file is absent, so a clean checkout passes. They compare against the
-workbook's own cached values rather than hardcoded balances, because the
-workbook is a live document. The workbook is personal financial data and must
-never be committed to the repository.
+`cargo test`. The integration tests read the workbook `MM_WORKBOOK` points at
+and assert against its own cached values rather than hardcoded balances, since
+it is a live document the owner keeps editing. It is personal financial data,
+it is never committed, and there is deliberately no default path to it.
 
-There is deliberately no default path. Where the owner keeps their finances is
-the same kind of fact as an account code, and a fallback would put it back in
-the repository in the one place nobody would think to grep for it.
-
-Set `MM_REQUIRE_WORKBOOK=1` to turn a missing workbook into a hard test
-failure instead of a skip -- useful for wiring these tests into CI on a
-machine that is expected to have the workbook available, where a silent skip
-would mean the importer is never actually exercised.
-
-Three accounts are named by no cell of the workbook — the current account and
-the two `Savings` block containers — and their codes are exactly the kind of
-thing this repository may not hold either, so the tests read those from the
-environment too:
+They skip, printing why, when the variable is unset or the file is absent, so a
+clean checkout passes. `MM_REQUIRE_WORKBOOK=1` turns either into a hard failure
+instead. Three accounts are named by no cell of the workbook — the current
+account and the two `Savings` block containers — so their codes are read from
+the environment as well:
 
 ```bash
 MM_REQUIRE_WORKBOOK=1 MM_WORKBOOK=path/to/Money.xlsx \
   MM_ACCOUNTS=<checking>,<goals>,<buckets> cargo test --features import
 ```
 
-`tests/common/mod.rs` reads both, configures a database the way screen `9`
-would, and runs the two-pass first import. Unset, the tests needing them skip
-as loudly as they do for a missing workbook.
+`--features import` is part of that invocation rather than an extra on it:
+every one of these binaries is behind the feature, so without it they compile
+to nothing and the run goes green having asserted nothing. CI runs the suite
+twice, once on the default features and once on all of them.
 
-`--features import` is part of that same invocation rather than an extra on
-it: every one of these binaries is behind the feature, since the importer is
-what puts the workbook in a database to assert against. Without it they
-compile to nothing, `MM_REQUIRE_WORKBOOK=1` has no test left to fail, and the
-run goes green having asserted nothing — the one thing that variable exists to
-prevent.
-
-CI runs `cargo test` twice, once on the default features and once on all of
-them, which is what keeps the second column honest.
+`tests/common/mod.rs` is what reads those variables, configures a database the
+way screen `9` would, and runs the two-pass first import. Why there is no
+fallback path, and what `MM_REQUIRE_WORKBOOK` exists to prevent, are in
+`CLAUDE.md` under "The workbook is the test oracle".
 
 ## No real data in the repository
 
 This repository is public and the owner's finances are not. Nothing committed
-here carries a real balance, a real institution, a real account code, or a
-goal name traceable to a real person — in source, tests, fixtures or docs
-alike. Every money literal in the crate is invented, and the tests that do
-assert against real figures read them out of the untracked workbook at run
-time rather than restating them. The root `CLAUDE.md` states the rule in full
-and carries the invented-fixture vocabulary a new test should copy.
+here carries a real balance, a real institution, a real account code, or a goal
+name traceable to a real person — in source, tests, fixtures or docs alike. The
+tests that do assert against real figures read them out of the untracked
+workbook at run time rather than restating them. `CLAUDE.md` states the rule in
+full and carries the invented-fixture vocabulary a new test copies from.

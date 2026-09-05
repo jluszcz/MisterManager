@@ -240,6 +240,13 @@ matches, since nothing but a test ties them together.
 
 ## Invariants worth knowing before editing
 
+This file is loaded into context every session, so a bullet here earns its place by saying what the
+code *cannot*: a rule that spans modules, a pairing nothing enforces, a state that means the
+opposite of what it looks like. **Where a rule is enforced at one item, this file states the rule
+and names the item — the derivation belongs on the item.** Two copies of an explanation are two
+places to edit and one place to forget, and the copy that goes stale is always the one further from
+the code. The same rule governs each module `CLAUDE.md` against the code beneath it.
+
 - **Goal names are not unique.** "Lego" names several goals in the workbook, "Dropbox" more than
   one. Nothing downstream may key a goal by name. Name matching happens exactly once, at import,
   which records ids into `setting` under the keys `gate::Gate` owns; readers resolve by id. Add a
@@ -261,15 +268,10 @@ matches, since nothing but a test ties them together.
   code is asked there and nowhere else, because it is what the next import matches the row
   against: a hand-created account whose code the workbook later grows is *adopted* by that import
   rather than duplicated, since `import::constants` skips a code the kind already holds.
-  `account::insert` refuses one it does not skip, naming the code as the database holds it — the
-  schema's `account_code_kind` is the backstop, and per kind, so one code may still name both a
-  cash account and the card drawn on it. **The match folds case**, in `account::by_code` and in
-  the index under it: a code typed `chk` against a sheet that later spells it `CHK` would
-  otherwise miss the skip and split one real account across two rows.
-  `account::reorder` takes a *position* rather than a raw `sort` and renumbers the whole kind,
-  because `sort` is only ever read through an `ORDER BY` that breaks ties by code — "put it third"
-  is an instruction whose result does not depend on rows the caller never saw, and "set sort to 2"
-  is.
+  The code match **folds case**, in `account::by_code` and in the index under it, or a code typed
+  `chk` against a sheet that later spells it `CHK` would split one real account across two rows.
+  What `insert`, `by_code` and `reorder` each refuse — and why `reorder` takes a *position* rather
+  than a raw `sort` — they say at their own definitions in `db::account`.
 - **An account's color is a name, and having none is a supported state rather than a gap.**
   `account.color` holds an `account::AccountColor` as `TEXT` with the schema's `CHECK` behind it —
   the construction `kind`, `grp` and `interest_policy` already use — because an index into a
@@ -285,8 +287,8 @@ matches, since nothing but a test ties them together.
   `account_label::Account`, which colors what it draws, everywhere but the residual list in
   `src/tui/CLAUDE.md`'s account-color section, and `AccountName`/`AccountCode` have no `Display`,
   so an account cannot be flattened into a `String` on the way.
-- **Five things about the owner's accounts are in no cell of the workbook, and every one of them is
-  configured on the Accounts screen.** The `Savings` sheet names its two blocks by *position* --
+- **Which account answers for what is in no cell of the workbook, and every one of those answers
+  is configured on the Accounts screen.** The `Savings` sheet names its two blocks by *position* --
   `A:E` and `I:K` -- with no account code beside either; nothing anywhere says which account is
   the current one; and no cell says which account a transfer leaves or which one settles a card.
   So:
@@ -425,44 +427,26 @@ matches, since nothing but a test ties them together.
     report one and draw the screen anyway — so it arrives as a `Reading` and `shares_of` takes an
     already-filtered set rather than reaching for the database itself.
 - **A payday prefills what each goal asks, and leaves the rest unallocated on purpose.** The ask is
-  `savings::paycheck_ask` — `calc::per_paycheck`, and the same figure the Savings screen shows in
-  `$/Pay`. `calc::fit` puts the asks against the money there is: under-subscribed, every ask is met
-  in full and the difference is **left over**, because that remainder is money the owner places by
-  hand rather than money a prefill should find a home for; over-subscribed, `pro_rata` scales every
-  goal to the same fraction of what it wanted. Weighting by the ask rather than by the raw shortfall
-  is what makes a deadline count — a goal due next paycheck asks for all it lacks, one due in three
-  years for a thirtieth of a larger number.
+  `savings::paycheck_ask` — the same figure the Savings screen shows in `$/Pay`, which is the whole
+  reason it is a function rather than an unpacking each caller repeats — and `calc::fit` is what
+  puts the asks against the money there is. Both say at their own definitions why a remainder is
+  left over and why the weighting is the ask rather than the raw shortfall.
   - **Only the plug is priced this way.** A line that names a goal hands it the waterfall's own
-    figure — Bills hands "Bill Payments" the whole of `lines.bills` — and a per-paycheck ask must never
-    overwrite an amount computed for that goal specifically.
-  - `savings::paycheck_ask` exists because several callers want that number: the `$/Pay` column, the `A`
-    prefill, and this one. A figure a screen shows and a figure a prefill writes must be the same
-    figure, and a copy of the unpacking in each is how they stop being.
+    figure — Bills hands "Bill Payments" the whole of `lines.bills` — and a per-paycheck ask must
+    never overwrite an amount computed for that goal specifically.
   - **The plug's set and its pricing come off one read, `transfer::spread_asks`**, so the figure the
-    Planning screen measures the Goals line against and the asks `calc::fit` is about to divide it
-    by cannot be answers to two different questions about which goals. `transfer::plan` resolves the
-    plug's *container* from that same read where its caller already holds one, which is what keeps a
-    Planning view to one read of the goals rather than one per question asked about them. That is
-    what `Asks` is: the type `spread_asks` returns and the only thing `plan` accepts, because the
-    refusals a dangling key and a rateless taxed goal earn are made where the set is read, and a set
-    assembled any other way would place a payday in a container nothing had validated.
-  - **The Planning screen says when the plug will not cover those asks, and nothing else does.** An
-    `Unmet Asks` row foots the transfers block, and is absent when the plug covers them.
-    `transfer::unmet_asks` is the one place that condition is stated — the screen draws it in a
-    table cell and `report::html::planning` in a `<td>`, and two of them deciding separately when a
-    payday is under-funded is two chances to disagree about the one thing the owner reads either of
-    them for. It takes **`lines.goals` and not a transfer row**: `plan` skips a line at zero, so the
-    payday whose plug is nothing has no Goals row at all — and it is the payday whose goals are
-    worst served, so a gap hung off that row would fade out exactly as the condition it reports got
-    worse. That is why it foots the block rather than sitting beside the line, and why it is drawn
-    outside the `match` a failed plan empties, as `Shortfall` beneath it is.
-    - **Both sinks read the asks on their own, never chained to `transfer::plan`.** That call is
-      what a payday with every line at zero *fails*, so asks read through it are zero exactly where
-      the row exists to be drawn, and a row drawn outside the `match` would go silent anyway. A
-      failure of the asks' own read is a different answer: the annotation cannot be made, so it is
-      omitted rather than propagated — the strict target reader is what a taxed goal with no rate
-      on record trips, and it would take a whole screen down over a figure beside the plan rather
-      than in it.
+    Planning screen measures the Goals line against and the asks `calc::fit` is about to divide
+    cannot be answers to two different questions about which goals. That is what `Asks` is: the type
+    that read returns and the only thing `plan` accepts, because the refusals a dangling key and a
+    rateless taxed goal earn are made where the set is read, and a set assembled any other way would
+    place a payday in a container nothing had validated.
+  - **`transfer::unmet_asks` is the one place a payday is called under-funded**, drawn as an
+    `Unmet Asks` row footing the transfers block on the Planning screen and as a `<td>` by
+    `report::html::planning`. **Both sinks read the asks themselves and never chain them to
+    `transfer::plan`**: that call is what a payday with every line at zero *fails*, so asks read
+    through it would be zero exactly where the row exists to be drawn. A failure of the asks' own
+    read is omitted rather than propagated — it would take a whole screen down over a figure beside
+    the plan rather than in it.
   - **Two lines may name one goal, and the prefill adds rather than replaces.** The destination
     chooser offers every open goal, claimed or not, and `transfer::plan` merges two lines sharing a
     destination into one transfer. `tui::app::add_share` merges them the same way, because
@@ -557,44 +541,29 @@ matches, since nothing but a test ties them together.
     a goal's value to unallocated has no key of its own: that is `a` with a negative amount, and a
     second spelling of it on the transfer form would be a second spelling of an ending.
 - **A goal's target is derived, never stored.** The table holds `goal.base_cents`, `goal.taxed` and
-  `goal.floating`; `goal::target` is the balance for a floating goal, `base_cents` for an untaxed
-  one and `calc::tax` of it for a taxed one, the way `calc::fund` turns an age rule into a
-  percentage. A rate that changes must not leave a stored figure behind quoting the old one, and
-  neither may a balance that moves. **The derived figure is the target everywhere** — the shortfall
-  behind a Planning gate, the percentage complete, `$/Pay`, whether the payday plug still counts the
-  goal as short, whether the Savings screen draws it as overdue. The base is shown as itself in
-  exactly two places, the goal form and the recurring-goal form, and both say what it comes to
-  beside it. A goal that funds to its base comes up short at the register, which is the whole
-  reason the column is split in two.
-  - **A floating goal's target is whatever it holds**, which is why `goal::target` takes the
-    balance. `goal.floating` is the owner's answer to "this is a pot rather than a purchase" — a
-    brokerage account, a rainy-day fund, anything never meant to be finished — and it is read
-    *first*, before `taxed` and before the rate is asked for: a target that follows the balance has
-    no base for the lambda to ceiling, so a row carrying both flags resolves rather than erroring.
-    Everything downstream follows from that one branch and nothing else knows the flag exists: the
-    shortfall is zero at every balance, so a Planning gate behind a floating goal never opens and
-    `transfer::spread_goals` never offers it a penny of the payday plug; `$/Pay` is blank and the
-    goal is never overdue, because it is already at its target. The one reader that *does* name the
-    flag is `savings::rows`, which states `100%` rather than dividing `current` by itself — see
-    `src/tui/CLAUDE.md`. The base and the `taxed` flag beside it are kept rather than cleared, so
-    turning the flag off restores the goal the owner was funding towards; the goal form is what
-    puts both fields out of reach while it is on.
-  - **A taxed goal with no rate on record is a loud error naming `key::TAX_RATE`**, not a silent
-    fallback to the base. An unset key normally means a feature is off, but the flag on the row says
-    tax is wanted, and quietly targeting the base would move the waterfall's plug on the strength of
-    a missing setting — the same reasoning that makes a dangling gate key an error. Both writers
-    refuse to *create* that row for the same reason, with the same sentence: `goal::NO_TAX_RATE` —
-    the goal form's commit, and the recurring-goal picker's, which hands the flag across rather than
-    computing anything and so has to ask before `insert_all` runs.
-  - **That refusal binds every path that *spends* a target, and no path that only *draws* one.**
-    Which of the two a caller gets is a `Reading` it passes: `Reading::Tolerant` targets the base,
-    and the Savings screen, `wiring` and the report read that way — the same split the reading
-    makes over a dangling setting key, for the reason it makes it: a screen cannot decline to draw
-    itself. Here it is sharper than a blank panel, because `App::reload_savings` runs inside
-    `App::new` — a strict read there stops the application starting, and the rate is set from
-    inside the application. `transfer::plan` through `spread_goals`, both worksheet prefills, and
-    `shortfall` behind every Planning gate stay `Reading::Strict`, so the owner is told the moment
-    a figure would be acted on and the waterfall's plug is never moved on a missing setting.
+  `goal.floating`; `goal::target` turns the three into a figure on every read, the way `calc::fund`
+  turns an age rule into a percentage — a rate that changes must not leave a stored figure behind
+  quoting the old one, and neither may a balance that moves. Which branch is taken in what order,
+  and why a taxed goal with no rate on record is an error rather than a fallback to the base, are
+  `src/goal.rs`'s to say. **The derived figure is the target everywhere**: the shortfall behind a
+  Planning gate, the percentage complete, `$/Pay`, whether the payday plug counts the goal as short,
+  whether Savings draws it overdue. The base is shown as itself in exactly two places, the goal form
+  and the recurring-goal form, and both say what it comes to beside it — a goal funded to its base
+  comes up short at the register, which is the whole reason the column is split in two.
+  - **A floating goal is short by nothing at every balance**, so a Planning gate behind one never
+    opens, `transfer::spread_goals` never offers it a penny of the plug, `$/Pay` is blank and it is
+    never overdue. Nothing downstream knows the flag exists; the one reader that names it is
+    `savings::rows`, which states `100%` rather than dividing `current` by itself. The base and the
+    `taxed` flag beside it are kept rather than cleared, so turning the flag off restores the goal
+    the owner was funding towards.
+  - **Both writers refuse to *create* a taxed goal with no rate on record**, in the same sentence
+    the read side refuses with — `goal::NO_TAX_RATE`, from the goal form's commit and from the
+    recurring-goal picker, which hands the flag across rather than computing anything and so has to
+    ask before `insert_all` runs.
+  - **That refusal binds every path that *spends* a target, and no path that only *draws* one**, and
+    which one a caller gets is the `Reading` it passes. Strict: `transfer::plan` through
+    `spread_goals`, both worksheet prefills, and `shortfall` behind every Planning gate. Tolerant:
+    the Savings screen, `wiring`, and the report. `src/reading.rs` is where the split is argued.
   - **`shortfall` lives in `src/goal.rs`, not in `db::goal`.** It is a target reader and the rate
     cannot be reached from `db`; a second one left behind in `db` would let `plan::remaining` go on
     gating the waterfall against a base. `db::goal::balance` stays, because a sum is not a target.
@@ -635,31 +604,13 @@ matches, since nothing but a test ties them together.
   and `note` is the sentence a person reads — they may coincide, as `paycheck` does, but no two
   kinds may share a note, and `import` writes its rows through the same constant rather than a
   literal of its own.
-- **An allocation is editable whatever wrote it, and a history is scoped to one goal.** `Enter` on a
-  Savings row opens that goal's rows in `tui::history`, where `e` corrects one and `d` deletes one —
+- **An allocation is editable whatever wrote it, and a history is scoped to one goal.**
   `goal::allocations`, `update_allocation` and `delete_allocation` are the only readers and writers
-  of a single `allocation` row in the crate; everything else wants the sum. Three things follow, and
-  none of them is visible from the screen:
-  - **Batch rows and the `Import` batch alike are editable.** An allocation is a figure the owner
-    entered, whatever wrote it down, and a history that refused the rows most likely to be wrong
-    would not do its job. Allocations carry no `edited` flag, so `U` still deletes a whole batch
-    including a row corrected inside it; the window is narrow — `U` reaches only the most recent
-    non-`Import` batch — but a correction made and then undone goes with the batch it was in. The
-    `manual` interest prefill rescales the container's last `Interest` batch, so correcting a row in
-    one moves the weights the next posting opens with: the wanted behaviour, simply not obvious from
-    the row being edited.
-  - **A row never leaves its goal.** The form edits the date, the amount and the note, and nothing
-    else. Re-pointing within a container would be defensible and across containers would not — no
-    cash moved between the accounts, the boundary `goal::move_value` already refuses to cross — and
-    a fourth field that can only ever move a row halfway is worth less than the rule. A misdirected
-    allocation is deleted here and re-entered with `a` on the right goal.
-  - **A correction reads its amount at `form::Precision::Cents` where `a` reads at
-    `WholeDollars`.** The rows most worth correcting are the ones the import and the interest
-    postings wrote, and those carry the cents `parse_whole_amount` refuses — a modal that would not
-    save the figure it had just prefilled would refuse exactly the rows it exists for. `a` keeps the
-    stricter reading for the reason `parse_whole_amount` gives: cents typed into a whole-dollar
-    field are a typo, while cents already on a row are arithmetic. One parameter rather than two
-    functions, the shape `reading::Reading` already makes for the goal readers.
+  of a *single* `allocation` row in the crate; everything else wants the sum. **A row never leaves
+  the goal it was written against**: re-pointing one across containers would move a goal's value
+  with no cash moved between the accounts, the boundary `goal::move_value` already refuses to
+  cross, so the form offers no field that could. What the modal over those rows does with them is
+  `src/tui/CLAUDE.md`'s.
 - **The interest prefill is a property of the account, not a setting.** `account.interest_policy` is
   `pro_rata` or `manual` (which is also what `NULL` reads as), because a per-container setting key
   cannot be a `Key<T>` constant. It is set on the Accounts screen and no import ever writes it: which
@@ -670,29 +621,16 @@ matches, since nothing but a test ties them together.
   `tui::worksheet::interest_prefill` filters the previous batch to it before that batch can weight
   anything. Without that filter the flag would be inert on exactly the container whose prefill is a
   copy — a goal made ineligible would keep drawing last month's share.
-- **Regeneration is release, skip, adopt, insert — in that order.** `recurring_txn::regenerate` deletes the
-  rows it owns from today forward that are still its own work (`recurring_txn_id = ? AND edited = 0 AND
-  date >= ?`); whatever it still owns after that is a hand-correction, one per occurrence. Then, and
-  only then, is the occurrence list known, so:
-  - a date it owns inside `[today, horizon]` that is **not** an occurrence is *released*
-    (`recurring_txn_id = NULL, edited = 0`, `recurring_txn::release_dates`) — never deleted, the
-    same as `recurring_txn::delete`. Without this, moving a correction (edit the anchor or cadence, or move
-    the row itself in the ledger) leaves it owned at a date the schedule no longer produces while
-    the schedule's own date gets a fresh insert: four rows for three occurrences, every projected
-    balance one payment out, stable from run two so nothing else catches it. Bound it to
-    `[today, horizon]`, or shrinking the horizon sweeps up rows beyond it as a side effect.
-  - an occurrence it **already owns is skipped**, not offered to `adopt` — whose
-    `recurring_txn_id IS NULL` guard would refuse it anyway, and the refusal would be read as "nothing to
-    adopt" and end in a duplicate insert. This step is the one the plan itself got wrong.
-  - otherwise `adopt` claims one matching unclaimed row before `insert` writes a new one. Adoption
-    is what makes `g` idempotent from the first press against an imported database, which already
-    holds every future occurrence. An adopted row whose amount differs is flagged `edited`, so the
-    next run never takes it back.
-
-  Regenerating twice must produce identical rows — that is the property the tests pin. **What this
-  does not do:** a moved correction plus the regenerated occurrence is still four rows where the
-  schedule says three. Ownership is coherent and the released row is an ordinary ledger row the
-  owner can keep or delete, but nothing decides that a moved row *consumes* its original
+- **Regeneration is release, skip, adopt, insert — in that order**, and it runs forward of today
+  only, so history is never rewritten. Releasing a correction the schedule no longer produces is
+  bounded to `[today, horizon]` as well, or shrinking the horizon would sweep up rows beyond it as a
+  side effect. Adoption is what makes `g` idempotent from the first press against an imported
+  database, which already holds every future occurrence; an adopted row whose amount differs is
+  flagged `edited`, so the next run never takes it back. `regenerate_within` is where the release
+  and the skip say what goes wrong without them.
+  **What this does not do:** a moved correction plus the regenerated occurrence is still four rows
+  where the schedule says three. Ownership is coherent and the released row is an ordinary ledger
+  row the owner can keep or delete, but nothing decides that a moved row *consumes* its original
   occurrence — that needs the transaction↔occurrence link recorded (a `txn.occurrence_date` column),
   which is not there.
 - **A recurring transaction's horizon is `min(recurring_txn.horizon,

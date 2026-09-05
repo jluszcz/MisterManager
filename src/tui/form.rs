@@ -119,9 +119,10 @@ impl Field {
 pub(super) struct DateField {
     field: Field,
     /// The day the `M/D` shorthand resolves against. `None` is a field that
-    /// takes `YYYY-MM-DD` and nothing else -- a birth date has no
-    /// present-or-future reading, so a shorthand there could only ever land
-    /// decades wrong in silence.
+    /// takes `YYYY-MM-DD` and nothing else: the shorthand's year turns on the
+    /// month alone, so it never reads more than weeks from today, and a birth
+    /// date is decades past -- a shorthand there could only ever land decades
+    /// wrong in silence.
     shorthand_from: Option<NaiveDate>,
 }
 
@@ -160,7 +161,8 @@ impl DateField {
 
     /// A field that takes `YYYY-MM-DD` and nothing else. It needs no `today`,
     /// which is the distinction made visible: the shorthand is the reading
-    /// that depends on when you are.
+    /// that depends on when you are. The `shorthand_from` field above says
+    /// which fields want it and why a birth date is one of them.
     pub(super) fn iso_only(prefill: &str) -> DateField {
         DateField {
             field: Field::given(prefill),
@@ -741,9 +743,10 @@ impl ValueForm {
     /// The same form over a date -- the Funds screen's birth-date prompt.
     /// `←`/`→` step it, as they do on every other date field.
     ///
-    /// `iso_only`: every reading of the `M/D` shorthand is present or future,
-    /// and a birth date is decades past, so a shorthand here could only ever
-    /// be a wrong year that nothing refuses.
+    /// `iso_only`: the shorthand's year turns on the month alone, so its
+    /// reading is never more than weeks from today, and a birth date is
+    /// decades past. A shorthand here could only ever be a wrong year that
+    /// nothing refuses.
     pub fn date(label: impl Into<Label>, prefill: &str) -> ValueForm {
         ValueForm {
             label: label.into(),
@@ -930,9 +933,10 @@ mod tests {
         assert_eq!(iso.parse().unwrap(), day(2026, 11, 27));
     }
 
-    /// The Funds screen's birth-date prompt. Every reading of `M/D` is
-    /// present-or-future and a birth date is decades past, so the shorthand
-    /// there could only ever be a wrong year nothing refuses.
+    /// The Funds screen's birth-date prompt. The shorthand's year turns on
+    /// the month alone, so its reading is never more than weeks from today,
+    /// and a birth date is decades past: the shorthand there could only ever
+    /// be a wrong year nothing refuses.
     #[test]
     fn a_field_that_takes_no_shorthand_refuses_one() {
         let mut f = DateField::iso_only("");
