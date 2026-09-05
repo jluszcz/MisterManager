@@ -43,12 +43,19 @@ pub(super) fn field_line(label: &str, value: Label, caret: Option<Caret>) -> Tex
 /// caret on whichever is focused and a note past the value of whichever
 /// carry one.
 ///
-/// The four forms in `goal_form` are one stack over four field enums, so the
-/// shape is stated here and each render says only what its own form has:
-/// which fields, how it spells one, and which of them earns a note. That last
-/// one is *declared* rather than decided in an `if` inside the map, since
-/// which field carries a note is a fact about the form rather than a step in
+/// Every form built over a field enum is one stack over it, so the shape is
+/// stated here and each render says only what its own form has: which
+/// fields, how it spells one, and which of them earns a note. That last one
+/// is *declared* rather than decided in an `if` inside the map, since which
+/// field carries a note is a fact about the form rather than a step in
 /// drawing it.
+///
+/// Three renders stand outside it, for two reasons. The Accounts screen's has
+/// the enum and still cannot map over it: its `Color` field draws through
+/// [`field_line_tinted`], so it runs a `match` per field instead.
+/// [`super::form::ValueForm`] and the Planning screen's transfer confirmation
+/// have no field enum to walk at all -- one holds a single `Entry`, and the
+/// other is a preview of the ledger rows with one date field under them.
 pub(super) fn field_stack<F: Copy + PartialEq>(
     fields: &[F],
     focus: F,

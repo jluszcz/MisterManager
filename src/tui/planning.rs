@@ -1079,7 +1079,7 @@ impl TransferConfirm {
     }
 }
 
-use super::widget::{centered, field_line, field_line_noted, render_fields};
+use super::widget::{centered, field_line_noted, field_stack, render_fields};
 use super::{Chrome, render_table};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -1088,16 +1088,14 @@ use ratatui::text::Line as TextLine;
 use ratatui::widgets::{Block, Clear, Paragraph, Row as TableRow, Wrap};
 
 pub fn render_bill(frame: &mut Frame, form: &BillForm) {
-    let lines: Vec<TextLine> = BillField::ORDER
-        .iter()
-        .map(|f| {
-            field_line(
-                f.label(),
-                form.display(*f),
-                (form.focus == *f).then(|| form.caret()),
-            )
-        })
-        .collect();
+    let lines = field_stack(
+        &BillField::ORDER,
+        form.focus,
+        form.caret(),
+        BillField::label,
+        |f| form.display(f),
+        &[],
+    );
     render_fields(frame, form.title(), lines);
 }
 
