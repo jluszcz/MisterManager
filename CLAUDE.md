@@ -196,39 +196,11 @@ atomic payday under a single caller-owned `transaction`. `txn::insert_transfer` 
 opens that transaction for a single transfer.
 
 **The schema migrates forward, and `schema.sql` is a frozen baseline rather than the whole truth.**
-`schema.sql` states version 1 and is never edited again; every change since is an arm in
-`db::migration::MIGRATIONS`. A fresh database takes the baseline and then the whole chain — the same
-SQL, in the same order, that an existing database takes the tail of. **One code path is the point:**
-there is no second statement of the schema for the chain to drift from, and since every test builds
-its database through `db::open_in_memory`, the chain is replayed from version 1 on every
-`cargo test`. An arm broken by a later arm fails the suite rather than waiting to fail on the one
-database nobody has migrated yet.
-
-Adding a schema change means appending an arm and nothing else. The head version is one plus the
-number of arms, so there is no constant to bump and no way to forget to — which is what retires the
-old hazard of a stale database failing on a missing column instead of saying so on open. A database
-above the head is one a later build wrote, and `db::open` refuses it rather than opening it
-best-effort. Zero is the one version that is not "some other schema": it is an empty file, and
-filling it is the whole job.
-
-Three rules bind an arm, all of them enforced by the chain being replayed from version 1:
-
-- **An arm names the schema as it stood when the arm was written, never as it stands today.** An arm
-  two versions before a table is renamed still calls it by its old name.
-- **An arm must survive replaying against an empty database**, because that is what a fresh install
-  is. A data half that finds nothing to move returns `Ok` rather than erroring.
-- **A change of *meaning* is an arm too** — a data half with no SQL. A column whose type does not
-  change but whose interpretation does leaves an existing database holding values under the old
-  reading, and no `CHECK` can catch that. The old version 2 was exactly this case: `account` stopped
-  being an imported table, so its name, band and order became the owner's.
-
-What this costs is a `schema.sql` that stops describing the database as it actually is once the
-chain is long. The remedy is to **squash**, and it is a periodic operation rather than a one-off:
-with the owner's database at the head version, dump the schema it actually has into `schema.sql` as
-the new version 1, empty `MIGRATIONS`, and delete-and-reimport once. That is affordable because the
-workbook is the source of truth for every figure in the database; what it does not carry — the
-recurring transactions, and the naming and ordering on the Accounts screen — is quick to re-enter.
-Never squashing is what would turn "frozen" into a trap.
+Every change since version 1 is an arm in `db::migration::MIGRATIONS` — a fresh database takes the
+baseline and then the whole chain, an existing one takes the tail — so adding a schema change means
+appending an arm and nothing else. What binds an arm, why one code path is the point, and why the
+chain is periodically squashed back into `schema.sql` are stated on `db::migration` and on
+`Migration` itself; read them before writing one.
 
 Anything the schema constrains has a Rust type that says the same thing, so the
 `CHECK` is a backstop rather than the only guard: `account::Kind`, `account::Group`,
@@ -542,16 +514,12 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
     is deliberately no batch because an undo could not reopen the goal it closed. Returning part of
     a goal's value to unallocated has no key of its own: that is `a` with a negative amount, and a
     second spelling of it on the transfer form would be a second spelling of an ending.
-- **A goal's target is derived, never stored.** The table holds `goal.base_cents`, `goal.taxed` and
-  `goal.floating`; `goal::target` turns the three into a figure on every read, the way `calc::fund`
-  turns an age rule into a percentage — a rate that changes must not leave a stored figure behind
-  quoting the old one, and neither may a balance that moves. Which branch is taken in what order,
-  and why a taxed goal with no rate on record is an error rather than a fallback to the base, are
-  `src/goal.rs`'s to say. **The derived figure is the target everywhere**: the shortfall behind a
-  Planning gate, the percentage complete, `$/Pay`, whether the payday plug counts the goal as short,
-  whether Savings draws it overdue. The base is shown as itself in exactly two places, the goal form
-  and the recurring-goal form, and both say what it comes to beside it — a goal funded to its base
-  comes up short at the register, which is the whole reason the column is split in two.
+- **A goal's target is derived, never stored, and the derived figure is the target everywhere.**
+  `goal::target` turns `base_cents`, `taxed` and `floating` into a figure on every read, and that
+  figure is what the shortfall behind a Planning gate, the percentage complete, `$/Pay`, the payday
+  plug's "still short" and Savings' overdue mark are all computed against. Which branch is taken in
+  what order, why a taxed goal with no rate on record is an error, and why the base is shown as
+  itself in only the two forms that edit it are `src/goal.rs`'s to say.
   - **A floating goal is short by nothing at every balance**, so a Planning gate behind one never
     opens, `transfer::spread_goals` never offers it a penny of the plug, `$/Pay` is blank and it is
     never overdue. Nothing downstream knows the flag exists; the one reader that names it is
@@ -566,9 +534,6 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
     which one a caller gets is the `Reading` it passes. Strict: `transfer::plan` through
     `spread_goals`, both worksheet prefills, and `shortfall` behind every Planning gate. Tolerant:
     the Savings screen, `wiring`, and the report. `src/reading.rs` is where the split is argued.
-  - **`shortfall` lives in `src/goal.rs`, not in `db::goal`.** It is a target reader and the rate
-    cannot be reached from `db`; a second one left behind in `db` would let `plan::remaining` go on
-    gating the waterfall against a base. `db::goal::balance` stays, because a sum is not a target.
 - **A container's goals are two blocks, and `goal.sort` orders only the first.** Undated goals lead,
   in `sort` order; dated goals follow, soonest first. The halves are arranged by different things — a
   deadline decides a goal's place for it, a goal without one is placed by hand — so `goal::list` and
