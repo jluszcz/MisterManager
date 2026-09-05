@@ -471,9 +471,11 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   real money to the wrong place on the strength of a stale row. The Planning screen has to *show*
   both, so `transfer::wiring` is the same rules read rather than enforced: it reports a dangling key
   as `Landing::Dangling` instead of refusing, because a screen cannot decline to draw itself the way
-  `plan` declines to move money. What the two states mean does not change — the block renders the
-  unset one as the withdrawal it is, in no color at all, and the dangling one in the red it shares
-  with a plan that cannot run.
+  `plan` declines to move money. Both read `transfer::resolve`, which is where the three states are
+  told apart; what each does with the dangling one is all that differs, which is what makes "the
+  same rules" a property of there being one reader rather than a promise two of them keep. What the
+  two states mean does not change — the block renders the unset one as the withdrawal it is, in no
+  color at all, and the dangling one in the red it shares with a plan that cannot run.
 - **A suggestion beside an unset destination is advisory, and is the one place a goal name is read
   after import.** `transfer::suggest` offers the goal a line's `Line::import_substring` names, and
   only when *exactly one* unclaimed open goal matches: "Lego" names several goals, and offering the

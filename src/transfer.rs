@@ -426,20 +426,21 @@ pub fn wiring(db: &Db) -> Result<Wired> {
         let landing = match line.destination() {
             // Resolved in the second pass, once every claim is known.
             Destination::Spread => continue,
-            Destination::Goal(key) => match setting::get(db, key)? {
-                None => Landing::Withdrawal,
-                Some(id) => match goal::get(db, id)? {
+            Destination::Goal(key) => match resolve(db, key)? {
+                Resolved::Unset => Landing::Withdrawal,
+                Resolved::Dangling(_) => Landing::Dangling {
+                    key: key.name().to_string(),
+                },
+                // A goal whose *container* is gone is dangling too, and only
+                // this reader can say so: `resolve` answers for the goal the
+                // key names, and the account under it is a second row.
+                Resolved::Found(goal) => match container_of(goal.container_account_id) {
                     None => Landing::Dangling {
                         key: key.name().to_string(),
                     },
-                    Some(goal) => match container_of(goal.container_account_id) {
-                        None => Landing::Dangling {
-                            key: key.name().to_string(),
-                        },
-                        Some(container) => Landing::Goal {
-                            goal: goal.name,
-                            container,
-                        },
+                    Some(container) => Landing::Goal {
+                        goal: goal.name,
+                        container,
                     },
                 },
             },
@@ -657,21 +658,54 @@ fn unclaimed_by_container(db: &Db, goals: &[Goal]) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// The goal a setting key names. `None` when the key is unset -- and, under
-/// [`Reading::Tolerant`], when it names a goal that is gone.
+/// What a destination key resolved to: the three states it can be in, told
+/// apart rather than collapsed.
 ///
-/// The one place a `Key<GoalId>` becomes a [`Goal`], so [`destination_account`]
-/// and [`claimed_goals`] cannot tell an unset key from a dangling one
-/// differently. Only the dangling row bends: a failed query is an error under
-/// either reading.
-fn resolve_goal(db: &Db, key: Key<GoalId>, reading: Reading) -> Result<Option<Goal>> {
+/// Two of the three are what this module exists to keep separate -- an unset
+/// key is a supported withdrawal and a dangling one is a corrupt database --
+/// and the readers below disagree only about what to *do* with the second.
+/// [`resolve_goal`] refuses it or drops it according to a [`Reading`];
+/// [`wiring`] draws it, which is a third answer no `Option` could carry, and
+/// used to be a second resolution written out by hand beside this one.
+enum Resolved {
+    /// The key is unset: the money leaves the tracked system.
+    Unset,
+    /// The key names a goal that is gone. It carries the id, because the
+    /// refusal names it.
+    Dangling(GoalId),
+    Found(Goal),
+}
+
+/// The goal a setting key names, in whichever of the three states it is in.
+///
+/// The one place a `Key<GoalId>` becomes a [`Goal`], so no reader can come to
+/// tell an unset key from a dangling one differently. A failed query is an
+/// error to every caller: only what a *resolved* dangling key costs is
+/// theirs to decide.
+fn resolve(db: &Db, key: Key<GoalId>) -> Result<Resolved> {
     let Some(id) = setting::get(db, key)? else {
-        return Ok(None);
+        return Ok(Resolved::Unset);
     };
-    match (goal::get(db, id)?, reading) {
-        (Some(goal), _) => Ok(Some(goal)),
-        (None, Reading::Tolerant) => Ok(None),
-        (None, Reading::Strict) => bail!("setting {key} = {id} names no goal"),
+    Ok(match goal::get(db, id)? {
+        Some(goal) => Resolved::Found(goal),
+        None => Resolved::Dangling(id),
+    })
+}
+
+/// [`resolve`] as the money path reads it: `None` when the key is unset --
+/// and, under [`Reading::Tolerant`], when it names a goal that is gone.
+///
+/// The two states arriving as one `None` is the whole reason [`wiring`] takes
+/// the three-armed reader instead: a screen that has to draw them differently
+/// cannot be handed an answer that has already merged them.
+fn resolve_goal(db: &Db, key: Key<GoalId>, reading: Reading) -> Result<Option<Goal>> {
+    match (resolve(db, key)?, reading) {
+        (Resolved::Found(goal), _) => Ok(Some(goal)),
+        (Resolved::Unset, _) => Ok(None),
+        (Resolved::Dangling(_), Reading::Tolerant) => Ok(None),
+        (Resolved::Dangling(id), Reading::Strict) => {
+            bail!("setting {key} = {id} names no goal")
+        }
     }
 }
 
@@ -1502,7 +1536,16 @@ mod tests {
                 key: key_of(Line::Bills).name().to_string()
             }
         );
-        assert!(plan(&db, &lines(), None).is_err(), "plan still refuses");
+        // Both readings come off one `resolve` now, so what stops them
+        // blurring is that the strict one still names the row to fix: a
+        // dangling key reported as a withdrawal would move real money to the
+        // wrong place, and one reported without its id says only that
+        // something, somewhere, is gone.
+        let refusal = plan(&db, &lines(), None).unwrap_err().to_string();
+        assert!(
+            refusal.contains(key_of(Line::Bills).name()) && refusal.contains("9999"),
+            "plan still refuses, naming the key and the id: {refusal}"
+        );
     }
 
     /// The same asymmetry over a goal that cannot derive a target. `plan` is
