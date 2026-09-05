@@ -354,7 +354,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   a day, a selector cycles. A form says which of the three it has focused, once, in
   `FormFields::focused` — an arrow pressed on the date must never move the account beside it, and
   a form that answered "which kind of field is this?" in two places would answer it differently in
-  two places. Four rules hold the date's meaning together:
+  two places. **The draw asks the same method**: `FormFields::caret` is a provided default over
+  `focused`, which is what makes every `render_*` take its form by `&mut` for a draw that changes
+  nothing. Four rules hold the date's meaning together:
   - **A field that does not parse as a date is left exactly as typed.** The arrows nudge a date that
     is already there; they do not conjure one. That is what keeps them off a half-typed date, and
     off the two empty fields that mean something in their own right — an undated goal, and a

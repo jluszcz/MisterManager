@@ -315,7 +315,7 @@ impl Confirm {
 /// this takes the modal by `&mut` and writes them back here.
 pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autocomplete) -> usize {
     let mut viewport = None;
-    let drawn = match &*modal {
+    let drawn = match &mut *modal {
         Some(Modal::Txn(f)) => ledger_form::render_txn(frame, f, popup),
         Some(Modal::Transfer(f)) => ledger_form::render_transfer(frame, f, popup),
         Some(Modal::Allocation(f)) => {
@@ -391,7 +391,7 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
         // and the dialog over the top of the list they were opened from.
         Some(Modal::History(h)) => {
             viewport = Some(history::render(frame, h));
-            match h.mode() {
+            match h.mode_mut() {
                 HistoryMode::List => {}
                 HistoryMode::Editing(form) => goal_form::render_allocation(frame, form),
                 HistoryMode::Confirming { action, label } => {

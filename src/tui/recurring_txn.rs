@@ -6,9 +6,7 @@
 
 use super::Label;
 use super::cursor::{Cursor, Viewport, impl_scroll};
-use super::form::{
-    Caret, DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index,
-};
+use super::form::{DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index};
 use crate::db::RecurringTxnId;
 use crate::db::account::Account;
 use crate::db::recurring_txn::{Cadence, NewRecurringTxn, RecurringTxn};
@@ -327,16 +325,6 @@ impl FormFields for RecurringTxnForm {
         }
     }
 
-    fn caret(&self) -> Caret {
-        match self.focus {
-            RecurringTxnField::Description => Caret::in_field(&self.description),
-            RecurringTxnField::Amount => Caret::in_field(&self.amount),
-            RecurringTxnField::Anchor => Caret::in_field(self.anchor.text()),
-            RecurringTxnField::Horizon => Caret::in_field(self.horizon.text()),
-            RecurringTxnField::Account | RecurringTxnField::Cadence => Caret::End,
-        }
-    }
-
     fn suggestion_prefix(&self) -> Option<&str> {
         (self.focus == RecurringTxnField::Description).then(|| self.description.value())
     }
@@ -370,11 +358,12 @@ use ratatui::widgets::{Cell, Row as TableRow};
 
 /// Returns how many suggestion rows the popup drew, for
 /// `Autocomplete::set_visible`.
-pub fn render_form(frame: &mut Frame, form: &RecurringTxnForm, popup: &Autocomplete) -> usize {
+pub fn render_form(frame: &mut Frame, form: &mut RecurringTxnForm, popup: &Autocomplete) -> usize {
+    let caret = form.caret();
     let lines = field_stack(
         &RecurringTxnField::ORDER,
         form.focus,
-        form.caret(),
+        caret,
         RecurringTxnField::label,
         |f| form.display(f),
         &[],

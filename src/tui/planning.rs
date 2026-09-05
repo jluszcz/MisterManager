@@ -1007,14 +1007,6 @@ impl FormFields for BillForm {
             BillField::Category => Focused::Selector,
         }
     }
-
-    fn caret(&self) -> Caret {
-        match self.focus {
-            BillField::Label => Caret::in_field(&self.label),
-            BillField::Amount => Caret::in_field(&self.amount),
-            BillField::Category => Caret::End,
-        }
-    }
 }
 
 /// The confirm modal behind `t`: what will be written, and when.
@@ -1087,11 +1079,12 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line as TextLine;
 use ratatui::widgets::{Block, Clear, Paragraph, Row as TableRow, Wrap};
 
-pub fn render_bill(frame: &mut Frame, form: &BillForm) {
+pub fn render_bill(frame: &mut Frame, form: &mut BillForm) {
+    let caret = form.caret();
     let lines = field_stack(
         &BillField::ORDER,
         form.focus,
-        form.caret(),
+        caret,
         BillField::label,
         |f| form.display(f),
         &[],

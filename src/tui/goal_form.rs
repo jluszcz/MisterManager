@@ -6,7 +6,7 @@
 //! render functions at the bottom drawing only.
 
 use super::form::{
-    Caret, DateField, Field, Focused, FormFields, Precision, Step, is_share, next_in, parse_share,
+    DateField, Field, Focused, FormFields, Precision, Step, is_share, next_in, parse_share,
     parse_whole_amount, step_index, tax_note,
 };
 use super::widget::{field_stack, render_fields};
@@ -234,14 +234,6 @@ impl FormFields for AllocationForm {
             AllocField::Date => Focused::Date(&mut self.date),
             AllocField::Amount => Focused::Text(&mut self.amount),
             AllocField::Note => Focused::Text(&mut self.note),
-        }
-    }
-
-    fn caret(&self) -> Caret {
-        match self.focus {
-            AllocField::Date => Caret::in_field(self.date.text()),
-            AllocField::Amount => Caret::in_field(&self.amount),
-            AllocField::Note => Caret::in_field(&self.note),
         }
     }
 }
@@ -540,15 +532,6 @@ impl FormFields for GoalForm {
             GoalField::Taxed | GoalField::Floating | GoalField::Interest => Focused::Selector,
         }
     }
-
-    fn caret(&self) -> Caret {
-        match self.focus {
-            GoalField::Name => Caret::in_field(&self.name),
-            GoalField::Target => Caret::in_field(&self.target),
-            GoalField::Date => Caret::in_field(self.date.text()),
-            GoalField::Taxed | GoalField::Floating | GoalField::Interest => Caret::End,
-        }
-    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -673,13 +656,6 @@ impl FormFields for CloseForm {
         match self.focus {
             CloseField::Date => Focused::Date(&mut self.date),
             CloseField::Destination => Focused::Selector,
-        }
-    }
-
-    fn caret(&self) -> Caret {
-        match self.focus {
-            CloseField::Date => Caret::in_field(self.date.text()),
-            CloseField::Destination => Caret::End,
         }
     }
 }
@@ -817,14 +793,6 @@ impl FormFields for GoalTransferForm {
             GoalTransferField::Destination => Focused::Selector,
         }
     }
-
-    fn caret(&self) -> Caret {
-        match self.focus {
-            GoalTransferField::Date => Caret::in_field(self.date.text()),
-            GoalTransferField::Amount => Caret::in_field(&self.amount),
-            GoalTransferField::Destination => Caret::End,
-        }
-    }
 }
 
 use ratatui::Frame;
@@ -833,15 +801,16 @@ use ratatui::text::Line as TextLine;
 /// Draws the allocate-against-a-goal modal: `a`'s form.
 ///
 /// One line taller than the other two forms here, for the pot `/N` divides.
-pub fn render_allocation(frame: &mut Frame, form: &AllocationForm) {
+pub fn render_allocation(frame: &mut Frame, form: &mut AllocationForm) {
     let share = form
         .resolved_share()
         .map(|cents| format!("= {}", crate::demo::whole_figure(cents)))
         .unwrap_or_default();
+    let caret = form.caret();
     let mut lines = field_stack(
         &AllocField::ORDER,
         form.focus,
-        form.caret(),
+        caret,
         AllocField::label,
         |f| form.display(f),
         &[(AllocField::Amount, share.as_str())],
@@ -851,12 +820,13 @@ pub fn render_allocation(frame: &mut Frame, form: &AllocationForm) {
 }
 
 /// Draws the goal modal: `e`'s form, and `n`'s.
-pub fn render_goal(frame: &mut Frame, form: &GoalForm) {
+pub fn render_goal(frame: &mut Frame, form: &mut GoalForm) {
     let note = form.tax_note();
+    let caret = form.caret();
     let lines = field_stack(
         form.fields(),
         form.focus,
-        form.caret(),
+        caret,
         GoalField::label,
         |f| form.display(f),
         // The Target field holds the base rather than what the goal is funded
@@ -868,11 +838,12 @@ pub fn render_goal(frame: &mut Frame, form: &GoalForm) {
 }
 
 /// Draws the move-value-to-another-goal modal: `t`'s form.
-pub fn render_goal_transfer(frame: &mut Frame, form: &GoalTransferForm) {
+pub fn render_goal_transfer(frame: &mut Frame, form: &mut GoalTransferForm) {
+    let caret = form.caret();
     let lines = field_stack(
         &GoalTransferField::ORDER,
         form.focus,
-        form.caret(),
+        caret,
         GoalTransferField::label,
         |f| form.display(f),
         &[],
@@ -881,11 +852,12 @@ pub fn render_goal_transfer(frame: &mut Frame, form: &GoalTransferForm) {
 }
 
 /// Draws the close-out-a-goal modal: `c`'s form.
-pub fn render_close(frame: &mut Frame, form: &CloseForm) {
+pub fn render_close(frame: &mut Frame, form: &mut CloseForm) {
+    let caret = form.caret();
     let lines = field_stack(
         &CloseField::ORDER,
         form.focus,
-        form.caret(),
+        caret,
         CloseField::label,
         |f| form.display(f),
         &[],
@@ -1040,7 +1012,7 @@ mod tests {
             day(2026, 8, 16),
         );
         typed(&mut form, AllocField::Amount, "/12");
-        let text = rendered(&form);
+        let text = rendered(&mut form);
 
         assert!(!text.contains("216"), "the resolved share survived: {text}");
         assert!(!text.contains("2,600"), "the remainder survived: {text}");
@@ -1076,7 +1048,7 @@ mod tests {
             day(2026, 8, 16),
         );
         typed(&mut form, AllocField::Amount, "1234");
-        let text = rendered(&form);
+        let text = rendered(&mut form);
 
         assert!(!text.contains("1234"), "the typed amount survived: {text}");
         assert!(
@@ -1099,8 +1071,8 @@ mod tests {
             cents: Cents(12_300),
             note: Some("birthday money".to_string()),
         };
-        let form = AllocationForm::edit(&row, "Lego", "Rainy Day", Cents::ZERO, today());
-        let text = rendered(&form);
+        let mut form = AllocationForm::edit(&row, "Lego", "Rainy Day", Cents::ZERO, today());
+        let text = rendered(&mut form);
 
         assert!(
             !text.contains("birthday money"),
@@ -1113,7 +1085,7 @@ mod tests {
     }
 
     #[cfg(feature = "demo")]
-    fn rendered(form: &AllocationForm) -> String {
+    fn rendered(form: &mut AllocationForm) -> String {
         use crate::tui::MIN_WIDTH;
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
