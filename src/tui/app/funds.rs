@@ -12,7 +12,7 @@ use crate::fund as fund_engine;
 use crate::tui::cursor;
 use crate::tui::form::{self, ValueForm};
 use crate::tui::fund::FundForm;
-use crate::tui::modal::{Confirm, Modal};
+use crate::tui::modal::{Confirm, Modal, ValueTarget};
 use anyhow::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
@@ -23,7 +23,10 @@ impl App {
     pub(super) fn open_funds(&mut self) {
         self.screen = Screen::Funds;
         if self.funds.needs_birth_date() {
-            self.modal = Some(Modal::BirthDate(ValueForm::date("Birth Date", "")));
+            self.modal = Some(Modal::Value(
+                ValueTarget::BirthDate,
+                ValueForm::date("Birth Date", ""),
+            ));
         }
     }
 
@@ -48,8 +51,8 @@ impl App {
         };
         // The stored cents, not the whole dollars the row prints: opening a
         // value and pressing Enter must not quietly round it.
-        self.modal = Some(Modal::FundValue(
-            row.fund_id,
+        self.modal = Some(Modal::Value(
+            ValueTarget::Fund(row.fund_id),
             ValueForm::money("Actual Value", &row.actual.to_string()),
         ));
     }
@@ -104,7 +107,7 @@ impl App {
     }
 
     pub(super) fn commit_fund_value(&mut self) -> Result<()> {
-        let Some(Modal::FundValue(id, form)) = &self.modal else {
+        let Some(Modal::Value(ValueTarget::Fund(id), form)) = &self.modal else {
             return Ok(());
         };
         // Parsed before the modal closes, so a rejected edit keeps the form
@@ -117,7 +120,7 @@ impl App {
     }
 
     pub(super) fn commit_birth_date(&mut self) -> Result<()> {
-        let Some(Modal::BirthDate(form)) = &self.modal else {
+        let Some(Modal::Value(ValueTarget::BirthDate, form)) = &self.modal else {
             return Ok(());
         };
         let birth = form::parse_date(form.value())?;
@@ -141,7 +144,7 @@ mod tests {
     use crate::money::Cents;
     use crate::rate::BasisPoints;
     use crate::tui::app::test_support::*;
-    use crate::tui::modal::Modal;
+    use crate::tui::modal::{Modal, ValueTarget};
     use chrono::Datelike;
     use ratatui::crossterm::event::KeyCode;
 
@@ -163,7 +166,10 @@ mod tests {
         app.reload().unwrap();
 
         press(&mut app, KeyCode::Char('6'));
-        assert!(matches!(app.modal, Some(Modal::BirthDate(_))));
+        assert!(matches!(
+            app.modal,
+            Some(Modal::Value(ValueTarget::BirthDate, _))
+        ));
 
         // Esc dismisses it, and the screen still draws.
         press(&mut app, KeyCode::Esc);
@@ -178,7 +184,10 @@ mod tests {
         // And it comes back on the next visit.
         press(&mut app, KeyCode::Char('1'));
         press(&mut app, KeyCode::Char('6'));
-        assert!(matches!(app.modal, Some(Modal::BirthDate(_))));
+        assert!(matches!(
+            app.modal,
+            Some(Modal::Value(ValueTarget::BirthDate, _))
+        ));
     }
 
     /// Answering it is the last time it is asked.

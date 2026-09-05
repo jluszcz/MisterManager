@@ -22,6 +22,7 @@ pub mod goal_form;
 mod help;
 mod history;
 pub mod ledger;
+pub mod ledger_form;
 mod modal;
 pub mod month;
 pub mod overview;
@@ -33,6 +34,7 @@ pub mod savings;
 mod search;
 pub mod style;
 mod text;
+mod widget;
 pub mod worksheet;
 
 use crate::account_label::{Account, Label};

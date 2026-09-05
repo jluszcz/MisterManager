@@ -202,10 +202,10 @@ mod tests {
             ("tui/app/accounts.rs", "edit.name.as_str()"),
             // Prefills a description with the card's code. Not a display of an
             // account: it seeds an editable field the owner then owns.
-            ("tui/form.rs", "{} Payment"),
+            ("tui/ledger_form.rs", "{} Payment"),
             // Names the source in an error about a transfer to itself. Errors
             // are prose, and the status line is uncolored.
-            ("tui/form.rs", "from.code.as_str()"),
+            ("tui/ledger_form.rs", "from.code.as_str()"),
             // `Ledger::account_name`, which feeds an `App::status` message --
             // a status message is transient prose.
             ("tui/ledger.rs", "map_or(\"?\", |a| a.name.as_str())"),
@@ -278,14 +278,14 @@ mod tests {
             // segments themselves; this flattened copy never reaches the
             // screen, and is taken of exactly the text that is drawn so the
             // measurement and the draw cannot disagree.
-            ("tui/form.rs", "label.plain_text().chars().count()"),
+            ("tui/widget.rs", "label.plain_text().chars().count()"),
             // Where the caret goes is decided against the text the value
             // draws as, and this flattened copy is only ever compared and
             // counted. The spans themselves come from `label_line`, and the
             // caret is laid over one character of one of them with that
             // span's own style kept underneath, so an account keeps its color
             // with the caret sitting in the middle of it.
-            ("tui/form.rs", "caret.offset(&value.plain_text())"),
+            ("tui/widget.rs", "caret.offset(&value.plain_text())"),
         ];
 
         let mut leaked: Vec<String> = Vec::new();

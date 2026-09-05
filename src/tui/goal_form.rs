@@ -6,9 +6,10 @@
 //! render functions at the bottom drawing only.
 
 use super::form::{
-    Caret, DateField, Field, Focused, FormFields, Precision, Step, field_stack, is_share, next_in,
-    parse_share, parse_whole_amount, render_fields, step_index, tax_note,
+    Caret, DateField, Field, Focused, FormFields, Precision, Step, is_share, next_in, parse_share,
+    parse_whole_amount, step_index, tax_note,
 };
+use super::widget::{field_stack, render_fields};
 use super::{Account, Label};
 use crate::db::goal::{Allocation, AllocationEdit, GoalEdit};
 use crate::db::{AccountId, AllocationId, GoalId};

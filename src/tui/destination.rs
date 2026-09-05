@@ -204,7 +204,7 @@ impl Search for Chooser {
 
 impl_scroll!(Chooser, visible);
 
-use super::form::centered;
+use super::widget::centered;
 use super::{Chrome, render_table};
 use ratatui::Frame;
 use ratatui::layout::Constraint;

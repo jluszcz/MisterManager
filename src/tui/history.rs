@@ -153,7 +153,7 @@ impl History {
 
 impl_scroll!(History, rows);
 
-use super::form::centered;
+use super::widget::centered;
 use super::{Chrome, amount, render_table, right_header};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};

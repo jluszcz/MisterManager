@@ -8,9 +8,10 @@
 //! reconciles against that one container's excess.
 
 use super::cursor::{Cursor, Viewport, impl_scroll};
-use super::form::{Caret, DateField, Step, value_spans};
+use super::form::{Caret, DateField, Step};
 use super::search::{Search, SearchBox};
 use super::text::Edit;
+use super::widget::value_spans;
 use super::{Account, Label};
 use crate::calc;
 use crate::db::account::InterestPolicy;
@@ -550,7 +551,7 @@ impl Search for Worksheet {
 
 impl_scroll!(Worksheet, visible);
 
-use super::form::centered;
+use super::widget::centered;
 use super::{amount, label_line, table_state};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
@@ -569,7 +570,7 @@ fn amount_line(sheet: &Worksheet) -> TextLine<'static> {
         Span::raw(crate::demo::figure(sheet.amount())),
     ];
     if sheet.focus() == Focus::Amount {
-        spans.push(Span::styled(" ", super::form::caret_style()));
+        spans.push(Span::styled(" ", super::widget::caret_style()));
     }
     TextLine::from(spans)
 }

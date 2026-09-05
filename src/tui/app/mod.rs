@@ -21,7 +21,7 @@ use super::fund::{self as fund_screen, Funds};
 use super::help::{self, Help, Topic};
 use super::history::Mode as HistoryMode;
 use super::ledger::{self as ledger_screen, Ledger};
-use super::modal::{self, Confirm, Modal};
+use super::modal::{self, Confirm, Modal, ValueTarget};
 use super::planning::{self as planning_screen, Planning};
 use super::recurring_goal::{self as recurring_goal_screen, RecurringGoals};
 use super::recurring_txn::{self as recurring_txn_screen, RecurringTxns};
@@ -588,18 +588,30 @@ impl App {
         // row caches its container's name at `set_goals` time, and a ledger's
         // `filter` reads whichever accounts it was last handed.
         self.reload_accounts()?;
+        // Ahead of the queries below, so a window clamped against the range is
+        // clamped against the one this reload found rather than the one the
+        // last one did. `Ledger::filter` reads no range today; the ordering is
+        // what keeps that from being the reason this works.
         let range = txn::date_range(&self.db)?;
         for ledger in self.ledgers_mut() {
             ledger.set_date_range(range);
         }
-        let cash_rows = txn::list(&self.db, &self.cash.filter())?;
-        self.cash.set_rows(cash_rows);
-        let cash_total = self.ledger_total(&self.cash)?;
-        self.cash.set_total(cash_total);
-        let credit_rows = txn::list(&self.db, &self.credit.filter())?;
-        self.credit.set_rows(credit_rows);
-        let credit_total = self.ledger_total(&self.credit)?;
-        self.credit.set_total(credit_total);
+        // Both ledgers, always. Two passes rather than one because the queries
+        // take the shared borrow `ledger_total` needs and the writes take the
+        // mutable one `ledgers_mut` hands out -- but two passes over the pair,
+        // not a block per ledger that the next thing a refresh sets would have
+        // to be added to twice.
+        let mut refreshed = Vec::with_capacity(2);
+        for ledger in self.ledgers() {
+            refreshed.push((
+                txn::list(&self.db, &ledger.filter())?,
+                self.ledger_total(ledger)?,
+            ));
+        }
+        for (ledger, (rows, total)) in self.ledgers_mut().into_iter().zip(refreshed) {
+            ledger.set_rows(rows);
+            ledger.set_total(total);
+        }
         self.reload_savings()?;
         self.reload_planning()?;
         self.reload_funds()?;
@@ -826,8 +838,18 @@ impl App {
                 }
                 Ok(())
             }
-            Some(Modal::Value(..)) => self.form_key(key, App::commit_value),
-            Some(Modal::Reconcile(..)) => self.form_key(key, App::commit_reconcile),
+            // One modal over four screens, so which handler answers it is a
+            // question about what is being edited rather than about the
+            // modal, and the arm asks `ValueTarget` instead of `Modal`.
+            Some(Modal::Value(target, _)) => self.form_key(
+                key,
+                match target {
+                    ValueTarget::Planning(_) => App::commit_value,
+                    ValueTarget::Reconcile(_) => App::commit_reconcile,
+                    ValueTarget::Fund(_) => App::commit_fund_value,
+                    ValueTarget::BirthDate => App::commit_birth_date,
+                },
+            ),
             Some(Modal::Bill(_)) => self.form_key(key, App::commit_bill),
             Some(Modal::RecurringTxn(_)) => self.form_key(key, App::commit_recurring_txn),
             Some(Modal::RecurringGoalEntry(_)) => self.form_key(key, App::commit_recurring_goal),
@@ -881,8 +903,6 @@ impl App {
                 Ok(())
             }
             Some(Modal::Fund(_)) => self.form_key(key, App::commit_fund),
-            Some(Modal::FundValue(..)) => self.form_key(key, App::commit_fund_value),
-            Some(Modal::BirthDate(_)) => self.form_key(key, App::commit_birth_date),
         }
     }
 
@@ -1072,8 +1092,10 @@ mod tests {
     use crate::test_support::day;
     use crate::tui::app::test_support::*;
     use crate::tui::cursor::Scroll;
-    use crate::tui::form::TxnField;
     use crate::tui::help::{self, Topic};
+    use crate::tui::ledger_form::TxnField;
+    #[cfg(feature = "demo")]
+    use crate::tui::modal::ValueTarget;
     use crate::tui::modal::{Confirm, Modal};
     use crate::tui::search::Search;
     use crate::tui::{MIN_WIDTH, worksheet as worksheet_screen};
@@ -1866,7 +1888,7 @@ mod tests {
         // The buffer still holds the real figure: reopening and pressing
         // Enter must not write the scrambled one back.
         press(&mut app, KeyCode::Char('r'));
-        let Some(Modal::Reconcile(_, form)) = &app.modal else {
+        let Some(Modal::Value(ValueTarget::Reconcile(_), form)) = &app.modal else {
             panic!("r must reopen the form: {:?}", app.status);
         };
         assert_eq!(form.value(), "1,200.00");

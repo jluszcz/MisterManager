@@ -151,7 +151,7 @@ impl Picker {
 
 impl_scroll!(Picker, entries);
 
-use super::form::centered;
+use super::widget::centered;
 use super::{Chrome, amount, label_line, month_name, render_table};
 use ratatui::Frame;
 use ratatui::layout::Constraint;

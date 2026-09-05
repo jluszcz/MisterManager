@@ -157,12 +157,14 @@ dispatch beneath it have to widen together, or a key the app answers earns no fr
 ## Which module is which screen
 
 `overview` is the first screen; `ledger` backs both the second and the third, Cash and Credit, from
-one type. `savings` and `goal_form` are the fourth screen and its forms, the goal
-form serving `e` and `n` alike and `GoalTransferForm` backing `t` — named apart from
-`form::TransferForm`, the cash transfer the ledgers open, since one moves money between accounts and
-the other moves none at all; `worksheet` backs `A`/`i`, and `picker` backs `s` on the seventh
-screen. `planning` is the fifth screen, its `Target` and `Editable` enums, its bill form,
-`Enter`, which opens the long form of a plan that will not resolve, and
+one type, and `ledger_form` holds the two forms they open — `a`/`e`'s `TxnForm` and `t`/`p`'s
+`TransferForm` — beside it, the way `goal_form` sits beside `savings`. `savings` and `goal_form`
+are the fourth screen and its forms, the goal form serving `e` and `n` alike and
+`GoalTransferForm` backing `t` — named apart from `ledger_form::TransferForm`, the cash transfer
+the ledgers open, since one moves money between accounts and the other moves none at all;
+`worksheet` backs `A`/`i`, and `picker` backs `s` on the seventh screen. `planning` is the fifth
+screen, its `Target` and `Editable` enums, its bill form, `Enter`, which opens the long form of a
+plan that will not resolve, and
 `t`, which confirms a computed plan, writes its payday through `transfer::execute`, and opens the
 allocation worksheets prefilled; `destination` is the list `e` opens on one of its destination
 rows. `fund` is the sixth screen, its form, and the birth-date prompt the age row needs and no
@@ -181,14 +183,18 @@ writes one, and two variants a letter apart would be misread on sight.
 `month` is the `[`/`]` filter Savings and Recurring Goals share. `style` is where color is decided —
 `ratatui::style::Color` is *decided* there and nowhere else, so no screen grows its own opinion
 about what red means. The helpers that carry one of those decisions to a cell — `tui::tinted`,
-`form::field_line_tinted` — have to name the type to pass it, and they reach it as `style::Color`,
+`widget::field_line_tinted` — have to name the type to pass it, and they reach it as `style::Color`,
 which `style` re-exports: every mention is then visibly routed through the module that owns the
 choice, and the plumbing stays visibly plumbing. `help` is where the screen footers are joined from — one `Topic` per context,
 so a footer cannot drift from the panel that explains it; modal border titles are still written
 where they are drawn. `cursor` answers the scroll keys for every list at once, `text` is the line
-of text under the caret and the keys that edit one — every box in the app is one — and `search` is
-the `/` box the ledgers, Savings, Recurring Goals, the worksheet and the destination chooser
-share: the box, its keys, and `Matcher`, which is what a needle *means* on all five. What every
+of text under the caret and the keys that edit one — every box in the app is one — `form` is the
+field framework every form in the app is built out of, and the one-field `ValueForm` that belongs
+to no single screen; `widget` is how any of them is *drawn* — the centered box, its labelled
+lines, and the caret over the character the focused field is on — which is why the help panel and
+the destination chooser reach for it too, neither of them being a form at all.
+`search` is the `/` box the ledgers, Savings, Recurring Goals, the worksheet and the destination
+chooser share: the box, its keys, and `Matcher`, which is what a needle *means* on all five. What every
 screen shares lives in `tui/mod.rs`, not in whichever screen needed it first.
 
 `app` is a directory rather than a file, and it is split the same way this section reads: one
@@ -410,11 +416,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     selector as well. The caller that knows a text field has the focus is the one that may read
     them as the caret, which is `FormFields::choice` in a form and `search_key` in a box that has
     neither a date nor a selector to share them with.
-- **The caret is reverse video over the character it is on, and it is `form::value_spans` that
+- **The caret is reverse video over the character it is on, and it is `widget::value_spans` that
   puts it there.** A block *over* a character rather than a bar *between* two of them: a bar costs
   a column, so the value shifted right of the caret every time the caret moved through it and the
   field read as though a space had been typed into it. `value_spans` splits the one span the caret
-  falls in and patches `form::caret_style()` onto that character, keeping the span's own style
+  falls in and patches `widget::caret_style()` onto that character, keeping the span's own style
   underneath — so an account keeps its colour with the caret in the middle of it, swapped into the
   background. Every box goes through it: a form's field, every search footer, the destination
   title, and the worksheet's date.
@@ -696,7 +702,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   warning nobody reads.
 - **A tinted cell colors its characters, never its padding and never its indent.** `tui::tinted`
   is the one place that happens; `account_cell`, `money_cell`, `savings::percent`,
-  `fund::tinted_percent`, Planning's three columns and `form::field_line_tinted` all go through it
+  `fund::tinted_percent`, Planning's three columns and `widget::field_line_tinted` all go through it
   or its rule. **A `Cell::style` carrying an `fg` anywhere under `src/tui/` is this bug**, and the
   sweep is one line: `grep -rn '.style(Style::default().fg(' src/tui/` should match nothing outside
   `mod.rs` and `style.rs`. A `Cell`'s own style — and a
@@ -775,8 +781,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   - **`Label` is what lets a title carry a tint.** A title cannot be a `String` and be colored,
     and it cannot be a ratatui `Line` because view-state types hold no ratatui. So it is a
     sequence of plain runs and `Account`s: `Savings::title`, `Ledger::title`, `Picker::title`,
-    `Worksheet::title`, the new-goal title and `ValueForm::title` (the Value, Reconcile, Fund
-    Value and Birth Date modals) all return one, and `label_line` turns one into spans. `text`
+    `Worksheet::title`, the new-goal title and `ValueForm::title` (the one `Modal::Value`,
+    whichever `ValueTarget` opened it) all return one, and `label_line` turns one into spans. `text`
     and `account` only ever append; `prepend` is the one way to put plain text ahead of a label
     built elsewhere, which is what lets `ValueForm::title` keep its "Edit " prefix in front of a
     label that may already carry a colored account segment.
@@ -992,7 +998,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     looks like is not a fact about cash. It sits beside the name because the two are one decision:
     what this account looks like wherever it is named.
   - **The `Color` field draws its own value in the color it names**, through
-    `form::field_line_tinted` — the one field on any form whose text is a name for something the
+    `widget::field_line_tinted` — the one field on any form whose text is a name for something the
     form could not otherwise show, and `Teal` in black is not an answer to "what will this look
     like". Only the value: the label and the caret are the form's chrome. It resolves through
     `style::account_color` with the account's own id, so `—` shows the **derived** shade the row
@@ -1570,14 +1576,14 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     *How wide a screen is* budgets per screen, and the bolding of its own header. The Overview is
     outside all of this — it holds no list and no cursor, so it has no `Scroll` to hand over.
 
-- **Every form is drawn by `form::render_fields`, and its height is its lines.** The centered
+- **Every form is drawn by `widget::render_fields`, and its height is its lines.** The centered
   `FORM_WIDTH` box, the border and its title, and one row per line are written once; the callers
   only build their lines. Height is `lines + 2`, which is what makes the forms that add a line past
   their fields — the allocation form's pot, the transfer confirmation's date and prompt — a row
   taller without anyone restating the arithmetic. It returns the `Rect` it took, which is what the
   forms with autocomplete hand to `render_popup`. `FundForm`'s variable field list needs nothing
   special: it passes its own `fields()`.
-  - **The four forms in `goal_form` build those lines through `form::field_stack`**, which is one
+  - **The four forms in `goal_form` build those lines through `widget::field_stack`**, which is one
     `field_line` per field in the order the form walks them, the caret on whichever is focused, and
     a note past the value of whichever carry one. `c`'s form and `t`'s were byte-identical bodies,
     and `a`'s and `e`'s each buried their note rule in an `if` inside the map — where a
@@ -1593,6 +1599,13 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   four. The write runs while the modal is still up, so a refusal that reaches the status line
   (`recurring_goal::delete` while a goal still references the entry) leaves the question on screen
   with the reason under it.
+- **Every single-field edit is one modal too, and `Modal::Value`'s `ValueTarget` is what tells those
+  apart.** Planning's `e`, a ledger's `r`, the Funds screen's `e` and its birth-date prompt all open
+  the same one-line box over the same `ValueForm`, and the only thing that differs between them is
+  where `Enter` writes. A variant per screen carrying an identical form would spell that difference
+  out in `fields_mut`, in `topic`, in `render` and in `modal_key` — four places, three of which have
+  nothing to say about it. It is a variant rather than a closure for the reason `Confirm` is: a
+  fifth figure edited this way cannot be added without saying what commits it.
 - **`?` opens Help; `F1` does too, and is the only way in where `?` is a
   character.** `help::Topic::takes_typed_chars` is that list: the form topics
   and the search boxes. The worksheet is deliberately not one of them —

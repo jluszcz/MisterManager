@@ -1079,7 +1079,7 @@ impl TransferConfirm {
     }
 }
 
-use super::form::{centered, field_line, field_line_noted, render_fields};
+use super::widget::{centered, field_line, field_line_noted, render_fields};
 use super::{Chrome, render_table};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
