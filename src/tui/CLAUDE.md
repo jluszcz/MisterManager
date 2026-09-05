@@ -575,8 +575,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   means once focus leaves, computed at render rather than written back, so there is no blur hook
   for the next form to forget and no half-typed date rewritten under the cursor.
   The Funds birth-date prompt is the one field built `DateField::iso_only`, and it needs no `today`
-  at all — which is the distinction made visible, and `DateField::iso_only` is where the reason
-  for it is written down.
+  at all — which is the distinction made visible, and `DateField`'s `shorthand_from` is where the
+  reason a birth date is the field that wants it is written down.
 - **A date field entering something new opens on today, and the ones that do not each say why.**
   `DateField::today` is the default and most fields take it. The exceptions:
   - The three forms that write a ledger row — `a`, `t` and `p` — open on `App::entry_date` through
@@ -1122,7 +1122,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   base, and the allocations booked against them all parse through `form::parse_whole_amount`, which
   *refuses* cents rather than flooring them — `1800.5` typed for `1800.50` is a typo, and booking
   $1,800 for it hides the slip in a figure that looks deliberate. An edit prefills the stored
-  figure with its cents, for the reason `GoalForm::edit` gives. The cents a goal
+  figure with its cents, for the reason `GoalForm::new` gives. The cents a goal
   drifts by therefore come only from interest and rounding, and they collect in the container's
   unallocated remainder — which is the figure the Savings footer reports, through
   `savings::unallocated`. The worksheet is not part of this: its lines are prefilled by `per_paycheck` and
@@ -1601,11 +1601,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   special: it passes its own `fields()`.
   - **The four forms in `goal_form` build those lines through `widget::field_stack`**, which is one
     `field_line` per field in the order the form walks them, the caret on whichever is focused, and
-    a note past the value of whichever carry one. Which field earns a note is *declared* rather
-    than decided in an `if` inside the map, since it is a fact about the form rather than a step in
-    drawing it. What a render still writes is only what its own form has: which
-    fields (`form.fields()` where the list is variable), how it spells one, and the extra line `a`
-    pushes past its stack.
+    a note past the value of whichever carry one. What a render still writes is only what its own
+    form has: which fields (`form.fields()` where the list is variable), how it spells one, and the
+    extra line `a` pushes past its stack.
 - **Every confirmation is one dialog, and `Modal::Confirm`'s `action` is what tells them apart.**
   `d` and `U` open the same 64×5 box over the same lines — the row as its screen describes it, a
   blank, and the verb. What differs is carried by the `Confirm` variant: the border's question, the
