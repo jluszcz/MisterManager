@@ -491,15 +491,11 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   default build has no `--demo` flag and none of the code behind it. The rules for reaching the
   mask — and the one place a caller has to say whether its figure is money — are in
   `src/tui/CLAUDE.md`.
-- **The quit path skips a page the day already has.** `report::is_due` writes only when this run
+- **The quit path skips a page the day already has.** `report::is_due` rewrites only when this run
   wrote a row -- `db::Db::wrote_rows`, over SQLite's own counter -- or when the report directory
-  holds no page whose mtime falls on the day this run is quoting. Both halves are proxies, and
-  `is_due` says where each gives way: the counter is per *connection* and starts at zero on every
-  open, so an `mm import`, a restored backup or a `sqlite3` edit between runs is invisible to it;
-  and an mtime is the day a page was *written* rather than the day it quotes, which a session held
-  open across midnight and a `--today` run each part. Either leaves a stale page standing until a
-  run writes a row. `mm report` is not gated, for the reason an unset `[report]` section does not
-  stop it either.
+  holds no page whose mtime falls on the day this run is quoting. Both halves are proxies with a
+  blind spot, and both are set out on `is_due`. `mm report` is not gated, for the reason an unset
+  `[report]` section does not stop it either.
 - **Sign conventions differ per ledger.** Cash rows are signed naturally (positive is inflow); credit
   rows are signed as debt (positive is a charge). Balances are always `SUM(cents) WHERE date <= X`,
   with future-dated rows pre-entered — that is what makes projection and to-date the same query.
