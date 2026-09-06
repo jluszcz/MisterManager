@@ -41,6 +41,22 @@ about a figure, one of them is wrong.
   `mm report` refuses `--demo` rather than ignoring it: no subcommand installs
   the mask, so the flag would quietly write the real figures the mask exists
   to keep off the page.
+- **A quit that changed nothing does not rewrite the day's page.** `is_due` is the
+  gate: a run that wrote a row is owed a page, and so is a run whose directory holds
+  none written on the day it is quoting. Both halves are there because the page
+  depends on both -- the database under it, and the date every figure is projected
+  to and the footer stamped with. The gate exists because `dir` names a synced
+  folder: a rename onto the name is an upload and a download on a phone, spent on
+  bytes that would come out the same. What bounds it is that `db::Db::wrote_rows`
+  counts only *this* connection, so a change made between runs -- an `mm import`, a
+  restored backup, a `sqlite3` edit -- is invisible to it and can leave a page
+  standing that is already stale. The day half is a proxy too, and `is_due` says
+  where it gives way: an mtime is the day a page was *written* rather than the day
+  it quotes, which a session held open across midnight and a `--today` run each
+  part. Either way what rewrites the page is the next run that writes a row.
+  **`mm report` is not gated**,
+  for the same reason an unset `[report]` section does not stop it: it reaches
+  `write` directly, and being asked for outright is the point.
 - **Every control on the page is CSS, and that is what the no-script rule
   buys.** The tabs and the ledgers' month filter are radio buttons the page
   never shows, plus a `:checked ~` rule per control; the radios are moved

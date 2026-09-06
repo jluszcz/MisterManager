@@ -66,6 +66,30 @@ impl Db {
         tx.commit()?;
         Ok(value)
     }
+
+    /// Whether a row has been inserted, updated or deleted through this
+    /// connection since it was opened. What `report::write_if_enabled` asks
+    /// before rewriting a page the day already has.
+    ///
+    /// **Since this connection was opened, and no further back.** SQLite's
+    /// counter lives in memory and starts at zero on every `open`, so the
+    /// question this answers is "did *this run* change anything" rather than
+    /// "has anything changed since the page was written". A change made
+    /// between runs -- an `mm import`, a restored backup, a hand edit through
+    /// `sqlite3` -- is invisible here, which is what bounds the report gate
+    /// above: a page can be left standing that an out-of-band write has
+    /// already made stale, until the next run that writes a row of its own.
+    ///
+    /// Rows, not statements: DDL does not register, so a migration arm that
+    /// only alters a table reads as no change while one that inserts a
+    /// `setting` reads as one. That is the answer the gate wants either way
+    /// -- a schema change that moves no figure moves nothing on the page.
+    ///
+    /// `main` opens the one connection and hands it to `tui::run`, which
+    /// gives it back, so at the quit path this spans exactly the session.
+    pub fn wrote_rows(&self) -> bool {
+        self.conn.total_changes() > 0
+    }
 }
 
 pub fn open(path: &Path) -> Result<Db> {
@@ -212,6 +236,39 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    /// Opens `path` twice, so the second `Db` is one that found the schema
+    /// already at this build's version. `open_in_memory` cannot stand in:
+    /// it creates the schema on every call, and one arm of the chain inserts
+    /// a `setting` row.
+    fn reopened(label: &str) -> (std::path::PathBuf, Db) {
+        let path = std::env::temp_dir().join(format!(
+            "mistermanager_test_{label}_{}.sqlite",
+            std::process::id()
+        ));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        open(&path).unwrap();
+        let db = open(&path).unwrap();
+        (path, db)
+    }
+
+    /// What the report's quit-path gate rests on: an ordinary run against a
+    /// database already at this version starts having written nothing, so a
+    /// session that changes nothing still reads as zero at the end of it.
+    #[test]
+    fn opening_a_database_at_this_version_writes_no_rows() {
+        let (_path, db) = reopened("wrote_rows_none");
+        assert!(!db.wrote_rows());
+    }
+
+    #[test]
+    fn a_run_that_inserts_a_row_reports_having_written_one() {
+        let (_path, db) = reopened("wrote_rows_some");
+        account::insert(&db, "CHK", "Everyday", account::Kind::Cash, 0).unwrap();
+        assert!(db.wrote_rows());
     }
 
     /// The refusal has to reach the caller that actually opens a file, not
