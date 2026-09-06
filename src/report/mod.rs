@@ -310,7 +310,56 @@ pub enum Outcome {
     Disabled,
     /// A `--demo` run.
     Skipped,
+    /// A page is already there, written on the day this run quotes, over a
+    /// database this run did not touch. See [`is_due`].
+    Unchanged,
     Written(Written),
+}
+
+/// Whether the page is owed a rewrite: this run changed something, or the
+/// page on the disk is not this day's.
+///
+/// The shape [`crate::backup::is_due`] has, and for the reason that one has
+/// it -- the decision is arithmetic over three values, so it is answerable
+/// without a filesystem or a clock.
+///
+/// `last_written` is the day the existing page was written, as its mtime, and
+/// `None` covers every reason there is no such day: no page there, or a
+/// directory that will not answer. Both are due, because a page that is not
+/// there cannot be the one this run would have written.
+///
+/// The two halves are the two things a page depends on that this crate can
+/// see. `wrote_rows` is the database, through [`crate::db::Db::wrote_rows`]
+/// -- and only as far back as this run, which is what leaves an out-of-band
+/// change able to strand a page until the next run writes a row. The day is
+/// the rest: every figure on the page is quoted at a date derived from
+/// `today`, and the footer's stamp is the freshness a reader checks on the
+/// way out, so a page from yesterday is rewritten even when every figure on
+/// it would come out the same.
+///
+/// **The mtime is the day the page was written, not the day it quotes**, and
+/// the two part company whenever the run that wrote it was not quoting its own
+/// wall-clock day. Two runs are not. `today` is read once in `main`, before
+/// the screens open, so a session held across local midnight quotes the day it
+/// started and lands its page on the next one -- and every quit that day then
+/// finds an mtime matching and leaves a page quoting yesterday standing. A
+/// `--today` run quotes whatever it was told, so the simulated page it writes
+/// carries the real day's mtime and suppresses the next ordinary quit in the
+/// same way. Both need the quoted day recorded somewhere the next run can read
+/// it, which is a second file beside `backup.toml` and deliberately not part
+/// of this gate. What is left is bounded by the other half: the next run that
+/// writes a row rewrites the page whatever its date says.
+pub fn is_due(last_written: Option<NaiveDate>, today: NaiveDate, wrote_rows: bool) -> bool {
+    wrote_rows || last_written != Some(today)
+}
+
+/// The local day `path` was last written, or `None` for every reason it
+/// cannot be read -- absent, unreadable, or a platform with no mtime. All of
+/// those mean the same thing to [`is_due`], which is that this run cannot
+/// claim the page already on the disk is its own.
+fn written_on(path: &Path) -> Option<NaiveDate> {
+    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
+    Some(DateTime::<Local>::from(modified).date_naive())
 }
 
 /// The two steps that can fail with a temporary file on the disk, so the one
@@ -376,7 +425,14 @@ pub fn write_if_enabled(
     if demo {
         return Ok(Outcome::Skipped);
     }
-    Ok(Outcome::Written(write(db, &report.dir()?, today)?))
+    let dir = report.dir()?;
+    // The page this run would write is the page already there, so the rename
+    // is not worth making: the directory is a synced one, and a rename onto
+    // the name is what a sync client uploads and a phone downloads again.
+    if !is_due(written_on(&dir.join(FILE_NAME)), today, db.wrote_rows()) {
+        return Ok(Outcome::Unchanged);
+    }
+    Ok(Outcome::Written(write(db, &dir, today)?))
 }
 
 #[cfg(test)]
@@ -624,6 +680,77 @@ mod tests {
 
         assert!(matches!(outcome, Outcome::Skipped));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "the real figures");
+    }
+
+    /// A page that is not there yet is always owed, whatever the run did.
+    #[test]
+    fn a_directory_with_no_page_in_it_is_due() {
+        assert!(is_due(None, today(), false));
+    }
+
+    /// The case this gate exists for: a second quit on the same day over a
+    /// database nothing touched would rename an identical page onto the one
+    /// already there, and a sync client would upload it.
+    #[test]
+    fn todays_page_over_an_untouched_database_is_not_due() {
+        assert!(!is_due(Some(today()), today(), false));
+    }
+
+    #[test]
+    fn a_run_that_wrote_a_row_is_due_however_fresh_the_page_is() {
+        assert!(is_due(Some(today()), today(), true));
+    }
+
+    /// The stamp in the footer is what a reader checks on the way out, so a
+    /// page carrying yesterday's date is rewritten even though every figure
+    /// on it would come out the same.
+    #[test]
+    fn yesterdays_page_is_due_though_nothing_changed() {
+        let yesterday = today().pred_opt().unwrap();
+        assert!(is_due(Some(yesterday), today(), false));
+    }
+
+    /// The whole gate, over a real database rather than three arguments: a
+    /// second quit finds the page it would have written already on the disk
+    /// and leaves it exactly where it is, mtime included -- a rename is what
+    /// a sync client uploads.
+    #[test]
+    fn a_second_quit_over_an_unchanged_database_leaves_the_page_untouched() {
+        let dir = scratch("unchanged");
+        let db_dir = scratch("unchanged-db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        let db_path = db_dir.join("money.db");
+        // The real day, not this module's `today()`: what the gate compares
+        // against is the day the file on the disk was written, and that is a
+        // fact about the clock rather than about the financial date a run is
+        // quoting. A directory with no page in it is due whatever day it is
+        // told, so the first write does not care which one this is.
+        {
+            let db = crate::db::open(&db_path).unwrap();
+            account::insert(&db, "CHK", "Everyday", account::Kind::Cash, 0).unwrap();
+            write_if_enabled(&db, &configured(&dir), Local::now().date_naive(), false).unwrap();
+        }
+        let before = std::fs::metadata(dir.join(FILE_NAME))
+            .unwrap()
+            .modified()
+            .unwrap();
+        // Read back off the page rather than taken from the clock again: a run
+        // that crossed local midnight between the write above and here would
+        // otherwise be due, and this test would go red once a year.
+        let day = written_on(&dir.join(FILE_NAME)).unwrap();
+
+        // A fresh connection over a database already at this version, with
+        // nothing written through it -- the shape of a quit that changed
+        // nothing.
+        let db = crate::db::open(&db_path).unwrap();
+        let outcome = write_if_enabled(&db, &configured(&dir), day, false).unwrap();
+
+        assert!(matches!(outcome, Outcome::Unchanged), "{outcome:?}");
+        let after = std::fs::metadata(dir.join(FILE_NAME))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(before, after, "the page was rewritten");
     }
 
     /// `default_db` creates its own directory; a feature that silently does

@@ -284,7 +284,7 @@ dir = "~/Dropbox/money"   # required
 ```
 
 `mm` writes a self-contained HTML page of the screens to `<dir>/Money.html`
-every time it quits — one file, no separate stylesheet or
+when it quits — one file, no separate stylesheet or
 script, sized to read on a phone in light or dark. Pointing `dir` at a synced
 folder is what turns "checked the balance on the laptop" into "checked it on
 the phone a minute later."
@@ -295,6 +295,18 @@ making the run fail. `mm --demo` never writes a report: the file it would
 overwrite is the one page nothing can regenerate without quitting an ordinary
 session. `mm import` and `mm backup` don't write one either, since neither
 launches the screens the page is drawn from.
+
+A quit that changed nothing leaves the page already there alone, so long as it
+was written the same day: every figure on it would come out identical, and a
+rename in a synced folder is an upload and then a download on the phone.
+
+Both halves of that check are approximations. One is SQLite's own count of the
+rows this run wrote, which sees only this run; the other is the page's
+timestamp, which records when it was written rather than which day its figures
+are quoted at. So a page can be left standing behind an `mm import`, a restored
+backup, a hand edit, a session held open across midnight, or a `--today` run —
+until the next quit that changes something. `mm report` is never skipped: being
+asked for outright is the point.
 
 The page carries six tabs, in the order the screens are numbered: Overview,
 Cash, Credit, Savings, Planning, Funds. It opens on Overview, and the switch is
