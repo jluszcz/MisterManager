@@ -557,7 +557,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
-use ratatui::widgets::{Block, Cell, Clear, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Cell, Clear, Padding, Paragraph, Row, Table};
 
 /// The amount, with the caret past the last digit while it has focus.
 ///
@@ -645,9 +645,22 @@ pub(super) fn render(frame: &mut Frame, sheet: &Worksheet) -> Viewport {
             } else {
                 Style::default()
             })
-            .highlight_symbol("> "),
+            .highlight_symbol("> ")
+            // The gutter every list `render_table` draws gets from its
+            // `Chrome`, which this one has to ask for along with the table.
+            .block(Block::new().padding(Padding::right(super::GUTTER))),
         lines_area,
         &mut state,
+    );
+    // The one list that draws its own table is also the one that has to ask
+    // for the indicator by hand; the track is the modal's own border, which
+    // `scroll_track` finds from the rows the same way it does for every list
+    // `render_table` draws.
+    super::render_scrollbar(
+        frame,
+        super::scroll_track(lines_area),
+        sheet.lines().len(),
+        viewport,
     );
 
     let status = if sheet.is_searching() {
