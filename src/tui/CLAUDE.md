@@ -238,6 +238,12 @@ Every table gives its fixed columns a `Constraint::Length` sized for their true 
 left over. A wider terminal therefore spends all of its extra columns on that one column, and no
 screen carries a second layout.
 
+One column of every screen's width is spent before any of that: `tui::GUTTER`, which holds the rows
+off the border to their right so the scroll indicator is read against a space rather than against
+the last digit of a figure. It comes out of the `Constraint::Min` column with the rest of the
+slack, it is spent whether or not a list is long enough to scroll, and it is the row's own right
+edge — so the selection bar and the favorite band stop with it.
+
 Why those tests are worth their weight: **a right-aligned cell that gets truncated loses its
 *leading* characters.** A `Goal Date` column one column short turns `2026-11-27` into a wrong year,
 and a money column one short turns a figure into a smaller figure — a wrong number rather than a
@@ -1373,10 +1379,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     undocumented on purpose, so a ledger of four hundred rows looks like a ledger of twenty until
     the cursor runs off the bottom; `tui::render_scrollbar` is the thumb that says otherwise, and
     it is drawn only when there are rows the viewport does not hold — an unbroken border means the
-    list is all on screen. It costs no column, because `tui::scroll_track` puts it on a border the
-    screen was already drawing: the column immediately past the rows, which is a titled list's own
-    block and a bare one's caller's, and which is why neither `Chrome` needs to say where its
-    border is. The worksheet asks for it by hand, being the one list that draws its own table.
+    list is all on screen. It takes no column of its own, because `tui::scroll_track` puts it on a
+    border the screen was already drawing: the column immediately past the rows, which is a titled
+    list's own block and a bare one's caller's, and which is why neither `Chrome` needs to say
+    where its border is. What the rows do give up is the `tui::GUTTER` between them and it, in
+    *How wide a screen is*. The worksheet asks for both by hand, being the one list that draws its
+    own table.
 
 - **Every list is drawn by `tui::render_table`, and its `Chrome` is what the rows pay for.** The
   reversed highlight and the `> ` marker are written once, because they are what a cursor has to

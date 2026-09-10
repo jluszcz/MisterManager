@@ -51,7 +51,7 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{
-    Block, Cell, Row as TableRow, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+    Block, Cell, Padding, Row as TableRow, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
     TableState,
 };
 use std::time::Duration;
@@ -399,14 +399,39 @@ fn render_table(
     if let Some(header) = chrome.header {
         table = table.header(header);
     }
-    if let Some(title) = chrome.title {
-        table = table.block(Block::bordered().title(title));
-    }
+    // Even a bare list is framed, because the frame is what holds the rows
+    // off the border to their right: a `Block` with no borders at all, and
+    // `GUTTER` of padding.
+    table = table.block(
+        match chrome.title {
+            Some(title) => Block::bordered().title(title),
+            None => Block::new(),
+        }
+        .padding(Padding::right(GUTTER)),
+    );
     frame.render_stateful_widget(table, area, &mut state);
     render_scrollbar(frame, scroll_track(rows_area), drawn, viewport);
 
     viewport
 }
+
+/// How far the rows are held off the border to their right, in columns.
+///
+/// A right-aligned cell ends at the last column its table is given, so
+/// without this the largest `$/Pay` on the Savings screen sits against the
+/// border -- and against the scroll thumb [`render_scrollbar`] draws over
+/// it, where a figure reads as running into the mark beside it. It is spent
+/// by every list whether or not that list is long enough to scroll, since a
+/// column handed back the moment a filter shortened the list would reflow
+/// the table under the eye that is reading it.
+///
+/// It comes out of the one column each screen gives a `Constraint::Min`,
+/// which is where all of a wider terminal's slack already goes -- the fixed
+/// columns are sized for their true content and must not be squeezed, for
+/// the reason *How wide a screen is* gives. A row's own marks stop with it:
+/// the selection bar and the favorite band run the width of the row, and
+/// the row is now a column short of the border.
+const GUTTER: u16 = 1;
 
 /// Where a list's scroll indicator is drawn: the column immediately right of
 /// its rows, for exactly the lines those rows occupy.
@@ -417,8 +442,9 @@ fn render_table(
 /// [`Chrome::titled`] list is inset by its own block, so the column past its
 /// rows is that block's right edge; a [`Chrome::bare`] one was handed an area
 /// someone else already inset, so the column past its rows is the border that
-/// caller drew. Neither costs the rows a column, which is what keeps the
-/// indicator out of the width budget in *How wide a screen is*.
+/// caller drew. Neither costs the rows a column of its own: what the rows
+/// give up is [`GUTTER`], the space between them and the mark, rather than
+/// the mark itself.
 fn scroll_track(rows: Rect) -> Rect {
     Rect {
         x: rows.right(),
@@ -727,8 +753,11 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
+        // Long enough to fill the one flexible column, since a row that
+        // stops short of the gutter would not notice one that was never
+        // reserved.
         let rows: Vec<TableRow<'static>> = (0..list.row_count())
-            .map(|i| TableRow::new(vec![Cell::from(format!("row {i}"))]))
+            .map(|i| TableRow::new(vec![Cell::from(format!("row {i} {}", "x".repeat(80)))]))
             .collect();
         let drawn = list.row_count();
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -824,6 +853,35 @@ mod tests {
             border.ends_with("█┘"),
             "the last row left the thumb short of the bottom: {border:?}"
         );
+    }
+
+    /// The rows stop a column short of the border beside them, so the thumb
+    /// is read against a space rather than against the last of a figure.
+    ///
+    /// The rows here fill their column, which is what makes this a test:
+    /// a row stopping short of the gutter would not notice one that was
+    /// never reserved. Both chromes, since a bare list asks its own `Block`
+    /// for the padding a titled one gets from its border's.
+    #[test]
+    fn the_rows_are_held_a_column_off_the_border_beside_them() {
+        for chrome in [Chrome::titled("Credit"), Chrome::bare()] {
+            let titled = chrome.title.is_some();
+            let area = match titled {
+                true => Rect::new(0, 0, 40, 10),
+                false => Rect::new(1, 1, 38, 8),
+            };
+            let lines = drawn(&List::of(50), chrome, area, 40, 10);
+            // The rows either way, and the border they are held off is 39.
+            let rows = &lines[2..9];
+            assert!(
+                rows.iter().all(|line| line.chars().nth(38) == Some(' ')),
+                "a row reached the gutter: {rows:?}"
+            );
+            assert!(
+                rows.iter().any(|line| line.chars().nth(37) == Some('x')),
+                "no row reached the column before it: {rows:?}"
+            );
+        }
     }
 
     /// A bare list was handed an area someone else inset for a border, so

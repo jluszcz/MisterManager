@@ -1214,11 +1214,16 @@ mod tests {
 
     /// A band, not a tint: it runs the row's whole width, padding and gaps
     /// included, which is exactly what a cell-level color may never do.
+    ///
+    /// The row's whole width is a column short of the right border, which is
+    /// `tui::GUTTER` -- the space the scroll indicator is read against. A
+    /// band stopping there is the band running the row rather than the band
+    /// falling short: what it may not do is leave a gap *inside* the row.
     #[test]
     fn a_favorited_row_is_banded_across_its_whole_width() {
         let buffer = band_buffer(&banded());
         // Inside the two borders. Row 4 is the third goal.
-        for x in 1..MIN_WIDTH - 1 {
+        for x in 1..MIN_WIDTH - 1 - super::super::GUTTER {
             assert_eq!(
                 buffer[(x, 4)].bg,
                 super::super::style::FAVORITE_BG,

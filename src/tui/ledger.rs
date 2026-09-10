@@ -1173,8 +1173,9 @@ mod tests {
     }
 
     /// The scroll indicator is drawn on the border rather than in a column of
-    /// its own, so a ledger long enough to scroll spends no more width than
-    /// one that fits.
+    /// its own, so a ledger long enough to scroll is laid out exactly like
+    /// one that fits: the `GUTTER` between the figures and the mark is spent
+    /// either way.
     ///
     /// This is the failure the width tests exist for: `Amount` is
     /// right-aligned, so a column taken off it would not truncate visibly --
@@ -1206,9 +1207,12 @@ mod tests {
             1,
             "no thumb on a ledger with seventeen rows off screen"
         );
-        // The same two cells the header-alignment test pins, unmoved.
-        assert_eq!(buffer[(border - 1, 1)].symbol(), "t", "end of `Amount`");
-        assert_eq!(buffer[(border - 1, 2)].symbol(), "0", "end of the figure");
+        // The same two cells the header-alignment test pins, unmoved, and a
+        // blank gutter between them and the thumb.
+        let last = MIN_WIDTH - 2 - super::super::GUTTER;
+        assert_eq!(buffer[(last, 1)].symbol(), "t", "end of `Amount`");
+        assert_eq!(buffer[(last, 2)].symbol(), "0", "end of the figure");
+        assert_eq!(buffer[(border - 1, 2)].symbol(), " ", "the gutter");
     }
 
     /// A right-aligned column wants a right-aligned header over it; left over
@@ -1229,10 +1233,11 @@ mod tests {
             })
             .unwrap();
 
-        // Row 1 is the header. Both the word and the figure below it must end
-        // one cell inside the right border.
+        // Row 1 is the header. Both the word and the figure below it end at
+        // the last column the rows are given: inside the right border, and
+        // inside the gutter that holds them off it.
         let buffer = terminal.backend().buffer();
-        let last = MIN_WIDTH - 2;
+        let last = MIN_WIDTH - 2 - super::super::GUTTER;
         assert_eq!(buffer[(last, 1)].symbol(), "t", "end of `Amount`");
         assert_eq!(buffer[(last + 1 - "Amount".len() as u16, 1)].symbol(), "A");
         assert_eq!(buffer[(last, 2)].symbol(), "0", "end of the figure");
@@ -1263,11 +1268,11 @@ mod tests {
             })
             .unwrap();
 
-        // Right-aligned in the last column, so the figure ends one cell inside
-        // the right border. The first data row sits below the border and the
-        // header.
+        // Right-aligned in the last column, so the figure ends at the last
+        // column the rows are given: inside the right border and the gutter
+        // both. The first data row sits below the border and the header.
         let buffer = terminal.backend().buffer();
-        let cell = &buffer[(MIN_WIDTH - 2, 2)];
+        let cell = &buffer[(MIN_WIDTH - 2 - super::super::GUTTER, 2)];
         assert_eq!(cell.symbol(), "0", "expected the end of -42.00: {cell:?}");
         assert_eq!(cell.fg, super::super::style::NEGATIVE);
         assert!(cell.modifier.contains(Modifier::DIM), "{cell:?}");
