@@ -1172,6 +1172,45 @@ mod tests {
         assert!(descriptions(&ledger).is_empty());
     }
 
+    /// The scroll indicator is drawn on the border rather than in a column of
+    /// its own, so a ledger long enough to scroll spends no more width than
+    /// one that fits.
+    ///
+    /// This is the failure the width tests exist for: `Amount` is
+    /// right-aligned, so a column taken off it would not truncate visibly --
+    /// it would draw a smaller figure.
+    #[test]
+    fn the_scroll_indicator_costs_the_amount_column_nothing() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let today = day(2026, 8, 15);
+        let mut ledger = ledger(today);
+        // Three rows fit the viewport a six-line terminal leaves; twenty do
+        // not.
+        ledger.set_rows((1..=20).map(|n| dated_row(n, today)).collect());
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &ledger, today);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let border = MIN_WIDTH - 1;
+        assert_eq!(
+            (2..5)
+                .filter(|y| buffer[(border, *y)].symbol() == "█")
+                .count(),
+            1,
+            "no thumb on a ledger with seventeen rows off screen"
+        );
+        // The same two cells the header-alignment test pins, unmoved.
+        assert_eq!(buffer[(border - 1, 1)].symbol(), "t", "end of `Amount`");
+        assert_eq!(buffer[(border - 1, 2)].symbol(), "0", "end of the figure");
+    }
+
     /// A right-aligned column wants a right-aligned header over it; left over
     /// right put `Amount` at the far side of the column from its own figures.
     #[test]

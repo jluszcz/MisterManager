@@ -1369,6 +1369,14 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     question. `table_state` is where every list reaches it, and every list but the worksheet
     reaches *that* through `tui::render_table`, which keeps a new screen on the rule by
     construction.
+  - **That a list scrolls at all is said on the border, and nowhere else.** The scroll keys are
+    undocumented on purpose, so a ledger of four hundred rows looks like a ledger of twenty until
+    the cursor runs off the bottom; `tui::render_scrollbar` is the thumb that says otherwise, and
+    it is drawn only when there are rows the viewport does not hold — an unbroken border means the
+    list is all on screen. It costs no column, because `tui::scroll_track` puts it on a border the
+    screen was already drawing: the column immediately past the rows, which is a titled list's own
+    block and a bare one's caller's, and which is why neither `Chrome` needs to say where its
+    border is. The worksheet asks for it by hand, being the one list that draws its own table.
 
 - **Every list is drawn by `tui::render_table`, and its `Chrome` is what the rows pay for.** The
   reversed highlight and the `> ` marker are written once, because they are what a cursor has to

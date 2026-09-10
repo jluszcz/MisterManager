@@ -50,7 +50,10 @@ use ratatui::crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
-use ratatui::widgets::{Block, Cell, Row as TableRow, Table, TableState};
+use ratatui::widgets::{
+    Block, Cell, Row as TableRow, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+    TableState,
+};
 use std::time::Duration;
 use style::Color;
 
@@ -319,7 +322,10 @@ impl Chrome {
         }
     }
 
-    /// A list drawn into an area already inset by whoever owns the border.
+    /// A list drawn into an area already inset by whoever owns the border,
+    /// which [`scroll_track`] takes to be the column immediately past its
+    /// rows -- so an area inset by anything else would put the scroll
+    /// indicator over a row instead of over a border.
     fn bare() -> Chrome {
         Chrome {
             title: None,
@@ -334,13 +340,30 @@ impl Chrome {
     }
 
     /// How many of `area`'s lines the chrome takes before any row is drawn.
-    fn lines(&self) -> usize {
-        let block = 2 * usize::from(self.title.is_some());
-        let header = self
-            .header
-            .as_ref()
-            .map_or(0, |_| usize::from(HEADER_LINES));
-        block + header
+    fn lines(&self) -> u16 {
+        2 * u16::from(self.title.is_some()) + self.header_lines()
+    }
+
+    /// How many of them the header alone takes.
+    fn header_lines(&self) -> u16 {
+        self.header.as_ref().map_or(0, |_| HEADER_LINES)
+    }
+
+    /// The rectangle the data rows themselves occupy inside `area`.
+    ///
+    /// [`render_table`] hands the whole of `area` to ratatui and lets the
+    /// table inset itself, so this is the same arithmetic read forwards --
+    /// what [`lines`](Chrome::lines) subtracts, said as a `Rect`. It exists
+    /// for [`scroll_track`], which wants the column the rows end at rather
+    /// than the number of lines they cost.
+    fn rows_area(&self, area: Rect) -> Rect {
+        let border = u16::from(self.title.is_some());
+        Rect {
+            x: area.x + border,
+            y: area.y + border + self.header_lines(),
+            width: area.width.saturating_sub(2 * border),
+            height: area.height.saturating_sub(self.lines()),
+        }
     }
 }
 
@@ -367,8 +390,8 @@ fn render_table(
     rows: Vec<TableRow<'static>>,
     drawn: usize,
 ) -> Viewport {
-    let height = usize::from(area.height).saturating_sub(chrome.lines());
-    let (mut state, viewport) = table_state(list, drawn, height);
+    let rows_area = chrome.rows_area(area);
+    let (mut state, viewport) = table_state(list, drawn, usize::from(rows_area.height));
 
     let mut table = Table::new(rows, widths.iter().copied())
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
@@ -380,8 +403,67 @@ fn render_table(
         table = table.block(Block::bordered().title(title));
     }
     frame.render_stateful_widget(table, area, &mut state);
+    render_scrollbar(frame, scroll_track(rows_area), drawn, viewport);
 
     viewport
+}
+
+/// Where a list's scroll indicator is drawn: the column immediately right of
+/// its rows, for exactly the lines those rows occupy.
+///
+/// That column is a border on every list in the app, and the rule is one rule
+/// because the two chromes put the border in the same place relative to the
+/// rows rather than in the same place relative to `area`. A
+/// [`Chrome::titled`] list is inset by its own block, so the column past its
+/// rows is that block's right edge; a [`Chrome::bare`] one was handed an area
+/// someone else already inset, so the column past its rows is the border that
+/// caller drew. Neither costs the rows a column, which is what keeps the
+/// indicator out of the width budget in *How wide a screen is*.
+fn scroll_track(rows: Rect) -> Rect {
+    Rect {
+        x: rows.right(),
+        y: rows.y,
+        width: 1,
+        height: rows.height,
+    }
+}
+
+/// A thumb on `track`, sized and placed by how much of `rows` the viewport
+/// holds and where in them it starts.
+///
+/// Drawn only when there are rows the viewport does not hold, so an unbroken
+/// border means the list is all on screen: the mark says "there is more this
+/// way" and appears exactly when there is. Nothing else on a list screen says
+/// so -- the scroll keys are undocumented on purpose, and a ledger of four
+/// hundred rows looks like a ledger of twenty until the cursor runs off the
+/// bottom.
+///
+/// The track symbol is the border's own `│` rather than the `║` a scrollbar
+/// defaults to, and the arrow caps are off: the untravelled part of the track
+/// has to read as the border it is drawn over, or a list that fits and a list
+/// that does not would differ in the whole column instead of in the thumb.
+///
+/// `content` is the number of *offsets* the list has rather than its length,
+/// which is what puts the thumb against the bottom of the track at the last
+/// of them; the thumb's own length is then the share of the list on screen.
+fn render_scrollbar(frame: &mut Frame, track: Rect, rows: usize, viewport: Viewport) {
+    if viewport.height == 0 || rows <= viewport.height {
+        return;
+    }
+    let track = track.intersection(frame.area());
+    if track.is_empty() {
+        return;
+    }
+    let content = rows - viewport.height + 1;
+    let mut state = ScrollbarState::new(content).position(viewport.offset);
+    frame.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .symbols(ratatui::symbols::scrollbar::VERTICAL)
+            .begin_symbol(None)
+            .end_symbol(None),
+        track,
+        &mut state,
+    );
 }
 
 /// The *column* each of `labels` ends at in `line`, matched left to right.
@@ -567,9 +649,15 @@ mod tests {
         assert!(share_of(Cents::from_dollars(100), -3).is_err());
     }
 
-    /// A list with nothing but a cursor in it, so the shared scroll state can
-    /// be asserted without a screen behind it.
-    struct List(cursor::Cursor);
+    /// A list with nothing but a cursor and a length in it, so the shared
+    /// scroll state can be asserted without a screen behind it.
+    struct List(cursor::Cursor, usize);
+
+    impl List {
+        fn of(rows: usize) -> List {
+            List(cursor::Cursor::new(), rows)
+        }
+    }
 
     impl Scroll for List {
         fn cursor(&self) -> &cursor::Cursor {
@@ -581,7 +669,7 @@ mod tests {
         }
 
         fn row_count(&self) -> usize {
-            0
+            self.1
         }
     }
 
@@ -589,7 +677,7 @@ mod tests {
     /// is a cursor on a row that is not there.
     #[test]
     fn an_empty_list_selects_nothing() {
-        let list = List(cursor::Cursor::new());
+        let list = List::of(0);
         assert_eq!(table_state(&list, 0, 10).0.selected(), None);
         assert_eq!(table_state(&list, 1, 10).0.selected(), Some(0));
     }
@@ -630,11 +718,139 @@ mod tests {
         })));
     }
 
+    /// The list drawn into `area`, as one string per line of the terminal.
+    ///
+    /// `area` is what the screen was handed, which is the whole terminal for
+    /// a titled list and an already-inset rectangle for a bare one -- the
+    /// difference the scroll track's rule exists to absorb.
+    fn drawn(list: &List, chrome: Chrome, area: Rect, width: u16, height: u16) -> Vec<String> {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let rows: Vec<TableRow<'static>> = (0..list.row_count())
+            .map(|i| TableRow::new(vec![Cell::from(format!("row {i}"))]))
+            .collect();
+        let drawn = list.row_count();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_table(
+                    frame,
+                    area,
+                    list,
+                    chrome,
+                    &[Constraint::Min(10)],
+                    rows,
+                    drawn,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The column an indicator would be drawn in, top to bottom.
+    fn column(lines: &[String], x: usize) -> String {
+        lines
+            .iter()
+            .map(|line| line.chars().nth(x).unwrap_or(' '))
+            .collect()
+    }
+
+    /// A titled list in a terminal too short for it: the thumb rides the
+    /// block's own right border, and the corners above and below it are
+    /// still the corners.
+    #[test]
+    fn a_list_taller_than_its_viewport_draws_a_thumb_on_the_border() {
+        let lines = drawn(
+            &List::of(50),
+            Chrome::titled("Credit").header(TableRow::new(vec![Cell::from("Row")])),
+            Rect::new(0, 0, 40, 10),
+            40,
+            10,
+        );
+        let border = column(&lines, 39);
+        assert!(border.contains('█'), "no thumb on the border: {border:?}");
+        assert_eq!(
+            border.chars().next(),
+            Some('┐'),
+            "the thumb reached the top corner: {border:?}"
+        );
+        assert_eq!(
+            border.chars().last(),
+            Some('┘'),
+            "the thumb reached the bottom corner: {border:?}"
+        );
+    }
+
+    /// The mark says "there is more this way", so a list with nothing off
+    /// screen draws an unbroken border and says nothing.
+    #[test]
+    fn a_list_that_fits_its_viewport_draws_no_thumb() {
+        let lines = drawn(
+            &List::of(3),
+            Chrome::titled("Credit").header(TableRow::new(vec![Cell::from("Row")])),
+            Rect::new(0, 0, 40, 10),
+            40,
+            10,
+        );
+        assert_eq!(column(&lines, 39), "┐││││││││┘");
+    }
+
+    /// Where the thumb sits is where the list is: against the top of the
+    /// track at the first row and against the bottom at the last, so the
+    /// border answers "how far down am I" as well as "is there more".
+    #[test]
+    fn the_thumb_travels_the_track_from_the_first_row_to_the_last() {
+        let chrome = || Chrome::titled("Credit").header(TableRow::new(vec![Cell::from("Row")]));
+        let area = Rect::new(0, 0, 40, 10);
+
+        // The track is the seven lines the rows take: the border less its
+        // two corners and the header line above them, which stay `│`.
+        let top = drawn(&List::of(50), chrome(), area, 40, 10);
+        assert_eq!(column(&top, 39), "┐│█││││││┘");
+
+        let mut list = List::of(50);
+        list.select_last();
+        let bottom = drawn(&list, chrome(), area, 40, 10);
+        let border = column(&bottom, 39);
+        assert!(
+            border.ends_with("█┘"),
+            "the last row left the thumb short of the bottom: {border:?}"
+        );
+    }
+
+    /// A bare list was handed an area someone else inset for a border, so
+    /// its track is the column past the rows in exactly the same sense --
+    /// one column outside the area it was given, and still not a column any
+    /// row was drawn in.
+    #[test]
+    fn a_bare_list_draws_its_thumb_on_the_border_its_caller_owns() {
+        let lines = drawn(
+            &List::of(50),
+            Chrome::bare(),
+            Rect::new(1, 1, 38, 8),
+            40,
+            10,
+        );
+        assert!(
+            column(&lines, 39).contains('█'),
+            "no thumb past the rows: {:?}",
+            column(&lines, 39)
+        );
+    }
+
     /// The offset a draw resolves is the one it reports back, so the next
     /// draw carries on from where this one left the list.
     #[test]
     fn the_drawn_offset_is_the_one_reported_back() {
-        let mut list = List(cursor::Cursor::new());
+        let mut list = List::of(58);
         list.cursor_mut().select(57);
         let (state, viewport) = table_state(&list, 58, 30);
         assert_eq!(state.offset(), 28);

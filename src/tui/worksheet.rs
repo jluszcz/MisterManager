@@ -649,6 +649,16 @@ pub(super) fn render(frame: &mut Frame, sheet: &Worksheet) -> Viewport {
         lines_area,
         &mut state,
     );
+    // The one list that draws its own table is also the one that has to ask
+    // for the indicator by hand; the track is the modal's own border, which
+    // `scroll_track` finds from the rows the same way it does for every list
+    // `render_table` draws.
+    super::render_scrollbar(
+        frame,
+        super::scroll_track(lines_area),
+        sheet.lines().len(),
+        viewport,
+    );
 
     let status = if sheet.is_searching() {
         let mut spans = vec![Span::raw("/")];
