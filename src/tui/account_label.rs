@@ -235,6 +235,10 @@ mod tests {
             // screen puts on the status line verbatim. Prose for the same
             // reason, masked the same way.
             ("db/account.rs", "crate::demo::text(account.name.as_str())"),
+            // `holding::insert`'s wrong-kind refusal, which the Funds screen
+            // puts on the status line verbatim. Prose for the same reason,
+            // masked the same way.
+            ("db/holding.rs", "crate::demo::text(owner.name.as_str())"),
         ];
 
         let mut found: Vec<String> = Vec::new();

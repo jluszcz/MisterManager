@@ -300,6 +300,37 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // asks of the two kinds that were here.
         data: None,
     },
+    Migration {
+        version: 13,
+        // The funds held in each investment account, and the composition of
+        // each fund.
+        //
+        // `UNIQUE (account_id, ticker)`: one ticker twice in one account is a
+        // typo, while one ticker held in two accounts is ordinary — the same
+        // shape as `UNIQUE (code, kind)` on `account`.
+        //
+        // `fund_mix` keys on the ticker rather than on a holding, because a
+        // fund's composition is a property of the fund and not of who holds
+        // it; `report_date` is per ticker because fund families file on their
+        // own schedules and a screen has to quote an as-of date per row.
+        sql: "CREATE TABLE holding (
+                id            INTEGER PRIMARY KEY,
+                account_id    INTEGER NOT NULL REFERENCES account(id),
+                ticker        TEXT    NOT NULL,
+                balance_cents INTEGER NOT NULL,
+                sort          INTEGER NOT NULL DEFAULT 0,
+                UNIQUE (account_id, ticker)
+              );
+              CREATE TABLE fund_mix (
+                ticker      TEXT    NOT NULL,
+                asset_class TEXT    NOT NULL CHECK (asset_class IN
+                              ('us_stock','intl_stock','us_bond','intl_bond','cash','unclassified')),
+                weight_bp   INTEGER NOT NULL,
+                report_date TEXT    NOT NULL,
+                PRIMARY KEY (ticker, asset_class)
+              );",
+        data: None,
+    },
 ];
 
 /// The last thing to tell an owner whose database this build will not open.

@@ -286,7 +286,7 @@ mod tests {
         let retirement = account::insert(
             &db,
             "RET",
-            "Retirement",
+            "Long Haul",
             Kind::Investment,
             0,
             Some(account::TaxTreatment::TaxDeferred),
@@ -313,7 +313,7 @@ mod tests {
                     .bands
                     .iter()
                     .flat_map(|b| &b.lines)
-                    .all(|l| l.account.as_ref().is_none_or(|a| a.text() != "Retirement")),
+                    .all(|l| l.account.as_ref().is_none_or(|a| a.text() != "Long Haul")),
                 "an investment account was drawn as a line"
             );
         }

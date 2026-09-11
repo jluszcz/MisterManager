@@ -1252,7 +1252,7 @@ mod tests {
         let id = insert(
             &db,
             "RET",
-            "Retirement",
+            "Long Haul",
             Kind::Investment,
             0,
             Some(TaxTreatment::TaxDeferred),
@@ -1292,7 +1292,7 @@ mod tests {
     fn an_investment_account_must_carry_a_tax_treatment() {
         let db = db::open_in_memory().unwrap();
         assert!(
-            insert(&db, "RET", "Retirement", Kind::Investment, 0, None).is_err(),
+            insert(&db, "RET", "Long Haul", Kind::Investment, 0, None).is_err(),
             "the schema's paired CHECK did not refuse an untaxed investment account"
         );
     }
@@ -1306,7 +1306,7 @@ mod tests {
         let id = insert(
             &db,
             "RET",
-            "Retirement",
+            "Long Haul",
             Kind::Investment,
             0,
             Some(TaxTreatment::Taxable),
@@ -1353,7 +1353,7 @@ mod tests {
         insert(
             &db,
             "RET",
-            "Retirement",
+            "Long Haul",
             Kind::Investment,
             0,
             Some(TaxTreatment::TaxDeferred),

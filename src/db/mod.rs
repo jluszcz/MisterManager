@@ -16,7 +16,9 @@
 pub mod account;
 pub mod bill;
 pub mod date;
+pub mod fund_mix;
 pub mod goal;
+pub mod holding;
 pub mod id;
 mod migration;
 pub mod recurring_goal;
@@ -25,7 +27,8 @@ pub mod setting;
 pub mod txn;
 
 pub use id::{
-    AccountId, AllocationId, BatchId, BillId, GoalId, RecurringGoalId, RecurringTxnId, TxnId,
+    AccountId, AllocationId, BatchId, BillId, GoalId, HoldingId, RecurringGoalId, RecurringTxnId,
+    TxnId,
 };
 
 use anyhow::{Context, Result};
@@ -129,13 +132,17 @@ pub fn snapshot(src: &Path, dest: &Path) -> Result<()> {
 /// deleted explicitly anyway so this order is self-documenting rather than
 /// relying on a cascade a reader has to go look up.
 ///
-/// **Two tables the schema creates are deliberately not here.** `account`
+/// **Four tables the schema creates are deliberately not here.** `account`
 /// holds the owner's own naming, banding and ordering, which the import no
 /// longer supplies — it writes a row per code and nothing more — so clearing
-/// it would throw that away on every `--replace`. And `recurring_txn` only
+/// it would throw that away on every `--replace`. `recurring_txn` only
 /// ever sat here because its `account_id` referenced rows the replace
 /// rebuilt; with `account` surviving, so do the rules, and the `txn` rows
-/// they own come back out of the workbook for `g` to adopt.
+/// they own come back out of the workbook for `g` to adopt. `holding` and
+/// `fund_mix` are the two newest exemptions: the workbook carries neither a
+/// fund's ticker nor its composition, so a replace has nothing in either to
+/// write back — the owner's typed balances and the fetcher's own cache both
+/// survive it untouched, the same as `account` does.
 const IMPORTED_TABLES: &[&str] = &[
     "allocation",
     "batch",
@@ -157,7 +164,7 @@ const IMPORTED_TABLES: &[&str] = &[
 /// checks: a table added to the schema and forgotten in both would survive a
 /// `--replace` silently.
 #[cfg(test)]
-const PRESERVED_TABLES: &[&str] = &["account", "recurring_txn"];
+const PRESERVED_TABLES: &[&str] = &["account", "recurring_txn", "holding", "fund_mix"];
 
 /// Whether this database already holds imported data.
 ///
@@ -571,6 +578,46 @@ mod tests {
         )
         .unwrap();
         setting::set(&db, setting::Key::<i64>::new("k"), 1).unwrap();
+        let retirement = account::insert(
+            &db,
+            "RET",
+            "Long Haul",
+            account::Kind::Investment,
+            1,
+            Some(account::TaxTreatment::Taxable),
+        )
+        .unwrap();
+        holding::insert(
+            &db,
+            retirement,
+            "USM",
+            crate::money::Cents::from_dollars(500),
+        )
+        .unwrap();
+        fund_mix::set_for_ticker(
+            &db,
+            "USM",
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            &[fund_mix::Slice {
+                class: fund_mix::AssetClass::UsStock,
+                weight: crate::rate::BasisPoints(10_000),
+            }],
+        )
+        .unwrap();
+
+        // Every table this test seeds a row in beforehand, so a table
+        // dropped from both lists here would still be caught: a count that
+        // was never nonzero to start with would pass the "kept" assertion
+        // below for free.
+        let mut preserved_before: Vec<i64> = Vec::new();
+        for table in PRESERVED_TABLES {
+            let count: i64 = db
+                .conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap();
+            assert!(count > 0, "{table} was not seeded before the clear");
+            preserved_before.push(count);
+        }
 
         clear_imported_data(&db).unwrap();
 
@@ -581,12 +628,12 @@ mod tests {
                 .unwrap();
             assert_eq!(remaining, 0, "{table} was not cleared");
         }
-        for table in PRESERVED_TABLES {
+        for (table, before) in PRESERVED_TABLES.iter().zip(preserved_before) {
             let remaining: i64 = db
                 .conn
                 .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
                 .unwrap();
-            assert_eq!(remaining, 1, "{table} was cleared");
+            assert_eq!(remaining, before, "{table} was cleared");
         }
     }
 
