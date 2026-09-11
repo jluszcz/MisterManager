@@ -745,7 +745,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     says what `Teal` looks like, not which account this is.
   - **The status line is deliberately uncolored.** It is transient prose rather than a place a
     reader looks to identify an account.
-  - **Sixteen account displays are outside this guarantee, and this is the entire list**, checked
+  - **Eighteen account displays are outside this guarantee, and this is the entire list**, checked
     by grepping every `crate::demo::text` call site in the crate and reading each one for what it
     draws. None of them goes through `Account`, so none carries its color — a picker column with
     nowhere to put a tint, a form field that is a `Field`'s buffer like any other, a row tinted by
@@ -827,6 +827,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     - **The Funds delete confirmation's label**, in `app/funds.rs`'s `open_delete_holding`: the
       holding's account is named beside its ticker and balance, masked through `demo::text` into
       the confirmation's prose, the same reasoning as the reconcile line above.
+    - **`holding::insert`'s two refusals**, in `src/db/holding.rs`: an account that is not an
+      investment one cannot hold a fund, and a ticker the account already holds is a typo. Both
+      name the account on the Funds screen's status line verbatim, masked on the line that reads
+      it.
+    - **`holding::update`'s two refusals**, in the same file: the same pair reached from a move,
+      where the destination is the account named.
   - **`as_str` is the escape for text, and it is pinned.** `AccountName::as_str` serves the uses
     that are not displays — a description prefill, a search filter folding case, a form seeding
     its editable field — and `nothing_that_draws_an_account_reads_its_name_as_bare_text` lists
@@ -842,7 +848,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     names accounts in `diagnose`'s prose and carries the name and the color apart on
     `Wiring`'s `Container` and the `Row::Transfer` beside it; and `src/db/`, whose own refusals —
     `account::checking`'s ambiguous Checking band, `account::insert`'s duplicate code,
-    `account::set_tax_treatment`'s wrong kind — are drawn
+    `account::set_tax_treatment`'s wrong kind, and `holding`'s wrong-kind and duplicate-ticker
+    pair on both of its writers — are drawn
     verbatim by the Planning screen or the status line, so a name read there reaches a viewer with
     no color and, unless it is masked on the line that reads it, no pseudonym either. Entries are
     keyed by the path below `src/`, since `tui/ledger.rs` and `report/html/ledger.rs` are two

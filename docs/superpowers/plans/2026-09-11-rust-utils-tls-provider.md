@@ -17,7 +17,7 @@ feature offers ring; reqwest drops its default features so it pins no provider o
 MisterManager repository — the "Dependency: `jluszcz_rust_utils`" section. This plan is the
 upstream half of it and lands in a different repository.
 
-**Repository:** `/Users/jacob/Documents/Programs/rust-utils` — **not** MisterManager. Every path in
+**Repository:** the `rust-utils` checkout — **not** MisterManager. Every path in
 this plan is relative to that checkout.
 
 ## Global Constraints
@@ -379,7 +379,7 @@ Constraint held.
   nothing is verifiable until the change is on `main`).
 - Produces: a verified claim that no consumer needs an edit.
 
-**The five consumers**, all under `/Users/jacob/Documents/Programs/`:
+**The five consumers**, all checked out beside it:
 
 | Repository | Features | Expected effect |
 |---|---|---|

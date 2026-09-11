@@ -100,16 +100,32 @@ untracked file at run time instead of restating them. A test that needs to *name
 workbook resolves it structurally instead: through the `setting` key that records the id, or
 through a property such as "some goal names repeat" rather than the two names that do.
 
-Invented fixtures use one vocabulary, so a new test copies it rather than inventing a second scheme:
+Invented fixtures draw on one vocabulary, so a new test copies it rather than inventing a second
+scheme. Accounts are named by code, per kind:
 
 | Kind | Codes | Names |
 |---|---|---|
 | Cash | `CHK`, `SAV`, `BKR`, `NST` | `Everyday`, `Rainy Day`, `Brokerage`, `Nest Egg` |
 | Credit | `CC1`, `CC2`, `CC3`, and `CHK` again | `Card One`, `Card Two`, `Card Three`, `Everyday Card` |
+| Investment | `BRK`, `RET`, `ROTH`, `HSA` | `Holdings`, `Long Haul`, `Untaxed Pot`, `Health Pot` |
 
-**The table is code, in `src/test_support::{cash, credit}`**, so a fixture takes a code and gets the
-name rather than restating the pairing — and a code outside it panics rather than being quietly
-named something new. Those builders, `day`, and `walk_until!` are the whole of what `mod tests`
+A fund is named the same way, by ticker rather than by account code, and the two never share a
+codespace:
+
+| Ticker | Fund name |
+|---|---|
+| `TDF45`, `TDF35` | `Target 2045 Fund`, `Target 2035 Fund` |
+| `USM`, `ISM` | `Total Market Index Fund`, `International Stock Index Fund` |
+| `USB`, `ISB` | `Total Bond Index Fund`, `International Bond Index Fund` |
+| `UNC` | `Overseas Growth Fund` |
+
+`UNC` earns its row: `Overseas` is a near miss for the vocabulary a classifier would read as
+international, so it is the fixture that pins an unrecognised name landing in a visible bucket
+rather than a plausible one.
+
+**Both tables are code, in `src/test_support::{cash, credit, investment, fund_name}`**, so a
+fixture takes a code and gets the name rather than restating the pairing — and a code outside
+either panics rather than being quietly named something new. Those builders, `day`, and `walk_until!` are the whole of what `mod tests`
 blocks share: what a module *chose* stays in the module, which is why each `today()` is still
 local, naming the day that module's schedules and deadlines turn on.
 
