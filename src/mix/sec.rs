@@ -149,6 +149,11 @@ fn browse_edgar_url(series_id: &str) -> String {
 
 /// The feed's one `<filing-href>`. `count=1` in the query string already
 /// narrowed the feed to a single entry, so nothing else in it is read.
+///
+/// Trimmed before it is handed back: an untrimmed trailing newline would
+/// ride into [`latest_filing`]'s `rsplit_once('/')` and turn a clean
+/// directory into a malformed second request rather than an error naming
+/// what was wrong.
 fn extract_filing_href(atom: &str) -> Result<String> {
     let mut reader = Reader::from_reader(atom.as_bytes());
     let mut pending = false;
@@ -158,7 +163,8 @@ fn extract_filing_href(atom: &str) -> Result<String> {
             Event::Start(e) if e.local_name().as_ref() == b"filing-href" => pending = true,
             Event::End(e) if e.local_name().as_ref() == b"filing-href" => pending = false,
             Event::Text(e) if pending => {
-                return Ok(unescape(&e.decode()?)?.into_owned());
+                let href = unescape(&e.decode()?)?.into_owned();
+                return Ok(href.trim().to_string());
             }
             _ => {}
         }
@@ -232,6 +238,59 @@ enum Field {
     InvCountry,
 }
 
+/// A holding as it is read out of one `<invstOrSec>`.
+///
+/// `pct_val` is the one field with no sensible default: every other scalar
+/// stands in for the filing having simply not said something, but a missing
+/// weight is not "zero" the way a missing title is "no title" --
+/// `classify`'s remainder step (`weights[largest] += 10_000 - total`) dumps
+/// whatever a filing under-reports onto its largest slice, so a holding read
+/// as `0.0` here does not shrink the mix, it silently becomes points of
+/// whatever class happens to be biggest. `Option` is what keeps that
+/// distinguishable from an honestly-reported zero for as long as it can be.
+struct PendingHolding {
+    name: String,
+    title: String,
+    cusip: String,
+    pct_val: Option<f64>,
+    asset_cat: String,
+    inv_country: String,
+}
+
+impl PendingHolding {
+    fn new() -> Self {
+        Self {
+            name: String::new(),
+            title: String::new(),
+            cusip: String::new(),
+            pct_val: None,
+            asset_cat: String::new(),
+            inv_country: String::new(),
+        }
+    }
+
+    /// `ordinal` is this holding's 1-based position among the filing's
+    /// holdings, read so far -- a filing can list thousands, and "some
+    /// holding somewhere has no pctVal" is not an error a reader can act on.
+    fn finish(self, ordinal: usize) -> Result<RawHolding> {
+        let pct_val = self.pct_val.ok_or_else(|| {
+            anyhow!(
+                "invstOrSec #{ordinal} ({:?}, cusip {:?}) carries no pctVal",
+                self.name,
+                self.cusip
+            )
+        })?;
+        Ok(RawHolding {
+            name: self.name,
+            title: self.title,
+            cusip: self.cusip,
+            pct_val,
+            asset_cat: self.asset_cat,
+            inv_country: self.inv_country,
+        })
+    }
+}
+
 /// Turns a filing's raw XML into a [`Filing`]. Streamed with
 /// [`quick_xml::Reader`] rather than parsed into a tree: a 3.2-20.6 MB
 /// filing is normal, and materializing one as a DOM before reading it back
@@ -245,8 +304,8 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
 
     let mut report_date: Option<String> = None;
     let mut in_gen_info = false;
-    let mut current: Option<RawHolding> = None;
-    let mut holdings = Vec::new();
+    let mut current: Option<PendingHolding> = None;
+    let mut holdings: Vec<RawHolding> = Vec::new();
     let mut pending: Option<Field> = None;
 
     loop {
@@ -255,16 +314,7 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
             Event::Start(e) => match e.local_name().as_ref() {
                 b"genInfo" => in_gen_info = true,
                 b"repPdDate" if in_gen_info => pending = Some(Field::ReportDate),
-                b"invstOrSec" => {
-                    current = Some(RawHolding {
-                        name: String::new(),
-                        title: String::new(),
-                        cusip: String::new(),
-                        pct_val: 0.0,
-                        asset_cat: String::new(),
-                        inv_country: String::new(),
-                    });
-                }
+                b"invstOrSec" => current = Some(PendingHolding::new()),
                 b"name" if current.is_some() => pending = Some(Field::Name),
                 b"title" if current.is_some() => pending = Some(Field::Title),
                 b"cusip" if current.is_some() => pending = Some(Field::Cusip),
@@ -277,38 +327,44 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
             // closed in this one step -- there is no `Text` event coming to
             // fill `pending`, and setting it anyway would let the next
             // sibling's inter-element whitespace fill this field instead.
+            // `<invstOrSec/>` is routed through the same `finish` a normal
+            // close uses rather than materialized directly: it carries no
+            // `pctVal` either, so it is the same error rather than a
+            // zero-weight row that quietly inflates `holdings.len()` --
+            // which is the fund-of-funds/direct-fund fork's only input.
             Event::Empty(e) => {
                 if e.local_name().as_ref() == b"invstOrSec" {
-                    holdings.push(RawHolding {
-                        name: String::new(),
-                        title: String::new(),
-                        cusip: String::new(),
-                        pct_val: 0.0,
-                        asset_cat: String::new(),
-                        inv_country: String::new(),
-                    });
+                    holdings.push(PendingHolding::new().finish(holdings.len() + 1)?);
                 }
             }
             Event::Text(e) => {
                 if let Some(field) = pending.take() {
                     let text = unescape(&e.decode()?)?.into_owned();
+                    // Trimmed once, here, for every field alike: a filer
+                    // whose generator pretty-prints leaf content --
+                    // `<invCountry>\n  US\n</invCountry>` -- must not send a
+                    // holding to the wrong class (or the wrong number
+                    // format) with no error anywhere.
+                    let text = text.trim();
                     // `current` is set on every `Start` that also sets
                     // `pending` to a holding field, so it is always present
                     // here; `ReportDate` is the one variant that does not
                     // touch it.
                     match field {
-                        Field::ReportDate => report_date = Some(text),
-                        Field::Name => current.as_mut().unwrap().name = text,
-                        Field::Title => current.as_mut().unwrap().title = text,
-                        Field::Cusip => current.as_mut().unwrap().cusip = text,
+                        Field::ReportDate => report_date = Some(text.to_string()),
+                        Field::Name => current.as_mut().unwrap().name = text.to_string(),
+                        Field::Title => current.as_mut().unwrap().title = text.to_string(),
+                        Field::Cusip => current.as_mut().unwrap().cusip = text.to_string(),
                         Field::PctVal => {
-                            current.as_mut().unwrap().pct_val = text
-                                .trim()
-                                .parse()
-                                .with_context(|| format!("pctVal {text:?} is not a number"))?;
+                            current.as_mut().unwrap().pct_val = Some(
+                                text.parse()
+                                    .with_context(|| format!("pctVal {text:?} is not a number"))?,
+                            );
                         }
-                        Field::AssetCat => current.as_mut().unwrap().asset_cat = text,
-                        Field::InvCountry => current.as_mut().unwrap().inv_country = text,
+                        Field::AssetCat => current.as_mut().unwrap().asset_cat = text.to_string(),
+                        Field::InvCountry => {
+                            current.as_mut().unwrap().inv_country = text.to_string();
+                        }
                     }
                 }
             }
@@ -317,7 +373,7 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
                     b"genInfo" => in_gen_info = false,
                     b"invstOrSec" => {
                         if let Some(holding) = current.take() {
-                            holdings.push(holding);
+                            holdings.push(holding.finish(holdings.len() + 1)?);
                         }
                     }
                     _ => {}
@@ -378,6 +434,12 @@ mod tests {
 
         assert_eq!(filing.holdings.len(), 30);
         assert!(filing.holdings.iter().any(|h| h.inv_country != "US"));
+        // The fixture's `<title></title>` is open-and-close with no text
+        // in between -- the exact shape that once left `pending` stuck on
+        // `Field::Title` long enough for the whitespace before the next
+        // sibling to fill it. Reverting that fix turns this whitespace,
+        // never empty.
+        assert!(filing.holdings[0].title.is_empty());
     }
 
     #[test]
@@ -387,6 +449,90 @@ mod tests {
             err.to_string().contains("repPdDate"),
             "the error does not name the missing element: {err}"
         );
+    }
+
+    /// `classify`'s remainder step dumps whatever a filing under-reports
+    /// onto its largest slice, so a holding silently read as `0.0` does not
+    /// shrink the mix -- it becomes points of whatever class is biggest.
+    /// This is the "absent entirely" shape: no `<pctVal>` at all.
+    #[test]
+    fn a_holding_with_no_percentage_element_is_an_error_naming_the_holding() {
+        let xml = br#"<edgarSubmission><formData>
+            <genInfo><repPdDate>2026-06-30</repPdDate></genInfo>
+            <invstOrSecs>
+                <invstOrSec>
+                    <name>Some Fund</name>
+                    <cusip>000000005</cusip>
+                </invstOrSec>
+            </invstOrSecs>
+        </formData></edgarSubmission>"#;
+
+        let err = parse_filing(xml).unwrap_err();
+        assert!(err.to_string().contains("pctVal"), "{err}");
+        assert!(err.to_string().contains("Some Fund"), "{err}");
+    }
+
+    /// The "open and closed with no text" shape -- `<pctVal></pctVal>` --
+    /// which emits no `Text` event at all and so must not read as `0.0`
+    /// either.
+    #[test]
+    fn a_holding_with_an_empty_percentage_element_is_an_error() {
+        let xml = br#"<edgarSubmission><formData>
+            <genInfo><repPdDate>2026-06-30</repPdDate></genInfo>
+            <invstOrSecs>
+                <invstOrSec>
+                    <name>Some Fund</name>
+                    <pctVal></pctVal>
+                </invstOrSec>
+            </invstOrSecs>
+        </formData></edgarSubmission>"#;
+
+        let err = parse_filing(xml).unwrap_err();
+        assert!(err.to_string().contains("pctVal"), "{err}");
+    }
+
+    /// The third shape a missing weight can take: the holding element
+    /// itself is self-closing, which must not silently materialize a
+    /// zero-weight row that inflates `holdings.len()` -- the fund-of-funds
+    /// versus direct-fund fork's only input.
+    #[test]
+    fn a_self_closing_holding_element_is_an_error_rather_than_a_phantom_row() {
+        let xml = br#"<edgarSubmission><formData>
+            <genInfo><repPdDate>2026-06-30</repPdDate></genInfo>
+            <invstOrSecs>
+                <invstOrSec/>
+            </invstOrSecs>
+        </formData></edgarSubmission>"#;
+
+        let err = parse_filing(xml).unwrap_err();
+        assert!(err.to_string().contains("pctVal"), "{err}");
+    }
+
+    /// A filer whose generator pretty-prints leaf content --
+    /// `<invCountry>\n  US\n</invCountry>` -- must not send a holding to
+    /// the wrong class because of surrounding whitespace `classify`'s exact
+    /// string matches never tolerate.
+    #[test]
+    fn a_holdings_category_and_country_are_trimmed_before_they_are_stored() {
+        let xml = br#"<edgarSubmission><formData>
+            <genInfo><repPdDate>2026-06-30</repPdDate></genInfo>
+            <invstOrSecs>
+                <invstOrSec>
+                    <name>Some Fund</name>
+                    <pctVal>100.0</pctVal>
+                    <assetCat>
+                        EC
+                    </assetCat>
+                    <invCountry>
+                        US
+                    </invCountry>
+                </invstOrSec>
+            </invstOrSecs>
+        </formData></edgarSubmission>"#;
+
+        let filing = parse_filing(xml).unwrap();
+        assert_eq!(filing.holdings[0].asset_cat, "EC");
+        assert_eq!(filing.holdings[0].inv_country, "US");
     }
 
     /// The marker text is what tells SEC's own throttle apart from a 403
@@ -407,5 +553,91 @@ mod tests {
     fn a_plain_403_is_not_mistaken_for_a_throttle() {
         let error = anyhow!("HTTP 403 from https://www.sec.gov/foo: Forbidden");
         assert!(!is_sec_throttle(&error));
+    }
+
+    /// `company_tickers_mf.json`'s rows are positional against `fields`,
+    /// not fixed -- this fixture deliberately spells them in a different
+    /// order than the brief's own example, which is what a test pinning
+    /// "resolved by name" has to do to actually distinguish it from
+    /// "resolved by position and it happened to still work."
+    #[test]
+    fn parse_ticker_file_resolves_columns_by_field_name_rather_than_position() {
+        let body = r#"{
+            "fields": ["symbol", "cik", "classId", "seriesId"],
+            "data": [["USM", 1, "C000000001", "S000000002"]]
+        }"#;
+
+        let resolved = parse_ticker_file(body, &["USM".to_string()]).unwrap();
+
+        assert_eq!(resolved.get("USM"), Some(&"S000000002".to_string()));
+    }
+
+    /// Thirty thousand-odd rows and a caller wanting a handful: only the
+    /// requested tickers may survive into the map.
+    #[test]
+    fn parse_ticker_file_keeps_only_rows_matching_a_requested_ticker() {
+        let body = r#"{
+            "fields": ["cik", "seriesId", "classId", "symbol"],
+            "data": [
+                [1, "S000000001", "C000000001", "TDF45"],
+                [2, "S000000002", "C000000002", "USM"]
+            ]
+        }"#;
+
+        let resolved = parse_ticker_file(body, &["USM".to_string()]).unwrap();
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved.get("USM"), Some(&"S000000002".to_string()));
+        assert!(!resolved.contains_key("TDF45"));
+    }
+
+    /// The one fact this whole hop exists to get right: the series id, not
+    /// the fund's own CIK, is what goes in the `CIK` slot.
+    #[test]
+    fn browse_edgar_url_puts_the_series_id_in_the_cik_slot() {
+        let url = browse_edgar_url("S000000001");
+
+        assert_eq!(
+            url,
+            "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=S000000001\
+             &type=NPORT-P&count=1&output=atom"
+        );
+    }
+
+    #[test]
+    fn extract_filing_href_reads_the_feeds_one_entry() {
+        let atom = "<feed><entry><filing-href>\
+             https://www.sec.gov/Archives/edgar/data/1/000000000001-index.htm\
+             </filing-href></entry></feed>";
+
+        let href = extract_filing_href(atom).unwrap();
+
+        assert_eq!(
+            href,
+            "https://www.sec.gov/Archives/edgar/data/1/000000000001-index.htm"
+        );
+    }
+
+    /// An untrimmed href would ride its surrounding whitespace into
+    /// `latest_filing`'s `rsplit_once('/')` and turn a clean directory into
+    /// a malformed second request.
+    #[test]
+    fn extract_filing_href_trims_surrounding_whitespace() {
+        let atom = "<feed><entry><filing-href>\n  \
+             https://www.sec.gov/Archives/edgar/data/1/x-index.htm\n  \
+             </filing-href></entry></feed>";
+
+        let href = extract_filing_href(atom).unwrap();
+
+        assert_eq!(
+            href,
+            "https://www.sec.gov/Archives/edgar/data/1/x-index.htm"
+        );
+    }
+
+    #[test]
+    fn extract_filing_href_errors_when_the_feed_carries_no_filing_href() {
+        let err = extract_filing_href("<feed><entry></entry></feed>").unwrap_err();
+        assert!(err.to_string().contains("filing-href"));
     }
 }
