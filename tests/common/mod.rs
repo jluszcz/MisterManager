@@ -167,6 +167,23 @@ pub fn sheet_cents(
         .unwrap_or(mistermanager::money::Cents::ZERO)
 }
 
+/// A cell as `BasisPoints`, panicking when the sheet carries no rate there.
+///
+/// Unlike `sheet_cents`, there is no sensible default: the equity-split test
+/// divides by two such cells, and defaulting a missing one to zero would
+/// silently change the ratio under test rather than fail loudly the way a
+/// sheet whose shape had moved should.
+pub fn sheet_bp(
+    range: &import::SheetRange,
+    row: usize,
+    col: usize,
+) -> mistermanager::rate::BasisPoints {
+    range
+        .get((row, col))
+        .and_then(import::cell::as_rate_bp)
+        .unwrap_or_else(|| panic!("no rate at row {row}, col {col}"))
+}
+
 /// Whether the sheet's `Overview!E2` is a day the app would quote at all.
 ///
 /// The ad-hoc date is the first paycheck eve strictly *after* today, so on the

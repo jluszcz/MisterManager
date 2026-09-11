@@ -10,7 +10,7 @@ reachable only under `--features import` — including its `mod tests`, and ever
 `tests/`, which carry `#![cfg(feature = "import")]` for the same reason.
 
 The whole import runs inside one SQL transaction opened by `import_all`, in dependency order:
-`Constants` (accounts and settings) → `Planning` (settings, the bill table and the fund table) → the ledgers →
+`Constants` (accounts and settings) → `Planning` (settings and the bill table) → the ledgers →
 `Savings`. A failure partway through — an unknown account code, half a bill row — leaves the
 database exactly as it was, not half-populated. Nothing here may call `Db::transaction` again; it
 is not reentrant.
@@ -113,7 +113,7 @@ That contiguity cuts the other way too: **half a bucket row is a hard error, not
 scan has already ended at the first blank name, so a *named* row with a blank `J` or `K` is a bucket
 with a missing figure rather than a heading or a footer. Dropping it would leave its balance out of
 the container's allocations and make the unallocated remainder wrong by that much — the way half a
-bill and half a fund are errors. The goal block cannot be strict for the same reason it is scanned
+bill is an error. The goal block cannot be strict for the same reason it is scanned
 differently: text in `A` with nothing beside it is a heading or a stray note there, and nothing
 distinguishes that from a goal with a blank cell.
 
@@ -149,7 +149,7 @@ group carry recurring-goal months two years ahead of their goal dates.
 | `E24` | `key::GOALS_FLOOR` |
 | `F25:F27` | the split percentages — refused by `plan::check_splits` if any is outside `0..=100` or the three total over 100% |
 | `C7:D12` | the `bill` table — `C7:C8` Housing, `C9:C12` Other |
-| `I2:M<n>` | the `fund` table — `I` name, `J` the cached target percentage, `M` the value |
+| `J3:J4` | `key::INTL_EQUITY_SHARE` — the international target as a share of `J3 + J4`, not either cell on its own |
 
 `C6` is the housing *subtotal*, not a bill. It is recomputed by `calc::planning`, not read, or the
 housing figure would be counted twice.
@@ -159,34 +159,11 @@ means a bill has been dropped, which inflates the excess the waterfall has left 
 skews every downstream transfer instruction. Blank in both columns is just the end of the block.
 Labels are indented in the sheet (`"  Mortgage"`); `cell::as_text` trims.
 
-**The fund block's kind comes from the value, not the formula.** `calamine` hands back cached
-values, and parsing `(DATEDIF(Dates[Birth Date],Dates[Today],"y")-30)/100` would be brittle. So the
-first row is the age row when its cached `J` matches `(age − 30)/100` to within a basis point, and
-every other row is a share of what that row leaves — `J / (1 − age target)`, rounded to the nearest
-basis point, which recovers `0.36/0.90` as exactly 40%. The age used is the one the
-*sheet* computed with: the birth date against `Constants!J2`, not against the day the import runs,
-because `J` is what Excel cached on that date. `K` and `L` are never read — they are derived, and
-recomputing them is what the screen is for.
-
-**The block is bounded by `I` *and* `J` together, not `M`.** The real sheet follows its last fund
-with a totals row (`M5`) that leaves `I5` and `J5` both blank beside a real `M`. Pairing the
-end-of-block check with `M` the way a bill row pairs label and amount would misread that row as a
-fund with a dropped name and refuse the whole import — but bounding on the name column alone gives
-up too much: a genuine fund that lost its name would still carry its `J` formula, and reading a
-blank name alone as the end of the block would let that row vanish silently and shrink the
-portfolio, exactly the failure half-a-row errors exist to catch. So blank `I` *and* blank `J`
-together is the sheet's own total, and ends the scan; blank `I` with `J` still present is a fund
-with a dropped label, and is a hard error naming the row. A *named* row with no value is still a
-hard error too, for the bill's reason in miniature: a dropped fund shrinks the portfolio and moves
-every percentage beside it. A share row with a zero remainder is an error too — its share is
-undefined. A missing block is silently zero rows.
-
-The margin below the block is one blank row. `I6`/`J6` carry an interest-posting label and amount
-(`Planning!I6:K9`), and `J11` is `key::PLANNING_BUFFER` — the same two columns the scan reads. Row
-5's blank `I` and `J` are what end the scan before it reaches them; if another fund ever landed
-where the totals row sits, the scan would keep going into `I6`, and the failure would surface as the
-loud, transactional `"half a fund: … has no value"` rather than a silent misread — the right
-failure, but the margin that produces it is exactly one row.
+**`J3` and `J4` are the two equity targets as shares of the whole portfolio, and only their ratio
+is stored.** The bond target moves with a birthday — see `Constants!K2` above — so a value cached
+beside it would go stale the next time it did; storing `J3 / (J3 + J4)` under one key sidesteps
+that rather than tracking two cells that could drift apart, the same reason only `Constants!G2` is
+imported for the pay cadence while `H2` is merely asserted against it.
 
 ## Goal matching happens here, once
 

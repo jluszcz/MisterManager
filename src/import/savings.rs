@@ -181,7 +181,7 @@ struct BucketRow {
 /// row is a bucket with a missing figure rather than a heading or a footer.
 /// Skipping it would drop the bucket's balance from the container's
 /// allocations and leave the unallocated remainder wrong by that much -- the
-/// way half a bill and half a fund are errors rather than skips.
+/// way half a bill is an error rather than a skip.
 fn bucket_rows(range: &SheetRange) -> Result<Vec<BucketRow>> {
     let at = |row: usize, col: usize| cell::at(range, row, col);
     let mut rows = Vec::new();
@@ -423,8 +423,7 @@ mod tests {
     /// already stopped at the first blank name, so it cannot be a heading or
     /// a footer. Dropping it would leave its balance out of the container's
     /// allocations and make the unallocated remainder wrong by that much, so
-    /// half a row is an error rather than a skip -- the way half a bill and
-    /// half a fund are.
+    /// half a row is an error rather than a skip -- the way half a bill is.
     #[test]
     fn a_bucket_row_missing_an_amount_is_an_error() {
         let range: SheetRange = Range::from_sparse(vec![

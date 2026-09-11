@@ -1,10 +1,9 @@
 pub mod cell;
 pub mod constants;
-pub mod fund;
 pub mod ledger;
 pub mod savings;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use calamine::{Range, Reader, Xlsx, open_workbook};
 use std::fs::File;
 use std::io::BufReader;
@@ -36,6 +35,7 @@ use crate::db::account;
 use crate::db::setting::key;
 use crate::db::{self, AccountId, Db, bill, setting};
 use crate::default_source::Source;
+use crate::rate::BasisPoints;
 use chrono::NaiveDate;
 
 /// What a run of [`import_all`] did.
@@ -63,18 +63,6 @@ pub enum Report {
 pub struct Full {
     pub ledger: ledger::Imported,
     pub savings: savings::Imported,
-    /// Fund rows read from `Planning!I2:M<n>`. Zero for a workbook without
-    /// the block, which is not an error -- the screen simply starts empty.
-    pub funds: usize,
-    /// Set when the fund block held rows but no birth date was on record, so
-    /// every row -- including what would otherwise be the age-tracking bond
-    /// row -- was stored as a `RemainderShare` with its cached percentage
-    /// frozen permanently, per `import::fund::targets_frozen`. That
-    /// collapse is otherwise invisible: it leaves every row with a resolved
-    /// target, so the Funds screen's birth-date prompt can never open for
-    /// this data. Reported so the owner can set the birth date and
-    /// re-import with `--replace`, or fix the row's kind by hand with `E`.
-    pub fund_targets_frozen: bool,
 }
 
 /// Import, in dependency order: accounts and settings, then the ledgers, then
@@ -128,17 +116,12 @@ pub fn import_all(db: &Db, path: &Path, today: NaiveDate, replace: bool) -> Resu
         };
         savings::set_containers(db, &containers)?;
 
-        let (funds, fund_targets_frozen) = planning(db, &mut sheets, today)?;
+        planning(db, &mut sheets)?;
 
         let ledger = ledger::import(db, &mut sheets)?;
         let savings = savings::import(db, &mut sheets, today, &containers)?;
 
-        Ok(Report::Full(Full {
-            ledger,
-            savings,
-            funds,
-            fund_targets_frozen,
-        }))
+        Ok(Report::Full(Full { ledger, savings }))
     })
 }
 
@@ -173,14 +156,9 @@ fn set_default_sources(db: &Db, defaults: &[(Source, AccountId)]) -> Result<()> 
     Ok(())
 }
 
-/// Sheet `Planning` -> settings, the `bill` table, and the `fund` table. Cell
-/// references are in the comments so the mapping can be checked against the
-/// workbook.
-///
-/// `today` reaches only the fund block, and only as a fallback: the cached
-/// `J` percentages were computed against `Constants!J2`, so that is the date
-/// the classifying age is derived at wherever the sheet carries one.
-fn planning(db: &Db, sheets: &mut Sheets, today: NaiveDate) -> Result<(usize, bool)> {
+/// Sheet `Planning` -> settings and the `bill` table. Cell references are in
+/// the comments so the mapping can be checked against the workbook.
+fn planning(db: &Db, sheets: &mut Sheets) -> Result<()> {
     let range = sheet(sheets, "Planning")?;
     let at = |row: usize, col: usize| cell::at(&range, row, col);
     let cents = |row: usize, col: usize| cell::as_cents(&at(row, col));
@@ -259,11 +237,17 @@ fn planning(db: &Db, sheets: &mut Sheets, today: NaiveDate) -> Result<(usize, bo
     // is measured against rather than one the waterfall divides.
     crate::plan::check_pinned_excess(db)?;
 
-    // `Constants` has already run, so the birth date is on record if the
-    // sheet carries one.
-    let quoted_at = setting::get(db, key::WORKBOOK_TODAY)?.unwrap_or(today);
-    let age = setting::get(db, key::BIRTH_DATE)?
-        .map(|birth| crate::calc::fund::whole_years(birth, quoted_at));
-    let count = fund::import(db, &range, age)?;
-    Ok((count, fund::targets_frozen(count, age)))
+    // The sheet carries both equity targets as shares of the whole
+    // portfolio. What is stored is the split between them, because the bond
+    // target moves with a birthday and these two would go stale beside it.
+    let intl = cell::as_rate_bp(&at(2, 9)).context("Planning!J3 is not a rate")?;
+    let us = cell::as_rate_bp(&at(3, 9)).context("Planning!J4 is not a rate")?;
+    let equity = intl.0 + us.0;
+    ensure!(equity > 0, "Planning!J3:J4 leave no equity to split");
+    setting::set(
+        db,
+        key::INTL_EQUITY_SHARE,
+        BasisPoints(intl.0 * 10_000 / equity),
+    )?;
+    Ok(())
 }

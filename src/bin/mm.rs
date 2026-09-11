@@ -293,18 +293,6 @@ fn print_full(report: &import::Full) {
         "imported {} goals, {} buckets, {} recurring goals",
         report.savings.goals, report.savings.buckets, report.savings.recurring_goals
     );
-    println!("imported {} fund rows", report.funds);
-    // No birth date on record leaves every fund row a frozen RemainderShare
-    // -- including what would otherwise track age -- and the Funds screen's
-    // birth-date prompt can never open for that data, so the collapse would
-    // otherwise be invisible.
-    if report.fund_targets_frozen {
-        eprintln!(
-            "no birth date on record: every fund row was stored as a fixed share, \
-             including what would otherwise track age -- set the birth date and \
-             re-import with --replace, or fix the row's kind on the Funds screen with E"
-        );
-    }
     for line in &report.ledger.skipped {
         eprintln!("skipped: {line}");
     }

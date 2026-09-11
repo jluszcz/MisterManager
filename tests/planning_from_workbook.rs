@@ -11,12 +11,13 @@ use mistermanager::db::{goal, txn};
 use mistermanager::gate::Gate;
 use mistermanager::money::Cents;
 use mistermanager::plan_line::Line;
+use mistermanager::rate::BasisPoints;
 use mistermanager::{db, import, plan, projection, transfer};
 use std::path::Path;
 
 mod common;
 
-use common::{sheet_cents, workbook};
+use common::{sheet_bp, sheet_cents, workbook};
 
 /// The date the waterfall quotes the checking balance at: the day before the
 /// next paycheck, the same figure the workbook's own `Overview!E2` held.
@@ -223,6 +224,30 @@ fn every_planning_constant_comes_from_the_sheet() {
             .unwrap_or_else(|| panic!("{setting_key} was never imported"));
         assert_eq!(got, sheet_pct(row), "{cell}");
     }
+}
+
+/// The stored split is the ratio of the two cells, not either cell.
+///
+/// Asserted against both, which is what would catch a sheet where the pair has
+/// come apart — the same guard `import_constants` keeps over `G2` and `H2`.
+#[test]
+fn the_stored_equity_split_is_the_ratio_of_the_sheets_two_equity_targets() {
+    let Some(path) = workbook() else { return };
+    let db = db::open_in_memory().unwrap();
+    let mut sheets = import::open(&path).unwrap();
+    let today = NaiveDate::from_ymd_opt(2026, 8, 14).unwrap();
+    if import_all(&db, &path, today).is_none() {
+        return;
+    }
+
+    let planning = import::sheet(&mut sheets, "Planning").unwrap();
+    let intl = sheet_bp(&planning, 2, 9);
+    let us = sheet_bp(&planning, 3, 9);
+    let stored = mistermanager::db::setting::get(&db, key::INTL_EQUITY_SHARE)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(stored, BasisPoints(intl.0 * 10_000 / (intl.0 + us.0)));
 }
 
 /// The importer must be deterministic: run against two independent, freshly
