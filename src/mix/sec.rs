@@ -434,12 +434,56 @@ mod tests {
 
         assert_eq!(filing.holdings.len(), 30);
         assert!(filing.holdings.iter().any(|h| h.inv_country != "US"));
-        // The fixture's `<title></title>` is open-and-close with no text
-        // in between -- the exact shape that once left `pending` stuck on
-        // `Field::Title` long enough for the whitespace before the next
-        // sibling to fill it. Reverting that fix turns this whitespace,
-        // never empty.
+        // The fixture's `<title></title>` carries no separate title, same
+        // as a real security with none. This is what a real filing looks
+        // like, not a regression guard -- see
+        // `stray_text_between_elements_is_never_assigned_to_the_wrong_leaf`
+        // below for the test that actually distinguishes the fixed parser
+        // from the broken one: real filings carry no stray text, so
+        // whitespace here trims to the same empty string either way.
         assert!(filing.holdings[0].title.is_empty());
+    }
+
+    /// The two shapes of "character data belongs to no leaf" that the
+    /// self-review fix in `parse_filing` closed, pinned with non-whitespace
+    /// text so `trim()` cannot make a broken parser and a correct one agree
+    /// by accident -- which is exactly what happened the first time this
+    /// was pinned only with inter-element indentation.
+    ///
+    /// `<title></title>ZZZ` is an empty leaf (no `Text` event of its own)
+    /// followed by stray text before the next element: if `Event::End`
+    /// does not clear `pending`, "ZZZ" is read as `title`'s content instead
+    /// of being ignored. `<cusip/>YYY` is a self-closing leaf followed by
+    /// stray text: if `Event::Empty` sets `pending` the way `Event::Start`
+    /// does, "YYY" is read as `cusip`'s content instead of being ignored.
+    /// The two assertions are independent -- each catches only its own half
+    /// reverted, which is what proves the test pins both rather than one
+    /// masking the other.
+    #[test]
+    fn stray_text_between_elements_is_never_assigned_to_the_wrong_leaf() {
+        let xml = br#"<edgarSubmission><formData>
+            <genInfo><repPdDate>2026-06-30</repPdDate></genInfo>
+            <invstOrSecs>
+                <invstOrSec>
+                    <name>Alpha</name><title></title>ZZZ<cusip/>YYY<pctVal>100.0</pctVal>
+                    <assetCat>EC</assetCat><invCountry>US</invCountry>
+                </invstOrSec>
+            </invstOrSecs>
+        </formData></edgarSubmission>"#;
+
+        let filing = parse_filing(xml).unwrap();
+
+        assert_eq!(filing.holdings.len(), 1);
+        let holding = &filing.holdings[0];
+        assert_eq!(holding.name, "Alpha");
+        assert_eq!(
+            holding.title, "",
+            "an empty leaf's End did not clear pending"
+        );
+        assert_eq!(holding.cusip, "", "a self-closing leaf's Empty set pending");
+        assert_eq!(holding.pct_val, 100.0);
+        assert_eq!(holding.asset_cat, "EC");
+        assert_eq!(holding.inv_country, "US");
     }
 
     #[test]
