@@ -9,6 +9,7 @@ use super::*;
 use crate::db;
 use crate::db::account::Group;
 use crate::db::goal;
+use crate::db::holding;
 use crate::db::txn::NewTxn;
 use crate::gate::Gate;
 use crate::money::Cents;
@@ -311,6 +312,39 @@ pub(super) fn planning_app() -> App {
     setting::set(&db, key(Line::MomAndDad), mom_and_dad).unwrap();
     setting::set(&db, Gate::EmergencyFund.key(), emergency).unwrap();
 
+    App::new(db, today()).unwrap()
+}
+
+/// Two investment accounts and three holdings across them, from the fund
+/// vocabulary, and no `fund_mix` rows at all -- the absence is the point,
+/// since a database nobody has run the fetcher against is the state every
+/// one of them starts in.
+///
+/// Split two-and-one across the accounts, not evenly, so a test narrowing
+/// the `Tab` filter to one account sees the list actually shrink.
+pub(super) fn app_with_holdings() -> App {
+    let db = db::open_in_memory().unwrap();
+    let first = account::insert(
+        &db,
+        "BRK",
+        "Holdings",
+        Kind::Investment,
+        0,
+        Some(account::TaxTreatment::Taxable),
+    )
+    .unwrap();
+    let second = account::insert(
+        &db,
+        "RET",
+        "Long Haul",
+        Kind::Investment,
+        1,
+        Some(account::TaxTreatment::TaxFree),
+    )
+    .unwrap();
+    holding::insert(&db, first, "USM", Cents::from_dollars(10_000)).unwrap();
+    holding::insert(&db, first, "USB", Cents::from_dollars(5_000)).unwrap();
+    holding::insert(&db, second, "ISM", Cents::from_dollars(3_000)).unwrap();
     App::new(db, today()).unwrap()
 }
 

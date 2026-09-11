@@ -176,6 +176,8 @@ pub(super) enum Topic {
     LedgerSearch,
     /// `/` on the Savings screen.
     SavingsSearch,
+    /// `/` on the Funds screen.
+    FundsSearch,
     /// `/` on the Recurring Goals screen.
     RecurringGoalsSearch,
     /// `/` then a non-digit inside a worksheet.
@@ -402,9 +404,40 @@ const PLANNING: [Entry; 9] = [
     },
 ];
 
-/// Empty until the holdings model exists: the screen answers no keys of its
-/// own, so it has nothing to add to the panel.
-const FUNDS: [Entry; 0] = [];
+const FUNDS: [Entry; 7] = [
+    Entry::filter(
+        ACCOUNT_FILTER,
+        "Cycle the account filter: All, then one entry per investment account.",
+    ),
+    Entry {
+        key: "BackTab",
+        label: Label::Hidden,
+        detail: "Cycle the account filter the other way.",
+    },
+    Entry::filter(
+        CLEAR_FILTER,
+        "Clear a kept search if one is narrowing the list; otherwise return the account filter to All.",
+    ),
+    Entry::filter(
+        SEARCH_FILTER,
+        "Filter holdings by ticker or account as you type. Enter keeps the filter and leaves the box; Esc clears it.",
+    ),
+    Entry {
+        key: "a",
+        label: Label::Shared("holding"),
+        detail: "Add a holding: the account it sits in, its ticker, and the balance typed for it.",
+    },
+    Entry {
+        key: "e",
+        label: Label::Shared("holding"),
+        detail: "Edit the selected holding's account, ticker and balance.",
+    },
+    Entry {
+        key: "d",
+        label: Label::Shared("holding"),
+        detail: "Delete the selected holding. Confirms first, because the write commits immediately.",
+    },
+];
 
 /// What `e` edits, and -- on a build that has an importer -- what the import
 /// does and does not take back.
@@ -907,6 +940,7 @@ impl Topic {
             Topic::Accounts => &ACCOUNTS,
             Topic::LedgerSearch
             | Topic::SavingsSearch
+            | Topic::FundsSearch
             | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch => &SEARCH,
@@ -935,6 +969,7 @@ impl Topic {
             Topic::Accounts => "Accounts",
             Topic::LedgerSearch => "Ledger search",
             Topic::SavingsSearch => "Savings search",
+            Topic::FundsSearch => "Funds search",
             Topic::RecurringGoalsSearch => "Recurring Goals search",
             Topic::WorksheetSearch => "Worksheet search",
             Topic::DestinationSearch => "Destination search",
@@ -977,6 +1012,7 @@ impl Topic {
             | Topic::Accounts => true,
             Topic::LedgerSearch
             | Topic::SavingsSearch
+            | Topic::FundsSearch
             | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch
@@ -1007,6 +1043,7 @@ impl Topic {
             | Topic::SuggestForm
             | Topic::LedgerSearch
             | Topic::SavingsSearch
+            | Topic::FundsSearch
             | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch => true,
@@ -1046,6 +1083,7 @@ impl Topic {
             | Topic::SuggestForm
             | Topic::LedgerSearch
             | Topic::SavingsSearch
+            | Topic::FundsSearch
             | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch
@@ -1300,7 +1338,7 @@ mod tests {
 
     /// Every topic there is. `SCREENS` stays separate because only those eight
     /// join a footer.
-    const ALL: [Topic; 22] = [
+    const ALL: [Topic; 23] = [
         Topic::Overview,
         Topic::Ledger,
         Topic::Savings,
@@ -1311,6 +1349,7 @@ mod tests {
         Topic::Accounts,
         Topic::LedgerSearch,
         Topic::SavingsSearch,
+        Topic::FundsSearch,
         Topic::RecurringGoalsSearch,
         Topic::WorksheetSearch,
         Topic::DestinationSearch,
@@ -1344,10 +1383,7 @@ mod tests {
     #[test]
     fn every_topic_anywhere_has_keys_a_title_and_details() {
         for topic in ALL {
-            // Funds answers no keys until its holdings model exists.
-            if topic != Topic::Funds {
-                assert!(!topic.keys().is_empty(), "{topic:?} has no keys");
-            }
+            assert!(!topic.keys().is_empty(), "{topic:?} has no keys");
             assert!(!topic.title().is_empty(), "{topic:?} has no title");
             for entry in topic.keys() {
                 assert!(!entry.detail.is_empty(), "{:?} {:?}", topic, entry.key);
@@ -1433,16 +1469,11 @@ mod tests {
         }
     }
 
-    /// Only a modal, a search box, or a screen that answers no keys of its
-    /// own may join no footer. Funds is the one screen topic that does:
-    /// it has no keys until its holdings model exists, and an empty footer
-    /// is what that looks like.
+    /// Only a modal or a search box may join no footer -- every screen topic
+    /// answers at least one key of its own.
     #[test]
     fn every_screen_topic_joins_a_non_empty_footer() {
         for topic in SCREENS {
-            if topic == Topic::Funds {
-                continue;
-            }
             assert!(!topic.footer().is_empty(), "{topic:?}");
         }
     }
@@ -1479,6 +1510,10 @@ mod tests {
             "e edit · E/a/d bill · t transfers · f expense · Enter why · p pin · P unpin"
         );
         assert_eq!(
+            Topic::Funds.footer(),
+            "Tab acct · Esc clear · / search · a/e/d holding"
+        );
+        assert_eq!(
             Topic::RecurringTxns.footer(),
             "a add · e edit · d delete · g regen · G all · x extend · P paycheck"
         );
@@ -1487,11 +1522,6 @@ mod tests {
             "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings"
         );
         assert_eq!(Topic::Accounts.footer(), "a add · e edit");
-    }
-
-    #[test]
-    fn the_funds_footer_is_empty_because_the_screen_answers_no_keys() {
-        assert_eq!(Topic::Funds.footer(), "");
     }
 
     /// The Credit ledger shares the Ledger topic with Cash but has no `t`:

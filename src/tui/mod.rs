@@ -374,9 +374,9 @@ impl Chrome {
 /// look the same for it to read as one cursor -- the reversed highlight, the
 /// `> ` marker, and the [`Chrome`] the rows are fitted inside.
 ///
-/// `drawn` is how many rows that cursor may travel over, which is deliberately
-/// not `rows.len()`: Funds counts the bold `Total` it appends, and Accounts
-/// does not count the placeholder it draws in place of an empty list.
+/// `drawn` is how many rows that cursor may travel over, which is not always
+/// `rows.len()`: Accounts does not count the placeholder it draws in place of
+/// an empty list.
 ///
 /// What stays at the call sites is what each screen decides for itself: its
 /// `widths`, which this directory's `CLAUDE.md` budgets per screen, and the

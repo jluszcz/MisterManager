@@ -9,7 +9,7 @@
 use super::account::{self, Kind};
 use super::{AccountId, Db, HoldingId};
 use crate::money::Cents;
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use rusqlite::{OptionalExtension, Row, params};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,13 +105,46 @@ pub fn tickers(db: &Db) -> Result<Vec<String>> {
     super::collect_rows(rows)
 }
 
-/// Rewrites a holding's ticker and balance -- the two fields the Funds
-/// screen's editor has a box for. Which account holds it and where it sorts
-/// are not the edit's to change.
-pub fn update(db: &Db, id: HoldingId, ticker: &str, balance: Cents) -> Result<()> {
+/// Rewrites a holding's account, ticker and balance -- the three fields the
+/// Funds screen's editor has a box for. Where it sorts among its account's
+/// holdings is not the edit's to change.
+///
+/// Refuses the same two ways [`insert`] does, for the same reasons: an
+/// account that is not [`Kind::Investment`], and a ticker the destination
+/// account already holds under a different id. The second is `insert`'s
+/// `UNIQUE (account_id, ticker)` reached from a new direction -- moving a
+/// holding into an account can collide with one already there, and a raw
+/// constraint violation on the status line is not a sentence a person can
+/// act on, so it is checked and refused here rather than left to the
+/// constraint.
+pub fn update(
+    db: &Db,
+    id: HoldingId,
+    account_id: AccountId,
+    ticker: &str,
+    balance: Cents,
+) -> Result<()> {
+    let owner = account::get(db, account_id)?;
+    ensure!(
+        owner.kind == Kind::Investment,
+        "{} is not an investment account, so it cannot hold a fund",
+        // The Funds screen puts this on its status line verbatim, so it
+        // reaches the mask here rather than through `account_label::Account`.
+        crate::demo::text(owner.name.as_str())
+    );
+    if list_for_account(db, account_id)?
+        .iter()
+        .any(|h| h.ticker == ticker && h.id != id)
+    {
+        bail!(
+            "{} already holds {}",
+            crate::demo::text(owner.name.as_str()),
+            crate::demo::text(ticker)
+        );
+    }
     let changed = db.conn.execute(
-        "UPDATE holding SET ticker = ?2, balance_cents = ?3 WHERE id = ?1",
-        params![id, ticker, balance.0],
+        "UPDATE holding SET account_id = ?2, ticker = ?3, balance_cents = ?4 WHERE id = ?1",
+        params![id, account_id, ticker, balance.0],
     )?;
     ensure!(changed == 1, "no holding with id {id}");
     Ok(())
@@ -302,15 +335,87 @@ mod tests {
         let id = account(&db);
         let holding_id = insert(&db, id, "USM", Cents(100_000)).unwrap();
 
-        update(&db, holding_id, "USB", Cents(75_000)).unwrap();
+        update(&db, holding_id, id, "USB", Cents(75_000)).unwrap();
 
         let found = get(&db, holding_id).unwrap();
         assert_eq!(found.ticker, "USB");
         assert_eq!(found.balance, Cents(75_000));
-        assert_eq!(
-            found.account_id, id,
-            "the edit is not a move to another account"
+        assert_eq!(found.account_id, id, "the account was not asked to move");
+    }
+
+    /// The Funds screen's `e` edits all three fields the form asks for,
+    /// account included -- a holding filed against the wrong account has no
+    /// other way back.
+    #[test]
+    fn update_moves_a_holding_to_another_account() {
+        let db = crate::db::open_in_memory().unwrap();
+        let first = account(&db);
+        let second = account::insert(
+            &db,
+            "BRK",
+            "Holdings",
+            Kind::Investment,
+            1,
+            Some(TaxTreatment::Taxable),
+        )
+        .unwrap();
+        let holding_id = insert(&db, first, "USM", Cents(100_000)).unwrap();
+
+        update(&db, holding_id, second, "USM", Cents(100_000)).unwrap();
+
+        let found = get(&db, holding_id).unwrap();
+        assert_eq!(found.account_id, second);
+        assert!(
+            list_for_account(&db, first).unwrap().is_empty(),
+            "the holding is still listed under the account it left"
         );
+        assert_eq!(
+            list_for_account(&db, second).unwrap().len(),
+            1,
+            "the holding did not reach the account it moved to"
+        );
+    }
+
+    /// `UNIQUE (account_id, ticker)` reached from `update`'s direction: an
+    /// owner correcting which account a holding sits in must be told why in
+    /// a sentence, not shown the constraint's own error.
+    #[test]
+    fn update_refuses_a_move_into_an_account_that_already_holds_the_ticker() {
+        let db = crate::db::open_in_memory().unwrap();
+        let first = account(&db);
+        let second = account::insert(
+            &db,
+            "BRK",
+            "Holdings",
+            Kind::Investment,
+            1,
+            Some(TaxTreatment::Taxable),
+        )
+        .unwrap();
+        let moving = insert(&db, first, "USM", Cents(100_000)).unwrap();
+        insert(&db, second, "USM", Cents(50_000)).unwrap();
+
+        let err = update(&db, moving, second, "USM", Cents(100_000)).unwrap_err();
+        assert!(err.to_string().contains("USM"), "{err}");
+
+        assert_eq!(
+            get(&db, moving).unwrap().account_id,
+            first,
+            "the refused move must not have partly landed"
+        );
+    }
+
+    /// The same guard `insert` applies: a holding cannot be moved onto a
+    /// cash or credit account.
+    #[test]
+    fn update_refuses_a_non_investment_destination_account() {
+        let db = crate::db::open_in_memory().unwrap();
+        let id = account(&db);
+        let holding_id = insert(&db, id, "USM", Cents(100_000)).unwrap();
+        let cash = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+
+        let err = update(&db, holding_id, cash, "USM", Cents(100_000)).unwrap_err();
+        assert!(err.to_string().contains("Everyday"), "{err}");
     }
 
     #[test]
@@ -400,8 +505,9 @@ mod tests {
     #[test]
     fn getting_updating_deleting_or_reordering_a_missing_holding_is_an_error() {
         let db = crate::db::open_in_memory().unwrap();
+        let id = account(&db);
         assert!(get(&db, HoldingId(999)).is_err());
-        assert!(update(&db, HoldingId(999), "USM", Cents::ZERO).is_err());
+        assert!(update(&db, HoldingId(999), id, "USM", Cents::ZERO).is_err());
         assert!(delete(&db, HoldingId(999)).is_err());
         assert!(reorder(&db, HoldingId(999), 0).is_err());
     }

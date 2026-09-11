@@ -17,7 +17,7 @@ use super::accounts::{self as accounts_screen, Accounts};
 use super::autocomplete::Autocomplete;
 use super::cursor::Scroll;
 use super::form::Step;
-use super::fund::Funds;
+use super::fund::{self as fund_screen, Funds};
 use super::help::{self, Help, Topic};
 use super::history::Mode as HistoryMode;
 use super::ledger::{self as ledger_screen, Ledger};
@@ -488,6 +488,10 @@ impl App {
                 search::search_key(&mut self.recurring_goal, key);
                 return Ok(());
             }
+            Screen::Funds if self.funds.is_searching() => {
+                search::search_key(&mut self.funds, key);
+                return Ok(());
+            }
             _ => {}
         }
         match key.code {
@@ -690,6 +694,7 @@ impl App {
                 true => Topic::Planning.footer(),
                 false => Topic::Planning.footer_without(&["P"]),
             }),
+            Screen::Funds if self.funds.is_searching() => search_footer(&self.funds),
             Screen::Funds => TextLine::from(Topic::Funds.footer()),
             Screen::RecurringTxns => TextLine::from(Topic::RecurringTxns.footer()),
             Screen::RecurringGoals if self.recurring_goal.is_searching() => {
@@ -748,6 +753,7 @@ impl App {
             Screen::Savings if self.savings.is_searching() => Topic::SavingsSearch,
             Screen::Savings => Topic::Savings,
             Screen::Planning => Topic::Planning,
+            Screen::Funds if self.funds.is_searching() => Topic::FundsSearch,
             Screen::Funds => Topic::Funds,
             Screen::RecurringTxns => Topic::RecurringTxns,
             Screen::RecurringGoals if self.recurring_goal.is_searching() => {
@@ -840,6 +846,7 @@ impl App {
             Some(Modal::RecurringTxn(_)) => self.form_key(key, App::commit_recurring_txn),
             Some(Modal::RecurringGoalEntry(_)) => self.form_key(key, App::commit_recurring_goal),
             Some(Modal::Account(_)) => self.form_key(key, App::commit_account),
+            Some(Modal::Holding(_)) => self.form_key(key, App::commit_holding_form),
             // Three modes over one modal, so the dispatch is one arm with two
             // guards rather than three variants: `Esc` then peels one layer at
             // a time with no flag on `App` saying what to return to.
@@ -1019,7 +1026,10 @@ impl App {
                 let viewport = planning_screen::render(frame, body, &self.planning);
                 self.planning.record_viewport(viewport);
             }
-            Screen::Funds => self.funds.render(frame, body),
+            Screen::Funds => {
+                let viewport = fund_screen::render(frame, body, &self.funds);
+                self.funds.record_viewport(viewport);
+            }
             Screen::RecurringTxns => {
                 let viewport = recurring_txn_screen::render(frame, body, &self.recurring_txn);
                 self.recurring_txn.record_viewport(viewport);
@@ -1068,7 +1078,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{account, recurring_goal, recurring_txn};
+    use crate::db::{account, holding, recurring_goal, recurring_txn};
     use crate::money::Cents;
     use crate::test_support::day;
     use crate::tui::app::test_support::*;
@@ -1360,9 +1370,8 @@ mod tests {
     /// it scrambled. Asking it of the scrambled draw instead -- that the two
     /// differ -- says nothing, because every screen also masks the names on
     /// it, so the two would differ on a screen whose figures had stopped being
-    /// masked entirely. Accounts and Funds are the two screens exempt:
-    /// Accounts draws a name, a band and a position and no figure at all, and
-    /// Funds draws no rows at all yet.
+    /// masked entirely. Accounts is the one screen exempt: it draws a name, a
+    /// band and a position and no figure at all.
     #[cfg(feature = "demo")]
     #[test]
     fn a_demo_leaves_no_figure_on_any_screen() {
@@ -1392,9 +1401,7 @@ mod tests {
                 );
             }
             assert!(
-                screen == '6'
-                    || screen == '9'
-                    || DEMO_FIXTURE_FIGURES.iter().any(|f| real.contains(f)),
+                screen == '9' || DEMO_FIXTURE_FIGURES.iter().any(|f| real.contains(f)),
                 "screen {screen} drew none of the fixture's figures, so the check above passed for free:\n{real}"
             );
         }
@@ -1404,8 +1411,8 @@ mod tests {
     /// the screens would print it unscrambled. One list rather than one per
     /// sweep, so a row added to that fixture is covered by both.
     #[cfg(feature = "demo")]
-    const DEMO_FIXTURE_FIGURES: [&str; 8] = [
-        "1,000", "1,200", "14.99", "25.99", "15,000", "10,000", "100.00", "128",
+    const DEMO_FIXTURE_FIGURES: [&str; 9] = [
+        "1,000", "1,200", "14.99", "25.99", "15,000", "10,000", "100.00", "128", "9,000",
     ];
 
     /// Every name and description `app_with_two_rows_on_every_list` puts in the
@@ -1415,7 +1422,7 @@ mod tests {
     /// the app's own words -- a Planning row, a form title -- so an absence
     /// check on either would fail on vocabulary rather than on a leak.
     #[cfg(feature = "demo")]
-    const DEMO_FIXTURE_NAMES: [&str; 16] = [
+    const DEMO_FIXTURE_NAMES: [&str; 18] = [
         "Everyday",
         "Rainy Day",
         "Card One",
@@ -1432,6 +1439,8 @@ mod tests {
         "Couch",
         "Utilities",
         "Gym",
+        "Holdings",
+        "USM",
     ];
 
     /// The net for names, and the Accounts screen is in it: it draws no figure
@@ -1629,16 +1638,20 @@ mod tests {
             ('5', KeyCode::Char('E')),
             ('5', KeyCode::Char('a')),
             ('5', KeyCode::Char('t')),
+            ('6', KeyCode::Char('e')),
+            ('6', KeyCode::Char('d')),
             ('7', KeyCode::Char('a')),
             ('7', KeyCode::Char('s')),
             ('8', KeyCode::Char('a')),
             ('9', KeyCode::Char('e')),
         ] {
             // `s` on screen 7 draws off `recurring_goal`, which `planning_app`
-            // fills neither of. Every other screen here has its rows on the
-            // fixture that carries the bills screen 5 needs.
+            // fills neither of; screen 6 needs a holding under the cursor,
+            // which `planning_app` carries no investment account to hold.
+            // Every other screen here has its rows on the fixture that
+            // carries the bills screen 5 needs.
             let mut app = match (screen, key) {
-                ('7', KeyCode::Char('s')) => app_with_two_rows_on_every_list(),
+                ('7', KeyCode::Char('s')) | ('6', _) => app_with_two_rows_on_every_list(),
                 _ => planning_app(),
             };
             press(&mut app, KeyCode::Char(screen));
@@ -1674,7 +1687,7 @@ mod tests {
             );
             let drawn = drawn(&mut app);
             let figures: &[&str] = match (screen, key) {
-                ('7', KeyCode::Char('s')) => &DEMO_FIXTURE_FIGURES,
+                ('7', KeyCode::Char('s')) | ('6', _) => &DEMO_FIXTURE_FIGURES,
                 _ => &["1,200", "300.00", "1,000", "50,000", "5,000"],
             };
             for figure in figures {
@@ -1756,15 +1769,18 @@ mod tests {
             ('5', KeyCode::Char('E')),
             ('5', KeyCode::Char('a')),
             ('5', KeyCode::Char('t')),
+            ('6', KeyCode::Char('e')),
+            ('6', KeyCode::Char('d')),
             ('7', KeyCode::Char('a')),
             ('7', KeyCode::Char('s')),
             ('8', KeyCode::Char('a')),
             ('9', KeyCode::Char('e')),
         ] {
             // `s` on screen 7 draws off `recurring_goal`, which `planning_app`
-            // fills neither of.
+            // fills neither of; screen 6 needs a holding under the cursor,
+            // which `planning_app` carries no investment account to hold.
             let mut app = match (screen, key) {
-                ('7', KeyCode::Char('s')) => app_with_two_rows_on_every_list(),
+                ('7', KeyCode::Char('s')) | ('6', _) => app_with_two_rows_on_every_list(),
                 _ => planning_app(),
             };
             press(&mut app, KeyCode::Char(screen));
@@ -1809,7 +1825,7 @@ mod tests {
             // (`src/gate.rs`), which does not contain the goal's full name,
             // so it is checked here rather than excluded.
             let names: &[&str] = match (screen, key) {
-                ('7', KeyCode::Char('s')) => &DEMO_FIXTURE_NAMES,
+                ('7', KeyCode::Char('s')) | ('6', _) => &DEMO_FIXTURE_NAMES,
                 _ => &[
                     "Everyday",
                     "Rainy Day",
@@ -2100,7 +2116,10 @@ mod tests {
             footer_of(&mut app, '5'),
             "e edit · E/a/d bill · t transfers · f expense · Enter why · p pin"
         );
-        assert_eq!(footer_of(&mut app, '6'), "");
+        assert_eq!(
+            footer_of(&mut app, '6'),
+            "Tab acct · Esc clear · / search · a/e/d holding"
+        );
         assert_eq!(
             footer_of(&mut app, '7'),
             "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings"
@@ -2547,7 +2566,7 @@ mod tests {
                 Topic::Planning,
                 &["e", "a", "E", "d", "t", "f", "Enter", "p", "P"],
             ),
-            (Topic::Funds, &[]),
+            (Topic::Funds, &["Tab", "BackTab", "Esc", "/", "a", "e", "d"]),
             (Topic::RecurringTxns, &["a", "e", "d", "g", "G", "x", "P"]),
             (
                 Topic::RecurringGoals,
@@ -2795,8 +2814,23 @@ mod tests {
     /// well as one that does. `app()` already fills the two ledgers, Savings
     /// and Planning; the two recurring screens start empty and are filled
     /// here.
+    ///
+    /// One holding besides those six lists, so the demo sweeps below have a
+    /// figure and a name on screen 6 to check for -- `app()` itself holds no
+    /// investment account, which is what leaves Funds empty in every other
+    /// fixture in this file.
     fn app_with_two_rows_on_every_list() -> App {
         let mut app = app();
+        let broker = account::insert(
+            &app.db,
+            "BRK",
+            "Holdings",
+            account::Kind::Investment,
+            0,
+            Some(account::TaxTreatment::Taxable),
+        )
+        .unwrap();
+        holding::insert(&app.db, broker, "USM", Cents::from_dollars(9_000)).unwrap();
         let checking = account::list(&app.db).unwrap()[0].id;
         for (name, day_of_month) in [("Utilities", 1), ("Gym", 15)] {
             recurring_txn::insert(

@@ -14,6 +14,7 @@ use super::autocomplete::Autocomplete;
 use super::cursor::Scroll;
 use super::destination;
 use super::form::{self, FormFields, ValueForm};
+use super::fund::{self as fund_screen, HoldingForm};
 use super::goal_form::{self, AllocationForm, CloseForm, GoalForm, GoalTransferForm};
 use super::help::Topic;
 use super::history::{self, History, Mode as HistoryMode};
@@ -27,11 +28,12 @@ use super::widget;
 use super::worksheet::{self, Worksheet};
 use crate::db::bill;
 use crate::db::goal;
+use crate::db::holding;
 use crate::db::recurring_goal;
 use crate::db::recurring_txn;
 use crate::db::txn;
 use crate::db::{
-    AccountId, AllocationId, BatchId, BillId, Db, RecurringGoalId, RecurringTxnId, TxnId,
+    AccountId, AllocationId, BatchId, BillId, Db, HoldingId, RecurringGoalId, RecurringTxnId, TxnId,
 };
 use anyhow::Result;
 use ratatui::Frame;
@@ -80,6 +82,8 @@ pub(super) enum Modal {
     /// writes that correct one. Its own three modes live inside [`History`]
     /// rather than as a modal over a modal.
     History(History),
+    /// `a`/`e` on Funds: a holding's account, ticker and balance.
+    Holding(HoldingForm),
 }
 
 impl Modal {
@@ -111,6 +115,7 @@ impl Modal {
                 HistoryMode::Editing(form) => Some(form),
                 HistoryMode::List | HistoryMode::Confirming { .. } => None,
             },
+            Modal::Holding(form) => Some(form),
         }
     }
 
@@ -139,7 +144,8 @@ impl Modal {
             | Modal::GoalTransfer(_)
             | Modal::Value(..)
             | Modal::Bill(_)
-            | Modal::RecurringGoalEntry(_) => Topic::Form,
+            | Modal::RecurringGoalEntry(_)
+            | Modal::Holding(_) => Topic::Form,
             // Under match guards, the construction `Modal::Worksheet` above
             // already uses for its search box: the footer follows the mode
             // without any screen asking it to.
@@ -157,7 +163,7 @@ impl Modal {
 /// What a [`Modal::Value`] is collecting: one prefilled field, and the thing
 /// on the far side of it.
 ///
-/// Four screens edit a single figure through this one modal, and the only
+/// Two screens edit a single figure through this one modal, and the only
 /// thing that differs between them is where `Enter` writes. A variant per
 /// screen carrying an identical `ValueForm` would spell that difference out
 /// four times over -- in `fields_mut`, in `topic`, in `render` and in
@@ -165,7 +171,7 @@ impl Modal {
 /// only the handler asks.
 ///
 /// One variant per thing that can be edited, for the reason [`Confirm`] is
-/// one per thing that can be confirmed: a fifth figure cannot be added
+/// one per thing that can be confirmed: a third figure cannot be added
 /// without saying what commits it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum ValueTarget {
@@ -204,6 +210,10 @@ pub(super) enum Confirm {
     /// One row of a goal's allocation history. The goal's balance moves with
     /// it, and so does every figure derived from it.
     DeleteAllocation(AllocationId),
+    /// A holding on the Funds screen. Nothing else references it -- no
+    /// account, goal or transaction links to one -- so the write is a plain
+    /// delete.
+    DeleteHolding(HoldingId),
 }
 
 impl Confirm {
@@ -217,6 +227,7 @@ impl Confirm {
             Confirm::DeleteRecurringTxn(_) => "Delete this recurring transaction?",
             Confirm::DeleteRecurringGoal(_) => "Delete this recurring goal?",
             Confirm::DeleteAllocation(_) => "Delete this allocation?",
+            Confirm::DeleteHolding(_) => "Delete this holding?",
         }
     }
 
@@ -233,7 +244,8 @@ impl Confirm {
             | Confirm::DeleteBill(_)
             | Confirm::DeleteRecurringTxn(_)
             | Confirm::DeleteRecurringGoal(_)
-            | Confirm::DeleteAllocation(_) => "y deletes · any other key cancels",
+            | Confirm::DeleteAllocation(_)
+            | Confirm::DeleteHolding(_) => "y deletes · any other key cancels",
         }
     }
 
@@ -246,7 +258,8 @@ impl Confirm {
             | Confirm::DeleteBill(_)
             | Confirm::DeleteRecurringTxn(_)
             | Confirm::DeleteRecurringGoal(_)
-            | Confirm::DeleteAllocation(_) => "delete cancelled",
+            | Confirm::DeleteAllocation(_)
+            | Confirm::DeleteHolding(_) => "delete cancelled",
         }
     }
 
@@ -279,6 +292,10 @@ impl Confirm {
             Confirm::DeleteAllocation(id) => {
                 goal::delete_allocation(db, id)?;
                 "allocation deleted".to_string()
+            }
+            Confirm::DeleteHolding(id) => {
+                holding::delete(db, id)?;
+                "holding deleted".to_string()
             }
         })
     }
@@ -362,6 +379,10 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
             accounts_screen::render_form(frame, f);
             0
         }
+        Some(Modal::Holding(f)) => {
+            fund_screen::render_holding(frame, f);
+            0
+        }
         // Each mode draws where the app already draws that shape: the form
         // and the dialog over the top of the list they were opened from.
         Some(Modal::History(h)) => {
@@ -417,6 +438,7 @@ mod tests {
             Confirm::DeleteRecurringTxn(RecurringTxnId(1)),
             Confirm::DeleteRecurringGoal(RecurringGoalId(1)),
             Confirm::DeleteAllocation(AllocationId(1)),
+            Confirm::DeleteHolding(HoldingId(1)),
         ] {
             let title = action.title();
             assert!(title.starts_with("Delete this "), "{title}");

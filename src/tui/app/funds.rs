@@ -1,17 +1,431 @@
-//! Screen 6's key handling.
+//! Screen 6's key handling: adding, editing and deleting a holding, and the
+//! account filter and the search over the list.
 //!
-//! The screen holds no rows yet, so every key falls through to `App::dispatch`
-//! above it.
+//! No `g`/`G` and no `Enter` here -- nothing yet resolves a fund's
+//! composition, and a key that does nothing is worse than a key that is
+//! absent.
 
-use super::App;
-use ratatui::crossterm::event::KeyEvent;
+use super::{Account, App, NOTHING_SELECTED};
+use crate::db::account::{self, Kind};
+use crate::db::fund_mix::{self, AssetClass};
+use crate::db::holding;
+use crate::rate::BasisPoints;
+use crate::tui::cursor;
+use crate::tui::fund::{HoldingForm, Row};
+use crate::tui::modal::{Confirm, Modal};
+use crate::tui::search::{self, Search};
+use anyhow::Result;
+use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use std::collections::HashMap;
 
 impl App {
-    pub(super) fn funds_key(&mut self, _key: KeyEvent) -> anyhow::Result<()> {
+    pub(super) fn funds_key(&mut self, key: KeyEvent) -> Result<()> {
+        if cursor::scroll_key(&mut self.funds, key.code) {
+            return Ok(());
+        }
+        match key.code {
+            KeyCode::Esc => {
+                if !search::escape_kept_filter(&mut self.funds) {
+                    self.funds.clear_filters();
+                }
+            }
+            KeyCode::Tab => self.funds.next_account(),
+            KeyCode::BackTab => self.funds.previous_account(),
+            KeyCode::Char('/') => self.funds.begin_search(),
+            KeyCode::Char('a') => self.open_add_holding()?,
+            KeyCode::Char('e') => self.open_edit_holding()?,
+            KeyCode::Char('d') => self.open_delete_holding(),
+            _ => {}
+        }
         Ok(())
     }
 
-    pub(super) fn reload_funds(&mut self) -> anyhow::Result<()> {
+    /// Opens on the account the screen is filtered to, or on the first
+    /// investment account when the filter is All.
+    fn open_add_holding(&mut self) -> Result<()> {
+        let accounts = account::list_by_kind(&self.db, Kind::Investment)?;
+        let preselected = self.funds.filter_account();
+        self.modal = Some(Modal::Holding(HoldingForm::add(accounts, preselected)?));
         Ok(())
+    }
+
+    fn open_edit_holding(&mut self) -> Result<()> {
+        let Some(row) = self.funds.selected().cloned() else {
+            return self.nothing_selected();
+        };
+        let accounts = account::list_by_kind(&self.db, Kind::Investment)?;
+        self.modal = Some(Modal::Holding(HoldingForm::edit(accounts, &row)?));
+        Ok(())
+    }
+
+    fn open_delete_holding(&mut self) {
+        match self.funds.selected().cloned() {
+            None => self.status = NOTHING_SELECTED.to_string(),
+            Some(row) => {
+                let label = format!(
+                    "{}  {}  {}",
+                    crate::demo::text(&row.ticker),
+                    crate::demo::text(self.funds.account_name(row.account_id)),
+                    crate::demo::whole_figure(row.balance)
+                );
+                self.modal = Some(Modal::Confirm {
+                    action: Confirm::DeleteHolding(row.id),
+                    label,
+                });
+            }
+        }
+    }
+
+    pub(super) fn commit_holding_form(&mut self) -> Result<()> {
+        let Some(Modal::Holding(form)) = &self.modal else {
+            return Ok(());
+        };
+        let (account_id, ticker, balance) = form.commit()?;
+        let verb = match form.editing {
+            Some(id) => {
+                holding::update(&self.db, id, account_id, &ticker, balance)?;
+                "updated"
+            }
+            None => {
+                holding::insert(&self.db, account_id, &ticker, balance)?;
+                "added"
+            }
+        };
+        self.status = format!(
+            "{verb} {} {}",
+            crate::demo::text(&ticker),
+            crate::demo::whole_figure(balance)
+        );
+        self.close_modal();
+        self.reload()
+    }
+
+    pub(super) fn reload_funds(&mut self) -> Result<()> {
+        let accounts = account::list_by_kind(&self.db, Kind::Investment)?;
+        self.funds.set_accounts(accounts.clone());
+
+        let holdings = holding::list(&self.db)?;
+        let mut mixes: HashMap<String, fund_mix::Mix> = HashMap::new();
+        for ticker in holding::tickers(&self.db)? {
+            if let Some(mix) = fund_mix::for_ticker(&self.db, &ticker)? {
+                mixes.insert(ticker, mix);
+            }
+        }
+
+        let rows = holdings
+            .into_iter()
+            .map(|h| {
+                let mix = mixes.get(&h.ticker);
+                Row {
+                    id: h.id,
+                    account_id: h.account_id,
+                    account: Account::named(&accounts, h.account_id),
+                    ticker: h.ticker,
+                    balance: h.balance,
+                    stock_percent: mix.map(stock_share),
+                    as_of: mix.map(|m| m.report_date),
+                }
+            })
+            .collect();
+        self.funds.set_rows(rows);
+        Ok(())
+    }
+}
+
+/// The stock share of a fund's composition -- U.S. plus international --
+/// out of its published slices.
+fn stock_share(mix: &fund_mix::Mix) -> BasisPoints {
+    let bp: i64 = mix
+        .slices
+        .iter()
+        .filter(|s| matches!(s.class, AssetClass::UsStock | AssetClass::IntlStock))
+        .map(|s| s.weight.0)
+        .sum();
+    BasisPoints(bp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stock_share;
+    use crate::db::fund_mix::{self, AssetClass, Slice};
+    use crate::money::Cents;
+    use crate::rate::BasisPoints;
+    use crate::test_support::day;
+    use crate::tui::app::test_support;
+    use crate::tui::modal::Modal;
+    use ratatui::crossterm::event::KeyCode;
+
+    #[test]
+    fn a_holding_with_no_mix_on_record_reads_as_never_fetched() {
+        let app = test_support::app_with_holdings();
+
+        let rows = app.funds.rows();
+        let row = rows.first().expect("a holding is listed");
+        assert_eq!(row.as_of, None);
+        assert_eq!(
+            row.stock_percent, None,
+            "a fund with no mix reported a stock share"
+        );
+    }
+
+    #[test]
+    fn the_account_filter_narrows_the_list_to_one_account() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        let all = app.funds.rows().len();
+
+        test_support::press(&mut app, KeyCode::Tab);
+
+        let filtered = app.funds.rows().len();
+        assert!(filtered < all, "Tab did not narrow the list");
+        assert!(
+            app.funds
+                .rows()
+                .iter()
+                .all(|r| r.account_id == app.funds.filter_account().unwrap()),
+            "a row from another account survived the filter"
+        );
+    }
+
+    #[test]
+    fn back_tab_narrows_the_list_from_the_other_direction() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        let all = app.funds.rows().len();
+
+        test_support::press(&mut app, KeyCode::BackTab);
+
+        let filtered = app.funds.rows().len();
+        assert!(filtered < all, "BackTab did not narrow the list");
+        assert_eq!(
+            app.funds.filter_account(),
+            app.funds.rows().first().map(|r| r.account_id)
+        );
+    }
+
+    /// `Esc` clears a kept search before it touches the account filter, the
+    /// same order Ledger and Savings answer it in -- both narrow the screen
+    /// two ways, and a press that cleared only one would leave the owner to
+    /// work out which is still hiding a row.
+    #[test]
+    fn esc_clears_a_kept_search_before_the_account_filter() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Tab);
+        assert_eq!(app.funds.rows().len(), 2, "BRK holds USM and USB");
+
+        test_support::press(&mut app, KeyCode::Char('/'));
+        test_support::type_str(&mut app, "USB");
+        test_support::press(&mut app, KeyCode::Enter);
+        assert_eq!(app.funds.rows().len(), 1, "the kept search did not narrow");
+
+        test_support::press(&mut app, KeyCode::Esc);
+        assert!(
+            app.funds.filter_account().is_some(),
+            "the first Esc must leave the account filter alone"
+        );
+        assert_eq!(
+            app.funds.rows().len(),
+            2,
+            "the first Esc must clear only the search"
+        );
+
+        test_support::press(&mut app, KeyCode::Esc);
+        assert_eq!(app.funds.filter_account(), None);
+        assert_eq!(
+            app.funds.rows().len(),
+            3,
+            "the second Esc must clear to All"
+        );
+    }
+
+    /// `a` opens on the account the `Tab` filter names, and a committed
+    /// holding reaches the list without a second reload.
+    #[test]
+    fn pressing_a_adds_a_holding_to_the_list() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Tab);
+        let filtered_account = app.funds.filter_account().unwrap();
+
+        test_support::press(&mut app, KeyCode::Char('a'));
+        test_support::type_str(&mut app, "UNC");
+        test_support::press(&mut app, KeyCode::Tab);
+        test_support::type_str(&mut app, "2000");
+        test_support::press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "the form stayed open: {}", app.status);
+        let rows = app.funds.rows();
+        let added = rows
+            .iter()
+            .find(|r| r.ticker == "UNC")
+            .expect("the new holding is listed");
+        assert_eq!(added.balance, Cents::from_dollars(2_000));
+        assert_eq!(
+            added.account_id, filtered_account,
+            "a did not open on the account the Tab filter named"
+        );
+    }
+
+    /// `e` opens on the ticker like `a` does; `Tab` reaches the balance,
+    /// which is the field most worth checking on an existing row.
+    #[test]
+    fn pressing_e_edits_the_selected_holdings_balance() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        let before = app.funds.rows()[0].ticker.clone();
+
+        test_support::press(&mut app, KeyCode::Char('e'));
+        test_support::press(&mut app, KeyCode::Tab);
+        for _ in 0.."10,000.00".len() {
+            test_support::press(&mut app, KeyCode::Backspace);
+        }
+        test_support::type_str(&mut app, "12000");
+        test_support::press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "the edit stayed open: {}", app.status);
+        let rows = app.funds.rows();
+        let edited = rows.iter().find(|r| r.ticker == before).unwrap();
+        assert_eq!(edited.balance, Cents::from_dollars(12_000));
+    }
+
+    /// The bug this guards: `e` opens on `Ticker`, so reaching `Account`
+    /// takes a `BackTab` first. Before the account was threaded through
+    /// `commit_holding_form`, cycling it here and pressing `Enter` reported
+    /// `updated` over a row that had not moved.
+    #[test]
+    fn pressing_e_can_move_a_holding_to_another_account() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        let moving = app.funds.rows()[0].clone();
+
+        test_support::press(&mut app, KeyCode::Char('e'));
+        test_support::press(&mut app, KeyCode::BackTab);
+        test_support::press(&mut app, KeyCode::Right);
+        test_support::press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "the edit stayed open: {}", app.status);
+        let rows = app.funds.rows();
+        let after = rows.iter().find(|r| r.ticker == moving.ticker).unwrap();
+        assert_ne!(
+            after.account_id, moving.account_id,
+            "the account was not moved"
+        );
+    }
+
+    #[test]
+    fn pressing_d_deletes_the_selected_holding_after_confirming() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        let before = app.funds.rows().len();
+        let deleting = app.funds.rows()[0].ticker.clone();
+
+        test_support::press(&mut app, KeyCode::Char('d'));
+        assert!(
+            matches!(app.modal, Some(Modal::Confirm { .. })),
+            "no confirmation opened"
+        );
+        test_support::press(&mut app, KeyCode::Char('y'));
+
+        assert!(app.modal.is_none());
+        let rows = app.funds.rows();
+        assert_eq!(rows.len(), before - 1);
+        assert!(!rows.iter().any(|r| r.ticker == deleting));
+    }
+
+    /// Any other key cancels a confirmation, the same as every delete
+    /// dialog in the app.
+    #[test]
+    fn cancelling_a_delete_confirmation_leaves_the_holding_in_place() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        let before = app.funds.rows().len();
+
+        test_support::press(&mut app, KeyCode::Char('d'));
+        test_support::press(&mut app, KeyCode::Esc);
+
+        assert!(app.modal.is_none());
+        assert_eq!(app.funds.rows().len(), before);
+    }
+
+    /// A search narrowed to nothing leaves the cursor with no row to act
+    /// on, and `e`/`d` say so rather than opening on whatever the cursor's
+    /// stale index would otherwise land on.
+    #[test]
+    fn e_and_d_with_nothing_selected_say_nothing_selected() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('/'));
+        test_support::type_str(&mut app, "zzz");
+        test_support::press(&mut app, KeyCode::Enter);
+        assert!(app.funds.rows().is_empty(), "the needle matched something");
+
+        test_support::press(&mut app, KeyCode::Char('e'));
+        assert_eq!(app.status, "nothing selected");
+        assert!(app.modal.is_none());
+
+        test_support::press(&mut app, KeyCode::Char('d'));
+        assert_eq!(app.status, "nothing selected");
+        assert!(app.modal.is_none());
+    }
+
+    /// `stock_share` sums the two stock classes and leaves the rest out --
+    /// a bond-heavy target-date fund still reads its own stock share rather
+    /// than the whole of its published composition.
+    #[test]
+    fn the_stock_share_is_the_us_and_international_slices_and_nothing_else() {
+        let mix = fund_mix::Mix {
+            ticker: "TDF45".to_string(),
+            report_date: day(2026, 6, 30),
+            slices: vec![
+                Slice {
+                    class: AssetClass::UsStock,
+                    weight: BasisPoints(4_500),
+                },
+                Slice {
+                    class: AssetClass::IntlStock,
+                    weight: BasisPoints(3_000),
+                },
+                Slice {
+                    class: AssetClass::UsBond,
+                    weight: BasisPoints(1_500),
+                },
+                Slice {
+                    class: AssetClass::Cash,
+                    weight: BasisPoints(1_000),
+                },
+            ],
+        };
+        assert_eq!(stock_share(&mix), BasisPoints(7_500));
+    }
+
+    /// The end-to-end reading: a mix on record for one holding's ticker
+    /// reaches the row as a stock share and the filing date it was read
+    /// off, while the other holding's ticker -- never fetched -- stays
+    /// `None`.
+    #[test]
+    fn reload_prices_a_holding_whose_ticker_has_a_mix_on_record() {
+        let mut app = test_support::app_with_holdings();
+        let report_date = day(2026, 6, 30);
+        fund_mix::set_for_ticker(
+            &app.db,
+            "USM",
+            report_date,
+            &[Slice {
+                class: AssetClass::UsStock,
+                weight: BasisPoints(10_000),
+            }],
+        )
+        .unwrap();
+        app.reload().unwrap();
+
+        let rows = app.funds.rows();
+        let priced = rows.iter().find(|r| r.ticker == "USM").unwrap();
+        assert_eq!(priced.stock_percent, Some(BasisPoints(10_000)));
+        assert_eq!(priced.as_of, Some(report_date));
+
+        let unpriced = rows.iter().find(|r| r.ticker == "USB").unwrap();
+        assert_eq!(unpriced.stock_percent, None);
+        assert_eq!(unpriced.as_of, None);
     }
 }

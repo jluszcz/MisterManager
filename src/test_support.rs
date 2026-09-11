@@ -118,10 +118,11 @@ pub fn investment(id: i64, code: &str) -> Account {
 ///
 /// A second table beside [`name_of`]'s: a fund fixture takes a ticker rather
 /// than an account code, and the two vocabularies never share a codespace.
-/// The classifier the follow-on plan adds reads these names in its own
-/// tests, which is why they are pinned here rather than invented per call
-/// site. An unknown ticker panics, for [`name_of`]'s reason: a fixture
-/// reaching for one has left the vocabulary.
+/// Naming no real fund family, so a test that needs a fund's name in the
+/// database passes this rather than a literal of its own, which is why the
+/// pairing is pinned here rather than invented per call site. An unknown
+/// ticker panics, for [`name_of`]'s reason: a fixture reaching for one has
+/// left the vocabulary.
 pub fn fund_name(ticker: &str) -> &'static str {
     match ticker {
         "TDF45" => "Target 2045 Fund",

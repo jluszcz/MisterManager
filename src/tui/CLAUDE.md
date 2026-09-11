@@ -91,7 +91,7 @@ the screen's own, not `q quit`.
 Who *shows* it is a separate question, and the rule is that the chrome appears only where `dispatch`
 actually answers those two keys. `Topic::answers_app_wide_keys` states it — the eight screens, and
 nothing else — and `App::footer_chrome` asks it through `App::topic`, so one question covers every
-modal and all five search boxes rather than a list of screens re-derived at the call site. That
+modal and all six search boxes rather than a list of screens re-derived at the call site. That
 `dispatch` returns into `modal_key` *above* its `q` and `1-9` arms is what makes the answer false
 under a modal: a digit typed into a worksheet's `/` box is part of the needle, a `q` under a confirm
 dialog is one of the "any key" that cancels it, and naming a key that does nothing is worse than
@@ -176,8 +176,9 @@ what a constant may be edited to and where it lands, and `planning/bill.rs` and
 will not resolve, and `t`, which confirms a computed plan, writes its payday through
 `transfer::execute`, and opens the allocation worksheets prefilled. `planning/test_support.rs` is
 the one plan and wiring the other four test against, for the reason `app/test_support.rs` is one
-fixture rather than nine. `destination` is the list `e` opens on one of its destination rows. `fund` is the sixth screen, its form, and the birth-date prompt the age row needs and no
-other screen owns. `recurring_goal` is the seventh screen and `recurring_txn` the
+fixture rather than nine. `destination` is the list `e` opens on one of its destination rows. `fund`
+is the sixth screen and its form: one row per holding, filtered by investment account and by a
+search over ticker and account, with `a`/`e`/`d` adding, editing and deleting one. `recurring_goal` is the seventh screen and `recurring_txn` the
 eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
 smallest: `a`, which creates an account the workbook does not name, and `e`, over everything the
 workbook does not say about one.
@@ -201,9 +202,9 @@ field framework every form in the app is built out of, and the one-field `ValueF
 to no single screen; `widget` is how any of them is *drawn* — the centered box, its labelled
 lines, and the caret over the character the focused field is on — which is why the help panel and
 the destination chooser reach for it too, neither of them being a form at all.
-`search` is the `/` box the ledgers, Savings, Recurring Goals, the worksheet and the destination
-chooser share: the box, its keys, and `Matcher`, which is what a needle *means* on all five. What every
-screen shares lives in `tui/mod.rs`, not in whichever screen needed it first.
+`search` is the `/` box the ledgers, Savings, Funds, Recurring Goals, the worksheet and the
+destination chooser share: the box, its keys, and `Matcher`, which is what a needle *means* on all
+six. What every screen shares lives in `tui/mod.rs`, not in whichever screen needed it first.
 
 `app` is a directory rather than a file, and it is split the same way this section reads: one
 module per screen — `app/ledger.rs`, `app/savings.rs`, `app/planning.rs`, `app/funds.rs`,
@@ -321,7 +322,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
       asserts the mask *appears* on every screen but Accounts, the one screen that draws no figure.
       The form sweep asserts `modal.is_some()` before it looks at the buffer, because a key that
       finds nothing to open on leaves the screen as it was: `('2', 'r')` needs the account filter
-      `r` reconciles against, and screen 6 needs a fixture with a `fund` row under the cursor.
+      `r` reconciles against, and `('6', 'e')`/`('6', 'd')` need a holding under the cursor, which
+      is why those two route to `app_with_two_rows_on_every_list` rather than `planning_app`.
   - **Text is masked where it becomes a `Label` or a `Cell`, never where a screen builds its rows.**
     A form prefills from the row a screen is holding, so a pseudonym written into view state is a
     pseudonym `Enter` would commit. `App::open_goal_edit` is the example: it hands `GoalForm` the
@@ -352,8 +354,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   it is being typed — the `M/D` shorthand needs a `today` to resolve against — and a bare `Field`
   beside a free `parse_date` is two halves a form has to keep in step itself. Every date in the app
   is one: both ledger forms, the allocation, goal and close-out forms, the worksheet, both dates on
-  a recurring transaction, `t`'s confirmation, and the Funds birth-date prompt through
-  `ValueForm`'s `Entry::Date`. A new form asks for a `DateField` rather than assembling one.
+  a recurring transaction, and `t`'s confirmation. A new form asks for a `DateField` rather than
+  assembling one.
 - **`←`/`→` step a date a day at a time, wherever there is a date, `Shift` with them a week, and
   `[`/`]` a month.**
   The Overview scrub, the worksheet's date, both dates on a recurring transaction, and the date
@@ -569,10 +571,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   `Ctrl` always means **editing the text under the caret**, and never anything else — see the
   editing-keys invariant below. Nothing reads `Alt`.
 - **A date is typed as `YYYY-MM-DD` or as the `M/D` shorthand, and every rule about either is
-  `form::DateField`'s.** Which year the shorthand takes is `parse_shorthand`'s to say, how the two
-  spellings share one field is `DateField::display`'s, and the one field built `iso_only` — the
-  Funds birth-date prompt — says at `shorthand_from` why a birth date is the field that wants no
-  shorthand at all.
+  `form::DateField`'s.** Which year the shorthand takes is `parse_shorthand`'s to say, and how the
+  two spellings share one field is `DateField::display`'s.
 - **A date field entering something new opens on today, and the ones that do not each say why.**
   `DateField::today` is the default and most fields take it. The exceptions:
   - The three forms that write a ledger row — `a`, `t` and `p` — open on `App::entry_date` through
@@ -590,9 +590,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     them. It is the *confirmed* date rather than the two-business-day default, since the owner may
     step it before committing. `A` and `i` open a worksheet of their own and stay on today, which
     is what they are entering.
-  - A recurring transaction's `End` field and the birth-date prompt open blank, because blank is a
-    supported state in both — a rule that does not end, and a date not on record — and `parse_opt`
-    is what reads the first of those back.
+  - A recurring transaction's `End` field opens blank, because blank is a supported state — a rule
+    that does not end — and `parse_opt` is what reads it back.
   - The cadence selector opens on `monthly` rather than on `Cadence::ALL[0]`. A two-option selector
     has no neutral setting, so it opens on the commoner answer: nearly every recurring transaction
     is monthly, and the biweekly one is the paycheck, entered once.
@@ -685,7 +684,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   warning nobody reads.
 - **A tinted cell colors its characters, never its padding and never its indent.** `tui::tinted`
   is the one place that happens, and says at its own definition what a `Cell::style` does instead;
-  `account_cell`, `money_cell`, `savings::percent`, `fund::tinted_percent`, Planning's three
+  `account_cell`, `money_cell`, `savings::percent`, Planning's three
   columns and `widget::field_line_tinted` all go through it or its rule. **A `Cell::style` carrying
   an `fg` anywhere under `src/tui/` is this bug**, and the sweep is one line:
   `grep -rn '.style(Style::default().fg(' src/tui/` should match nothing outside `mod.rs` and
@@ -746,7 +745,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     says what `Teal` looks like, not which account this is.
   - **The status line is deliberately uncolored.** It is transient prose rather than a place a
     reader looks to identify an account.
-  - **Fourteen account displays are outside this guarantee, and this is the entire list**, checked
+  - **Sixteen account displays are outside this guarantee, and this is the entire list**, checked
     by grepping every `crate::demo::text` call site in the crate and reading each one for what it
     draws. None of them goes through `Account`, so none carries its color — a picker column with
     nowhere to put a tint, a form field that is a `Field`'s buffer like any other, a row tinted by
@@ -825,6 +824,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     - **`account::set_tax_treatment`'s wrong-kind refusal**, in the same file again: only an
       investment account carries a treatment, and the account that is not one is named on the
       status line as prose, masked on the line that reads it.
+    - **The Funds delete confirmation's label**, in `app/funds.rs`'s `open_delete_holding`: the
+      holding's account is named beside its ticker and balance, masked through `demo::text` into
+      the confirmation's prose, the same reasoning as the reconcile line above.
   - **`as_str` is the escape for text, and it is pinned.** `AccountName::as_str` serves the uses
     that are not displays — a description prefill, a search filter folding case, a form seeding
     its editable field — and `nothing_that_draws_an_account_reads_its_name_as_bare_text` lists
@@ -970,8 +972,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   that: on Savings and Planning the `edit` prefill keeps the stored cents *and* the commit path
   accepts it back, so opening a constant and pressing Enter cannot quietly round it. Funds' `e`
   prefill keeps the stored cents too, but its commit path goes through `form::parse_whole_amount`,
-  which *refuses* a value carrying cents rather than rounding it — opening a fund whose actual value
-  has cents and pressing Enter is a parse error, not a silent round. Planning keeps one footer at
+  which *refuses* a value carrying cents rather than rounding it — opening a holding whose stored
+  balance carries cents and pressing Enter is a parse error, not a silent round. Planning keeps one footer at
   full precision — its pin drift, because sub-dollar drift is the only thing that line exists to
   show. Savings' `Unallocated` footer drops the cents like every column above it, for a reason of
   its own: sub-dollar drift there is what a container sits at for months, so the line reads `0` and
@@ -1260,7 +1262,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     first rather than with them: while the box is open `Esc` is the box's, the one
     `search::search_key` answers on every screen that has one, and once `Enter` has left the box
     the needle is still narrowing the list — `search::escape_kept_filter` clears it before these
-    two. That is the same order on all five `/` screens, so Savings is not the odd one out either
+    two. That is the same order on all six `/` screens, so Savings is not the odd one out either
     way.
   - **A goal with no date belongs to no month**, so any month filter drops it and All is the only
     place it appears. That is what the filter is *for*, not an edge case.
@@ -1306,9 +1308,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   `$0.00` is a figure to compare with the two beside it. **It carries a trailing space**, because
   the delta is the title's last term and the title is drawn flush into the block's top border: it
   is the one thing that border ever meets that is not a digit, and a mark set against a `─` run
-  reads as one shape with it rather than as an answer. The form is the same `ValueForm` the
-  Planning and Funds prompts use; an empty field clears the target, and `Esc` means what it means
-  everywhere else — leave the figure alone. With no target the border is exactly what it always was.
+  reads as one shape with it rather than as an answer. The form is the same `ValueForm` Planning's
+  `e` uses; an empty field clears the target, and `Esc` means what it means everywhere else — leave
+  the figure alone. With no target the border is exactly what it always was.
 - **Cash and Credit share one month, and it is a window, not a `MonthCycle`.** The ledgers' window
   is a one-or-two month span clamped to the data's range and pushed down into the SQL, so they have
   no All to clear to: "no filter" there would be every transaction ever. `Esc` therefore returns the
@@ -1336,7 +1338,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   The worksheet is the one screen that overrides anything else: `/` is two keys there, so opening
   the box also spends the pending slash that `/N` would have used.
 - **`Esc` clears a kept filter before it means anything else**, through `search::escape_kept_filter`
-  in each of the five screens' own `Esc` arms. `Enter` leaves the box and keeps the needle, so
+  in each of the six screens' own `Esc` arms. `Enter` leaves the box and keeps the needle, so
   without this the only way back to the whole list is to open the box again and close it the other
   way -- the one route nothing on screen suggests. It is the vocabulary's "innermost thing" read
   literally: the needle first, then the screen's own filter (a ledger's account and window, Savings'
@@ -1347,7 +1349,7 @@ derive it from `MIN_WIDTH` rather than write the offset out.
 - **A needle matches a row's text *and* the figures the row is about**, and what that means is
   `search::Matcher` rather than four `contains` calls — it and `search::searchable_amount` say at
   their definitions how a figure is compared. What each screen decides is which figures it hands
-  over, and the five answers differ:
+  over, and the six answers differ:
   - Savings offers **Current and Goal**. `%` and `$/Pay` are derived from those two and are
     deliberately withheld — a needle reaching a readout narrows through a column nobody was
     searching — and the goal date has `[`/`]` already.
@@ -1360,6 +1362,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     tally of the goals made from an entry rather than a figure the entry carries.
   - The destination chooser offers none. What is being chosen is a goal by identity, and the
     amount that will land on it is the waterfall's rather than the goal's.
+  - Funds offers none either, the same call as the destination chooser and for a related reason: a
+    needle matches the ticker and the account a holding sits in, both text, and the balance beside
+    them is not what a search over *which fund* is about.
 - **Every `/` screen filters in memory, the Ledger included.** Its rows come out of SQL, but
   `txn::Filter` carries no needle: the window and the account filter bound the fetch before
   anything is typed, so the rows in hand are the only rows a needle could ever reach. Narrowing
@@ -1414,10 +1419,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   off it, because ratatui charges a row's margins to the table and hands back no reader for them —
   a header quietly taking two lines would leave the arithmetic a line short, and the cursor would
   be offered a row that was never drawn.
-  - **`drawn` is not `rows.len()`, and the two screens where it differs both mean it.** It is how
-    many rows the *cursor* may travel over: Funds counts the bold `Total` it appends so a long
-    list scrolls to the end of what is on screen, and Accounts does not count the placeholder it
-    draws in place of an empty list, which is not a row anything may select.
+  - **`drawn` is not always `rows.len()`.** It is how many rows the *cursor* may travel over:
+    Accounts does not count the placeholder it draws in place of an empty list, which is not a row
+    anything may select.
   - **The worksheet is the one list that draws its own table**, because its highlight answers to
     the focus rather than to the cursor — the bar belongs to `Focus::Lines` alone while the marker
     stays under every focus, which is the invariant above about its two marks. Passing a highlight
@@ -1447,12 +1451,12 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   (`recurring_goal::delete` while a goal still references the entry) leaves the question on screen
   with the reason under it.
 - **Every single-field edit is one modal too, and `Modal::Value`'s `ValueTarget` is what tells those
-  apart.** Planning's `e`, a ledger's `r`, the Funds screen's `e` and its birth-date prompt all open
-  the same one-line box over the same `ValueForm`, and the only thing that differs between them is
-  where `Enter` writes. A variant per screen carrying an identical form would spell that difference
+  apart.** Planning's `e` and a ledger's `r` both open the same one-line box over the same
+  `ValueForm`, and the only thing that differs between them is where `Enter` writes. A variant per
+  screen carrying an identical form would spell that difference
   out in `fields_mut`, in `topic`, in `render` and in `modal_key` — four places, three of which have
   nothing to say about it. It is a variant rather than a closure for the reason `Confirm` is: a
-  fifth figure edited this way cannot be added without saying what commits it.
+  third figure edited this way cannot be added without saying what commits it.
 - **`?` opens Help; `F1` does too, and is the only way in where `?` is a
   character.** `help::Topic::takes_typed_chars` is that list: the form topics
   and the search boxes. The worksheet is deliberately not one of them —
@@ -1484,14 +1488,10 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   while generation begins at today. The list's column beside them stays `Last`, a third thing
   again: where the rows actually reached. That list heads its own column `Start` too — one field
   cannot be called two things across the screen that lists it and the form that edits it.
-- **The Funds screen asks for the birth date, because nothing else has anywhere to.** The bond
-  row's target is `(age − 30)` points and the age comes from `setting::key::BIRTH_DATE`, which the
-  import writes and no screen owns. Entering the screen with an age row and no birth date on record
-  opens a one-field date form writing that same key. `Esc` dismisses it — the target draws as `—`,
-  the share rows divide the whole 100%, and the footer says the birth date is unset — and it asks
-  again the next time the screen is entered, never once the setting exists. Not an error and not a
-  silent zero: a zero target would read as "bonds are not wanted" rather than "we have not been
-  told".
-- **`e` edits the figure and `E` edits the row**, the bill precedent exactly. Nothing on this
-  screen moves money — there is no `t` — and no fund row links to an account, a goal, or a
-  transaction: the values are typed or imported, and nothing reconciles them against a balance.
+- **A holding is one row, and `e` edits all of it: account, ticker and balance.** There is no `E`
+  beside it the way a bill splits `e`/`E` — a holding has no figure that stands apart from the row
+  the way a bill's amount does, so one form asks for the three fields together. Nothing on this
+  screen moves money — there is no `t` — and nothing reconciles a balance against a statement —
+  there is no `r`. A holding does link to an account, through `account_id`; what it does not link
+  to is a goal or a transaction, and its balance is always typed, never imported — `holding` and
+  `fund_mix` are in `PRESERVED_TABLES` because the workbook carries neither.
