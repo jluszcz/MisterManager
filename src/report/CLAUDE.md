@@ -1,6 +1,6 @@
 # report — the standing HTML report
 
-`Snapshot` reads the Overview, both ledgers, Savings, Planning and Funds in one pass; `html`
+`Snapshot` reads the Overview, both ledgers, Savings and Planning in one pass; `html`
 renders them as one self-contained page, one module per tab, the way `tui` keeps one per screen;
 `write` minifies that page and puts it on the disk atomically; `write_if_enabled` is the quit
 path's gate over it. `minify_html` is named only in `mod.rs`.

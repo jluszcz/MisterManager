@@ -58,14 +58,25 @@ pub fn whole_years(birth: NaiveDate, today: NaiveDate) -> i64 {
 /// all bonds rather than overflowing the equity remainder into the negative.
 /// The equity remainder always splits by `intl_equity_share` of what the bond
 /// share leaves, so the three always foot to `BasisPoints::ONE`.
+///
+/// **`intl_equity_share` is clamped to `0..=`[`BasisPoints::ONE`] here**, which
+/// is the whole guard over it: it is stored as a ratio of two cells the
+/// importer reads through `cell::as_rate_bp`, which reads whatever the sheet
+/// carries, and a negative cell against a larger positive one stores a
+/// negative share. Unclamped that hands back a negative `intl_stock` and a
+/// `us_stock` over 100%, which is two wrong percentages on the Funds screen.
+/// The clamp belongs with the derivation for the reason `planning::compute`'s
+/// does, and is silent for the same reason: nothing in the app can write the
+/// setting, so there is no screen with anything to report.
 pub fn targets(age: Option<i64>, intl_equity_share: BasisPoints) -> Targets {
     let bonds =
         age.map(|age| BasisPoints(((age - BONDS_START_AGE) * 100).clamp(0, BasisPoints::ONE.0)));
     let equity_remainder = BasisPoints::ONE.0 - bonds.map_or(0, |b| b.0);
 
+    let intl_share = intl_equity_share.0.clamp(0, BasisPoints::ONE.0);
     let intl_stock = BasisPoints(
-        ((i128::from(equity_remainder) * i128::from(intl_equity_share.0))
-            / i128::from(BasisPoints::ONE.0)) as i64,
+        ((i128::from(equity_remainder) * i128::from(intl_share)) / i128::from(BasisPoints::ONE.0))
+            as i64,
     );
     let us_stock = BasisPoints(equity_remainder - intl_stock.0);
 
@@ -131,6 +142,35 @@ mod tests {
             targets(Some(200), BasisPoints(4_000)).bonds,
             Some(BasisPoints(10_000))
         );
+    }
+
+    /// The setting behind `intl_equity_share` is a ratio of two cells read
+    /// off the sheet unbounded, so a negative one against a larger positive
+    /// one stores a negative share. Unclamped, that is a negative
+    /// international target beside a US target over 100% -- two wrong
+    /// percentages that still foot to a hundred, which is what makes it
+    /// unnoticeable rather than obviously broken.
+    #[test]
+    fn an_equity_split_outside_the_range_is_clamped_rather_than_drawn() {
+        let below = targets(Some(48), BasisPoints(-2_000));
+        assert_eq!(below.intl_stock, BasisPoints::ZERO);
+        assert_eq!(
+            below.us_stock,
+            BasisPoints(8_200),
+            "the whole equity remainder"
+        );
+
+        let above = targets(Some(48), BasisPoints(12_000));
+        assert_eq!(above.intl_stock, BasisPoints(8_200));
+        assert_eq!(above.us_stock, BasisPoints::ZERO);
+
+        for t in [below, above] {
+            assert_eq!(
+                t.bonds.unwrap().0 + t.us_stock.0 + t.intl_stock.0,
+                10_000,
+                "the clamp broke the three targets' footing"
+            );
+        }
     }
 
     /// `DATEDIF(..., "y")` semantics: whole years only.

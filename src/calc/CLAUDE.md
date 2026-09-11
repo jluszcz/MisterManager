@@ -213,7 +213,7 @@ leak a dollar the single merged line does not.
 ```
 bonds       = clamp(0, (age − BONDS_START_AGE) × 100 bp, 10,000 bp)   unknown when no birth date is on record
 equity      = 10,000 bp − bonds, or the whole 10,000 bp when bonds is unknown
-intl_stock  = equity × intl_equity_share / 10,000
+intl_stock  = equity × clamp(0, intl_equity_share, 10,000 bp) / 10,000
 us_stock    = equity − intl_stock
 ```
 
@@ -222,6 +222,15 @@ rather than a negative share, and an age far enough past it targets all bonds ra
 overflowing the equity remainder negative. An unknown age is a third state beside "young" and
 "old", and it is neither an error nor a zero: `bonds` is `None`, and the two equity shares divide
 the whole remainder rather than being told a bond target that is really a question.
+
+**`intl_equity_share` is clamped here too, and this is the only place it is bounded.** It is stored
+as the ratio of two sheet cells, and `import::cell::as_rate_bp` reads whatever they carry — a
+negative `J3` against a larger positive `J4` stores a negative share, which unclamped is a negative
+international target beside a US target over 100%. The import refuses only a pair that sums to
+nothing, since the figure is drawn and never spent: unlike `check_splits`, whose percentages reach
+`transfer::plan` as real instructions to move money, nothing downstream of these three shares
+writes anything. The clamp is silent for the reason the discretionary clamp above it is — no screen
+in the app can write the setting, so there is nothing to report.
 
 ## `pro_rata` splits interest by largest remainder
 

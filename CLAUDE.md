@@ -164,7 +164,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. `spread_asks` prices the plug's set, and `unmet_asks` says when the plug falls short of it. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
-| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and Funds in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own. |
+| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings and Planning in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own; its Funds tab is a line of text, there being no fund composition on record to look through. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/backup/` | The schedule, the snapshot, and the upload. `aws_config`, `aws_sdk_s3` and `tokio` are named only in `s3.rs`. |
 | `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `tui/mod.rs` rather than in whichever screen needed it first. `app` is a directory, one module per screen over one `App`. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
@@ -324,18 +324,28 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   `Planning!J3` and `J4` and stores their ratio, because two stored values for one fact can
   disagree — the same reason only `Constants!G2` is imported for the pay cadence while `H2` is
   merely asserted against it.
-- **An investment account is banded off the Overview, and its balance is not a `SUM(cents)`.**
+- **An investment account is banded off the Overview, and no balance of one is drawn there.**
   `kind = 'investment'` means an account the Overview skips: `overview::load` filters them before
-  banding, so Net keeps meaning spendable net worth derived from the dated ledger. Their balance is
-  the sum of the `holding` rows beneath them instead — `overview::load`'s own comment says why that
-  sum cannot be banded in. What reusing `account` buys is naming, colors, ordering and the Accounts
-  screen, deliberately not the balance model.
+  banding, so Net keeps meaning spendable net worth derived from the dated ledger. What such an
+  account holds is the `holding` rows beneath it, a balance each and none of them dated; nothing
+  sums them into a balance for the account, and `overview::load`'s own comment says why such a sum
+  could not be banded in if it did. What reusing `account` buys is naming, colors, ordering and the
+  Accounts screen, deliberately not the balance model.
 - **`account.tax_treatment` is present exactly when the kind is `investment`**, which the schema's
   paired `CHECK` is the backstop for and the Accounts screen's conditional field is the guard.
   `account::set_tax_treatment` is its one writer, for the reason `set_interest_policy` is its
   column's.
 - **`holding` and `fund_mix` are in `PRESERVED_TABLES`**, and the reason is uniform: the workbook
   carries neither, so a `--replace` has nothing to say about them.
+- **A ticker is uppercased once, where it is typed.** It is a key in three places and not one of
+  them folds case: `holding`'s `UNIQUE (account_id, ticker)`, `db::holding::update`'s duplicate
+  guard, and `fund_mix`'s `PRIMARY KEY (ticker, asset_class)`, which is looked up by the string a
+  holding carries. So `usm` and `USM` would be two holdings in one account, two entries in
+  `holding::tickers`, and two independent compositions — a mix fetched under one spelling never
+  reaching a holding typed in the other. It is the failure `account::by_code` folds case against,
+  answered the other way round: the form is the only writer, so `tui::fund::HoldingForm::commit`
+  normalises the typing and the three keys agree by construction. A second writer owes the same
+  before it calls `holding::insert` or `holding::update`.
 - **The pay cadence is one setting, and the days between paydays are derived from it.**
   `key::PAY_PERIODS_PER_YEAR` is the count; `calc::period_days` divides a year of whole weeks
   (`52 × 7`) by it, clamped at both ends, and that is what `calc::per_paycheck` counts a deadline's
@@ -536,7 +546,7 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
 - **`mm --demo` replaces absolute figures and owner-entered text, and nothing else.** Every
   absolute dollar figure draws with another figure's digits, keyed on a per-run salt so one amount
   reads the same everywhere; every account name and code, goal name, goal note, recurring-goal name,
-  bill label, fund name and transaction description draws as a same-length pronounceable pseudoword,
+  bill label, fund ticker and transaction description draws as a same-length pronounceable pseudoword,
   keyed the same way so one word reads the same all run. Percentages, dates, counts, the app's own vocabulary, and every match key are
   untouched: a percentage is a shape rather than a sum, a scrambled date is not a date, and a count
   over a list of rows the reader can see would read as a fault. It is display-only and installed

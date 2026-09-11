@@ -267,6 +267,73 @@ mod tests {
         );
     }
 
+    /// A ticker is a key in three places and none of them folds case, so the
+    /// form uppercases what is typed. Without that, `usm` and `USM` are two
+    /// holdings in one account and two independent compositions, and a mix
+    /// fetched under one spelling never reaches a holding typed in the other.
+    #[test]
+    fn typing_a_lowercase_ticker_stores_it_uppercase() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        test_support::press(&mut app, KeyCode::Char('a'));
+        test_support::type_str(&mut app, "unc");
+        test_support::press(&mut app, KeyCode::Tab);
+        test_support::type_str(&mut app, "2000");
+        test_support::press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "the form stayed open: {}", app.status);
+        assert!(
+            app.funds.rows().iter().any(|r| r.ticker == "UNC"),
+            "the ticker was not stored uppercase: {:?}",
+            app.funds
+                .rows()
+                .iter()
+                .map(|r| &r.ticker)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// The other half of the same rule, from the direction it protects: the
+    /// fixture already holds `USM`, so a lowercase re-entry into that account
+    /// must meet the duplicate guard rather than open a second row under a
+    /// second spelling.
+    #[test]
+    fn a_lowercase_re_entry_of_a_held_ticker_is_refused_as_a_duplicate() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Tab);
+        let account = app.funds.filter_account().unwrap();
+        let before = app.funds.rows().len();
+
+        test_support::press(&mut app, KeyCode::Char('a'));
+        test_support::type_str(&mut app, "usm");
+        test_support::press(&mut app, KeyCode::Tab);
+        test_support::type_str(&mut app, "2000");
+        test_support::press(&mut app, KeyCode::Enter);
+
+        assert!(
+            app.modal.is_some(),
+            "a duplicate ticker was accepted: {}",
+            app.status
+        );
+        assert!(!app.status.is_empty(), "the refusal said nothing");
+        test_support::press(&mut app, KeyCode::Esc);
+        assert_eq!(
+            app.funds.rows().len(),
+            before,
+            "a second row was written under a second spelling"
+        );
+        assert_eq!(
+            app.funds
+                .rows()
+                .iter()
+                .filter(|r| r.account_id == account && r.ticker.eq_ignore_ascii_case("USM"))
+                .count(),
+            1
+        );
+    }
+
     /// `e` opens on the ticker like `a` does; `Tab` reaches the balance,
     /// which is the field most worth checking on an existing row.
     #[test]

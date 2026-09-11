@@ -228,8 +228,11 @@ fn every_planning_constant_comes_from_the_sheet() {
 
 /// The stored split is the ratio of the two cells, not either cell.
 ///
-/// Asserted against both, which is what would catch a sheet where the pair has
-/// come apart — the same guard `import_constants` keeps over `G2` and `H2`.
+/// Both cells are inputs to that ratio, so this recomputes the production
+/// expression from the same two cells rather than checking it against an
+/// independent statement of the same fact. What it catches is a moved cell or
+/// a changed formula — either of which would have the split read out of
+/// somewhere else entirely.
 #[test]
 fn the_stored_equity_split_is_the_ratio_of_the_sheets_two_equity_targets() {
     let Some(path) = workbook() else { return };

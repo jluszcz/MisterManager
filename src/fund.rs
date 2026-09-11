@@ -14,16 +14,17 @@ use chrono::NaiveDate;
 /// The international share of the equity remainder, when
 /// [`key::INTL_EQUITY_SHARE`] is unset.
 ///
-/// A database nobody has imported into yet is a real state, not a
-/// misconfiguration: the sheet's own split is what an import writes, and 40%
-/// is what it carries.
+/// A database nobody has imported into yet is a real state rather than a
+/// misconfiguration, so the Funds screen needs an answer before there is a
+/// workbook to take one from. An import writes the sheet's own split over it;
+/// until then this is the split, and a round number is the honest guess to
+/// open on.
 pub const DEFAULT_INTL_EQUITY_SHARE: BasisPoints = BasisPoints(4_000);
 
 /// Read the birth date and the equity split, and derive the three targets.
 pub fn targets_from_db(db: &Db, today: NaiveDate) -> Result<calc_fund::Targets> {
     let age = setting::get(db, key::BIRTH_DATE)?.map(|birth| calc_fund::whole_years(birth, today));
-    // Unset is a real state: a database nobody has imported into yet. The
-    // sheet's own split is what an import writes, and 40% is what it carries.
+    // Unset is a real state: a database nobody has imported into yet.
     let intl = setting::get(db, key::INTL_EQUITY_SHARE)?.unwrap_or(DEFAULT_INTL_EQUITY_SHARE);
     Ok(calc_fund::targets(age, intl))
 }

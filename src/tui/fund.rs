@@ -391,9 +391,21 @@ impl HoldingForm {
         }
     }
 
+    /// The ticker is **uppercased here**, which is the one place the owner's
+    /// typing becomes one.
+    ///
+    /// A ticker is a key in three places and none of them folds case:
+    /// `holding`'s `UNIQUE (account_id, ticker)`, [`crate::db::holding::update`]'s
+    /// duplicate guard, and `fund_mix`'s `PRIMARY KEY (ticker, asset_class)`,
+    /// which is looked up by the string a holding carries. So `usm` and `USM`
+    /// would be two holdings in one account, two entries in
+    /// [`crate::db::holding::tickers`], and two independent compositions —
+    /// with a mix fetched under one spelling never reaching a holding typed
+    /// in the other. Normalising the typing is what folds the three at once,
+    /// and tickers are written in capitals anyway.
     pub fn commit(&self) -> Result<(AccountId, String, Cents)> {
         let account = self.account.selected().context("no account is selected")?;
-        let ticker = self.ticker.value().trim().to_string();
+        let ticker = self.ticker.value().trim().to_uppercase();
         ensure!(!ticker.is_empty(), "ticker must not be empty");
         let balance = parse_whole_amount(self.balance.value())?;
         Ok((account.id, ticker, balance))

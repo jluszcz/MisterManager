@@ -149,7 +149,7 @@ group carry recurring-goal months two years ahead of their goal dates.
 | `E24` | `key::GOALS_FLOOR` |
 | `F25:F27` | the split percentages — refused by `plan::check_splits` if any is outside `0..=100` or the three total over 100% |
 | `C7:D12` | the `bill` table — `C7:C8` Housing, `C9:C12` Other |
-| `J3:J4` | `key::INTL_EQUITY_SHARE` — the international target as a share of `J3 + J4`, not either cell on its own |
+| `J3:J4` | `key::INTL_EQUITY_SHARE` — the international target as a share of `J3 + J4`, not either cell on its own; **both cells are required**, and a missing one fails the whole import, as does a pair summing to nothing |
 
 `C6` is the housing *subtotal*, not a bill. It is recomputed by `calc::planning`, not read, or the
 housing figure would be counted twice.

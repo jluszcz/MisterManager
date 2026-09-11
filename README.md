@@ -100,15 +100,18 @@ checking balance at Paycheck-Eve, so a scrubbed plan names its date beside `Exce
 
 ### `6` Funds
 
-The target/actual split across the funds, with a `Total` row under them. One fund's target is not a
-stored figure: it tracks the owner's age directly — a percentage point past thirty for every year —
-and the rest split whatever share of the target that leaves. Whichever row sits furthest below its
-own target draws in bold, which is where the next contribution belongs; nothing is marked once every
-fund is at or above its target. Nothing here moves money, so a delete moves no balance either.
+One row per fund you hold: the investment account it sits in, the ticker, the balance you typed for
+it, and what the fund is made of. `a`, `e` and `d` add, edit and delete a holding, `Tab` and
+`BackTab` cycle the account filter, and `/` narrows by ticker or account. A ticker is stored in
+capitals however it is typed, since it is the key a fund's composition is looked up under and one
+fund under two spellings is two funds. Nothing here moves money, so a delete moves no balance
+either — and none of these balances reaches the Overview or Net, which stay the spendable net
+worth the dated ledgers add up to.
 
-Entering the screen with an age-tracked fund and no birth date on record opens a one-field form
-asking for it. `Esc` leaves that fund's target blank rather than guessing, and the screen asks again
-the next time it has no answer.
+The `Mix`, `Stock%` and `As of` columns read `—` on every row: a fund's composition is published
+rather than typed, and nothing in the app fetches one yet. A holding whose fund has never been
+looked up and a fund that genuinely holds no stock are different states, so the columns say
+nothing rather than drawing a zero.
 
 ### `7` Recurring Goals
 
@@ -158,8 +161,8 @@ on the same few days. A new goal's opens on the first of the next month, since a
 deadline. `t`'s confirmation opens two business days out, dated for when the transfers land rather
 than for when the plan was read, and the worksheets it queues behind that confirmation open on the
 date it wrote — an allocation is the transfer read from the container's side, so both carry the one
-date. And a recurring transaction's end date and the Funds birth-date prompt open blank, because
-blank means something in both: a rule that does not end, and a date not on record.
+date. And a recurring transaction's end date opens blank, because blank means something in its own
+right: a rule that does not end.
 
 ## Importing a workbook
 
@@ -257,7 +260,7 @@ behind it.
 
 Draws the application exactly as an ordinary run does, with every absolute
 dollar figure's digits replaced by another figure's digits, and every account
-name and code, goal name, recurring-goal name, bill label, fund name and
+name and code, goal name, recurring-goal name, bill label, fund ticker and
 transaction description replaced by a same-length pronounceable pseudoword — both keyed on a salt drawn once
 per run, so one amount draws the same everywhere it appears, one word reads
 the same wherever it appears, and whole dollars agree with the figure they

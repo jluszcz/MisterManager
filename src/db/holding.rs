@@ -5,6 +5,14 @@
 //! holding is where a balance sits, and a mix is what it is composed of, and
 //! the two are looked up by ticker rather than carried together so that one
 //! fetch of a fund's composition prices every account holding it.
+//!
+//! **A ticker arrives here already normalised to uppercase**, and this module
+//! takes it as given rather than folding case itself. `UNIQUE (account_id,
+//! ticker)`, [`update`]'s duplicate guard and `fund_mix`'s lookup by ticker
+//! all compare the string exactly, so `usm` and `USM` would be two holdings,
+//! two tickers and two compositions. `tui::fund::HoldingForm::commit` is where
+//! that normalisation happens, being the only writer; a second writer owes the
+//! same thing before it calls [`insert`] or [`update`].
 
 use super::account::{self, Kind};
 use super::{AccountId, Db, HoldingId};

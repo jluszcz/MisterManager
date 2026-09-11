@@ -111,10 +111,10 @@ impl Overview {
         let adhoc = column(dates.adhoc)?;
         let month_end = column(dates.month_end)?;
 
-        // Investment accounts are not banded and do not reach Net. Their
-        // balance is the sum of the holdings in them, which is not dated, so
-        // it would read the same in all three columns of a screen whose whole
-        // shape is one widening horizon.
+        // Investment accounts are not banded and do not reach Net. What one
+        // holds is its `holding` rows, a balance each and none of them dated,
+        // so any figure derived from them would read the same in all three
+        // columns of a screen whose whole shape is one widening horizon.
         //
         // Filtered here rather than given a band of its own, which would draw
         // a row of zeroes. It is a guard rather than the only one: `section`

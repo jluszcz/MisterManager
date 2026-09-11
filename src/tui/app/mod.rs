@@ -2781,11 +2781,12 @@ mod tests {
         /// A screen key, and the cursor that screen scrolls.
         type ScreenCursor = (char, fn(&App) -> usize);
 
-        let screens: [ScreenCursor; 6] = [
+        let screens: [ScreenCursor; 7] = [
             ('2', |app| app.cash.selected_index()),
             ('3', |app| app.credit.selected_index()),
             ('4', |app| app.savings.selected_index()),
             ('5', |app| app.planning.selected_index()),
+            ('6', |app| app.funds.selected_index()),
             ('7', |app| app.recurring_goal.selected_index()),
             ('8', |app| app.recurring_txn.selected_index()),
         ];
@@ -2808,17 +2809,16 @@ mod tests {
         }
     }
 
-    /// Two rows on all six lists, which is what makes the test above mean
-    /// anything: over an empty list every scroll key leaves the cursor at zero,
-    /// so a screen that never calls `cursor::scroll_key` would pass just as
-    /// well as one that does. `app()` already fills the two ledgers, Savings
-    /// and Planning; the two recurring screens start empty and are filled
-    /// here.
+    /// Two rows on all seven lists, which is what makes the test above mean
+    /// anything: over a list of one row `End` lands where `Home` did, so a
+    /// screen that never calls `cursor::scroll_key` would pass just as well as
+    /// one that does. `app()` already fills the two ledgers, Savings and
+    /// Planning; the two recurring screens and Funds start empty and are
+    /// filled here -- `app()` itself holds no investment account, which is
+    /// what leaves Funds empty in every other fixture in this file.
     ///
-    /// One holding besides those six lists, so the demo sweeps below have a
-    /// figure and a name on screen 6 to check for -- `app()` itself holds no
-    /// investment account, which is what leaves Funds empty in every other
-    /// fixture in this file.
+    /// Filling Funds is also what gives the demo sweeps below a figure and a
+    /// name on screen 6 to check for.
     fn app_with_two_rows_on_every_list() -> App {
         let mut app = app();
         let broker = account::insert(
@@ -2831,6 +2831,7 @@ mod tests {
         )
         .unwrap();
         holding::insert(&app.db, broker, "USM", Cents::from_dollars(9_000)).unwrap();
+        holding::insert(&app.db, broker, "USB", Cents::from_dollars(4_000)).unwrap();
         let checking = account::list(&app.db).unwrap()[0].id;
         for (name, day_of_month) in [("Utilities", 1), ("Gym", 15)] {
             recurring_txn::insert(

@@ -393,7 +393,9 @@ pub(super) fn run(conn: &Connection) -> Result<()> {
 /// around the whole thing. `PRAGMA foreign_keys` is a no-op inside a
 /// transaction, so the switch is thrown out here, and thrown back however the
 /// chain ends -- `db::prepare` turned it on, and it is the rest of the run's
-/// guard.
+/// guard. SQLite reports no error for ignoring the pragma, so the switch is
+/// read back and a chain that would run with enforcement on is refused
+/// outright rather than left to fail somewhere inside an arm.
 ///
 /// **What an arm loses by that is `ON DELETE CASCADE`**, which is inert with
 /// the enforcement off: `allocation`'s is the one the schema declares, and an
@@ -417,6 +419,19 @@ fn apply(conn: &Connection, schema: &str, chain: &[Migration]) -> Result<()> {
     }
     let enforcing: bool = conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?;
     conn.pragma_update(None, "foreign_keys", false)?;
+    // SQLite ignores this pragma inside a transaction and reports no error for
+    // doing so, so the `?` above proves nothing on its own: the switch has to
+    // be read back. With enforcement still on, the first arm that rebuilds a
+    // table would fail on a `REFERENCES` three tables away, and the only
+    // signal would be a constraint error naming neither this function nor the
+    // transaction that caused it.
+    let off: bool = !conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?;
+    anyhow::ensure!(
+        off,
+        "the schema chain cannot run inside a transaction; open the database \
+         through db::open or db::open_in_memory, which migrate before anything \
+         else touches the connection"
+    );
     let migrated = migrate(conn, schema, chain, current, head);
     let restored = conn.pragma_update(None, "foreign_keys", enforcing);
     // The chain's own failure first: it is the one that says what went wrong,
@@ -608,6 +623,27 @@ mod tests {
         assert!(err.contains("version 3"), "{err}");
         assert!(err.contains("newer than this build"), "{err}");
         assert_eq!(version(&conn), 3, "the database was written to anyway");
+    }
+
+    /// The chain runs with foreign keys off, and SQLite ignores the pragma
+    /// that turns them off inside a transaction without reporting anything.
+    /// So the switch is read back, and a chain that would run with enforcement
+    /// still on is refused here rather than allowed to fail three arms later
+    /// on a `REFERENCES` that names nothing to do with the real cause.
+    ///
+    /// The state is out of reach in the app -- `db::prepare` is the only
+    /// caller and runs before anything opens a transaction -- which is exactly
+    /// why the guard is worth pinning: nothing else would notice a second
+    /// caller putting one there.
+    #[test]
+    fn the_chain_refuses_to_run_with_a_transaction_already_open() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        conn.execute_batch("BEGIN").unwrap();
+
+        let err = apply(&conn, BASELINE, ONE_ARM).unwrap_err().to_string();
+
+        assert!(err.contains("cannot run inside a transaction"), "{err}");
     }
 
     fn double_a_into_b(conn: &Connection) -> Result<()> {
