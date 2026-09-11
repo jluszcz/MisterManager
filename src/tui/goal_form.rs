@@ -1738,11 +1738,17 @@ mod tests {
             Some(BasisPoints(625)),
             today(),
         );
+        // Focused, which is the state it is typed in and the one that costs a
+        // column: the caret sits past the last character, as a terminal's own
+        // does.
+        walk_until!(form.focus == GoalField::Note, form.next_field());
 
         let text = rendered_goal(&mut form);
+        // The space is `widget`'s `PAST_THE_END`, the column the caret sits in.
+        // A note clipped at the limit has the border there instead.
         assert!(
-            text.contains(&"x".repeat(NOTE_LIMIT)),
-            "the note is cut short: {text}"
+            text.contains(&format!("{} ", "x".repeat(NOTE_LIMIT))),
+            "the note, or the caret past it, is cut short: {text}"
         );
     }
 

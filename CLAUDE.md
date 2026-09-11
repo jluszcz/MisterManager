@@ -574,8 +574,10 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
     the modal that draws one on a single line have to agree about what fits. **The form is what
     bounds it**, being the narrower of the two and having no horizontal scrolling: a longer limit
     would let the owner type past the right edge of a field the commit then accepts. The derivation
-    is on the constant, and `a_note_at_the_limit_is_drawn_whole_on_the_form` is what ties the number
-    to the width.
+    is on the constant — including the column the caret spends past the last character, which is why
+    the figure is odd — and `a_note_at_the_limit_is_drawn_whole_on_the_form` is what ties the number
+    to the width. That test focuses the Note field, because the caret is only drawn on the line that
+    has focus and an unfocused one would pass at any limit a column too wide.
 - **One worksheet commit is one `batch`.** `goal::insert_allocations` opens the batch itself, so a
   fumbled payday is one `delete_batch` rather than dozens of deletions. `U` undoes the most recent
   batch by insert order and **never an `Import` batch** — that one holds every opening balance in the
