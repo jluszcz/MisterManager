@@ -1,11 +1,11 @@
 # Fund Allocation Look-Through — Design
 
 **Status:** approved in conversation, 2026-09-11
-**Branch:** `remove-funds-screen`
+**Branch:** `fund-lookthrough-spec`
 
 ## Goal
 
-Replace the Funds screen's age-based asset-allocation block with a **look-through view**: the
+Replace the Funds screen's hand-typed asset-allocation block with a **look-through view**: the
 owner types a balance per fund per account, and the app derives a bonds / domestic-stock /
 international-stock breakdown across the whole portfolio by fetching each fund's published
 composition from SEC N-PORT filings.
@@ -13,35 +13,41 @@ composition from SEC N-PORT filings.
 The figure the owner should never have to type is the one inside a fund. Balances are typed;
 compositions are fetched.
 
+**The age-based target survives, and is what the look-through is measured against.** It was
+previously a target per row of a table whose actuals were three hand-typed values; it becomes a
+target per asset class against a portfolio the app derives. That is the whole point of keeping it —
+the delta column finally compares a target to something nobody typed.
+
 ## Scope
 
 ### What goes
 
 | File | Lines | Disposition |
 |---|---|---|
-| `src/fund.rs` | 218 | Deleted. |
-| `src/calc/fund.rs` | 374 | Deleted. |
 | `src/db/fund.rs` | 394 | Deleted. |
 | `src/import/fund.rs` | 395 | Deleted. |
 | `tests/fund_from_workbook.rs` | 108 | Deleted. |
+| `src/calc/fund.rs` | 374 | **Shrunk** to the target rule alone. |
+| `src/fund.rs` | 218 | **Rewritten** to read settings rather than a table. |
 | `src/tui/fund.rs` | 795 | **Rewritten.** |
 | `src/tui/app/funds.rs` | 369 | **Rewritten.** |
 | `src/report/html/funds.rs` | 109 | **Rewritten.** |
 
-Also removed: `db::FundId`, `key::BIRTH_DATE`, the `Planning!I1:M5` block in the importer, and
-`Constants!K2` (the birth date's only producer). The `fund` table is dropped by a migration arm;
-`schema.sql` is a frozen baseline and is not edited.
+Also removed: `db::FundId`, `db::fund::Target`, and the `Planning!I1:M5` block in the importer. The
+`fund` table is dropped by a migration arm; `schema.sql` is a frozen baseline and is not edited.
 
-The birth date is read on the fund-import path (`src/import/mod.rs:265`), in `src/fund.rs`, and on
-the Funds screen. Nothing else reads it, so it leaves with them.
+**`key::BIRTH_DATE` and `Constants!K2` stay.** The bond target is `(age − 30)` points and nothing
+else produces the age. What leaves is the *table* the target used to be attached to, not the rule.
 
 Screen 6 keeps its slot and its three files are rewritten rather than deleted, so the exhaustive
 `match self.screen` blocks in `src/tui/app/mod.rs` never pass through a state with a hole in them.
 
 ### What survives, and is easy to delete by mistake
 
-- **`BasisPoints`** (`src/rate.rs`). It loses the age rule and gains `fund_mix.weight_bp`, so it
-  keeps three callers throughout.
+- **`BasisPoints`** (`src/rate.rs`). It keeps the age rule and gains `fund_mix.weight_bp`.
+- **`calc::fund::whole_years` and `calc::fund::BONDS_START_AGE`.** The rule, and the only number in
+  it. What leaves that module is everything shaped around a table of rows: `Rule`, `Row`,
+  `ComputedRow`, `Computed`, and the per-row target/actual/delta.
 - **The paired `CHECK` construction** `db::fund::Target` introduced — a column whose presence is
   tied to another column's value. It moves to `account.tax_treatment`.
 - **The palette's funding ramp** (`src/palette.rs`). That is how funded a *goal* is, unrelated.
@@ -243,6 +249,42 @@ There is no override table. The classifier is correct on every holding of the po
 designed against, `Unclassified` is visible, and the first genuine miss can add a keyword. A schema
 surface serving a case that has not happened is not earned yet.
 
+## Targets
+
+The look-through says what the portfolio *is*. The age rule says what it should be, and the two are
+drawn side by side.
+
+**Bonds track age: `(age - 30)` percentage points**, one per year, from
+`calc::fund::BONDS_START_AGE`. The age comes from `key::BIRTH_DATE`, imported from `Constants!K2`,
+and moves with no write - which is why the target is derived on every read and never stored.
+
+**The equity remainder splits by one setting.** `key::INTL_EQUITY_SHARE` is the international share
+*of the equity remainder*, in basis points; domestic is what is left. One key rather than two,
+because two keys for one fact can disagree - the same reason only `Constants!G2` is imported for the
+pay cadence while `H2` is merely asserted against it. The importer reads `Planning!J3` and
+`Planning!J4`, which the sheet carries as shares of the whole portfolio, and stores
+`J3 / (J3 + J4)`. `tests/planning_from_workbook.rs` asserts that derivation against both cells,
+which is what would catch a sheet where the pair has come apart.
+
+**No birth date on record is a question, not a zero.** The bond target is `None` and the two equity
+targets divide the whole 100% rather than being told a bond target that is really a question. That
+is the behaviour `calc::fund` already has for an age row with no birth date, kept verbatim.
+
+**The three target-bearing rows are Bonds, U.S. stock and Intl stock.** Bonds is the pair
+`us_bond + intl_bond` combined, because the age rule produces one number and splitting it would
+invent a precision the rule does not have. `cash` and `unclassified` carry no target and draw an em
+dash in that column - a target for money the classifier could not place would be a claim about
+nothing.
+
+**The delta is `target - actual`, signed, and drawn wherever a target exists.** Signed rather than
+the sheet's `MAX(0, ...)`: over-weight in bonds is as much a thing to see as under-weight, and a
+column that can only report one direction reads as though the other never happens.
+
+**What no longer exists is the per-row target.** `db::fund::Target`, `calc::fund::Rule` and the
+`Planning!I1:M5` block went with the table: a target attached to a row the owner typed is what the
+look-through replaces. `src/fund.rs` is what remains of the read side - it reads the birth date and
+`key::INTL_EQUITY_SHARE` out of `db` and feeds `calc::fund`.
+
 ## Screens
 
 ### Funds, screen 6
@@ -273,6 +315,10 @@ leading characters the way a right-aligned figure would.
 **A ticker with no `fund_mix` rows reads "never fetched", not 0%.** Zero and unknown mean opposite
 things — a fund holding no stock, versus a fund nobody has asked SEC about — and the screen saying
 so is the screen `G` is pressed from.
+
+**The summary is a table, not a stack of bars**: one row per target-bearing class carrying Target,
+Actual and the delta, with the four-class mix bar beside it. One table answers both questions - the
+rows are what the rule targets, the bar is what the portfolio holds.
 
 **The `Unclassified` summary row is drawn only when non-zero**, as the two transfer footers on
 Planning are.
@@ -342,8 +388,10 @@ the id being what three tables reference.
 
 ### What has no oracle
 
-The workbook carries none of this. `tests/fund_from_workbook.rs` is deleted and nothing replaces it;
-`tests/` gains no new binary. Stated here because "the workbook is the test oracle" is the first
+The workbook carries none of the *holdings*. `tests/fund_from_workbook.rs` is deleted and `tests/`
+gains no new binary - but two workbook assertions move rather than disappearing: the birth date
+stays asserted in `tests/import_constants.rs`, and the equity split gains an assertion in
+`tests/planning_from_workbook.rs` tying `key::INTL_EQUITY_SHARE` to `J3 / (J3 + J4)`. Stated here because "the workbook is the test oracle" is the first
 thing `CLAUDE.md` says, and a reader will look for the missing file.
 
 ## Documentation
@@ -354,7 +402,9 @@ investment-kind and Overview-exclusion invariant, the `PRESERVED_TABLES` reasoni
 `Unclassified` stance.
 
 `src/tui/CLAUDE.md` gains screen 6's new identity and `g`/`G` on it. `src/import/CLAUDE.md` loses
-the `Planning!I1:M5` and `Constants!K2` mappings. `src/calc/CLAUDE.md` loses the fund derivation.
+the `Planning!I1:M5` mapping, keeps `Constants!K2`, and gains `Planning!J3:J4` as the one setting
+they are read into. `src/calc/CLAUDE.md` keeps the age rule and loses everything the table shaped
+around it.
 `src/report/CLAUDE.md` gains the allocation tab. `src/mix/CLAUDE.md` is new, and carries what this
 spec says about the three hops, SEC etiquette, and the two classification paths.
 

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Retire the age-based asset-allocation feature and replace its data model with typed
-holdings — investment accounts, the funds held in them, and a place to store each fund's
-composition — leaving the Funds screen working as a holdings list.
+**Goal:** Replace the hand-typed asset-allocation table with typed holdings — investment accounts,
+the funds held in them, and a place to store each fund's composition — while **keeping the
+age-based target rule**, which the look-through will be measured against.
 
 **Architecture:** Nine tasks, leaf-consumer first so every intermediate state compiles and the whole
 suite stays green. The screen and report tab are emptied before the derivation they read
@@ -92,8 +92,8 @@ grep -rn 'fund' --include='*.rs' src/ tests/ | grep -iv 'emergency' | grep -v 'r
 | `src/tui/fund.rs` | Emptied in task 1, refilled in task 8 as the holdings screen. |
 | `src/tui/app/funds.rs` | Same. |
 | `src/report/html/funds.rs` | Emptied in task 2; refilled by the follow-on plan. |
-| `src/fund.rs` | Deleted (task 2). |
-| `src/calc/fund.rs` | Deleted (task 2). |
+| `src/fund.rs` | Rewritten (task 2) — reads settings instead of a table. |
+| `src/calc/fund.rs` | Shrunk (task 2) to the target rule alone. |
 | `src/import/fund.rs` | Deleted (task 3). |
 | `src/db/fund.rs` | Deleted (task 4). |
 | `src/db/id.rs` | `FundId` removed (task 4). |
@@ -206,17 +206,110 @@ Commit with `jluszcz:commit`. Message: `refactor(tui): empty the Funds screen ah
 
 ---
 
-## Task 2: Delete the derivation
+## Task 2: Shrink the derivation to the target rule
+
+The table goes; the rule does not. `calc::fund` keeps `whole_years` and `BONDS_START_AGE` and loses
+everything shaped around a table of rows.
 
 **Files:**
-- Delete: `src/fund.rs`, `src/calc/fund.rs`
+- Modify: `src/calc/fund.rs`, `src/fund.rs`
 - Modify: `src/report/html/funds.rs`, `src/report/mod.rs`, `src/report/html/mod.rs`,
   `src/report/html/fixture.rs`
-- Modify: `src/lib.rs`, `src/calc/mod.rs`
 
 **Interfaces:**
 - Consumes: task 1 (nothing in `src/tui/` reads `crate::fund`).
-- Produces: no module named `crate::fund` or `crate::calc::fund`.
+- Produces:
+  ```rust
+  // src/calc/fund.rs
+  pub const BONDS_START_AGE: i64 = 30;                          // unchanged
+  pub fn whole_years(birth: NaiveDate, on: NaiveDate) -> i64;   // unchanged
+
+  /// The three target shares, derived on every read.
+  pub struct Targets {
+      /// `None` only when no birth date is on record — a question to ask,
+      /// not a zero to assume. The two equity targets then divide the whole
+      /// 100% rather than being told a bond target that is really a question.
+      pub bonds: Option<BasisPoints>,
+      pub us_stock: BasisPoints,
+      pub intl_stock: BasisPoints,
+  }
+
+  pub fn targets(age: Option<i64>, intl_equity_share: BasisPoints) -> Targets;
+
+  // src/fund.rs
+  pub fn targets_from_db(db: &Db, today: NaiveDate) -> Result<calc::fund::Targets>;
+  ```
+
+- [ ] **Step 0: Write the failing tests for the surviving rule**
+
+In `src/calc/fund.rs`'s `mod tests`, keeping whichever existing `whole_years` tests still apply:
+
+```rust
+#[test]
+fn the_bond_target_is_one_point_a_year_over_thirty() {
+    let t = targets(Some(48), BasisPoints(4_000));
+    assert_eq!(t.bonds, Some(BasisPoints(1_800)));
+}
+
+#[test]
+fn the_equity_remainder_splits_by_the_configured_share() {
+    let t = targets(Some(48), BasisPoints(4_000));
+    // 82% equity, 40% of it international.
+    assert_eq!(t.intl_stock, BasisPoints(3_280));
+    assert_eq!(t.us_stock, BasisPoints(4_920));
+}
+
+#[test]
+fn the_three_targets_foot_to_one_hundred_percent() {
+    let t = targets(Some(48), BasisPoints(4_000));
+    let total = t.bonds.unwrap().0 + t.us_stock.0 + t.intl_stock.0;
+    assert_eq!(total, 10_000);
+}
+
+#[test]
+fn with_no_birth_date_the_equity_targets_divide_the_whole_hundred_percent() {
+    let t = targets(None, BasisPoints(4_000));
+    assert_eq!(t.bonds, None, "a missing birth date became a zero bond target");
+    assert_eq!(t.intl_stock, BasisPoints(4_000));
+    assert_eq!(t.us_stock, BasisPoints(6_000));
+}
+
+#[test]
+fn an_age_at_or_under_thirty_targets_no_bonds_rather_than_a_negative_share() {
+    assert_eq!(targets(Some(30), BasisPoints(4_000)).bonds, Some(BasisPoints::ZERO));
+    assert_eq!(targets(Some(22), BasisPoints(4_000)).bonds, Some(BasisPoints::ZERO));
+}
+
+#[test]
+fn an_age_past_a_hundred_and_thirty_targets_all_bonds_rather_than_overflowing() {
+    assert_eq!(targets(Some(200), BasisPoints(4_000)).bonds, Some(BasisPoints(10_000)));
+}
+```
+
+Run: `cargo test --lib calc::fund` — expected FAIL, `cannot find function targets`.
+
+- [ ] **Step 0b: Shrink the module**
+
+Delete `Rule`, `Row`, `ComputedRow`, `Computed` and the per-row `compute`. Keep `whole_years` and
+`BONDS_START_AGE`, and add `Targets`/`targets` clamping at both ends as the tests above pin. Restate
+the module doc to describe the rule as it now stands: three shares over a whole portfolio, with no
+mention of the `Planning!J2:L4` block or the table.
+
+- [ ] **Step 0c: Rewrite `src/fund.rs` to read settings**
+
+It loses the `fund` table read and keeps the birth-date read, gaining the equity-split key:
+
+```rust
+pub fn targets_from_db(db: &Db, today: NaiveDate) -> Result<calc::fund::Targets> {
+    let age = setting::get(db, key::BIRTH_DATE)?
+        .map(|birth| calc::fund::whole_years(birth, today));
+    // Unset is a real state: a database nobody has imported into yet. The
+    // sheet's own split is what an import writes, and 40% is what it carries.
+    let intl = setting::get(db, key::INTL_EQUITY_SHARE)?
+        .unwrap_or(DEFAULT_INTL_EQUITY_SHARE);
+    Ok(calc::fund::targets(age, intl))
+}
+```
 
 - [ ] **Step 1: Empty the report's Funds tab**
 
@@ -229,13 +322,20 @@ the exact signature this crate uses and match it — do not invent one.
 In `src/report/mod.rs`, delete the `Snapshot` field the Funds tab read and its population. In
 `src/report/html/fixture.rs`, delete the fund rows and the `FundId` uses.
 
-- [ ] **Step 3: Delete the two modules**
+- [ ] **Step 3: Add the setting key**
 
-```bash
-git rm src/fund.rs src/calc/fund.rs
+In `src/db/setting.rs`, beside `BIRTH_DATE`:
+
+```rust
+/// The international share *of the equity remainder*, in basis points.
+///
+/// One key rather than one per side: two keys for one fact can disagree, which
+/// is the reason only `Constants!G2` is imported for the pay cadence. Domestic
+/// is what is left.
+pub const INTL_EQUITY_SHARE: Key<BasisPoints> = Key::new("allocation.intl_equity_share");
 ```
 
-Remove `pub mod fund;` from `src/lib.rs` and from `src/calc/mod.rs`.
+Add it to the key-name test beside `BIRTH_DATE`'s line.
 
 - [ ] **Step 4: Build and follow the errors**
 
@@ -258,27 +358,30 @@ Expected: PASS. `tests/fund_from_workbook.rs` still compiles at this point becau
 
 - [ ] **Step 6: Commit**
 
-Commit with `jluszcz:commit`. Message: `refactor(fund): delete the age-based allocation derivation`
+Commit with `jluszcz:commit`. Message: `refactor(fund): target the portfolio rather than a table row`
 
 ---
 
-## Task 3: Delete the importer's fund block and the birth date
+## Task 3: Delete the importer's fund block; import the equity split
 
 **Files:**
-- Delete: `src/import/fund.rs`
-- Modify: `src/import/mod.rs:255-270`, `src/import/constants.rs:52-55`, `src/import/CLAUDE.md`
-- Modify: `src/db/setting.rs` (the `BIRTH_DATE` constant and its test)
-- Delete: `tests/fund_from_workbook.rs`
+- Delete: `src/import/fund.rs`, `tests/fund_from_workbook.rs`
+- Modify: `src/import/mod.rs:255-270`, `src/import/planning.rs`, `src/import/CLAUDE.md`
+- Modify: `tests/planning_from_workbook.rs`
 
 **Interfaces:**
-- Consumes: task 2.
+- Consumes: task 2 (`key::INTL_EQUITY_SHARE` exists).
 - Produces: `import::import_all` returns without a fund count. Check its current return type in
   `src/import/mod.rs` and drop the fund half of the tuple, updating `src/bin/mm.rs`'s reporting to
   match.
 
-**Why the birth date goes with it:** `setting::key::BIRTH_DATE` is read at `src/import/mod.rs:265`
-and in `src/fund.rs` (already deleted), and written at `src/import/constants.rs:54` from
-`Constants!K2`. Nothing else reads it, so a stored birth date would be a fact nobody asks.
+**`key::BIRTH_DATE` and `Constants!K2` stay put.** The bond target is `(age - 30)` points and
+nothing else produces the age. `src/import/constants.rs` is **not** edited by this task.
+
+**What replaces the fund block's other job.** `Planning!J3` and `J4` are the equity targets as
+shares of the whole portfolio. The importer stores their ratio under one key rather than both cells
+under two, for the reason only `Constants!G2` is imported for the pay cadence: two stored values for
+one fact can disagree.
 
 - [ ] **Step 1: Delete the fund import**
 
@@ -293,20 +396,56 @@ Remove `mod fund;` from `src/import/mod.rs`.
 In `src/import/mod.rs`, delete the block at lines 262–268 — the `quoted_at`/`age` derivation and
 the `fund::import` call — and the `fund::targets_frozen` half of the return.
 
-- [ ] **Step 3: Stop reading `Constants!K2`**
+- [ ] **Step 3: Import the equity split**
 
-In `src/import/constants.rs`, delete the `if let Some(birth) = as_date(&at(1, 10))` block. Leave the
-`WORKBOOK_TODAY` block above it untouched — that key has other readers.
+Wherever the `Planning` sheet is read (`src/import/planning.rs`, or the module that already reads
+`Planning!C6:E12` — find it rather than assuming), read `J3` and `J4` through
+`import::cell::as_rate_bp` and store their ratio:
 
-- [ ] **Step 4: Delete the setting key**
+```rust
+// The sheet carries both equity targets as shares of the whole portfolio.
+// What is stored is the split between them, because the bond target moves
+// with a birthday and these two would go stale beside it.
+let intl = as_rate_bp(&at(2, 9)).context("Planning!J3 is not a rate")?;
+let us = as_rate_bp(&at(3, 9)).context("Planning!J4 is not a rate")?;
+let equity = intl.0 + us.0;
+ensure!(equity > 0, "Planning!J3:J4 leave no equity to split");
+setting::set(db, key::INTL_EQUITY_SHARE, BasisPoints(intl.0 * 10_000 / equity))?;
+```
 
-In `src/db/setting.rs`, delete `pub const BIRTH_DATE` and its line in the key-name test at
-line 548.
+Check the row/column indices against `src/import/CLAUDE.md`'s sheet map before writing them — the
+`at(row, col)` convention there is zero-based and `J` is column 9.
+
+- [ ] **Step 4: Assert the derivation against the workbook**
+
+In `tests/planning_from_workbook.rs`:
+
+```rust
+/// The stored split is the ratio of the two cells, not either cell.
+///
+/// Asserted against both, which is what would catch a sheet where the pair has
+/// come apart — the same guard `import_constants` keeps over `G2` and `H2`.
+#[test]
+fn the_stored_equity_split_is_the_ratio_of_the_sheets_two_equity_targets() {
+    let Some(ctx) = common::workbook() else { return };
+    let range = ctx.planning_range();
+
+    let intl = sheet_bp(&range, 2, 9);
+    let us = sheet_bp(&range, 3, 9);
+    let stored = setting::get(&ctx.db, key::INTL_EQUITY_SHARE).unwrap().unwrap();
+
+    assert_eq!(stored, BasisPoints(intl.0 * 10_000 / (intl.0 + us.0)));
+}
+```
+
+Read `tests/planning_from_workbook.rs`'s existing helpers and match them — `sheet_bp` and the
+context accessor above are the shapes `tests/fund_from_workbook.rs` used, and may be named
+differently here.
 
 - [ ] **Step 5: Update `src/import/CLAUDE.md`**
 
-Remove the `Planning!I1:M5` block mapping and the `Constants!K2` row. Say nothing about them having
-been there.
+Remove the `Planning!I1:M5` block mapping. **Keep the `Constants!K2` row.** Add `Planning!J3:J4`,
+saying that the ratio rather than either cell is what is stored.
 
 - [ ] **Step 6: Run the workbook oracle**
 
@@ -320,7 +459,7 @@ here would be exactly the failure `MM_REQUIRE_WORKBOOK` exists to prevent.
 
 - [ ] **Step 7: Commit**
 
-Commit with `jluszcz:commit`. Message: `refactor(import): drop the fund block and the birth date`
+Commit with `jluszcz:commit`. Message: `refactor(import): drop the fund block, keep the equity split`
 
 ---
 
@@ -1173,7 +1312,13 @@ Commit with `jluszcz:commit`. Message: `feat(tui): the Funds screen lists holdin
 
 - [ ] **Step 1: Update the root architecture table**
 
-Remove the `src/fund.rs`, `src/calc/` fund mention, `src/db/fund.rs` and `src/import/fund.rs` rows.
+Remove the `src/db/fund.rs` and `src/import/fund.rs` rows. Restate the two that survive:
+
+```markdown
+| `src/calc/fund.rs` | The target rule: bonds track age one point a year over thirty, and the equity remainder splits by one configured share. No database. |
+| `src/fund.rs` | Reads the birth date and the equity split out of `db`, feeds `calc::fund`. The one place a stored birth date becomes the bond target every screen measures against. |
+```
+
 Add:
 
 ```markdown
@@ -1181,10 +1326,26 @@ Add:
 | `src/db/fund_mix.rs` | The `fund_mix` table — one fund's composition by asset class, as of the filing it was read from. |
 ```
 
-- [ ] **Step 2: Remove the four fund invariants**
+- [ ] **Step 2: Restate the fund invariants**
 
-Delete the bullets on the fund table being imported, a fund's target percentage being derived, and
-the two that follow from them. Add:
+Delete the bullet on the `fund` table being imported and `--replace` overwriting hand-typed values —
+the table is gone. **Keep the bullet on a fund's target percentage being derived rather than
+stored**, and restate it for the new shape:
+
+```markdown
+- **The allocation target is derived, never stored.** The bond target is `(age - 30)` points and a
+  birthday moves it with no write, so storing it would go stale in the night. What is stored is the
+  birth date and one split — `key::INTL_EQUITY_SHARE`, the international share of the equity
+  remainder — and `calc::fund::targets` turns the pair into three percentages on every read. **An
+  age row with no birth date on record claims nothing**, so the two equity targets divide the whole
+  100% rather than being told a bond target that is really a question.
+- **One key holds the equity split, not two.** Domestic is the remainder. The importer reads
+  `Planning!J3` and `J4` and stores their ratio, because two stored values for one fact can
+  disagree — the same reason only `Constants!G2` is imported for the pay cadence while `H2` is
+  merely asserted against it.
+```
+
+Add:
 
 ```markdown
 - **An investment account is banded off the Overview, and its balance is not a `SUM(cents)`.**
@@ -1218,11 +1379,18 @@ screen" paragraph restates screen 6.
 - [ ] **Step 5: Verify no stale references survive**
 
 ```bash
-grep -rn 'birth' --include='*.rs' --include='*.md' src/ tests/ CLAUDE.md | grep -iv emergency
-grep -rn 'calc::fund\|db::fund\b\|FundId' --include='*.rs' --include='*.md' src/ tests/ CLAUDE.md
+# These must be GONE.
+grep -rn 'db::fund\b\|FundId\|fund::Target\|fund::Rule\|Planning!I1' \
+  --include='*.rs' --include='*.md' src/ tests/ CLAUDE.md
+
+# These must still be PRESENT — the rule survived the table.
+grep -rn 'BIRTH_DATE' --include='*.rs' src/ | grep -v emergency
+grep -rn 'BONDS_START_AGE\|INTL_EQUITY_SHARE' --include='*.rs' src/
 ```
 
-Expected: no output from either.
+Expected: no output from the first; matches from both of the others. A clean first grep with an
+empty second one means the rule was deleted along with its table, which is the mistake this step
+exists to catch.
 
 - [ ] **Step 6: Final gate**
 

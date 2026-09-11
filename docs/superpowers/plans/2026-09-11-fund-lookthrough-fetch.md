@@ -626,8 +626,12 @@ Commit with `jluszcz:commit`. Message: `feat(tui): refresh fund mixes from the F
 - Modify: `src/tui/fund.rs`
 
 **Interfaces:**
-- Consumes: tasks 4 and 5. Extends `tui::fund::Row` from the model plan's task 8, whose
-  `stock_percent` and `as_of` are already `Option`.
+- Consumes: tasks 4 and 5, and `crate::fund::targets_from_db` from the model plan's task 2. Extends
+  `tui::fund::Row` from the model plan's task 8, whose `stock_percent` and `as_of` are already
+  `Option`.
+- Produces: `tui::fund::TargetClass { Bonds, UsStock, IntlStock }` and
+  `SummaryRow { class: TargetClass, target: Option<BasisPoints>, actual: BasisPoints,
+  delta: Option<BasisPoints> }`, reachable as `Funds::summary_row(TargetClass) -> Option<SummaryRow>`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -676,15 +680,56 @@ Expected: FAIL — no method `app_with_mixes`.
 - [ ] **Step 3: Extend the fixture**
 
 `app_with_mixes()` is `app_with_holdings()` plus `fund_mix` rows for every ticker but one — the one
-without is what keeps the "never fetched" test from the model plan honest once mixes exist.
+without is what keeps the "never fetched" test from the model plan honest once mixes exist. It also
+sets `key::BIRTH_DATE`, since two of the tests below are about the target column; set it from
+`test_support::day` relative to the fixture's own `today()` rather than writing a year, so no real
+birth year enters a tracked file.
 
-- [ ] **Step 4: Draw the summary and the bars**
+- [ ] **Step 4: Draw the summary, the targets and the bars**
 
 The summary is each holding's balance apportioned by its ticker's mix, summed by class, then
 expressed as basis points of the total. A holding with no mix contributes to the total and to no
 class — and the screen says so on its row rather than in the summary.
 
+Beside each actual sits its target, from `crate::fund::targets_from_db`. **The target-bearing rows
+are Bonds, U.S. stock and Intl stock** — Bonds being `us_bond + intl_bond` combined, because the age
+rule produces one number and splitting it would invent a precision the rule does not have. `cash`
+and `unclassified` carry no target and draw an em dash in that column.
+
+Δ is `target − actual`, signed, drawn wherever a target exists. A `None` bond target — no birth date
+on record — draws an em dash in both the Target and Δ columns, never a zero.
+
 `Unclassified` is drawn only when non-zero, as the two transfer footers on Planning are.
+
+Add these tests alongside the three in step 1:
+
+```rust
+#[test]
+fn the_bond_target_is_drawn_against_the_combined_bond_share() {
+    let mut app = test_support::app_with_mixes();
+    app.screen = Screen::Funds;
+    app.reload().unwrap();
+
+    let bonds = app.funds().summary_row(TargetClass::Bonds).expect("a Bonds row");
+    let mix = app.funds().mix();
+    assert_eq!(
+        bonds.actual,
+        weight(&mix, AssetClass::UsBond) + weight(&mix, AssetClass::IntlBond)
+    );
+}
+
+#[test]
+fn with_no_birth_date_on_record_the_bond_target_is_blank_rather_than_zero() {
+    let mut app = test_support::app_with_mixes();
+    setting::clear(&app.db, key::BIRTH_DATE).unwrap();
+    app.screen = Screen::Funds;
+    app.reload().unwrap();
+
+    let bonds = app.funds().summary_row(TargetClass::Bonds).unwrap();
+    assert_eq!(bonds.target, None, "a missing birth date drew a zero bond target");
+    assert_eq!(bonds.delta, None);
+}
+```
 
 - [ ] **Step 5: Add the width test and run**
 
@@ -725,6 +770,20 @@ fn every_asset_class_bar_has_a_width_and_a_percentage_beside_it() {
         assert!(html.contains(class.label()), "{} is not labelled", class.label());
     }
 }
+
+#[test]
+fn the_allocation_tab_draws_the_same_targets_the_screen_does() {
+    let snapshot = fixture::snapshot();
+    let html = render(&snapshot);
+    for row in &snapshot.allocation.summary {
+        let Some(target) = row.target else { continue };
+        assert!(
+            html.contains(&target.to_string()),
+            "{:?}'s target is missing from the page",
+            row.class
+        );
+    }
+}
 ```
 
 - [ ] **Step 2: Run them to make sure they fail**
@@ -742,6 +801,10 @@ the terminal and the page cannot disagree about what bonds look like.
 Bars are CSS widths on a `<div>` with the percentage as text beside them — **the page carries no
 script and is read offline on a phone**. The per-account breakdown renders as stacked sections
 rather than the screen's `Tab` cycle, which the page has no way to offer.
+
+The summary table carries the same Target / Actual / Δ columns the screen draws, from the same
+`crate::fund::targets_from_db` — the tab is a spelling of the screen, not a second reading. A
+`None` bond target draws an em dash in both columns here too, for the reason it does there.
 
 - [ ] **Step 5: Run the tests and commit**
 
