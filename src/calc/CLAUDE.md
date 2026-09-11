@@ -49,9 +49,9 @@ Two directions, applied by role:
   the figure covers the thing it is sizing. Under-rounding a set-aside means missing the goal date.
 - **Floor** (`Cents::floor_to_dollar`) on every *transfer instruction* in `planning::compute`. You
   move whole dollars, and never more than you actually have.
-- **Truncation toward zero** on every *display* figure — `calc::fund`'s target, actual and delta
-  percentages. Neither a requirement nor an instruction to move money: nothing is sized by these and
-  nothing is transferred on them, so they take the direction that keeps a percentage from claiming a
+- **Truncation toward zero** on every *display* figure — `calc::fund::targets`'s three shares.
+  Neither a requirement nor an instruction to move money: nothing is sized by these and nothing is
+  transferred on them, so they take the direction that keeps a percentage from claiming a
   hundredth of a point it does not have.
 
 Those two directions are precisely why the waterfall needs a plug: the parts are rounded one way,
@@ -206,28 +206,22 @@ a question for the layer above `calc`, which is why the share is not split here:
 goal contribution and a mortgage overflow, the way the sheet's `D35`/`D41` do, floors twice and can
 leak a dollar the single merged line does not.
 
-## The fund allocation, in order
+## The fund allocation targets
 
-`fund::compute` reproduces `Planning!J2:L4`:
+`fund::targets` derives three portfolio-wide shares, not a row at a time:
 
 ```
-age_target  = max(0, age − BONDS_START_AGE) × 100 bp     unknown when no birth date is on record
-remainder   = max(0, 10,000 − Σ age targets)              an unknown age claims nothing
-target      = age_target, or remainder × share / 10,000
-actual      = value × 10,000 / Σ values                   zero for every row when the total is zero
-delta       = max(0, target − actual)
+bonds       = clamp(0, (age − BONDS_START_AGE) × 100 bp, 10,000 bp)   unknown when no birth date is on record
+equity      = 10,000 bp − bonds, or the whole 10,000 bp when bonds is unknown
+intl_stock  = equity × intl_equity_share / 10,000
+us_stock    = equity − intl_stock
 ```
 
-`furthest_down` is the index of the largest positive delta — the first on a tie, and `None` when
-every row is at or above target.
-
-Shares that do not add to 1.0 are computed as given, never refused: adding the first share row
-always leaves the shares short, so a refusal would block ordinary entry. The screen carries a
-`Total` row instead, where a mis-sum reads as `44.80` rather than `100.00`.
-
-An unknown age is a third state beside "at target" and "below it", and it is neither an error nor a
-zero: the row has no target, so it has no delta, and it is left out of the target sum rather than
-counted as nothing.
+The bond share is clamped at both ends: an age at or under `BONDS_START_AGE` targets no bonds
+rather than a negative share, and an age far enough past it targets all bonds rather than
+overflowing the equity remainder negative. An unknown age is a third state beside "young" and
+"old", and it is neither an error nor a zero: `bonds` is `None`, and the two equity shares divide
+the whole remainder rather than being told a bond target that is really a question.
 
 ## `pro_rata` splits interest by largest remainder
 

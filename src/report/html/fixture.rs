@@ -7,13 +7,12 @@
 
 use crate::calc::planning::{PlanInputs, PlanSettings};
 use crate::db::account::{Account, AccountColor, Group, Kind};
-use crate::db::{AccountId, FundId, GoalId};
-use crate::fund::{Allocation, FundRow};
+use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
 use crate::overview::{Balances, Band, Line, Overview, Section};
 use crate::plan_rows::{Bill, Transfer};
 use crate::projection::Dates;
-use crate::rate::{BasisPoints, Percent};
+use crate::rate::Percent;
 use crate::report::{Container, Ledger, LedgerMonth, LedgerRow, PlanView, Planning, Snapshot};
 use crate::test_support::day;
 use chrono::{Local, NaiveDate, TimeZone};
@@ -159,27 +158,6 @@ pub(super) fn plan_view() -> PlanView {
     }
 }
 
-pub(super) fn funds() -> Allocation {
-    let fund = |id, name: &str, actual: i64, target, share| FundRow {
-        id: FundId(id),
-        name: name.into(),
-        actual: Cents::from_dollars(actual),
-        target,
-        actual_share: BasisPoints(share),
-        delta: target.map(|t: BasisPoints| BasisPoints((t.0 - share).max(0))),
-    };
-    Allocation {
-        rows: vec![
-            fund(1, "Stocks", 6_000, Some(BasisPoints(7_000)), 6_000),
-            fund(2, "Bonds", 4_000, Some(BasisPoints(3_000)), 4_000),
-        ],
-        total: Cents::from_dollars(10_000),
-        target_total: BasisPoints(10_000),
-        furthest_down: Some(0),
-        age: Some(36),
-    }
-}
-
 /// The whole page's worth: `rows` are the one container's goals and `net` is
 /// what the Overview's Net line reads.
 pub(super) fn snapshot(rows: Vec<crate::savings::Row>, net: i64) -> Snapshot {
@@ -216,7 +194,6 @@ pub(super) fn snapshot(rows: Vec<crate::savings::Row>, net: i64) -> Snapshot {
             excess: Cents(23),
         }],
         planning: Planning::Resolved(Box::new(plan_view())),
-        funds: funds(),
     }
 }
 

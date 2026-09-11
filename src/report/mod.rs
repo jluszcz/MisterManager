@@ -13,7 +13,6 @@ use crate::calc;
 use crate::calc::planning::PlanSettings;
 use crate::db::account::Kind;
 use crate::db::{Db, account, bill, txn};
-use crate::fund;
 use crate::goal as goal_engine;
 use crate::money::Cents;
 use crate::overview::Overview;
@@ -111,7 +110,6 @@ pub struct Snapshot {
     pub credit: Ledger,
     pub containers: Vec<Container>,
     pub planning: Planning,
-    pub funds: fund::Allocation,
 }
 
 /// One ledger, every row of it, grouped by month.
@@ -262,7 +260,6 @@ impl Snapshot {
                 Ok(view) => Planning::Resolved(Box::new(view)),
                 Err(e) => Planning::Unresolvable(format!("{e:#}")),
             },
-            funds: fund::compute_from_db(db, today)?,
         })
     }
 }

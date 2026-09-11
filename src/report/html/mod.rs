@@ -251,7 +251,7 @@ pub fn page(snapshot: &Snapshot) -> String {
         ledger::panel(&snapshot.credit),
         savings::sections(&snapshot.containers),
         planning::block(&snapshot.planning),
-        funds::table(&snapshot.funds),
+        funds::table(),
     ];
     let body: String = TABS
         .iter()
@@ -461,6 +461,5 @@ mod tests {
             panel(&page, "planning").contains("Remaining Excess"),
             "no planning rows"
         );
-        assert!(panel(&page, "funds").contains("Stocks"), "no fund rows");
     }
 }

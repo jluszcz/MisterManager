@@ -155,7 +155,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/overview.rs` | Reads balances at the three projection dates out of `db` and bands them into the Overview's sections and Net. Read by the Overview screen and by `report`. |
 | `src/savings.rs` | A goal's derived columns — `%`, `$/Pay`, expired — and what a container has left unallocated. Read by the Savings screen and by `report`. |
 | `src/plan.rs` | Reads settings and balances out of `db`, feeds `calc::planning::compute`. |
-| `src/fund.rs` | Reads the `fund` table and the birth date out of `db`, feeds `calc::fund`. The one place `db::fund::Target` becomes `calc::fund::Rule`. |
+| `src/fund.rs` | Reads the birth date and the international-equity split out of `db`, feeds `calc::fund::targets`. |
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. `spread_asks` prices the plug's set, and `unmet_asks` says when the plug falls short of it. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
