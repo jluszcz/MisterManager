@@ -169,7 +169,9 @@ pub enum Kind {
     /// A block title.
     Heading,
     /// A separator between blocks. The screen draws an empty line; the page
-    /// takes its spacing off the heading's own padding and draws nothing.
+    /// draws no row at all and spends the spacing on the row *below* it
+    /// instead -- a heading's own padding where one follows, and a rule of
+    /// its own where the row is an ordinary one.
     Blank,
     /// An ordinary line.
     Figure,

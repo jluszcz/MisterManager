@@ -93,8 +93,12 @@ about a figure, one of them is wrong.
   one per month. One `sub` for every level past the first would draw flat a
   row the screen draws nested, which is the drift one shared list of rows
   exists to prevent. A
-  `Kind::Blank` draws nothing at all -- the screen's separator is an empty
-  line, and this medium's is `tr.head td`'s padding. Before this, the tab and
+  `Kind::Blank` draws no row at all: the screen's separator is an empty line,
+  and this medium's is padding on the row *below* it. `tr.head td` carries it
+  where a heading follows, which is every break in the list but one -- the
+  Biweekly Expenses line is an ordinary row under a blank, and takes `tr.gap`
+  for the same measure. That class is decided in `resolved`, from the list,
+  because a row does not know what sits above it. Before this, the tab and
   the screen were hand-transcriptions of each other and had already come to
   disagree about which blocks were headed. A row the Biweekly Expenses figure
   counts takes a third class, `counted`, drawn as a `::after` on its label cell
