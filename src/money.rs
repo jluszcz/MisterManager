@@ -49,10 +49,19 @@ impl Cents {
     /// through any path the app offers, and a rounding that reversed
     /// direction below zero would be a second rule to remember for a case
     /// nobody sees.
+    ///
+    /// Saturating, because what reaches this is a figure the owner typed:
+    /// `Goals Floor` and `Cap` are bounded only by what a `Cents` can hold,
+    /// so the step up to the next hundred can run off the top of the range.
+    /// It stops at `i64::MAX` rather than at the hundred below it -- not a
+    /// round figure, but the half of the contract worth keeping is that a
+    /// ceiling never comes out under what it was given.
     pub fn ceil_to_hundred_dollars(self) -> Cents {
         match self.0.rem_euclid(10_000) {
             0 => self,
-            over => Cents(self.0 + 10_000 - over),
+            // `self.0 - over` is the hundred below and cannot overflow; only
+            // the step up to the next one can.
+            over => Cents((self.0 - over).saturating_add(10_000)),
         }
     }
 
@@ -196,6 +205,27 @@ mod tests {
         assert_eq!(Cents(430_001).ceil_to_hundred_dollars(), d(4_400));
         // Up is toward zero from below, not away from it.
         assert_eq!(d(-4_260).ceil_to_hundred_dollars(), d(-4_200));
+    }
+
+    /// `Goals Floor` and `Cap` are typed by the owner and bounded only by
+    /// what a `Cents` can hold, so a figure near the top of the range reaches
+    /// this once it is marked. Stepping up to the next hundred overflows: a
+    /// panic mid-frame in a debug build, and in release a large negative --
+    /// a budget figure below zero drawn where a ceiling should be.
+    ///
+    /// It saturates at `i64::MAX` rather than at the whole hundred below it,
+    /// which is not a round figure but is the half of the contract worth
+    /// keeping: a ceiling may not come out under what it was given.
+    #[test]
+    fn a_ceiling_over_the_top_of_the_range_saturates_rather_than_wrapping() {
+        assert_eq!(Cents(i64::MAX).ceil_to_hundred_dollars(), Cents(i64::MAX));
+        for over in [1, 5_807, 9_999] {
+            let figure = Cents(i64::MAX - over);
+            assert!(
+                figure.ceil_to_hundred_dollars() >= figure,
+                "{figure:?} rounded down"
+            );
+        }
     }
 
     #[test]

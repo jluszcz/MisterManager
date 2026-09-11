@@ -620,9 +620,16 @@ fn counted_biweekly(input: &Input, periods: i64) -> Option<Cents> {
                 .filter_map(|t| t.expense_biweekly(input.settings, periods)),
         )
         .collect();
+    // Saturating for the reason `ceil_to_hundred_dollars` above it is: two
+    // owner-typed constants near the top of the range overflow this sum
+    // before anything has rounded it.
     match counted.is_empty() {
         true => None,
-        false => Some(counted.into_iter().sum()),
+        false => Some(
+            counted
+                .into_iter()
+                .fold(Cents::ZERO, |total, c| Cents(total.0.saturating_add(c.0))),
+        ),
     }
 }
 
@@ -1154,6 +1161,34 @@ mod tests {
         });
 
         assert_eq!(at(&rows, "Expenses").extra, Extra::Annual(Cents(i64::MAX)));
+    }
+
+    /// The same hazard one line above the ceiling: `Cap` and `Goals Floor`
+    /// are typed by the owner with no upper bound, so two of them near the
+    /// top of the range overflow the sum before anything rounds it.
+    #[test]
+    fn a_pair_of_nonsense_constants_saturates_the_sum_rather_than_overflowing() {
+        let plan = plan();
+        let settings = PlanSettings {
+            bill_payment_cap: Cents(i64::MAX),
+            goals_floor: Cents(i64::MAX),
+            ..settings()
+        };
+        let counted = counted_biweekly(
+            &Input {
+                plan: &plan,
+                settings: &settings,
+                housing: &[],
+                other_bills: &[],
+                transfers: Ok(&[]),
+                spread_ask_total: Cents::ZERO,
+                scrubbed_adhoc: None,
+                expense_constants: &[Target::BillPaymentCap, Target::GoalsFloor],
+            },
+            26,
+        );
+
+        assert_eq!(counted, Some(Cents(i64::MAX)));
     }
 
     /// A count is a number rather than an amount, so no sink can decide it is
