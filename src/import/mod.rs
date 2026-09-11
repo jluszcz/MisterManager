@@ -111,7 +111,13 @@ pub fn import_all(db: &Db, path: &Path, today: NaiveDate, replace: bool) -> Resu
 
         let Some(containers) = containers else {
             return Ok(Report::AccountsOnly {
-                accounts: account::list(db)?.len(),
+                // What the sheet can name, which is what "imported" means on
+                // the line this count goes into. `Constants` carries cash and
+                // credit codes and nothing else, so an investment account is
+                // one the owner made on the Accounts screen and `account`
+                // being in `PRESERVED_TABLES` is what kept it -- counting it
+                // here would report it as something this run wrote.
+                accounts: account::list_ledger(db)?.len(),
             });
         };
         savings::set_containers(db, &containers)?;

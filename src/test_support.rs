@@ -47,6 +47,10 @@ fn name_of(kind: Kind, code: &str) -> &'static str {
             "CHK" => Some("Everyday Card"),
             _ => None,
         },
+        // The table names no investment code, so every one of them falls to
+        // the panic below -- which is what a fixture that has left the
+        // vocabulary should meet.
+        Kind::Investment => None,
     };
     named.unwrap_or_else(|| {
         panic!(
@@ -74,6 +78,9 @@ fn account(id: i64, code: &str, kind: Kind) -> Account {
         sort: id - 1,
         group: crate::db::account::default_group(kind),
         color: None,
+        // Both builders below name a cash or a credit account, and neither
+        // kind carries a treatment.
+        tax_treatment: None,
     }
 }
 

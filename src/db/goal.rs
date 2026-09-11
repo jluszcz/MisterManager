@@ -933,7 +933,7 @@ mod tests {
     #[test]
     fn balance_is_the_sum_of_allocations() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = insert(&db, &new_goal("Vacation 2027", savings, 15_000)).unwrap();
 
         assert_eq!(balance(&db, id).unwrap(), Cents::ZERO);
@@ -975,7 +975,7 @@ mod tests {
     #[test]
     fn container_excess_is_the_undated_balance_minus_allocated() {
         let db = db::open_in_memory().unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 0).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 0, None).unwrap();
 
         txn::insert(
             &db,
@@ -1004,7 +1004,7 @@ mod tests {
     #[test]
     fn container_excess_counts_future_rows() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         txn::insert(
             &db,
             &NewTxn {
@@ -1022,7 +1022,7 @@ mod tests {
     #[test]
     fn list_with_balances_returns_goals_in_sort_order() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let mut second = new_goal("Second", savings, 100);
         second.sort = 2;
         let mut first = new_goal("First", savings, 100);
@@ -1042,7 +1042,7 @@ mod tests {
     #[test]
     fn allocations_can_be_grouped_into_a_batch_and_removed_together() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let a = insert(&db, &new_goal("A", savings, 100)).unwrap();
         let b = insert(&db, &new_goal("B", savings, 100)).unwrap();
 
@@ -1059,7 +1059,7 @@ mod tests {
     #[test]
     fn closed_goals_are_excluded_from_listings() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = insert(&db, &new_goal("Done", savings, 100)).unwrap();
         db.conn
             .execute(
@@ -1073,7 +1073,7 @@ mod tests {
     #[test]
     fn a_malformed_goal_date_is_an_error_not_a_silently_undated_goal() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = insert(&db, &new_goal("Corrupt", savings, 100)).unwrap();
         db.conn
             .execute(
@@ -1149,7 +1149,7 @@ mod tests {
     #[test]
     fn list_orders_by_sort_then_id_and_excludes_closed() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let mut second = new_goal("Second", savings, 100);
         second.sort = 2;
         let mut first = new_goal("First", savings, 100);
@@ -1177,7 +1177,7 @@ mod tests {
     #[test]
     fn undated_goals_sort_before_dated_ones() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
 
         let mut dated = new_goal("Dated", savings, 100);
         dated.goal_date = Some(day(2027, 3, 1));
@@ -1202,7 +1202,7 @@ mod tests {
     #[test]
     fn dated_goals_sort_soonest_first_whatever_their_manual_order() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
 
         for (name, date, sort) in [
             ("Soonest", day(2026, 9, 1), 0),
@@ -1227,8 +1227,8 @@ mod tests {
     #[test]
     fn all_with_balances_puts_each_containers_undated_goals_first() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1, None).unwrap();
 
         for (name, container, date) in [
             ("Rainy Dated", savings, Some(day(2027, 1, 1))),
@@ -1261,7 +1261,7 @@ mod tests {
     #[test]
     fn reorder_moves_an_undated_goal_and_renumbers_the_block() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let mut ids = Vec::new();
         for (name, sort) in [("First", 0), ("Second", 1), ("Third", 2)] {
             let mut goal = new_goal(name, savings, 100);
@@ -1284,7 +1284,7 @@ mod tests {
     #[test]
     fn reorder_leaves_the_containers_dated_goals_alone() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let mut dated = new_goal("Dated", savings, 100);
         dated.goal_date = Some(day(2027, 1, 1));
         dated.sort = 7;
@@ -1307,7 +1307,7 @@ mod tests {
     #[test]
     fn reordering_a_dated_goal_is_an_error() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let mut dated = new_goal("Dated", savings, 100);
         dated.goal_date = Some(day(2027, 1, 1));
         let dated_id = insert(&db, &dated).unwrap();
@@ -1318,7 +1318,7 @@ mod tests {
     #[test]
     fn reorder_past_the_end_lands_last() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let mut ids = Vec::new();
         for name in ["First", "Second", "Third"] {
             ids.push(insert(&db, &new_goal(name, savings, 100)).unwrap());
@@ -1337,8 +1337,8 @@ mod tests {
     #[test]
     fn reorder_leaves_another_container_alone() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1, None).unwrap();
         let mut ids = Vec::new();
         for name in ["First", "Second"] {
             ids.push(insert(&db, &new_goal(name, savings, 100)).unwrap());
@@ -1357,7 +1357,7 @@ mod tests {
     #[test]
     fn closing_a_goal_hides_it_but_does_not_change_container_excess() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         txn::insert(
             &db,
             &NewTxn {
@@ -1386,9 +1386,9 @@ mod tests {
     #[test]
     fn containers_lists_only_the_accounts_holding_goals() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 2).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 2, None).unwrap();
         insert(&db, &new_goal("Vacation", savings, 100_000)).unwrap();
         insert(&db, &new_goal("Lego", savings, 20_000)).unwrap();
         insert(&db, &new_goal("Emergency Savings", brokerage, 1_066_000)).unwrap();
@@ -1401,7 +1401,7 @@ mod tests {
     #[test]
     fn containers_of_a_database_with_no_goals_is_empty() {
         let db = db::open_in_memory().unwrap();
-        account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         assert!(containers(&db).unwrap().is_empty());
     }
 
@@ -1412,8 +1412,8 @@ mod tests {
     #[test]
     fn all_with_balances_orders_by_container_then_sort_then_id() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1, None).unwrap();
 
         let mut second = new_goal("Rainy Day Second", savings, 100);
         second.sort = 2;
@@ -1444,7 +1444,7 @@ mod tests {
     #[test]
     fn all_with_balances_of_a_database_with_no_goals_is_empty() {
         let db = db::open_in_memory().unwrap();
-        account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         assert!(all_with_balances(&db).unwrap().is_empty());
     }
 
@@ -1454,7 +1454,7 @@ mod tests {
     #[test]
     fn abandoning_a_goal_raises_the_container_excess_by_its_balance() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         txn::insert(
             &db,
             &NewTxn {
@@ -1485,7 +1485,7 @@ mod tests {
     #[test]
     fn closing_a_goal_out_into_another_leaves_the_container_excess_unmoved() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
@@ -1506,8 +1506,8 @@ mod tests {
     #[test]
     fn closing_a_goal_out_across_containers_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let emergency = insert(&db, &new_goal("Emergency Savings", brokerage, 1_066)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
@@ -1526,7 +1526,7 @@ mod tests {
     #[test]
     fn a_goal_with_a_negative_balance_can_still_be_closed_out() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(-2_500), None, None).unwrap();
@@ -1541,7 +1541,7 @@ mod tests {
     #[test]
     fn closing_a_goal_out_into_itself_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         assert!(move_value(&db, couch, Some(couch), day(2026, 8, 16)).is_err());
     }
@@ -1553,7 +1553,7 @@ mod tests {
     #[test]
     fn a_close_out_notes_the_goal_the_value_came_from_in_plain_text() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
@@ -1578,7 +1578,7 @@ mod tests {
     #[test]
     fn closing_a_goal_out_into_a_closed_goal_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
@@ -1601,7 +1601,7 @@ mod tests {
     #[test]
     fn transferring_value_between_goals_leaves_both_open_and_the_excess_unmoved() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
@@ -1622,7 +1622,7 @@ mod tests {
     #[test]
     fn a_transfer_writes_both_rows_under_one_adhoc_batch() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
@@ -1655,7 +1655,7 @@ mod tests {
     #[test]
     fn a_transfer_notes_the_goal_at_the_other_end_of_it_in_plain_text() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
 
@@ -1680,8 +1680,8 @@ mod tests {
     #[test]
     fn transferring_value_across_containers_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let emergency = insert(&db, &new_goal("Emergency Savings", brokerage, 1_066)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
@@ -1698,7 +1698,7 @@ mod tests {
     #[test]
     fn transferring_value_into_a_closed_goal_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
@@ -1716,7 +1716,7 @@ mod tests {
     #[test]
     fn transferring_value_out_of_a_closed_goal_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
@@ -1731,7 +1731,7 @@ mod tests {
     #[test]
     fn transferring_value_from_a_goal_into_itself_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
 
@@ -1745,7 +1745,7 @@ mod tests {
     #[test]
     fn a_transfer_of_a_non_positive_amount_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
@@ -1765,7 +1765,7 @@ mod tests {
     #[test]
     fn ending_a_goal_that_is_already_closed_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         close(&db, couch).unwrap();
 
@@ -1776,7 +1776,7 @@ mod tests {
     #[test]
     fn update_rewrites_the_name_target_and_goal_date() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
 
         update(
@@ -1805,7 +1805,7 @@ mod tests {
     #[test]
     fn update_can_clear_a_goal_date() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let mut goal = new_goal("Couch", savings, 1_000);
         goal.goal_date = Some(day(2027, 3, 5));
         let id = insert(&db, &goal).unwrap();
@@ -1834,7 +1834,7 @@ mod tests {
     #[test]
     fn a_goals_floating_flag_round_trips_through_insert_and_update() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let mut goal = new_goal("Brokerage", savings, 0);
         goal.floating = true;
         let id = insert(&db, &goal).unwrap();
@@ -1863,7 +1863,7 @@ mod tests {
     #[test]
     fn a_goals_note_round_trips_through_insert_and_update() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let mut goal = new_goal("Couch", savings, 1_000);
         goal.note = Some("the grey one, not the sectional".to_string());
         let id = insert(&db, &goal).unwrap();
@@ -1899,7 +1899,7 @@ mod tests {
     #[test]
     fn a_goal_arrives_with_no_note() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
 
         assert_eq!(get(&db, id).unwrap().unwrap().note, None);
@@ -1910,7 +1910,7 @@ mod tests {
     #[test]
     fn a_goal_arrives_not_floating() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
 
         assert!(!get(&db, id).unwrap().unwrap().floating);
@@ -1921,7 +1921,7 @@ mod tests {
     #[test]
     fn update_rewrites_interest_eligibility() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = insert(&db, &new_goal("Down Payment", savings, 1_000)).unwrap();
 
         update(
@@ -1947,7 +1947,7 @@ mod tests {
     #[test]
     fn a_goal_is_not_favorited_until_it_is_made_one() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = insert(&db, &new_goal("Down Payment", savings, 1_000)).unwrap();
 
         assert!(!get(&db, id).unwrap().unwrap().favorite);
@@ -1959,7 +1959,7 @@ mod tests {
     #[test]
     fn favoriting_a_goal_round_trips_and_can_be_taken_back() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = insert(&db, &new_goal("Down Payment", savings, 1_000)).unwrap();
 
         set_favorite(&db, id, true).unwrap();
@@ -1975,7 +1975,7 @@ mod tests {
     #[test]
     fn editing_a_goal_leaves_its_favorite_alone() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = insert(&db, &new_goal("Down Payment", savings, 1_000)).unwrap();
         set_favorite(&db, id, true).unwrap();
 
@@ -2030,7 +2030,7 @@ mod tests {
     #[test]
     fn insert_allocations_writes_one_batch_for_every_share() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let a = insert(&db, &new_goal("A", savings, 100)).unwrap();
         let b = insert(&db, &new_goal("B", savings, 100)).unwrap();
 
@@ -2060,7 +2060,7 @@ mod tests {
     #[test]
     fn insert_allocations_writes_nothing_when_any_row_fails() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let a = insert(&db, &new_goal("A", savings, 100)).unwrap();
 
         let err = insert_allocations(
@@ -2086,8 +2086,8 @@ mod tests {
     #[test]
     fn last_batch_ignores_other_kinds_and_other_containers() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1, None).unwrap();
         let roth_goal = insert(&db, &new_goal("Roth IRA", savings, 100)).unwrap();
         let emergency_goal = insert(&db, &new_goal("Emergency Savings", brokerage, 100)).unwrap();
 
@@ -2138,7 +2138,7 @@ mod tests {
     #[test]
     fn last_batch_of_a_container_with_no_such_posting_is_none() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         assert!(
             last_batch(&db, BatchKind::Interest, savings)
                 .unwrap()
@@ -2152,7 +2152,7 @@ mod tests {
     #[test]
     fn most_recent_batch_is_the_last_one_entered() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let g = insert(&db, &new_goal("Roth IRA", savings, 100)).unwrap();
         insert_allocations(
             &db,
@@ -2182,7 +2182,7 @@ mod tests {
     #[test]
     fn most_recent_batch_never_offers_the_import_batch() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let g = insert(&db, &new_goal("Roth IRA", savings, 100)).unwrap();
         insert_allocations(
             &db,
@@ -2211,7 +2211,7 @@ mod tests {
     #[test]
     fn batch_shares_sums_a_goals_rows_together() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let g = insert(&db, &new_goal("Roth IRA", savings, 100)).unwrap();
         let batch = insert_batch(&db, BatchKind::Adhoc, day(2026, 8, 14)).unwrap();
         insert_allocation(&db, g, day(2026, 8, 14), Cents(700), None, Some(batch)).unwrap();
@@ -2225,8 +2225,8 @@ mod tests {
     #[test]
     fn next_sort_follows_the_containers_highest_sort() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 1, None).unwrap();
         assert_eq!(next_sort(&db, savings).unwrap(), 0);
 
         let mut goal = new_goal("Lego", savings, 340);
@@ -2241,7 +2241,7 @@ mod tests {
     #[test]
     fn insert_all_writes_every_goal_or_none_of_them() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let ids = insert_all(
             &db,
             &[
@@ -2270,7 +2270,7 @@ mod tests {
     #[test]
     fn a_goal_dated_in_the_year_is_found_even_once_it_is_closed() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let entry = crate::db::recurring_goal::insert(
             &db,
             &crate::db::recurring_goal::NewEntry {
@@ -2298,7 +2298,7 @@ mod tests {
     #[test]
     fn a_goal_dated_in_a_neighbouring_year_does_not_count() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let entry = crate::db::recurring_goal::insert(
             &db,
             &crate::db::recurring_goal::NewEntry {
@@ -2327,7 +2327,7 @@ mod tests {
     #[test]
     fn an_undated_goal_counts_for_no_year() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let entry = crate::db::recurring_goal::insert(
             &db,
             &crate::db::recurring_goal::NewEntry {
@@ -2352,7 +2352,7 @@ mod tests {
     #[test]
     fn allocations_read_back_every_column_of_a_goals_rows() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let id = insert_allocation(
             &db,
@@ -2382,7 +2382,7 @@ mod tests {
     #[test]
     fn an_allocation_with_no_note_round_trips_as_none() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         insert_allocation(
             &db,
@@ -2402,7 +2402,7 @@ mod tests {
     #[test]
     fn allocations_are_oldest_first_and_break_a_shared_date_by_insert_order() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let write = |date, note: &str| {
             insert_allocation(&db, couch, date, Cents::from_dollars(100), Some(note), None).unwrap()
@@ -2423,7 +2423,7 @@ mod tests {
     #[test]
     fn allocations_of_another_goal_are_not_listed() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let lego = insert(&db, &new_goal("Lego", savings, 500)).unwrap();
         insert_allocation(
@@ -2444,7 +2444,7 @@ mod tests {
     #[test]
     fn update_allocation_rewrites_the_date_amount_and_note() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let id = insert_allocation(
             &db,
@@ -2499,7 +2499,7 @@ mod tests {
     #[test]
     fn delete_allocation_removes_one_row_and_leaves_its_batch_intact() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let lego = insert(&db, &new_goal("Lego", savings, 500)).unwrap();
         let batch = insert_allocations(

@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn a_gate_setting_reports_its_goals_outstanding_need() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = goal::insert(
             &db,
             &NewGoal {
@@ -261,7 +261,7 @@ mod tests {
     fn a_gate_over_a_taxed_goal_is_not_satisfied_until_the_taxed_figure_is_funded() {
         let db = db::open_in_memory().unwrap();
         setting::set(&db, key::TAX_RATE, crate::rate::BasisPoints(625)).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = goal::insert(
             &db,
             &NewGoal {
@@ -332,7 +332,7 @@ mod tests {
         let db = db::open_in_memory().unwrap();
         let today = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
 
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
         txn::insert(
             &db,
@@ -346,8 +346,8 @@ mod tests {
         )
         .unwrap();
 
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 2).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 2, None).unwrap();
 
         // Emergency: funded exactly to target, so its shortfall -- and its
         // gate -- is zero.
@@ -460,7 +460,7 @@ mod tests {
 
         let db = db::open_in_memory().unwrap();
         let today = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
         txn::insert(
             &db,

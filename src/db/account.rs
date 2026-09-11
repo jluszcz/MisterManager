@@ -8,6 +8,10 @@ use std::str::FromStr;
 pub enum Kind {
     Cash,
     Credit,
+    /// Holds funds rather than a dated ledger. No transaction ever names
+    /// one: its balance is the sum of what is held in it, which is why it
+    /// is banded off the Overview and offered by no form that writes a row.
+    Investment,
 }
 
 impl Kind {
@@ -15,12 +19,13 @@ impl Kind {
     /// them. Beside the enum rather than on the screen, for
     /// [`InterestPolicy::ALL`]'s reason: a screen offering a subset would
     /// leave a variant unreachable with nothing to say so.
-    pub const ALL: [Kind; 2] = [Kind::Cash, Kind::Credit];
+    pub const ALL: [Kind; 3] = [Kind::Cash, Kind::Credit, Kind::Investment];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Kind::Cash => "cash",
             Kind::Credit => "credit",
+            Kind::Investment => "investment",
         }
     }
 
@@ -30,6 +35,7 @@ impl Kind {
         match self {
             Kind::Cash => "Cash",
             Kind::Credit => "Credit",
+            Kind::Investment => "Investment",
         }
     }
 }
@@ -40,6 +46,7 @@ impl FromStr for Kind {
         match s {
             "cash" => Ok(Kind::Cash),
             "credit" => Ok(Kind::Credit),
+            "investment" => Ok(Kind::Investment),
             other => bail!("unknown account kind {other:?}"),
         }
     }
@@ -48,15 +55,20 @@ impl FromStr for Kind {
 /// Which subtotal band an account sits in on the Overview.
 ///
 /// A group subdivides exactly one [`Kind`]: cash splits into `Checking` and
-/// `Savings`, and credit does not split, so `Credit` is the whole kind. The
-/// variants are exactly the schema's `CHECK (grp IN (...))` list -- keep the
-/// two in step, or an update that type-checks will fail against the
-/// constraint.
+/// `Savings`, and neither credit nor investment splits, so each of those is
+/// the whole of its own kind. The variants are exactly the schema's
+/// `CHECK (grp IN (...))` list -- keep the two in step, or an update that
+/// type-checks will fail against the constraint.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Group {
     Checking,
     Savings,
     Credit,
+    /// The whole of [`Kind::Investment`]. A band the Overview never stacks:
+    /// `overview::Overview::load` drops these accounts before the banding,
+    /// because an undated balance would read the same in all three of its
+    /// columns.
+    Investment,
 }
 
 impl Group {
@@ -65,13 +77,19 @@ impl Group {
     /// Fixed here rather than taken from the order accounts happen to come
     /// back in: an account the layout table does not place sorts last, and
     /// taking the scan order would let it split its own band in two.
-    pub const ALL: [Group; 3] = [Group::Checking, Group::Savings, Group::Credit];
+    pub const ALL: [Group; 4] = [
+        Group::Checking,
+        Group::Savings,
+        Group::Credit,
+        Group::Investment,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Group::Checking => "checking",
             Group::Savings => "savings",
             Group::Credit => "credit",
+            Group::Investment => "investment",
         }
     }
 
@@ -81,6 +99,7 @@ impl Group {
             Group::Checking => "Checking",
             Group::Savings => "Savings",
             Group::Credit => "Credit",
+            Group::Investment => "Investment",
         }
     }
 
@@ -91,6 +110,7 @@ impl Group {
         match self {
             Group::Checking | Group::Savings => Kind::Cash,
             Group::Credit => Kind::Credit,
+            Group::Investment => Kind::Investment,
         }
     }
 
@@ -104,6 +124,7 @@ impl Group {
         match kind {
             Kind::Cash => &[Group::Checking, Group::Savings],
             Kind::Credit => &[Group::Credit],
+            Kind::Investment => &[Group::Investment],
         }
     }
 }
@@ -115,6 +136,7 @@ impl FromStr for Group {
             "checking" => Ok(Group::Checking),
             "savings" => Ok(Group::Savings),
             "credit" => Ok(Group::Credit),
+            "investment" => Ok(Group::Investment),
             other => bail!("unknown account group {other:?}"),
         }
     }
@@ -130,6 +152,7 @@ pub(crate) fn default_group(kind: Kind) -> Group {
     match kind {
         Kind::Cash => Group::Savings,
         Kind::Credit => Group::Credit,
+        Kind::Investment => Group::Investment,
     }
 }
 
@@ -177,6 +200,67 @@ impl FromStr for InterestPolicy {
             "pro_rata" => Ok(InterestPolicy::ProRata),
             "manual" => Ok(InterestPolicy::Manual),
             other => bail!("unknown interest policy {other:?}"),
+        }
+    }
+}
+
+/// How the money in an investment account is taxed.
+///
+/// Carried by every investment account and by no other kind, which the
+/// schema's paired `CHECK` is the backstop for. It decides nothing the app
+/// computes -- it is what the screen groups by when the owner asks where the
+/// bonds live, a question about tax drag that no balance answers.
+///
+/// The variants are exactly the schema's `CHECK (tax_treatment IN (...))`
+/// list, the same construction as [`Kind`], [`Group`], [`InterestPolicy`]
+/// and [`AccountColor`]: keep the two in step, or an update that type-checks
+/// will fail against the constraint.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TaxTreatment {
+    Taxable,
+    TaxDeferred,
+    TaxFree,
+}
+
+impl TaxTreatment {
+    /// Every treatment, in the order the Accounts screen's selector cycles
+    /// them. Beside the enum rather than on the screen, for
+    /// [`InterestPolicy::ALL`]'s reason: a screen offering a subset would
+    /// leave a variant unreachable with nothing to say so.
+    pub const ALL: [TaxTreatment; 3] = [
+        TaxTreatment::Taxable,
+        TaxTreatment::TaxDeferred,
+        TaxTreatment::TaxFree,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TaxTreatment::Taxable => "taxable",
+            TaxTreatment::TaxDeferred => "tax_deferred",
+            TaxTreatment::TaxFree => "tax_free",
+        }
+    }
+
+    /// What the Accounts screen calls this treatment. Hyphenated prose
+    /// rather than the string it is stored as, the way [`AccountColor`] is
+    /// capitalized.
+    pub fn label(self) -> &'static str {
+        match self {
+            TaxTreatment::Taxable => "Taxable",
+            TaxTreatment::TaxDeferred => "Tax-deferred",
+            TaxTreatment::TaxFree => "Tax-free",
+        }
+    }
+}
+
+impl FromStr for TaxTreatment {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "taxable" => Ok(TaxTreatment::Taxable),
+            "tax_deferred" => Ok(TaxTreatment::TaxDeferred),
+            "tax_free" => Ok(TaxTreatment::TaxFree),
+            other => bail!("unknown tax treatment {other:?}"),
         }
     }
 }
@@ -310,7 +394,7 @@ macro_rules! account_text {
         /// ```compile_fail
         /// use mistermanager::db::{self, account::Kind};
         /// let db = db::open_in_memory().unwrap();
-        /// let id = db::account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        /// let id = db::account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         /// let account = db::account::get(&db, id).unwrap();
         #[doc = concat!("println!(\"{}\", account.", stringify!($field), ");")]
         /// ```
@@ -384,12 +468,17 @@ pub struct Account {
     /// shade the id derives, so accounts are distinguishable the moment
     /// they are imported rather than only once they are configured.
     pub color: Option<AccountColor>,
+    /// How this account's money is taxed -- `Some` for every investment
+    /// account and `None` for every other kind, which the schema's paired
+    /// `CHECK` is what holds true.
+    pub tax_treatment: Option<TaxTreatment>,
 }
 
 fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
     let kind: String = row.get(3)?;
     let group: String = row.get(5)?;
     let color: Option<String> = row.get(6)?;
+    let tax_treatment: Option<String> = row.get(7)?;
     Ok(Account {
         id: row.get(0)?,
         code: row.get(1)?,
@@ -403,6 +492,10 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
             c.parse()
                 .expect("schema CHECK guarantees a valid account color")
         }),
+        tax_treatment: tax_treatment.map(|t| {
+            t.parse()
+                .expect("schema CHECK guarantees a valid tax treatment")
+        }),
     })
 }
 
@@ -411,7 +504,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
 macro_rules! select_account {
     ($tail:literal) => {
         concat!(
-            "SELECT id, code, name, kind, sort, grp, color FROM account ",
+            "SELECT id, code, name, kind, sort, grp, color, tax_treatment FROM account ",
             $tail
         )
     };
@@ -432,7 +525,19 @@ macro_rules! select_account {
 /// The clash is reported as the code the database holds rather than the one
 /// that was typed, because [`by_code`] folds case: an owner told `"chk"`
 /// already exists, having typed exactly that, has been told nothing.
-pub fn insert(db: &Db, code: &str, name: &str, kind: Kind, sort: i64) -> Result<AccountId> {
+///
+/// `tax_treatment` is `Some` for an investment account and `None` for every
+/// other kind. It is a parameter rather than a later `set_tax_treatment`
+/// because the schema pairs it with the kind: there is no moment at which an
+/// investment account exists without one.
+pub fn insert(
+    db: &Db,
+    code: &str,
+    name: &str,
+    kind: Kind,
+    sort: i64,
+    tax_treatment: Option<TaxTreatment>,
+) -> Result<AccountId> {
     if let Some(existing) = by_code(db, code, kind)? {
         bail!(
             "a {} account with code {:?} already exists",
@@ -445,13 +550,15 @@ pub fn insert(db: &Db, code: &str, name: &str, kind: Kind, sort: i64) -> Result<
         );
     }
     db.conn.execute(
-        "INSERT INTO account (code, name, kind, sort, grp) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO account (code, name, kind, sort, grp, tax_treatment) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             code,
             name,
             kind.as_str(),
             sort,
-            default_group(kind).as_str()
+            default_group(kind).as_str(),
+            tax_treatment.map(TaxTreatment::as_str)
         ],
     )?;
     Ok(AccountId(db.conn.last_insert_rowid()))
@@ -484,6 +591,32 @@ pub fn list(db: &Db) -> Result<Vec<Account>> {
         .conn
         .prepare(select_account!("ORDER BY kind, sort, code"))?;
     let rows = stmt.query_map([], from_row)?;
+    super::collect_rows(rows)
+}
+
+/// The accounts a ledger row may name.
+///
+/// No cash moves into or out of an investment account in the tracked ledger
+/// -- its balance is the sum of the holdings in it -- so offering one as a
+/// transfer's destination, a card payment's source or a recurring
+/// transaction's account would let the owner write a row that means nothing.
+/// This is the selection; [`list`] stays the lookup table every screen names
+/// an account off, because filtering one of those could only fail to name an
+/// account that is already on a row.
+///
+/// Written as the kinds it **includes** rather than the one it leaves out,
+/// so a fourth kind reaches a ledger form only once somebody has decided it
+/// should. Excluding by name would put every later variant in front of the
+/// owner by default, which is backwards for a list whose whole job is to say
+/// what may be picked.
+pub fn list_ledger(db: &Db) -> Result<Vec<Account>> {
+    let mut stmt = db.conn.prepare(select_account!(
+        "WHERE kind IN (?1, ?2) ORDER BY kind, sort, code"
+    ))?;
+    let rows = stmt.query_map(
+        params![Kind::Cash.as_str(), Kind::Credit.as_str()],
+        from_row,
+    )?;
     super::collect_rows(rows)
 }
 
@@ -667,6 +800,36 @@ pub fn set_color(db: &Db, id: AccountId, color: Option<AccountColor>) -> Result<
     Ok(())
 }
 
+/// The one writer of `account.tax_treatment`.
+///
+/// Separate from `set_group` for the reason `set_interest_policy` is
+/// separate from both: the column is the owner's, set on the Accounts
+/// screen, and an edit that wrote the whole row would let one field clear
+/// another.
+///
+/// It takes a treatment rather than an `Option`, because the schema pairs
+/// the column with the kind: clearing one would leave an investment account
+/// the `CHECK` refuses, and the two kinds that carry none have none to
+/// clear. Which is also why the wrong kind is refused here rather than left
+/// to the constraint -- the Accounts screen puts this message on its status
+/// line, and an owner told a cash account is tax-free has been told
+/// something false.
+pub fn set_tax_treatment(db: &Db, id: AccountId, treatment: TaxTreatment) -> Result<()> {
+    let account = get(db, id)?;
+    ensure!(
+        account.kind == Kind::Investment,
+        "{} is not an investment account, so it carries no tax treatment",
+        // Prose the status line puts up verbatim, so it reaches the mask
+        // here rather than through `account_label::Account`.
+        crate::demo::text(account.name.as_str())
+    );
+    db.conn.execute(
+        "UPDATE account SET tax_treatment = ?2 WHERE id = ?1",
+        params![id, treatment.as_str()],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,14 +848,14 @@ mod tests {
     /// tests below that iterate it looking for exactly that mistake.
     #[test]
     fn all_covers_every_variant() {
-        // The match is exhaustive, so a fourth variant stops this compiling
+        // The match is exhaustive, so a fifth variant stops this compiling
         // until it is added to `ALL` and counted here too.
         for group in Group::ALL {
             match group {
-                Group::Checking | Group::Savings | Group::Credit => {}
+                Group::Checking | Group::Savings | Group::Credit | Group::Investment => {}
             }
         }
-        assert_eq!(Group::ALL.len(), 3);
+        assert_eq!(Group::ALL.len(), 4);
     }
 
     /// The enum and the schema's `CHECK (grp IN (...))` are two independent
@@ -702,7 +865,11 @@ mod tests {
     fn every_group_satisfies_the_schema_constraint() {
         let db = db::open_in_memory().unwrap();
         for group in Group::ALL {
-            let id = insert(&db, "X", "X", group.kind(), 0).unwrap();
+            // The one kind the schema pairs a treatment with, so the insert
+            // has to carry one to get as far as the `grp` constraint under
+            // test.
+            let treatment = (group.kind() == Kind::Investment).then_some(TaxTreatment::Taxable);
+            let id = insert(&db, "X", "X", group.kind(), 0, treatment).unwrap();
             set_group(&db, id, group)
                 .unwrap_or_else(|e| panic!("{group:?} is not in the schema's CHECK list: {e}"));
             assert_eq!(get(&db, id).unwrap().group, group);
@@ -719,6 +886,7 @@ mod tests {
         assert_eq!(Group::Checking.kind(), Kind::Cash);
         assert_eq!(Group::Savings.kind(), Kind::Cash);
         assert_eq!(Group::Credit.kind(), Kind::Credit);
+        assert_eq!(Group::Investment.kind(), Kind::Investment);
     }
 
     /// Nothing in the schema stops a cash row claiming `credit`, so the
@@ -727,7 +895,7 @@ mod tests {
     #[test]
     fn set_group_rejects_a_group_from_the_other_kind() {
         let db = db::open_in_memory().unwrap();
-        let checking = insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let err = set_group(&db, checking, Group::Credit).unwrap_err();
         assert!(err.to_string().contains("credit"), "{err}");
         assert_eq!(get(&db, checking).unwrap().group, Group::Savings);
@@ -738,7 +906,7 @@ mod tests {
     /// leads to. The two lists are independent matches over the same fact.
     #[test]
     fn every_band_belongs_to_the_kind_that_offers_it() {
-        for kind in [Kind::Cash, Kind::Credit] {
+        for kind in Kind::ALL {
             let bands = Group::bands(kind);
             assert!(!bands.is_empty(), "{kind:?} offers no band");
             for band in bands {
@@ -760,7 +928,7 @@ mod tests {
     #[test]
     fn an_account_can_be_renamed() {
         let db = db::open_in_memory().unwrap();
-        let id = insert(&db, "SAV", "SAV", Kind::Cash, 0).unwrap();
+        let id = insert(&db, "SAV", "SAV", Kind::Cash, 0, None).unwrap();
         set_name(&db, id, "Rainy Day").unwrap();
         assert_eq!(get(&db, id).unwrap().name, "Rainy Day");
     }
@@ -777,9 +945,9 @@ mod tests {
     #[test]
     fn reorder_moves_an_account_and_renumbers_its_kind() {
         let db = db::open_in_memory().unwrap();
-        let chk = insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
-        let sav = insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
-        let bkr = insert(&db, "BKR", "Brokerage", Kind::Cash, 2).unwrap();
+        let chk = insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let sav = insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
+        let bkr = insert(&db, "BKR", "Brokerage", Kind::Cash, 2, None).unwrap();
 
         reorder(&db, bkr, 0).unwrap();
 
@@ -802,10 +970,10 @@ mod tests {
     #[test]
     fn reorder_leaves_the_other_kind_alone() {
         let db = db::open_in_memory().unwrap();
-        insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
-        let sav = insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
-        let one = insert(&db, "CC1", "Card One", Kind::Credit, 0).unwrap();
-        let two = insert(&db, "CC2", "Card Two", Kind::Credit, 1).unwrap();
+        insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let sav = insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
+        let one = insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
+        let two = insert(&db, "CC2", "Card Two", Kind::Credit, 1, None).unwrap();
 
         reorder(&db, sav, 0).unwrap();
 
@@ -822,8 +990,8 @@ mod tests {
     #[test]
     fn reorder_past_the_end_lands_last() {
         let db = db::open_in_memory().unwrap();
-        let chk = insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
-        let sav = insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
+        let chk = insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let sav = insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
 
         reorder(&db, chk, 99).unwrap();
 
@@ -841,18 +1009,20 @@ mod tests {
     #[test]
     fn an_inserted_account_takes_its_kinds_default_group() {
         let db = db::open_in_memory().unwrap();
-        let cash = insert(&db, "NEW", "NEW", Kind::Cash, 0).unwrap();
-        let card = insert(&db, "NEW", "NEW", Kind::Credit, 0).unwrap();
+        let cash = insert(&db, "NEW", "NEW", Kind::Cash, 0, None).unwrap();
+        let card = insert(&db, "NEW", "NEW", Kind::Credit, 0, None).unwrap();
         assert_eq!(get(&db, cash).unwrap().group, Group::Savings);
         assert_eq!(get(&db, card).unwrap().group, Group::Credit);
     }
 
     #[test]
     fn kind_as_str_and_from_str_round_trip() {
+        for kind in Kind::ALL {
+            assert_eq!(kind.as_str().parse::<Kind>().unwrap(), kind);
+        }
         assert_eq!(Kind::Cash.as_str(), "cash");
         assert_eq!(Kind::Credit.as_str(), "credit");
-        assert_eq!("cash".parse::<Kind>().unwrap(), Kind::Cash);
-        assert_eq!("credit".parse::<Kind>().unwrap(), Kind::Credit);
+        assert_eq!(Kind::Investment.as_str(), "investment");
     }
 
     #[test]
@@ -863,8 +1033,8 @@ mod tests {
     #[test]
     fn by_code_discriminates_by_kind() {
         let db = db::open_in_memory().unwrap();
-        let cash_id = insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
-        let credit_id = insert(&db, "CHK", "Everyday Card", Kind::Credit, 0).unwrap();
+        let cash_id = insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let credit_id = insert(&db, "CHK", "Everyday Card", Kind::Credit, 0, None).unwrap();
         // The same code exists for both kinds -- the one-code-two-accounts
         // design `UNIQUE (code, kind)` rests on.
         assert_ne!(cash_id, credit_id);
@@ -883,10 +1053,10 @@ mod tests {
     #[test]
     fn list_orders_by_kind_then_sort_then_code() {
         let db = db::open_in_memory().unwrap();
-        insert(&db, "ZZZ", "Z Credit", Kind::Credit, 5).unwrap();
-        insert(&db, "AAA", "A Cash", Kind::Cash, 1).unwrap();
-        insert(&db, "BBB", "B Cash", Kind::Cash, 0).unwrap();
-        insert(&db, "CCC", "C Credit", Kind::Credit, 0).unwrap();
+        insert(&db, "ZZZ", "Z Credit", Kind::Credit, 5, None).unwrap();
+        insert(&db, "AAA", "A Cash", Kind::Cash, 1, None).unwrap();
+        insert(&db, "BBB", "B Cash", Kind::Cash, 0, None).unwrap();
+        insert(&db, "CCC", "C Credit", Kind::Credit, 0, None).unwrap();
 
         let codes: Vec<String> = list(&db)
             .unwrap()
@@ -901,10 +1071,10 @@ mod tests {
     #[test]
     fn list_by_kind_filters_and_orders_by_sort_then_code() {
         let db = db::open_in_memory().unwrap();
-        insert(&db, "ZZZ", "Z Credit", Kind::Credit, 5).unwrap();
-        insert(&db, "AAA", "A Cash", Kind::Cash, 1).unwrap();
-        insert(&db, "BBB", "B Cash", Kind::Cash, 0).unwrap();
-        insert(&db, "CCC", "C Credit", Kind::Credit, 0).unwrap();
+        insert(&db, "ZZZ", "Z Credit", Kind::Credit, 5, None).unwrap();
+        insert(&db, "AAA", "A Cash", Kind::Cash, 1, None).unwrap();
+        insert(&db, "BBB", "B Cash", Kind::Cash, 0, None).unwrap();
+        insert(&db, "CCC", "C Credit", Kind::Credit, 0, None).unwrap();
 
         let cash_codes: Vec<String> = list_by_kind(&db, Kind::Cash)
             .unwrap()
@@ -927,7 +1097,7 @@ mod tests {
     #[test]
     fn every_interest_policy_satisfies_the_schema_constraint() {
         let db = db::open_in_memory().unwrap();
-        let savings = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         for policy in [InterestPolicy::ProRata, InterestPolicy::Manual] {
             set_interest_policy(&db, savings, policy)
                 .unwrap_or_else(|e| panic!("{policy:?} is not in the schema's CHECK list: {e}"));
@@ -941,7 +1111,7 @@ mod tests {
     #[test]
     fn an_unset_interest_policy_reads_as_manual() {
         let db = db::open_in_memory().unwrap();
-        let savings = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         assert_eq!(
             interest_policy(&db, savings).unwrap(),
             InterestPolicy::Manual
@@ -963,7 +1133,7 @@ mod tests {
     #[test]
     fn every_account_color_satisfies_the_schema_constraint() {
         let db = db::open_in_memory().unwrap();
-        let id = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let id = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         for color in AccountColor::ALL {
             set_color(&db, id, Some(color))
                 .unwrap_or_else(|e| panic!("{color:?} is not in the schema's CHECK list: {e}"));
@@ -977,7 +1147,7 @@ mod tests {
     #[test]
     fn an_account_nobody_has_colored_holds_no_color() {
         let db = db::open_in_memory().unwrap();
-        let id = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let id = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         assert_eq!(get(&db, id).unwrap().color, None);
     }
 
@@ -986,7 +1156,7 @@ mod tests {
     #[test]
     fn a_color_can_be_cleared_back_to_the_derived_one() {
         let db = db::open_in_memory().unwrap();
-        let id = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let id = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         set_color(&db, id, Some(AccountColor::Teal)).unwrap();
         set_color(&db, id, None).unwrap();
         assert_eq!(get(&db, id).unwrap().color, None);
@@ -1031,7 +1201,7 @@ mod tests {
     #[test]
     fn an_accounts_name_and_code_survive_a_round_trip_through_the_database() {
         let db = db::open_in_memory().unwrap();
-        let id = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let id = insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let account = get(&db, id).unwrap();
         assert_eq!(account.code, "SAV");
         assert_eq!(account.name, "Rainy Day");
@@ -1046,8 +1216,8 @@ mod tests {
     #[test]
     fn insert_refuses_a_code_the_kind_already_holds() {
         let db = db::open_in_memory().unwrap();
-        insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
-        let err = insert(&db, "SAV", "Nest Egg", Kind::Cash, 1).unwrap_err();
+        insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let err = insert(&db, "SAV", "Nest Egg", Kind::Cash, 1, None).unwrap_err();
         assert!(err.to_string().contains("SAV"), "{err}");
         assert_eq!(list_by_kind(&db, Kind::Cash).unwrap().len(), 1);
     }
@@ -1061,8 +1231,8 @@ mod tests {
     #[test]
     fn insert_refuses_a_code_the_kind_holds_in_another_case() {
         let db = db::open_in_memory().unwrap();
-        insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
-        let err = insert(&db, "chk", "Everyday Again", Kind::Cash, 1).unwrap_err();
+        insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let err = insert(&db, "chk", "Everyday Again", Kind::Cash, 1, None).unwrap_err();
         assert!(err.to_string().contains("CHK"), "{err}");
         assert_eq!(list_by_kind(&db, Kind::Cash).unwrap().len(), 1);
         // And the import finds that row by the case the sheet spells it in,
@@ -1073,14 +1243,144 @@ mod tests {
         );
     }
 
+    /// An investment account is the one kind that carries a tax treatment,
+    /// and it lands in the band of its own name -- `Group::Investment` is
+    /// the whole kind, the way `Group::Credit` is.
+    #[test]
+    fn an_investment_account_carries_a_tax_treatment() {
+        let db = db::open_in_memory().unwrap();
+        let id = insert(
+            &db,
+            "RET",
+            "Retirement",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxDeferred),
+        )
+        .unwrap();
+
+        assert_eq!(
+            get(&db, id).unwrap().tax_treatment,
+            Some(TaxTreatment::TaxDeferred)
+        );
+        assert_eq!(get(&db, id).unwrap().group, Group::Investment);
+    }
+
+    /// The pairing is a `CHECK` over both columns because neither column
+    /// alone can say it: a treatment on a cash account is an answer to a
+    /// question nobody put about it.
+    #[test]
+    fn a_cash_account_may_not_carry_a_tax_treatment() {
+        let db = db::open_in_memory().unwrap();
+        assert!(
+            insert(
+                &db,
+                "CHK",
+                "Everyday",
+                Kind::Cash,
+                0,
+                Some(TaxTreatment::Taxable)
+            )
+            .is_err(),
+            "the schema's paired CHECK did not refuse a taxed cash account"
+        );
+    }
+
+    /// And the other half of the same pairing: every investment account
+    /// carries one, so there is no row the screen has to draw a hole for.
+    #[test]
+    fn an_investment_account_must_carry_a_tax_treatment() {
+        let db = db::open_in_memory().unwrap();
+        assert!(
+            insert(&db, "RET", "Retirement", Kind::Investment, 0, None).is_err(),
+            "the schema's paired CHECK did not refuse an untaxed investment account"
+        );
+    }
+
+    /// The enum and the schema's `CHECK (tax_treatment IN (...))` are two
+    /// independent lists of the same three strings. A variant missing from
+    /// the constraint type-checks and then fails at runtime.
+    #[test]
+    fn every_tax_treatment_satisfies_the_schema_constraint() {
+        let db = db::open_in_memory().unwrap();
+        let id = insert(
+            &db,
+            "RET",
+            "Retirement",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::Taxable),
+        )
+        .unwrap();
+        for treatment in TaxTreatment::ALL {
+            set_tax_treatment(&db, id, treatment)
+                .unwrap_or_else(|e| panic!("{treatment:?} is not in the schema's CHECK list: {e}"));
+            assert_eq!(get(&db, id).unwrap().tax_treatment, Some(treatment));
+        }
+    }
+
+    /// Nothing but the kind decides whether the column means anything, so
+    /// the writer is the guard in front of the schema's pairing: an owner
+    /// told a cash account is now tax-free has been told something false.
+    #[test]
+    fn set_tax_treatment_refuses_an_account_of_another_kind() {
+        let db = db::open_in_memory().unwrap();
+        let everyday = insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let err = set_tax_treatment(&db, everyday, TaxTreatment::Taxable).unwrap_err();
+        assert!(err.to_string().contains("Everyday"), "{err}");
+        assert_eq!(get(&db, everyday).unwrap().tax_treatment, None);
+    }
+
+    #[test]
+    fn tax_treatment_as_str_and_from_str_round_trip() {
+        for treatment in TaxTreatment::ALL {
+            assert_eq!(
+                treatment.as_str().parse::<TaxTreatment>().unwrap(),
+                treatment
+            );
+        }
+        assert!("untaxed".parse::<TaxTreatment>().is_err());
+    }
+
+    /// The ledger moves no cash into or out of an investment account, so the
+    /// forms that write a ledger row are offered every other kind and not
+    /// this one.
+    #[test]
+    fn list_ledger_leaves_out_the_investment_accounts() {
+        let db = db::open_in_memory().unwrap();
+        insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
+        insert(
+            &db,
+            "RET",
+            "Retirement",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxDeferred),
+        )
+        .unwrap();
+
+        let codes: Vec<String> = list_ledger(&db)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.code.as_str().to_string())
+            .collect();
+        assert_eq!(codes, vec!["CHK", "CC1"]);
+        assert_eq!(
+            list(&db).unwrap().len(),
+            3,
+            "the unfiltered list lost a row"
+        );
+    }
+
     /// The refusal is per kind, because the constraint is: one code naming
     /// both a cash account and the card drawn on it is exactly what
     /// `UNIQUE (code, kind)` exists to allow.
     #[test]
     fn one_code_may_name_a_cash_account_and_a_card() {
         let db = db::open_in_memory().unwrap();
-        insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
-        insert(&db, "CHK", "Everyday Card", Kind::Credit, 0).unwrap();
+        insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        insert(&db, "CHK", "Everyday Card", Kind::Credit, 0, None).unwrap();
         assert_eq!(
             by_code(&db, "CHK", Kind::Cash).unwrap().unwrap().name,
             "Everyday"

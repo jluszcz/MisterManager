@@ -822,6 +822,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     - **`account::insert`'s duplicate-code refusal**, in the same file: `App::on_key` puts it on
       the status line verbatim, and typing a code that already exists is an ordinary thing to do
       on the Accounts screen. The code is quoted as the database holds it, masked on the way.
+    - **`account::set_tax_treatment`'s wrong-kind refusal**, in the same file again: only an
+      investment account carries a treatment, and the account that is not one is named on the
+      status line as prose, masked on the line that reads it.
   - **`as_str` is the escape for text, and it is pinned.** `AccountName::as_str` serves the uses
     that are not displays — a description prefill, a search filter folding case, a form seeding
     its editable field — and `nothing_that_draws_an_account_reads_its_name_as_bare_text` lists
@@ -836,7 +839,8 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     would otherwise be free to flatten an account into a `format!`; `src/transfer.rs`, which
     names accounts in `diagnose`'s prose and carries the name and the color apart on
     `Wiring`'s `Container` and the `Row::Transfer` beside it; and `src/db/`, whose own refusals —
-    `account::checking`'s ambiguous Checking band, `account::insert`'s duplicate code — are drawn
+    `account::checking`'s ambiguous Checking band, `account::insert`'s duplicate code,
+    `account::set_tax_treatment`'s wrong kind — are drawn
     verbatim by the Planning screen or the status line, so a name read there reaches a viewer with
     no color and, unless it is masked on the line that reads it, no pseudonym either. Entries are
     keyed by the path below `src/`, since `tui/ledger.rs` and `report/html/ledger.rs` are two

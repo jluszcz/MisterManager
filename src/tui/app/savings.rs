@@ -427,9 +427,9 @@ mod tests {
     /// manual order `K` and `J` move things around in.
     fn app_with_undated_goals() -> App {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
         for (i, (name, date)) in [
             ("Couch", None),
             ("Bike", None),
@@ -1063,9 +1063,9 @@ mod tests {
     #[test]
     fn the_app_starts_on_a_taxed_goal_with_no_rate_and_draws_it_against_its_base() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
         goal::insert(
             &db,
             &goal::NewGoal {
@@ -1306,7 +1306,7 @@ mod tests {
     #[test]
     fn n_on_savings_with_no_container_says_so() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
         let mut app = App::new(db, today()).unwrap();
         press(&mut app, KeyCode::Char('4'));

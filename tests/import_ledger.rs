@@ -75,11 +75,11 @@ fn every_cash_and_credit_balance_agrees_with_the_workbook() {
     // it, so both kinds are quoted the sheet's way before being compared.
     let quoted = |at: NaiveDate| {
         let mut figures: Vec<Cents> = Vec::new();
-        for account in account::list(&db).unwrap() {
+        for account in account::list_ledger(&db).unwrap() {
             let balance = txn::balance_at(&db, account.id, at).unwrap();
             figures.push(match account.kind {
-                Kind::Cash => balance,
                 Kind::Credit => -balance,
+                Kind::Cash | Kind::Investment => balance,
             });
         }
         sorted(figures)

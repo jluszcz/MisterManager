@@ -461,7 +461,7 @@ mod tests {
 
     fn seeded() -> Db {
         let db = crate::db::open_in_memory().unwrap();
-        account::insert(&db, "CHK", "Everyday", account::Kind::Cash, 0).unwrap();
+        account::insert(&db, "CHK", "Everyday", account::Kind::Cash, 0, None).unwrap();
         db
     }
 
@@ -564,7 +564,8 @@ mod tests {
             },
         )
         .unwrap();
-        let container = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 1).unwrap();
+        let container =
+            account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 1, None).unwrap();
         crate::db::goal::insert(
             &db,
             &crate::db::goal::NewGoal {
@@ -619,7 +620,8 @@ mod tests {
         // An excess of nothing puts every line at zero -- what a payday whose
         // fixed bills took the whole of it produces, and what `plan` refuses.
         crate::db::setting::set(&db, crate::db::setting::key::PINNED_EXCESS, Cents::ZERO).unwrap();
-        let container = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 1).unwrap();
+        let container =
+            account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 1, None).unwrap();
         crate::db::goal::insert(
             &db,
             &crate::db::goal::NewGoal {
@@ -730,7 +732,7 @@ mod tests {
         // told, so the first write does not care which one this is.
         {
             let db = crate::db::open(&db_path).unwrap();
-            account::insert(&db, "CHK", "Everyday", account::Kind::Cash, 0).unwrap();
+            account::insert(&db, "CHK", "Everyday", account::Kind::Cash, 0, None).unwrap();
             write_if_enabled(&db, &configured(&dir), Local::now().date_naive(), false).unwrap();
         }
         let before = std::fs::metadata(dir.join(FILE_NAME))

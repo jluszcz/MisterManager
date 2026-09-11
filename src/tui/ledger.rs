@@ -379,11 +379,11 @@ impl Ledger {
     }
 
     pub fn title(&self) -> Label {
-        let kind = match self.kind {
-            Kind::Cash => "Cash",
-            Kind::Credit => "Credit",
-        };
-        let mut title = Label::plain(format!("{kind} · {} · ", self.window.label()));
+        let mut title = Label::plain(format!(
+            "{} · {} · ",
+            self.kind.label(),
+            self.window.label()
+        ));
         title = match self.account {
             None => title.text("All"),
             Some(i) => title.account(super::Account::coded(&self.accounts, self.accounts[i].id)),

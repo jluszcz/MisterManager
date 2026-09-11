@@ -231,6 +231,10 @@ mod tests {
             // the status line verbatim. Prose for the same reason, masked the
             // same way.
             ("db/account.rs", "crate::demo::text(existing.code.as_str())"),
+            // `set_tax_treatment`'s wrong-kind refusal, which the Accounts
+            // screen puts on the status line verbatim. Prose for the same
+            // reason, masked the same way.
+            ("db/account.rs", "crate::demo::text(account.name.as_str())"),
         ];
 
         let mut found: Vec<String> = Vec::new();

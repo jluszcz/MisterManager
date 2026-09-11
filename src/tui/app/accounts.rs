@@ -36,7 +36,7 @@ impl App {
         };
         let new = form.commit_new()?;
         let sort = account::list_by_kind(&self.db, new.kind)?.len() as i64;
-        account::insert(&self.db, &new.code, &new.name, new.kind, sort)?;
+        account::insert(&self.db, &new.code, &new.name, new.kind, sort, None)?;
         self.status = format!("{} added", crate::demo::text(new.name.as_str()));
         self.close_modal();
         self.reload()

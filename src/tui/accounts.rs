@@ -418,7 +418,7 @@ impl AccountForm {
         if self.editing.is_none() {
             return vec![AccountField::Code, AccountField::Kind, AccountField::Name];
         }
-        // Both kinds, unlike the three below it: a card is named on the
+        // Every kind, unlike the three below it: a card is named on the
         // Credit ledger and on Recurring Transactions, so it is tinted there
         // too, and the choice belongs to every account rather than to the
         // cash ones. Beside the name because the two are one decision --
@@ -634,7 +634,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
                 // an interest posting to divide.
                 Cell::from(match r.kind {
                     Kind::Cash => r.policy.label(),
-                    Kind::Credit => "—",
+                    Kind::Credit | Kind::Investment => "—",
                 }),
                 Cell::from(match r.block {
                     Some(block) => block.label(),
@@ -708,6 +708,7 @@ mod tests {
             sort: 0,
             group,
             color: None,
+            tax_treatment: None,
         }];
         Row {
             account: super::super::Account::named(&accounts, AccountId(id)),
@@ -744,6 +745,7 @@ mod tests {
             sort: 0,
             group,
             color: None,
+            tax_treatment: None,
         }
     }
 
@@ -1258,7 +1260,7 @@ mod tests {
         assert_eq!(form.fields(), cash);
     }
 
-    /// Both kinds, in the order the selector cycles them, and a full cycle
+    /// Every kind, in the order the selector cycles them, and a full cycle
     /// comes back to where it started.
     #[test]
     fn the_kind_selector_round_trips_every_kind() {
@@ -1366,6 +1368,7 @@ mod savings_block_tests {
             sort: 0,
             group,
             color: None,
+            tax_treatment: None,
         }
     }
 

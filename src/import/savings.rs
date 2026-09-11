@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn one_container_alone_reads_as_unset() {
         let db = crate::db::open_in_memory().unwrap();
-        let id = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0).unwrap();
+        let id = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0, None).unwrap();
         setting::set(&db, Block::Goals.key(), id).unwrap();
         assert!(containers(&db).unwrap().is_none());
     }
@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn a_container_setting_pointing_at_a_missing_account_is_an_error() {
         let db = crate::db::open_in_memory().unwrap();
-        let id = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0).unwrap();
+        let id = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0, None).unwrap();
         setting::set(&db, Block::Goals.key(), id).unwrap();
         setting::set(&db, Block::Buckets.key(), crate::db::AccountId(999)).unwrap();
 
@@ -533,8 +533,9 @@ mod tests {
     #[test]
     fn configured_containers_resolve_to_the_accounts_their_keys_name() {
         let db = crate::db::open_in_memory().unwrap();
-        let goals = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0).unwrap();
-        let buckets = account::insert(&db, "BKR", "Brokerage", account::Kind::Cash, 1).unwrap();
+        let goals = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0, None).unwrap();
+        let buckets =
+            account::insert(&db, "BKR", "Brokerage", account::Kind::Cash, 1, None).unwrap();
         setting::set(&db, Block::Goals.key(), goals).unwrap();
         setting::set(&db, Block::Buckets.key(), buckets).unwrap();
 
@@ -548,8 +549,9 @@ mod tests {
     #[test]
     fn set_containers_puts_the_mapping_back() {
         let db = crate::db::open_in_memory().unwrap();
-        let goals = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0).unwrap();
-        let buckets = account::insert(&db, "BKR", "Brokerage", account::Kind::Cash, 1).unwrap();
+        let goals = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0, None).unwrap();
+        let buckets =
+            account::insert(&db, "BKR", "Brokerage", account::Kind::Cash, 1, None).unwrap();
         setting::set(&db, Block::Goals.key(), goals).unwrap();
         setting::set(&db, Block::Buckets.key(), buckets).unwrap();
         let held = containers(&db).unwrap().unwrap();

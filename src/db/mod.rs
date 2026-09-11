@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn a_run_that_inserts_a_row_reports_having_written_one() {
         let (_path, db) = reopened("wrote_rows_some");
-        account::insert(&db, "CHK", "Everyday", account::Kind::Cash, 0).unwrap();
+        account::insert(&db, "CHK", "Everyday", account::Kind::Cash, 0, None).unwrap();
         assert!(db.wrote_rows());
     }
 
@@ -366,7 +366,8 @@ mod tests {
     #[test]
     fn a_transaction_rolls_back_when_the_closure_fails() {
         let db = open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0).unwrap();
+        let savings =
+            account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0, None).unwrap();
 
         let result: Result<()> = db.transaction(|db| {
             txn::insert(
@@ -393,7 +394,7 @@ mod tests {
     fn a_transaction_commits_and_returns_the_closures_value() {
         let db = open_in_memory().unwrap();
         let savings = db
-            .transaction(|db| account::insert(db, "SAV", "Rainy Day", account::Kind::Cash, 0))
+            .transaction(|db| account::insert(db, "SAV", "Rainy Day", account::Kind::Cash, 0, None))
             .unwrap();
         assert_eq!(
             account::by_code(&db, "SAV", account::Kind::Cash)
@@ -412,7 +413,8 @@ mod tests {
         let db = open_in_memory().unwrap();
         assert!(!has_imported_data(&db).unwrap());
 
-        let savings = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0).unwrap();
+        let savings =
+            account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0, None).unwrap();
         // An account alone is not imported data: `constants::import` writes
         // accounts before anything else, and a run that failed there must
         // still be re-runnable.
@@ -501,7 +503,8 @@ mod tests {
     #[test]
     fn clear_imported_data_empties_the_imported_tables_and_keeps_the_rest() {
         let db = open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0).unwrap();
+        let savings =
+            account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0, None).unwrap();
         recurring_txn::insert(
             &db,
             &recurring_txn::NewRecurringTxn {
@@ -600,7 +603,7 @@ mod tests {
 
         {
             let db = open(&src).unwrap();
-            account::insert(&db, "CHK", "Everyday", account::Kind::Cash, 0).unwrap();
+            account::insert(&db, "CHK", "Everyday", account::Kind::Cash, 0, None).unwrap();
             setting::set(&db, setting::key::PAY_PERIODS_PER_YEAR, 26).unwrap();
             snapshot(&src, &dest).unwrap();
         }

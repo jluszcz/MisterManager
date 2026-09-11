@@ -187,7 +187,7 @@ mod tests {
 
     fn seeded() -> (db::Db, crate::db::AccountId) {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         (db, savings)
     }
 
@@ -238,7 +238,7 @@ mod tests {
     fn a_taxed_goals_target_is_what_the_lambda_makes_of_its_base() {
         let db = db::open_in_memory().unwrap();
         setting::set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         db::goal::insert(&db, &new_goal("Couch", savings, 1_000, true)).unwrap();
 
         let funded = list_with_balances(&db, savings).unwrap();
@@ -290,7 +290,7 @@ mod tests {
     fn the_tolerant_reader_taxes_a_goal_whose_rate_is_on_record() {
         let db = db::open_in_memory().unwrap();
         setting::set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         db::goal::insert(&db, &new_goal("Couch", savings, 1_000, true)).unwrap();
 
         assert_eq!(
@@ -351,7 +351,7 @@ mod tests {
     fn a_taxed_goal_funded_to_its_base_is_still_short_by_the_tax() {
         let db = db::open_in_memory().unwrap();
         setting::set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = db::goal::insert(&db, &new_goal("Couch", savings, 1_000, true)).unwrap();
         db::goal::insert_allocation(
             &db,

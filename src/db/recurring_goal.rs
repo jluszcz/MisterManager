@@ -275,9 +275,15 @@ mod tests {
     #[test]
     fn open_goal_counts_counts_only_open_goals_of_each_entry() {
         let db = db::open_in_memory().unwrap();
-        let savings =
-            crate::db::account::insert(&db, "SAV", "Rainy Day", crate::db::account::Kind::Cash, 0)
-                .unwrap();
+        let savings = crate::db::account::insert(
+            &db,
+            "SAV",
+            "Rainy Day",
+            crate::db::account::Kind::Cash,
+            0,
+            None,
+        )
+        .unwrap();
         let lego = insert(
             &db,
             &NewEntry {
@@ -367,9 +373,15 @@ mod tests {
     #[test]
     fn deleting_an_entry_that_any_goal_references_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let savings =
-            crate::db::account::insert(&db, "SAV", "Rainy Day", crate::db::account::Kind::Cash, 0)
-                .unwrap();
+        let savings = crate::db::account::insert(
+            &db,
+            "SAV",
+            "Rainy Day",
+            crate::db::account::Kind::Cash,
+            0,
+            None,
+        )
+        .unwrap();
         let id = insert(
             &db,
             &NewEntry {

@@ -1148,7 +1148,7 @@ mod tests {
     #[test]
     fn the_planning_screen_says_so_when_there_is_no_checking_account() {
         let db = db::open_in_memory().unwrap();
-        let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0).unwrap();
+        let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
         write(&db, card_one, day(2026, 8, 11), 1_499, "Movies");
         let mut app = App::new(db, today()).unwrap();
 
@@ -1329,7 +1329,7 @@ mod tests {
     #[test]
     fn p_on_a_screen_with_no_live_view_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0).unwrap();
+        let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
         write(&db, card_one, day(2026, 8, 11), 1_499, "Movies");
         let mut app = App::new(db, today()).unwrap();
 
@@ -2184,7 +2184,7 @@ mod tests {
     fn a_taxed_goals_plug_ask_is_measured_against_its_taxed_target() {
         let db = db::open_in_memory().unwrap();
         setting::set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = goal::insert(
             &db,
             &goal::NewGoal {
@@ -2246,10 +2246,10 @@ mod tests {
     #[test]
     fn a_zero_plug_with_unclaimed_goals_in_two_containers_refuses_before_writing() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 2).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 2, None).unwrap();
         // A round $10,000.00, so Future Housing/Retirement/Investment's
         // 40/30/30 split lands on whole dollars with nothing left for Goals
         // to absorb.

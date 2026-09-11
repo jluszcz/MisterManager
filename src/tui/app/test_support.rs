@@ -45,11 +45,11 @@ pub(super) fn write(db: &Db, account_id: AccountId, date: NaiveDate, cents: i64,
 /// on.
 pub(super) fn app() -> App {
     let db = db::open_in_memory().unwrap();
-    let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+    let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
     account::set_group(&db, checking, Group::Checking).unwrap();
-    let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
-    let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0).unwrap();
-    let card_two = account::insert(&db, "CC2", "Card Two", Kind::Credit, 1).unwrap();
+    let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
+    let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
+    let card_two = account::insert(&db, "CC2", "Card Two", Kind::Credit, 1, None).unwrap();
     write(&db, checking, day(2026, 8, 1), 100_000, "Paycheck");
     write(&db, checking, day(2026, 8, 10), -5_000, "Whole Foods");
     write(&db, savings, day(2026, 8, 12), 20_000, "Transfer");
@@ -250,10 +250,10 @@ pub(super) fn with_bills(db: &Db) {
 /// an unclaimed goal and `spread_container` would refuse to pick one.
 pub(super) fn planning_app() -> App {
     let db = db::open_in_memory().unwrap();
-    let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+    let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
     account::set_group(&db, checking, Group::Checking).unwrap();
-    let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
-    let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 2).unwrap();
+    let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
+    let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 2, None).unwrap();
     // A few cents of drift off the round paycheck so `Excess (Actual)`
     // has something for `floor_to_dollar` to floor.
     write(&db, checking, day(2026, 8, 1), 5_000_007, "Paycheck");
