@@ -16,7 +16,6 @@
 pub mod account;
 pub mod bill;
 pub mod date;
-pub mod fund;
 pub mod goal;
 pub mod id;
 mod migration;
@@ -26,8 +25,7 @@ pub mod setting;
 pub mod txn;
 
 pub use id::{
-    AccountId, AllocationId, BatchId, BillId, FundId, GoalId, RecurringGoalId, RecurringTxnId,
-    TxnId,
+    AccountId, AllocationId, BatchId, BillId, GoalId, RecurringGoalId, RecurringTxnId, TxnId,
 };
 
 use anyhow::{Context, Result};
@@ -145,7 +143,6 @@ const IMPORTED_TABLES: &[&str] = &[
     "recurring_goal",
     "txn",
     "bill",
-    "fund",
     "setting",
 ];
 
@@ -571,16 +568,6 @@ mod tests {
         )
         .unwrap();
         setting::set(&db, setting::Key::<i64>::new("k"), 1).unwrap();
-        fund::insert(
-            &db,
-            &fund::NewFund {
-                name: "Bonds".to_string(),
-                ord: 0,
-                target: fund::Target::AgeOver30,
-                actual: crate::money::Cents::from_dollars(30_000),
-            },
-        )
-        .unwrap();
 
         clear_imported_data(&db).unwrap();
 

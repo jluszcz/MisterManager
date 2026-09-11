@@ -149,9 +149,8 @@ pub enum InterestPolicy {
 impl InterestPolicy {
     /// Every policy, in the order the Accounts screen's selector cycles them.
     ///
-    /// Beside the enum rather than on the screen, for `fund::Target::KINDS`'s
-    /// reason: a screen offering a subset would leave a variant unreachable
-    /// with nothing to say so.
+    /// Beside the enum rather than on the screen: a screen offering a subset
+    /// would leave a variant unreachable with nothing to say so.
     pub const ALL: [InterestPolicy; 2] = [InterestPolicy::ProRata, InterestPolicy::Manual];
 
     pub fn as_str(self) -> &'static str {

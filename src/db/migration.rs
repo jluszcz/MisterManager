@@ -225,6 +225,19 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // counted yet.
         data: None,
     },
+    Migration {
+        version: 11,
+        // The asset-allocation block is derived from each fund's published
+        // composition now, not from a target the sheet carried per row, so
+        // the table holds answers to a question nobody puts. Dropped here
+        // rather than cleared by `--replace`, for the reason the retired
+        // `pay.period_days` key was: an owner who never replaces would keep
+        // the rows indefinitely.
+        sql: "DROP TABLE IF EXISTS fund",
+        // Nothing to move. A fresh install replaying the chain has no such
+        // table, which `IF EXISTS` is what makes safe.
+        data: None,
+    },
 ];
 
 /// The version this build's chain leaves a database at.
@@ -617,5 +630,19 @@ mod tests {
             [],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn the_fund_table_is_gone_after_the_chain() {
+        let db = crate::db::open_in_memory().unwrap();
+        let count: i64 = db
+            .conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'fund'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "the fund table survived the migration chain");
     }
 }

@@ -68,7 +68,6 @@ row_id!(RecurringGoalId, "recurring_goal");
 row_id!(BatchId, "batch");
 row_id!(AllocationId, "allocation");
 row_id!(BillId, "bill");
-row_id!(FundId, "fund");
 
 #[cfg(test)]
 mod tests {
