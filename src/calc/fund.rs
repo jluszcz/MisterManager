@@ -7,8 +7,12 @@
 //! ```text
 //! bonds       = (age - 30) / 100, clamped to 0..=1.0     bonds track age
 //! intl_stock  = (1 - bonds) * intl_equity_share            the equity split
-//! us_stock    = (1 - bonds) * (1 - intl_equity_share)      what bonds leave
+//! us_stock    = (1 - bonds) - intl_stock                   the remainder, not a second multiply
 //! ```
+//!
+//! Taking `us_stock` as the remainder rather than `(1 - bonds) * (1 - intl_equity_share)` is what
+//! keeps the three shares footing to exactly `BasisPoints::ONE` under truncation: two independent
+//! multiplies can each truncate down and leave the total a basis point or two short.
 //!
 //! Pure, and with no database in it: `crate::fund` is the one place a stored
 //! setting becomes an argument here.

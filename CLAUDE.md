@@ -56,6 +56,10 @@ waterfall's ordering and gates. Read the relevant one before touching either mod
 values themselves stay in the tests, where they are asserted against the workbook rather than
 restated.
 
+The holdings model has no workbook oracle: `holding` and `fund_mix` carry data the sheet never
+carried, so `tests/` holds no binary for either and their coverage is unit tests against invented
+fixtures.
+
 `src/tui/CLAUDE.md` sits beside those two and answers a different set of questions: what a key is
 allowed to mean, what each screen owns, and how much width it may spend. The app is driven entirely
 by single keystrokes, so the same action takes the same key on every screen that offers it. Read it
@@ -142,14 +146,15 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/config.rs` | The TOML config file. `serde` and `toml` are named here, and both again in `src/backup/state.rs`, whose `State` derives `Serialize` as well as `Deserialize`. |
 | `src/plan_line.rs` | Every Planning line: its label, the amount it moves, and the setting key that says where it lands. |
 | `src/plan_rows.rs` | The Planning waterfall as an ordered list of rows, in neither medium -- a peer of `overview` and `savings`. The order, the labels, the grouping, the two footers outside the transfers block, and `Target`, the constant a row *is*. The Planning screen and the report's Planning tab both read it, and each spends `Row::depth` in its own units. |
-| `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `per_paycheck_over_years`, `period_days`, `pro_rata`, the Planning waterfall, `fund` (the target/actual/delta derivation), `schedule` (when a recurring thing happens). No database. |
+| `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `per_paycheck_over_years`, `period_days`, `pro_rata`, the Planning waterfall, `fund` (the age-based allocation target), `schedule` (when a recurring thing happens). No database. |
 | `src/description.rs` | What a transaction's description reads as, in any medium: the stored text, or `—` when there is none. One rule rather than one per sink, the same split `palette` makes for color — `tui`'s ledger, status line and delete confirmation read it, and so does `report::html::ledger`. |
 | `src/demo/` | `mm --demo`: the mask every absolute figure and owner-entered name is drawn through, and the once-per-run salt that turns it on. `mask` is the pure scrambling and pseudoword rules; `mod.rs` is the API every layer that puts a figure or a name in front of a human calls — `tui`, `transfer`'s prose, and the refusals `goal` and `db` build for a screen to print verbatim. Compiles only under the `demo` Cargo feature. |
 | `src/db/` | Schema and queries — one module per aggregate. |
 | `src/db/migration.rs` | The frozen v1 baseline, the chain of arms above it, and the runner that applies whichever of them a database is missing. |
 | `src/db/date.rs` | The stored date format, in one place: `iso` writes it, `parse`/`parse_opt` read it back for a `from_row`. |
 | `src/db/bill.rs` | The monthly bill block, labelled — the `Planning!C6:E12` rows, and the owner's mark saying which of them the Biweekly Expenses figure counts. |
-| `src/db/fund.rs` | The `fund` table — the asset-allocation block, `Planning!I1:M5`. `Target` is the age rule or a share of what it leaves. |
+| `src/db/holding.rs` | The `holding` table — a fund held in an investment account, and the balance the owner typed. |
+| `src/db/fund_mix.rs` | The `fund_mix` table — one fund's composition by asset class, as of the filing it was read from. |
 | `src/db/recurring_txn.rs` | The `recurring_txn` table — rows whose amount and date are known in advance. CRUD plus the queries regeneration needs. |
 | `src/import/` | Reads `Money.xlsx` via `calamine`. Behind the non-default `import` Cargo feature — it is the only module naming `calamine`, which is what lets that dependency be `optional`, so a default build compiles no spreadsheet parser and offers no `mm import`. |
 | `src/overview.rs` | Reads balances at the three projection dates out of `db` and bands them into the Overview's sections and Net. Read by the Overview screen and by `report`. |
@@ -204,8 +209,8 @@ chain is periodically squashed back into `schema.sql` are stated on `db::migrati
 
 Anything the schema constrains has a Rust type that says the same thing, so the
 `CHECK` is a backstop rather than the only guard: `account::Kind`, `account::Group`,
-`recurring_goal::Cadence`, `goal::BatchKind`, `fund::Target`, and one id type per table
-(`db::AccountId`, `db::GoalId`, …, `db::FundId`, in `src/db/id.rs`, which carry their own
+`account::TaxTreatment`, `recurring_goal::Cadence`, `goal::BatchKind`, and one id type per table
+(`db::AccountId`, `db::GoalId`, …, `db::HoldingId`, in `src/db/id.rs`, which carry their own
 `ToSql`/`FromSql`). When you add a table or a constrained column, add the type
 too — and when you add an enum variant, check the schema's `CHECK` list still
 matches, since nothing but a test ties them together.
@@ -309,17 +314,28 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   takes two bare `Vec<Cents>`; `plan::compute_from_db` fills them from `bill::amounts`. A half-filled
   row in the sheet is an import error, because a dropped bill inflates the excess the waterfall has
   left to allocate.
-- **Funds are imported, so `--replace` overwrites hand-typed values.** `fund` is in `IMPORTED_TABLES`
-  because the import writes it, which means a value typed on the Funds screen is replaced by the
-  sheet's on the next `--replace`, exactly as every other imported figure is. `has_imported_data` is
-  unchanged: transactions and goals still stand in for the whole set.
-- **A fund's target percentage is derived, never stored.** The bond row's target is
-  `(age − 30)` points and a birthday moves it with no write, so storing it would go stale in the
-  night. What the table holds is the *rule* — `Target::AgeOver30`, or a share of what that rule
-  leaves — and `calc::fund` turns it into a percentage on every read. The remainder those shares
-  divide is `10,000 bp` minus every age row's target, clamped at zero; an age row with **no birth
-  date on record** claims nothing, so the share rows divide the whole 100% rather than being told a
-  zero that is really a question.
+- **The allocation target is derived, never stored.** The bond share is `(age − 30)` points and a
+  birthday moves it with no write, so storing it would go stale in the night. What is stored is the
+  birth date and one split — `key::INTL_EQUITY_SHARE`, the international share of the equity
+  remainder — and `calc::fund::targets` turns the pair into three shares on every read. **An unset
+  birth date claims no bond share**, so the two equity shares divide the whole 100% rather than
+  being told a bond target that is really a question.
+- **One key holds the equity split, not two.** Domestic is the remainder. The importer reads
+  `Planning!J3` and `J4` and stores their ratio, because two stored values for one fact can
+  disagree — the same reason only `Constants!G2` is imported for the pay cadence while `H2` is
+  merely asserted against it.
+- **An investment account is banded off the Overview, and its balance is not a `SUM(cents)`.**
+  `kind = 'investment'` means an account the Overview skips: `overview::load` filters them before
+  banding, so Net keeps meaning spendable net worth derived from the dated ledger. Their balance is
+  the sum of the `holding` rows beneath them instead — `overview::load`'s own comment says why that
+  sum cannot be banded in. What reusing `account` buys is naming, colors, ordering and the Accounts
+  screen, deliberately not the balance model.
+- **`account.tax_treatment` is present exactly when the kind is `investment`**, which the schema's
+  paired `CHECK` is the backstop for and the Accounts screen's conditional field is the guard.
+  `account::set_tax_treatment` is its one writer, for the reason `set_interest_policy` is its
+  column's.
+- **`holding` and `fund_mix` are in `PRESERVED_TABLES`**, and the reason is uniform: the workbook
+  carries neither, so a `--replace` has nothing to say about them.
 - **The pay cadence is one setting, and the days between paydays are derived from it.**
   `key::PAY_PERIODS_PER_YEAR` is the count; `calc::period_days` divides a year of whole weeks
   (`52 × 7`) by it, clamped at both ends, and that is what `calc::per_paycheck` counts a deadline's
