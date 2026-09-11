@@ -121,12 +121,9 @@ impl Field {
 #[derive(Clone, Debug)]
 pub(super) struct DateField {
     field: Field,
-    /// The day the `M/D` shorthand resolves against. `None` is a field that
-    /// takes `YYYY-MM-DD` and nothing else: the shorthand's year turns on the
-    /// month alone, so it never reads more than weeks from today, and a birth
-    /// date is decades past -- a shorthand there could only ever land decades
-    /// wrong in silence.
-    shorthand_from: Option<NaiveDate>,
+    /// The day the `M/D` shorthand resolves against: its year turns on the
+    /// month alone, so it never reads more than weeks from today.
+    shorthand_from: NaiveDate,
 }
 
 impl DateField {
@@ -134,7 +131,7 @@ impl DateField {
     pub(super) fn on(today: NaiveDate, date: NaiveDate) -> DateField {
         DateField {
             field: Field::prefilled(iso(date)),
-            shorthand_from: Some(today),
+            shorthand_from: today,
         }
     }
 
@@ -149,7 +146,7 @@ impl DateField {
     pub(super) fn blank(today: NaiveDate) -> DateField {
         DateField {
             field: Field::prefilled(""),
-            shorthand_from: Some(today),
+            shorthand_from: today,
         }
     }
 
@@ -158,18 +155,7 @@ impl DateField {
     pub(super) fn given(today: NaiveDate, date: Option<NaiveDate>) -> DateField {
         DateField {
             field: Field::given(date.map(iso).unwrap_or_default()),
-            shorthand_from: Some(today),
-        }
-    }
-
-    /// A field that takes `YYYY-MM-DD` and nothing else. It needs no `today`,
-    /// which is the distinction made visible: the shorthand is the reading
-    /// that depends on when you are. The `shorthand_from` field above says
-    /// which fields want it and why a birth date is one of them.
-    pub(super) fn iso_only(prefill: &str) -> DateField {
-        DateField {
-            field: Field::given(prefill),
-            shorthand_from: None,
+            shorthand_from: today,
         }
     }
 
@@ -252,9 +238,9 @@ impl DateField {
     /// parse.
     pub(super) fn parse(&self) -> Result<NaiveDate> {
         let raw = self.field.value().trim();
-        match self.shorthand_from {
-            Some(today) if raw.contains('/') => parse_shorthand(raw, today),
-            _ => parse_date(raw),
+        match raw.contains('/') {
+            true => parse_shorthand(raw, self.shorthand_from),
+            false => parse_date(raw),
         }
     }
 
@@ -796,9 +782,10 @@ pub struct ValueForm {
 
 /// The one field a [`ValueForm`] collects, and which reading it is.
 ///
-/// An enum rather than a `Field` beside a flag: a figure and a date are two
-/// readings of one buffer, and a separate flag is a second place for this
-/// form to say which it is collecting -- one the two could disagree on.
+/// An enum rather than a `Field` beside a flag: a figure and a demo-scrambled
+/// figure are two readings of one buffer, and a separate flag is a second
+/// place for this form to say which it is collecting -- one the two could
+/// disagree on.
 #[derive(Debug)]
 enum Entry {
     /// A figure, which this form does not parse: the caller knows which
@@ -810,22 +797,19 @@ enum Entry {
     Figure(Field),
     /// A figure in dollars, whose digits a demo scrambles.
     ///
-    /// A third reading rather than a flag beside `Figure`, for the reason
+    /// A second reading rather than a flag beside `Figure`, for the reason
     /// this is an enum at all: which reading the caller opened the form on is
     /// one fact, and a flag would be a second place to say it. The two are
     /// not interchangeable -- the Planning screen edits a pay-period count
     /// and a split percentage through this same modal, and neither of those
     /// is money.
     Money(Field),
-    /// A date, which `←`/`→` step like every other date in the app.
-    Date(DateField),
 }
 
 impl Entry {
     fn value(&self) -> &str {
         match self {
             Entry::Figure(field) | Entry::Money(field) => field.value(),
-            Entry::Date(date) => date.value(),
         }
     }
 }
@@ -838,27 +822,14 @@ impl ValueForm {
         }
     }
 
-    /// The same form over an amount -- a Planning constant, a bill, a fund's
-    /// value, a reconciliation target. What separates it from [`ValueForm::new`]
-    /// is only that a demo scrambles the digits of what it shows.
+    /// The same form over an amount -- a Planning constant, a bill, a
+    /// ledger's reconciliation target. What separates it from
+    /// [`ValueForm::new`] is only that a demo scrambles the digits of what it
+    /// shows.
     pub fn money(label: impl Into<Label>, prefill: &str) -> ValueForm {
         ValueForm {
             label: label.into(),
             entry: Entry::Money(Field::given(prefill)),
-        }
-    }
-
-    /// The same form over a date -- the Funds screen's birth-date prompt.
-    /// `←`/`→` step it, as they do on every other date field.
-    ///
-    /// `iso_only`: the shorthand's year turns on the month alone, so its
-    /// reading is never more than weeks from today, and a birth date is
-    /// decades past. A shorthand here could only ever be a wrong year that
-    /// nothing refuses.
-    pub fn date(label: impl Into<Label>, prefill: &str) -> ValueForm {
-        ValueForm {
-            label: label.into(),
-            entry: Entry::Date(DateField::iso_only(prefill)),
         }
     }
 
@@ -896,12 +867,10 @@ impl FormFields for ValueForm {
     // One field, so there is nowhere to tab to.
     fn move_focus(&mut self, _step: isize) {}
 
-    // Nothing to cycle either: the one field is a buffer, and a date among
-    // them steps on the arrows like every other date in the app.
+    // Nothing to cycle either: the one field is always a text buffer.
     fn focused(&mut self) -> Focused<'_> {
         match &mut self.entry {
             Entry::Figure(field) | Entry::Money(field) => Focused::Text(field),
-            Entry::Date(date) => Focused::Date(date),
         }
     }
 }
@@ -1019,34 +988,6 @@ mod tests {
         }
         let err = f.parse().unwrap_err().to_string();
         assert!(err.contains("2/30"), "{err}");
-    }
-
-    /// `YYYY-MM-DD` is what a field is written back as, so it must read back
-    /// the same whichever kind of field it lands in.
-    #[test]
-    fn an_iso_date_reads_the_same_with_the_shorthand_on_or_off() {
-        let mut shorthand = DateField::blank(day(2026, 8, 21));
-        let mut iso = DateField::iso_only("");
-        for c in "2026-11-27".chars() {
-            shorthand.push(c);
-            iso.push(c);
-        }
-        assert_eq!(shorthand.parse().unwrap(), day(2026, 11, 27));
-        assert_eq!(iso.parse().unwrap(), day(2026, 11, 27));
-    }
-
-    /// The Funds screen's birth-date prompt. The shorthand's year turns on
-    /// the month alone, so its reading is never more than weeks from today,
-    /// and a birth date is decades past: the shorthand there could only ever
-    /// be a wrong year nothing refuses.
-    #[test]
-    fn a_field_that_takes_no_shorthand_refuses_one() {
-        let mut f = DateField::iso_only("");
-        for c in "3/4".chars() {
-            f.push(c);
-        }
-        let err = f.parse().unwrap_err().to_string();
-        assert!(err.contains("3/4"), "{err}");
     }
 
     /// `YYYY-MM-DD` is always the display date. What was typed stands while
@@ -1410,18 +1351,6 @@ mod tests {
     fn a_value_form_offers_no_autocomplete() {
         let form = ValueForm::new("Target", "26");
         assert_eq!(form.suggestion_prefix(), None);
-    }
-
-    /// A date form's one field is a date, so `←`/`→` step it -- the same
-    /// meaning they carry on every other date field in the app.
-    #[test]
-    fn a_date_value_form_steps_its_field_by_a_day() {
-        let mut form = ValueForm::date("Birth Date", "1990-03-04");
-        form.choice(Step::NEXT);
-        assert_eq!(form.value(), "1990-03-05");
-        form.choice(Step::PREVIOUS);
-        form.choice(Step::PREVIOUS);
-        assert_eq!(form.value(), "1990-03-03");
     }
 
     #[test]

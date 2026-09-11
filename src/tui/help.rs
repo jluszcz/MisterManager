@@ -402,28 +402,9 @@ const PLANNING: [Entry; 9] = [
     },
 ];
 
-const FUNDS: [Entry; 4] = [
-    Entry {
-        key: "a",
-        label: Label::Own("add"),
-        detail: "Add a fund: a name, whether its target tracks your age or takes a share of what age leaves, and the value it holds now.",
-    },
-    Entry {
-        key: "e",
-        label: Label::Own("value"),
-        detail: "Edit just the figure on the selected row -- the value that fund holds. Whole dollars; cents are refused rather than rounded.",
-    },
-    Entry {
-        key: "E",
-        label: Label::Own("edit"),
-        detail: "Edit the selected row in full: the same form 'a' adds with.",
-    },
-    Entry {
-        key: "d",
-        label: Label::Own("delete"),
-        detail: "Delete the selected row, after a confirmation. Nothing here holds money, so no balance moves.",
-    },
-];
+/// Empty until the holdings model exists: the screen answers no keys of its
+/// own, so it has nothing to add to the panel.
+const FUNDS: [Entry; 0] = [];
 
 /// What `e` edits, and -- on a build that has an importer -- what the import
 /// does and does not take back.
@@ -799,8 +780,7 @@ const FORM: [Entry; 10] = [
         label: Label::Hidden,
         detail: concat!(
             "Save. A value that will not parse reports itself in the status line and the form stays open.",
-            date_detail!(),
-            " The birth-date prompt is the exception and takes YYYY-MM-DD alone: every M/D reading is present or future."
+            date_detail!()
         ),
     },
     Entry {
@@ -1364,7 +1344,10 @@ mod tests {
     #[test]
     fn every_topic_anywhere_has_keys_a_title_and_details() {
         for topic in ALL {
-            assert!(!topic.keys().is_empty(), "{topic:?} has no keys");
+            // Funds answers no keys until its holdings model exists.
+            if topic != Topic::Funds {
+                assert!(!topic.keys().is_empty(), "{topic:?} has no keys");
+            }
             assert!(!topic.title().is_empty(), "{topic:?} has no title");
             for entry in topic.keys() {
                 assert!(!entry.detail.is_empty(), "{:?} {:?}", topic, entry.key);
@@ -1450,11 +1433,16 @@ mod tests {
         }
     }
 
-    /// Only a modal or a search box may join no footer. A screen topic with no
-    /// labelled entries would render an empty footer line.
+    /// Only a modal, a search box, or a screen that answers no keys of its
+    /// own may join no footer. Funds is the one screen topic that does:
+    /// it has no keys until its holdings model exists, and an empty footer
+    /// is what that looks like.
     #[test]
     fn every_screen_topic_joins_a_non_empty_footer() {
         for topic in SCREENS {
+            if topic == Topic::Funds {
+                continue;
+            }
             assert!(!topic.footer().is_empty(), "{topic:?}");
         }
     }
@@ -1502,8 +1490,8 @@ mod tests {
     }
 
     #[test]
-    fn the_funds_footer_names_every_key_the_screen_answers() {
-        assert_eq!(Topic::Funds.footer(), "a add · e value · E edit · d delete");
+    fn the_funds_footer_is_empty_because_the_screen_answers_no_keys() {
+        assert_eq!(Topic::Funds.footer(), "");
     }
 
     /// The Credit ledger shares the Ledger topic with Cash but has no `t`:

@@ -267,8 +267,7 @@ pub struct NewAccount {
 }
 
 /// One account: `a` creating one, or `e` saying the rest about one that
-/// exists. `editing` is which, the same shape `FundForm` and
-/// `RecurringTxnForm` carry.
+/// exists. `editing` is which, the same shape `RecurringTxnForm` carries.
 ///
 /// The two modes ask disjoint questions, and that is the point rather than an
 /// accident. `a` asks the two things an account cannot be given afterwards --
@@ -281,10 +280,9 @@ pub struct NewAccount {
 /// the schema's `CHECK` would refuse, a position off the end, a policy that is
 /// not a policy, a kind that is not a kind, and an account claiming both
 /// `Savings` blocks at once are all unrepresentable. Which fields an *edit*
-/// shows depends on the kind, exactly as `FundForm`'s do on the target:
-/// credit does not split into bands, so there is nothing for a band selector
-/// to cycle, and only a cash account holds the goals an interest posting is
-/// divided among or a `Savings` block fills.
+/// shows depends on the kind: credit does not split into bands, so there is
+/// nothing for a band selector to cycle, and only a cash account holds the
+/// goals an interest posting is divided among or a `Savings` block fills.
 #[derive(Debug)]
 pub struct AccountForm {
     /// The account this form saves back to, or `None` for one `a` will
