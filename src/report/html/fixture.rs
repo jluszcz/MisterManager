@@ -54,6 +54,9 @@ pub(super) fn row(name: &str, current: i64, goal: i64) -> crate::savings::Row {
         per_paycheck: Some(Cents::from_dollars(25)),
         interest_eligible: false,
         favorite: false,
+        // The report has no column for it: a note is read on the two screens
+        // that edit and audit one goal.
+        note: None,
     }
 }
 

@@ -479,8 +479,8 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   rather than a side effect.
 - **`mm --demo` replaces absolute figures and owner-entered text, and nothing else.** Every
   absolute dollar figure draws with another figure's digits, keyed on a per-run salt so one amount
-  reads the same everywhere; every account name and code, goal name, recurring-goal name, bill
-  label, fund name and transaction description draws as a same-length pronounceable pseudoword,
+  reads the same everywhere; every account name and code, goal name, goal note, recurring-goal name,
+  bill label, fund name and transaction description draws as a same-length pronounceable pseudoword,
   keyed the same way so one word reads the same all run. Percentages, dates, counts, the app's own vocabulary, and every match key are
   untouched: a percentage is a shape rather than a sum, a scrambled date is not a date, and a count
   over a list of rows the reader can see would read as a fault. It is display-only and installed
@@ -550,22 +550,34 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   reason `account::reorder` does — it renumbers the whole undated block, so "put it third" has a
   result that does not depend on rows the caller never saw. It refuses a dated goal rather than
   renumbering around it.
-- **`goal.favorite` and `goal.floating` are the owner's, and a `--replace` takes both away.**
-  Neither is a fact the sheet carries and neither is written by any import. `f` on Savings toggles
-  the first, and `goal::set_favorite` is that column's one writer — not a field on `GoalEdit`, for
-  the reason `recurring_txn::set_paycheck` is not one on `update`: the goal form has no field for
-  it, so an edit that wrote the whole row would clear a mark the owner never touched. `floating`
-  *is* a field on that form, and so is on `GoalEdit`, which is the whole difference between the
-  two. The comparison worth drawing is `account.color`, which is also the owner's and also absent
-  from the sheet — but `account` is in `PRESERVED_TABLES` and `goal` is not, so a `--replace` keeps
-  a color and loses both of these along with the goals themselves. Nothing can fix that: goal names
-  are not unique, so there is no key to re-attach either by.
-  - **What the loss costs is not the same for the two.** A favorite is a highlight and nothing
+- **`goal.favorite`, `goal.floating` and `goal.note` are the owner's, and a `--replace` takes all
+  three away.** None is a fact the sheet carries and none is written by any import. `f` on Savings
+  toggles the first, and `goal::set_favorite` is that column's one writer — not a field on
+  `GoalEdit`, for the reason `recurring_txn::set_paycheck` is not one on `update`: the goal form has
+  no field for it, so an edit that wrote the whole row would clear a mark the owner never touched.
+  `floating` and `note` *are* fields on that form, and so are on `GoalEdit`, which is the whole
+  difference between them and the favorite. The comparison worth drawing is `account.color`, which is
+  also the owner's and also absent from the sheet — but `account` is in `PRESERVED_TABLES` and `goal`
+  is not, so a `--replace` keeps a color and loses all three of these along with the goals
+  themselves. Nothing can fix that: goal names are not unique, so there is no key to re-attach any of
+  them by.
+  - **What the loss costs is not the same for the three.** A favorite is a highlight and nothing
     else — it moves no money, gates nothing, and changes no figure on any screen, so losing one
     costs a keystroke. A lost `floating` flag leaves the goal funded towards whatever base the
     sheet carries, which puts it back in the payday plug's set and back behind every Planning gate
     it sits under, so it is worth re-setting after a `--replace` rather than re-noticing a payday
-    later.
+    later. A lost note moves nothing either, but unlike a favorite it cannot be retyped from what
+    is on screen: it is the only thing in the database nothing else records.
+  - **Nothing downstream reads the note.** It is drawn on the goal form that writes it and above the
+    rows in that goal's history, and nowhere else — not on a Savings row, not in the report. One
+    number bounds it, `crate::goal::NOTE_LIMIT`, because the form that refuses an over-long note and
+    the modal that draws one on a single line have to agree about what fits. **The form is what
+    bounds it**, being the narrower of the two and having no horizontal scrolling: a longer limit
+    would let the owner type past the right edge of a field the commit then accepts. The derivation
+    is on the constant — including the column the caret spends past the last character, which is why
+    the figure is odd — and `a_note_at_the_limit_is_drawn_whole_on_the_form` is what ties the number
+    to the width. That test focuses the Note field, because the caret is only drawn on the line that
+    has focus and an unfocused one would pass at any limit a column too wide.
 - **One worksheet commit is one `batch`.** `goal::insert_allocations` opens the batch itself, so a
   fumbled payday is one `delete_batch` rather than dozens of deletions. `U` undoes the most recent
   batch by insert order and **never an `Import` batch** — that one holds every opening balance in the

@@ -51,6 +51,11 @@ pub struct History {
     /// opens, the way `a`'s is.
     container: AccountId,
     container_name: String,
+    /// The goal's own note, drawn above the rows. `None` is a goal nobody has
+    /// annotated, and it spends no line: an absent note is nothing to report,
+    /// where an allocation's absent note is an em dash in a column that has to
+    /// hold something.
+    note: Option<String>,
     rows: Vec<Allocation>,
     cursor: Cursor,
     mode: Mode,
@@ -65,6 +70,7 @@ impl History {
         goal_name: &str,
         container: AccountId,
         container_name: &str,
+        note: Option<&str>,
         rows: Vec<Allocation>,
     ) -> History {
         let mut cursor = Cursor::new();
@@ -74,6 +80,7 @@ impl History {
             goal_name: goal_name.to_string(),
             container,
             container_name: container_name.to_string(),
+            note: note.map(str::to_string),
             rows,
             cursor,
             mode: Mode::List,
@@ -98,6 +105,14 @@ impl History {
 
     pub fn rows(&self) -> &[Allocation] {
         &self.rows
+    }
+
+    /// The line above the rows: the owner's own prose about the goal, masked
+    /// the way the goal's name in the border is. `None` draws no line at all.
+    pub fn note_line(&self) -> Option<String> {
+        self.note
+            .as_deref()
+            .map(|note| crate::demo::text(note).into_owned())
     }
 
     pub fn selected(&self) -> Option<&Allocation> {
@@ -174,8 +189,19 @@ pub(super) fn render(frame: &mut Frame, history: &History) -> Viewport {
     frame.render_widget(Block::bordered().title(history.title()), area);
     let inner = area.inner(ratatui::layout::Margin::new(1, 1));
 
-    let [rows_area, footer_area] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    // The note takes a line only when there is one, and never more than one:
+    // `goal::NOTE_LIMIT` is bounded by the goal form, which is narrower than
+    // this modal, so a note the form accepted fits here with room to spare.
+    let note = history.note_line();
+    let [note_area, rows_area, footer_area] = Layout::vertical([
+        Constraint::Length(u16::from(note.is_some())),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    if let Some(note) = note {
+        frame.render_widget(Paragraph::new(TextLine::from(note)), note_area);
+    }
 
     // An empty history draws neither a header nor columns: there is nothing
     // under them, and one full-width line says so where a placeholder squeezed
@@ -278,6 +304,7 @@ mod tests {
             "Vacation 2027",
             AccountId(2),
             "Rainy Day",
+            None,
             vec![
                 row(1, day(2026, 1, 15), 25_000, Some("opening")),
                 row(2, day(2026, 3, 4), 40_000, None),
@@ -317,7 +344,14 @@ mod tests {
 
     #[test]
     fn a_history_with_no_rows_selects_nothing() {
-        let empty = History::new(GoalId(1), "Couch", AccountId(2), "Rainy Day", Vec::new());
+        let empty = History::new(
+            GoalId(1),
+            "Couch",
+            AccountId(2),
+            "Rainy Day",
+            None,
+            Vec::new(),
+        );
         assert_eq!(empty.selected(), None);
     }
 
@@ -351,6 +385,7 @@ mod tests {
             "Vacation 2027",
             AccountId(2),
             "Rainy Day",
+            None,
             vec![row(1, day(2026, 12, 31), -123_456_789, Some("a note"))],
         );
         let text = drawn(&widest).join("\n");
@@ -368,6 +403,69 @@ mod tests {
         assert!(text.contains("opening"), "{text}");
     }
 
+    /// The goal's own note, above the rows it explains. The `Note` column
+    /// below it is each allocation's; this one is the goal's, which is why it
+    /// is a line of its own rather than a cell.
+    /// The same fixture with something said about the goal itself.
+    fn annotated() -> History {
+        History::new(
+            GoalId(1),
+            "Vacation 2027",
+            AccountId(2),
+            "Rainy Day",
+            Some("book flights by March"),
+            vec![row(1, day(2026, 1, 15), 25_000, Some("opening"))],
+        )
+    }
+
+    #[test]
+    fn a_goals_note_is_drawn_above_the_rows() {
+        let lines = drawn(&annotated());
+        let note = lines
+            .iter()
+            .position(|l| l.contains("book flights by March"))
+            .unwrap_or_else(|| panic!("the note is not drawn: {lines:#?}"));
+        let header = lines
+            .iter()
+            .position(|l| l.contains("Date"))
+            .unwrap_or_else(|| panic!("the table header is not drawn: {lines:#?}"));
+        assert!(note < header, "the note is below the rows: {lines:#?}");
+    }
+
+    /// The second reader of [`crate::goal::NOTE_LIMIT`]: the line is drawn
+    /// without wrapping, so a note the limit allows has to fit it whole.
+    #[test]
+    fn a_note_at_the_limit_is_drawn_whole_above_the_rows() {
+        let long = "x".repeat(crate::goal::NOTE_LIMIT);
+        let history = History::new(
+            GoalId(1),
+            "Vacation 2027",
+            AccountId(2),
+            "Rainy Day",
+            Some(&long),
+            vec![row(1, day(2026, 1, 15), 25_000, None)],
+        );
+
+        let text = drawn(&history).join("\n");
+        assert!(text.contains(&long), "the note is cut short: {text}");
+    }
+
+    /// Having nothing to say takes no line: a goal nobody has annotated draws
+    /// the modal it drew before notes existed, rather than an em dash standing
+    /// in for prose the way an allocation's absent note does.
+    #[test]
+    fn a_goal_with_no_note_spends_no_line_on_one() {
+        let lines = drawn(&history());
+        let border = lines
+            .iter()
+            .position(|l| l.contains("Vacation 2027"))
+            .unwrap_or_else(|| panic!("the border is not drawn: {lines:#?}"));
+        assert!(
+            lines[border + 1].contains("Date"),
+            "a line stands between the border and the rows: {lines:#?}"
+        );
+    }
+
     #[test]
     fn the_rows_foot_with_their_total() {
         let text = drawn(&history()).join("\n");
@@ -379,7 +477,14 @@ mod tests {
     /// of this modal's own.
     #[test]
     fn a_goal_with_no_allocations_says_so_instead_of_footing_a_zero() {
-        let empty = History::new(GoalId(1), "Couch", AccountId(2), "Rainy Day", Vec::new());
+        let empty = History::new(
+            GoalId(1),
+            "Couch",
+            AccountId(2),
+            "Rainy Day",
+            None,
+            Vec::new(),
+        );
         let text = drawn(&empty).join("\n");
         assert!(text.contains("no allocations yet"), "{text}");
         assert!(!text.contains("Total"), "{text}");
@@ -416,5 +521,22 @@ mod tests {
         // An absence is not something to hide, and the dates are not figures.
         assert!(text.contains("—"), "{text}");
         assert!(text.contains("2026-01-15"), "{text}");
+    }
+
+    /// The goal's note is the owner's own prose, the way its name is.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_the_goals_own_note() {
+        crate::demo::install_with_salt(7);
+        let text = drawn(&annotated()).join("\n");
+
+        assert!(
+            !text.contains("book flights by March"),
+            "the note survived: {text}"
+        );
+        assert!(
+            text.contains(&crate::demo::text("book flights by March").to_string()),
+            "no scrambled note found: {text}"
+        );
     }
 }

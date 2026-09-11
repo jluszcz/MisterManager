@@ -27,6 +27,29 @@ use anyhow::{Context, Result};
 /// and the form that refuses to *store* one say the same sentence.
 pub const NO_TAX_RATE: &str = "no sales tax rate is configured; import Constants first";
 
+/// The longest note a goal may carry, in characters.
+///
+/// Here rather than in `tui`, beside [`NO_TAX_RATE`] and for the same reason:
+/// the form that refuses an over-long note and the modal that draws one in a
+/// single line have to agree about one number, and a second copy of it is a
+/// note that commits and then draws clipped.
+///
+/// The figure is what the **goal form** can show, which is the narrower of the
+/// two readers: `tui::widget::FORM_WIDTH` less its two border columns, less the
+/// label gutter every field line is padded to, and less one more for the column
+/// the caret sits in past the last character. A text field has no horizontal
+/// scrolling, so a longer limit would be an invitation to type blind -- the
+/// characters past the edge invisible, or the caret gone while the text is
+/// still there, which is the same field with no visible end to type at.
+///
+/// That last column is why the figure is odd. It is spent only while the field
+/// has focus, which is exactly when a note is being typed, so it is not slack
+/// to reclaim. Stated here rather than derived from those four, because `goal`
+/// must not reach into `tui` for a number;
+/// `tui::goal_form`'s `a_note_at_the_limit_is_drawn_whole_on_the_form` focuses
+/// the field and is what holds the two together.
+pub const NOTE_LIMIT: usize = 47;
+
 /// A goal, its balance, and the target it is funded to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Funding {
@@ -179,6 +202,7 @@ mod tests {
             sort: 0,
             taxed,
             floating: false,
+            note: None,
         }
     }
 
@@ -199,6 +223,7 @@ mod tests {
             favorite: false,
             taxed: false,
             floating: false,
+            note: None,
         };
         assert_eq!(
             target(&g, Cents::from_dollars(250), Some(BasisPoints(625))).unwrap(),
@@ -382,6 +407,7 @@ mod tests {
             favorite: false,
             taxed: false,
             floating: true,
+            note: None,
         };
 
         assert_eq!(

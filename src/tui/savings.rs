@@ -477,6 +477,7 @@ mod tests {
                 favorite: false,
                 taxed: false,
                 floating: false,
+                note: None,
             },
             current: Cents(current),
             target: Cents(target),

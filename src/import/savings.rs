@@ -280,6 +280,7 @@ pub fn import(
                 // which is what not floating means.
                 taxed: false,
                 floating: false,
+                note: None,
             },
         )?;
         roth.offer(id, &name)?;
@@ -311,6 +312,7 @@ pub fn import(
                 sort: report.buckets as i64,
                 taxed: false,
                 floating: false,
+                note: None,
             },
         )?;
         emergency.offer(id, &b.name)?;

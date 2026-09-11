@@ -117,6 +117,7 @@ pub(super) fn goal(name: &str, container: i64) -> crate::db::goal::Goal {
         favorite: false,
         taxed: false,
         floating: false,
+        note: None,
     }
 }
 

@@ -1149,9 +1149,10 @@ derive it from `MIN_WIDTH` rather than write the offset out.
 - **`Floating` takes the Target and the Taxed fields off the form rather than blanking them.** A
   floating goal is funded to whatever it holds — `goal.floating`, read first by
   `crate::goal::target` — so a target and a tax on it describe nothing, and `GoalForm::fields` is
-  what Tab walks and what `render_goal` draws: `Name`, `Goal Date`, `Floating`, `Interest`. It sits
-  after the Date and beside `Taxed` because the two say what the Target above them means, and
-  because a goal that *has* a target is still typed name, target, date.
+  what Tab walks and what `render_goal` draws: `Name`, `Goal Date`, `Floating`, `Interest`, `Note`.
+  It sits after the Date and beside `Taxed` because the two say what the Target above them means,
+  and because a goal that *has* a target is still typed name, target, date. `Note` survives the flag
+  because it describes the goal rather than its target.
   - **What those two fields hold is suspended, not erased.** The commit writes the base the
     unreachable field still carries and the `taxed` flag beside it, so flipping `Floating` back off
     reopens the goal on the figure it was funded towards. The field cannot always be *read* back —

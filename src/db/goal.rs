@@ -91,6 +91,7 @@ pub struct NewGoal {
     pub sort: i64,
     pub taxed: bool,
     pub floating: bool,
+    pub note: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,6 +119,10 @@ pub struct Goal {
     /// base and `taxed` beside it say nothing while this is set --
     /// `crate::goal::target` reads it first and stops there.
     pub floating: bool,
+    /// Whatever the owner wants to remember about this goal, at most
+    /// [`NOTE_LIMIT`] characters of it. `None` is having said nothing, which
+    /// is every goal an import writes: no sheet carries one.
+    pub note: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -140,6 +145,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Goal> {
         favorite: row.get::<_, i64>(9)? != 0,
         taxed: row.get::<_, i64>(10)? != 0,
         floating: row.get::<_, i64>(11)? != 0,
+        note: row.get(12)?,
     })
 }
 
@@ -147,7 +153,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Goal> {
 /// with `$tail` appended. See [`crate::db`] for the idiom.
 ///
 /// The `with_balance` arm is those same columns qualified with the `g` alias
-/// a join needs, followed by the goal's allocation sum as column index 12 --
+/// a join needs, followed by the goal's allocation sum as its last column --
 /// what [`GoalWithBalance`] reads. Two lists rather than one, but adjacent,
 /// so a column added to the table is one edit in one place.
 macro_rules! select_goal {
@@ -155,7 +161,7 @@ macro_rules! select_goal {
         concat!(
             "SELECT id, name, container_account_id, base_cents, goal_date,
                     recurring_goal_id, interest_eligible, closed, sort, favorite,
-                    taxed, floating
+                    taxed, floating, note
                FROM goal ",
             $tail
         )
@@ -164,7 +170,7 @@ macro_rules! select_goal {
         concat!(
             "SELECT g.id, g.name, g.container_account_id, g.base_cents, g.goal_date,
                     g.recurring_goal_id, g.interest_eligible, g.closed, g.sort, g.favorite,
-                    g.taxed, g.floating,
+                    g.taxed, g.floating, g.note,
                     COALESCE((SELECT SUM(a.cents) FROM allocation a WHERE a.goal_id = g.id), 0)
                FROM goal g ",
             $tail
@@ -175,8 +181,8 @@ macro_rules! select_goal {
 pub fn insert(db: &Db, goal: &NewGoal) -> Result<GoalId> {
     db.conn.execute(
         "INSERT INTO goal
-           (name, container_account_id, base_cents, goal_date, recurring_goal_id, interest_eligible, sort, taxed, floating)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+           (name, container_account_id, base_cents, goal_date, recurring_goal_id, interest_eligible, sort, taxed, floating, note)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             goal.name,
             goal.container_account_id,
@@ -186,7 +192,8 @@ pub fn insert(db: &Db, goal: &NewGoal) -> Result<GoalId> {
             goal.interest_eligible as i64,
             goal.sort,
             goal.taxed as i64,
-            goal.floating as i64
+            goal.floating as i64,
+            goal.note
         ],
     )?;
     Ok(GoalId(db.conn.last_insert_rowid()))
@@ -358,7 +365,7 @@ pub fn list_with_balances(
     let rows = stmt.query_map(params![container_account_id], |row| {
         Ok(GoalWithBalance {
             goal: from_row(row)?,
-            current: Cents(row.get(12)?),
+            current: Cents(row.get(13)?),
         })
     })?;
     super::collect_rows(rows)
@@ -384,7 +391,7 @@ pub fn all_with_balances(db: &Db) -> Result<Vec<GoalWithBalance>> {
     let rows = stmt.query_map([], |row| {
         Ok(GoalWithBalance {
             goal: from_row(row)?,
-            current: Cents(row.get(12)?),
+            current: Cents(row.get(13)?),
         })
     })?;
     super::collect_rows(rows)
@@ -632,12 +639,13 @@ pub struct GoalEdit {
     pub interest_eligible: bool,
     pub taxed: bool,
     pub floating: bool,
+    pub note: Option<String>,
 }
 
 pub fn update(db: &Db, id: GoalId, edit: &GoalEdit) -> Result<()> {
     let changed = db.conn.execute(
         "UPDATE goal SET name = ?2, base_cents = ?3, goal_date = ?4, \
-         interest_eligible = ?5, taxed = ?6, floating = ?7 WHERE id = ?1",
+         interest_eligible = ?5, taxed = ?6, floating = ?7, note = ?8 WHERE id = ?1",
         params![
             id,
             edit.name,
@@ -646,6 +654,7 @@ pub fn update(db: &Db, id: GoalId, edit: &GoalEdit) -> Result<()> {
             edit.interest_eligible as i64,
             edit.taxed as i64,
             edit.floating as i64,
+            edit.note,
         ],
     )?;
     ensure!(changed == 1, "no goal with id {id}");
@@ -856,6 +865,7 @@ mod tests {
             sort: 0,
             taxed: false,
             floating: false,
+            note: None,
         }
     }
 
@@ -1112,6 +1122,7 @@ mod tests {
             sort: 9,
             taxed: true,
             floating: false,
+            note: None,
         };
         let id = insert(&db, &goal).unwrap();
 
@@ -1778,6 +1789,7 @@ mod tests {
                 interest_eligible: true,
                 taxed: false,
                 floating: false,
+                note: None,
             },
         )
         .unwrap();
@@ -1808,6 +1820,7 @@ mod tests {
                 interest_eligible: true,
                 taxed: false,
                 floating: false,
+                note: None,
             },
         )
         .unwrap();
@@ -1837,11 +1850,59 @@ mod tests {
                 interest_eligible: true,
                 taxed: false,
                 floating: false,
+                note: None,
             },
         )
         .unwrap();
 
         assert!(!get(&db, id).unwrap().unwrap().floating);
+    }
+
+    /// The owner's own prose about a goal, which no import ever writes and
+    /// the edit form is the only source of.
+    #[test]
+    fn a_goals_note_round_trips_through_insert_and_update() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let mut goal = new_goal("Couch", savings, 1_000);
+        goal.note = Some("the grey one, not the sectional".to_string());
+        let id = insert(&db, &goal).unwrap();
+        assert_eq!(
+            get(&db, id).unwrap().unwrap().note.as_deref(),
+            Some("the grey one, not the sectional")
+        );
+
+        update(
+            &db,
+            id,
+            &GoalEdit {
+                name: "Couch".to_string(),
+                base_cents: Cents::from_dollars(1_000),
+                goal_date: None,
+                interest_eligible: true,
+                taxed: false,
+                floating: false,
+                note: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            get(&db, id).unwrap().unwrap().note,
+            None,
+            "an emptied note outlived the edit that emptied it"
+        );
+    }
+
+    /// Having nothing to say about a goal is the state every goal starts in,
+    /// and the only one an import can leave it in.
+    #[test]
+    fn a_goal_arrives_with_no_note() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let id = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+
+        assert_eq!(get(&db, id).unwrap().unwrap().note, None);
     }
 
     /// The state every existing goal is already in, and the one the schema
@@ -1873,6 +1934,7 @@ mod tests {
                 interest_eligible: false,
                 taxed: false,
                 floating: false,
+                note: None,
             },
         )
         .unwrap();
@@ -1927,6 +1989,7 @@ mod tests {
                 interest_eligible: true,
                 taxed: false,
                 floating: false,
+                note: None,
             },
         )
         .unwrap();
@@ -1955,6 +2018,7 @@ mod tests {
                     interest_eligible: true,
                     taxed: false,
                     floating: false,
+                    note: None,
                 },
             )
             .is_err()

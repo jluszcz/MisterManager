@@ -381,6 +381,7 @@ impl App {
                 sort: first_sort + offset as i64,
                 taxed: entry.taxed,
                 floating: false,
+                note: None,
             });
         }
         goal::insert_all(&self.db, &new_goals)?;
@@ -510,6 +511,7 @@ mod tests {
                 sort: 9,
                 taxed: false,
                 floating: false,
+                note: None,
             },
         )
         .unwrap();
@@ -1458,6 +1460,7 @@ mod tests {
                         sort: 9,
                         taxed: false,
                         floating: false,
+                        note: None,
                     },
                 )
                 .unwrap();

@@ -526,6 +526,7 @@ mod tests {
                     sort: 0,
                     taxed: false,
                     floating: false,
+                    note: None,
                 },
             )
             .unwrap();
@@ -749,6 +750,7 @@ mod tests {
                 sort: 0,
                 taxed: false,
                 floating: false,
+                note: None,
             },
         )
         .unwrap();
