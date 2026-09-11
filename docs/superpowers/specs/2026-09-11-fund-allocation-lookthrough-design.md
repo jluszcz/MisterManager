@@ -170,11 +170,16 @@ five sibling projects already use. `query::send` is the reason: retry with jitte
 retry on non-idempotent methods, and an error that keeps the response body `error_for_status`
 discards.
 
-**This requires an upstream change first.** `features = ["query"]` currently pulls `aws-lc-sys`,
-because reqwest 0.13 resolves `default` to `default-tls` to `rustls` to `__rustls-aws-lc-rs`.
-`aws-lc-sys` compiles C, which the `aarch64-unknown-linux-musl` target both CI jobs build for has
-no toolchain for — the constraint `Cargo.toml` documents at the `aws-config` dependency. The fix is
-in rust-utils:
+**This wants an upstream change, but is not blocked on one.** `features = ["query"]` currently
+pulls `aws-lc-sys`, because reqwest 0.13 resolves `default` to `default-tls` to `rustls` to
+`__rustls-aws-lc-rs`. `Cargo.toml` documents avoiding `aws-lc-sys` on the grounds that the
+`aarch64-unknown-linux-musl` build "has no toolchain for" the C it compiles — **that is not true of
+CI as it stands**: the shared workflow installs `musl-tools`, and rust-utils builds `--all-features`
+(so, `aws-lc-sys`) for that target on the same runner, green.
+
+What the change buys is therefore build weight and coherence rather than a working build: taking
+`query` as-is puts two crypto backends in one binary, ring for `aws-sdk-s3` and aws-lc for reqwest,
+and compiles C for the second. The fix is in rust-utils:
 
 ```toml
 reqwest = { version = "0.13", default-features = false,
@@ -355,7 +360,9 @@ spec says about the three hops, SEC etiquette, and the two classification paths.
 
 ## Open items
 
-- The rust-utils change lands upstream before this crate can take the dependency.
+- The rust-utils change is sequenced alongside this work rather than ahead of it; see
+  `docs/superpowers/plans/2026-09-11-rust-utils-tls-provider.md`. Until it lands, `features =
+  ["query"]` builds and works — it just carries `aws-lc-sys`.
 - The `remove-funds-screen` branch holds a single commit planning an abandoned approach — deleting
   the Funds feature outright rather than replacing it. It should be deleted rather than merged, so
   no agent following `superpowers:executing-plans` picks that plan up.
