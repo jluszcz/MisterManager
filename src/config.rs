@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     pub backup: Option<Backup>,
     pub report: Option<Report>,
+    pub sec: Option<Sec>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -76,6 +77,16 @@ impl Report {
         let home = std::env::var("HOME").context("HOME is not set")?;
         Ok(PathBuf::from(home).join(rest))
     }
+}
+
+/// What `mm mixes` puts in its `User-Agent`.
+///
+/// SEC refuses a request that declares no contact, so this is required rather
+/// than defaulted -- and it is a setting rather than a constant because no
+/// real address may be written into a file in this repository.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct Sec {
+    pub contact: String,
 }
 
 /// `$XDG_CONFIG_HOME/mistermanager/config.toml`, or `~/.config` when it is
@@ -255,5 +266,17 @@ mod tests {
         let path = fixture("report_mid_tilde", "[report]\ndir = \"/tmp/a~b\"\n");
         let report = load(&path).unwrap().report.unwrap();
         assert_eq!(report.dir().unwrap(), PathBuf::from("/tmp/a~b"));
+    }
+
+    #[test]
+    fn a_config_with_no_sec_section_parses_and_reports_no_contact() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.sec.is_none());
+    }
+
+    #[test]
+    fn the_sec_contact_is_read_from_its_own_section() {
+        let config: Config = toml::from_str("[sec]\ncontact = \"someone@example.com\"").unwrap();
+        assert_eq!(config.sec.unwrap().contact, "someone@example.com");
     }
 }
