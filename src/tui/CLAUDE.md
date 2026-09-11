@@ -29,6 +29,7 @@ forget, and the copy that goes stale is always the one further from the code.
 | `t` | move money from one place to another: between accounts on the ledgers and on Planning, between two goals of one container on Savings |
 | `p` | pay a card on the ledgers, pin a plan on Planning — unrelated actions, so the letter is free to serve both |
 | `P` | unpin a plan on Planning, mark the paycheck on Recurring Txns — likewise |
+| `f` | the owner's own mark on the selected row: a favorite on Savings, a biweekly expense on Planning — one verb, two things worth marking |
 | `r` | reconcile the ledgers' filtered account against a statement |
 | `[` / `]` | step a month: the filter a screen narrows by, or the date a field holds |
 | `←` / `→` | move the caret in a text field, step a date a day at a time, or cycle the focused selector — see the invariant below |
@@ -631,7 +632,9 @@ derive it from `MIN_WIDTH` rather than write the offset out.
     as well. Whole dollars, refused below zero, and an empty field does not parse — so the row can
     create or replace a pin and never clear one.
 - **Planning leads with the transfers, not with the sheet's first row.** The rows `t` would write
-  head the screen; `Planning!C1:G41` follows underneath, Target and Buffer first. That order is
+  head the screen, the Biweekly Expenses line sits under them, and `Planning!C1:G41` follows
+  underneath that, Target and Buffer first. Both of the first two are answers rather than working,
+  which is what puts them above the blocks that produced them. That order is
   `plan_rows::rows` and not this file's: the report's Planning tab draws the same list, and
   `build` here only spends it in a terminal's units — the indent from `Row::depth`, the tint, the
   bold, and the `Editable` the cursor stops on. The Destinations block is appended after it, and is

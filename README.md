@@ -76,13 +76,22 @@ spends on the allocation it is mostly used for).
 
 ### `5` Planning
 
-The transfer instructions first — one per destination account — over the waterfall that worked them
-out: the excess, the monthly bill block with its biweekly column, the gates, the split, and where
-each line lands. `↑`/`↓` move between the editable constants and skip everything computed.
+The transfer instructions first — one per destination account — then what a pay period costs, over
+the waterfall that worked them out: the excess, the monthly bill block with its biweekly column, the
+gates, the split, and where each line lands. `↑`/`↓` move between the editable constants and skip
+everything computed.
 
 `p` pins the excess so the plan stops moving underneath a payday; pressing it again re-pins at
 whatever the excess reads now, and `P` unpins. `Excess (Used)` is an editable constant like any
 other, so a figure typed there pins that instead of the one `p` computed.
+
+`f` counts the selected row towards **biweekly expenses** — a bill at its biweekly figure, the
+bill-payment `Cap` and the `Goals Floor` at their own, `Mom & Dad`'s `Annual` at its share of one
+paycheck. No other row counts, and the screen says so rather than doing nothing if the key is
+pressed on one. The `Expenses` line under the transfers is that total rounded up to a whole hundred,
+with the year it comes to beside it, and every row it counted is dotted. It is the owner's own
+reckoning and nothing reads it back: it moves no money, and no figure above it moves when a mark
+does. An import that replaces the bills clears the marks along with them.
 
 **The transfers never total more than the excess.** On a payday too small for the fixed bills,
 housing is paid first and the line that gave way carries the gap beside it. The excess is the
@@ -312,7 +321,8 @@ The page carries six tabs, in the order the screens are numbered: Overview,
 Cash, Credit, Savings, Planning, Funds. It opens on Overview, and the switch is
 radio buttons and a stylesheet — no script, so it works on a phone with no
 network and nothing to load. Each container's goals sit under its own heading,
-the Planning tab shows the transfers over the waterfall that produced them, and
+the Planning tab shows the transfers and the biweekly expenses over the
+waterfall that produced them, and
 the footer says when the page was written. A goal's `%` is colored the way the
 Savings screen colors it — red at nothing saved, yellow at halfway, green at
 funded, and every shade between — off the same ramp, so a goal is the same

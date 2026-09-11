@@ -207,6 +207,24 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // one nobody has annotated yet, which is what `NULL` reads as.
         data: None,
     },
+    Migration {
+        version: 10,
+        // Whether the Planning screen's Biweekly Expenses figure adds this
+        // bill up. Not "is this an expense" -- every bill is a cost, and a
+        // column asking that would be true of every row it ever holds. What
+        // the owner marks is a membership: which of these costs are the ones
+        // they think of as what a pay period has to carry.
+        //
+        // `NOT NULL DEFAULT 0` rather than nullable, for the reason
+        // `favorite` and `floating` are: there is no third state between
+        // counted and not. Zero rather than one because a figure that starts
+        // out summing everything is a figure nobody chose.
+        sql: "ALTER TABLE bill ADD COLUMN counts_as_expense INTEGER NOT NULL DEFAULT 0",
+        // Nothing to move. No sheet carries the mark -- it is the owner's,
+        // like a goal's favorite -- so every existing bill is one nobody has
+        // counted yet.
+        data: None,
+    },
 ];
 
 /// The version this build's chain leaves a database at.

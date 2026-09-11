@@ -73,6 +73,10 @@ pub struct Bill {
     pub cents: Cents,
     pub category: Category,
     pub sort: i64,
+    /// Whether the Planning screen's Biweekly Expenses figure adds this bill
+    /// up. The owner's mark, not the sheet's: no import writes it, and
+    /// [`set_counts_as_expense`] is its one writer.
+    pub counts_as_expense: bool,
 }
 
 // Column order is fixed by `select_bill!` below -- keep the two in sync.
@@ -86,6 +90,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Bill> {
             .parse()
             .expect("schema CHECK guarantees a valid category"),
         sort: row.get(4)?,
+        counts_as_expense: row.get(5)?,
     })
 }
 
@@ -93,7 +98,10 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Bill> {
 /// with `$tail` appended. See [`crate::db`] for the idiom.
 macro_rules! select_bill {
     ($tail:literal) => {
-        concat!("SELECT id, label, cents, category, sort FROM bill ", $tail)
+        concat!(
+            "SELECT id, label, cents, category, sort, counts_as_expense FROM bill ",
+            $tail
+        )
     };
 }
 
@@ -154,6 +162,22 @@ pub fn set_amount(db: &Db, id: BillId, cents: Cents) -> Result<()> {
     let changed = db.conn.execute(
         "UPDATE bill SET cents = ?2 WHERE id = ?1",
         params![id, cents.0],
+    )?;
+    ensure!(changed == 1, "no bill with id {id}");
+    Ok(())
+}
+
+/// Mark or unmark one bill as a biweekly expense, which is what `f` on the
+/// Planning screen presses.
+///
+/// This column's one writer. It is deliberately not a field on [`BillEdit`],
+/// for the reason `favorite` is not one on a goal's: the bill form has no box
+/// for it, so an `E` that rewrote the whole row would clear a mark the owner
+/// never touched.
+pub fn set_counts_as_expense(db: &Db, id: BillId, counts: bool) -> Result<()> {
+    let changed = db.conn.execute(
+        "UPDATE bill SET counts_as_expense = ?2 WHERE id = ?1",
+        params![id, counts],
     )?;
     ensure!(changed == 1, "no bill with id {id}");
     Ok(())
@@ -351,6 +375,49 @@ mod tests {
         assert_eq!(list(&db, Category::Housing).unwrap().len(), 2);
     }
 
+    /// A bill is a cost whatever else is true of it, so the column is not
+    /// asking whether this row is an expense -- it is asking whether this row
+    /// is one of the ones the Planning screen's Biweekly Expenses figure adds
+    /// up. Nothing has been added up until the owner says so.
+    #[test]
+    fn a_bill_counts_as_no_expense_until_it_is_marked() {
+        let db = db::open_in_memory().unwrap();
+        let id = insert(&db, &housing("Mortgage", 1_200, 0)).unwrap();
+        assert!(!get(&db, id).unwrap().counts_as_expense);
+
+        set_counts_as_expense(&db, id, true).unwrap();
+        assert!(get(&db, id).unwrap().counts_as_expense);
+
+        set_counts_as_expense(&db, id, false).unwrap();
+        assert!(!get(&db, id).unwrap().counts_as_expense);
+    }
+
+    /// `f` writes this column and nothing else does -- it is not a field on
+    /// [`BillEdit`], for the reason `favorite` is not one on a goal's: the
+    /// bill form has no box for it, so an `E` that wrote the whole row would
+    /// clear a mark the owner never touched.
+    #[test]
+    fn set_counts_as_expense_is_that_columns_one_writer() {
+        let db = db::open_in_memory().unwrap();
+        let id = insert(&db, &other("Coworking", 1_000, 3)).unwrap();
+        set_counts_as_expense(&db, id, true).unwrap();
+
+        set_amount(&db, id, Cents::from_dollars(900)).unwrap();
+        assert!(get(&db, id).unwrap().counts_as_expense);
+
+        update(
+            &db,
+            id,
+            &BillEdit {
+                label: "Office".to_string(),
+                cents: Cents::from_dollars(900),
+                category: Category::Housing,
+            },
+        )
+        .unwrap();
+        assert!(get(&db, id).unwrap().counts_as_expense);
+    }
+
     /// A silent no-op here would let the screen report a delete that did not
     /// happen, and the row would come back on the next reload.
     #[test]
@@ -358,6 +425,7 @@ mod tests {
         let db = db::open_in_memory().unwrap();
         assert!(delete(&db, BillId(999)).is_err());
         assert!(set_amount(&db, BillId(999), Cents::ZERO).is_err());
+        assert!(set_counts_as_expense(&db, BillId(999), true).is_err());
         assert!(
             update(
                 &db,

@@ -114,6 +114,29 @@ integer_value!(BasisPoints, BasisPoints, |v: &BasisPoints| v.0);
 integer_value!(GoalId, GoalId, |v: &GoalId| v.0);
 integer_value!(AccountId, AccountId, |v: &AccountId| v.0);
 
+/// A mark: `1` or `0`, and nothing else accepted back.
+///
+/// Deliberately strict where `integer_value!` above is not permissive either:
+/// a flag stored as `""`, `"no"` or `"false"` is a corrupt setting rather
+/// than a falsy one, and decoding it as `false` would silently un-mark
+/// something the owner marked.
+impl Value for bool {
+    fn encode(&self) -> String {
+        match self {
+            true => "1".to_string(),
+            false => "0".to_string(),
+        }
+    }
+
+    fn decode(raw: &str) -> Result<Self> {
+        match raw {
+            "1" => Ok(true),
+            "0" => Ok(false),
+            other => Err(anyhow!("is not a flag: {other:?}")),
+        }
+    }
+}
+
 impl Value for String {
     fn encode(&self) -> String {
         self.clone()
@@ -289,6 +312,21 @@ pub mod key {
     /// `Planning!F27`.
     pub const SPLIT_INVESTMENT_PCT: Key<Percent> = Key::new("planning.split_investment_pct");
 
+    /// Whether the Planning screen's Biweekly Expenses figure counts this
+    /// constant.
+    ///
+    /// Three keys rather than a column, because a constant has no row of its
+    /// own to carry a mark -- a bill does, and carries it as
+    /// `bill.counts_as_expense`. Nothing pairs a key with the constant it
+    /// marks at a call site: `plan_rows::Target::counts_as_expense_key` is
+    /// the one place, for the reason `gate::Gate` owns its own key.
+    pub const BILL_PAYMENT_CAP_COUNTS_AS_EXPENSE: Key<bool> =
+        Key::new("planning.counts_as_expense.bill_payment_cap");
+    pub const MOM_AND_DAD_ANNUAL_COUNTS_AS_EXPENSE: Key<bool> =
+        Key::new("planning.counts_as_expense.mom_and_dad_annual");
+    pub const GOALS_FLOOR_COUNTS_AS_EXPENSE: Key<bool> =
+        Key::new("planning.counts_as_expense.goals_floor");
+
     /// How far ahead a recurring transaction generates, in months, capped per
     /// recurring transaction by `recurring_txn.horizon`. Three by default: a
     /// workbook *is* a calendar year, but the app spans years, and these
@@ -340,6 +378,29 @@ mod tests {
         let account: Key<AccountId> = Key::new("some.account_id");
         set(&db, account, AccountId(3)).unwrap();
         assert_eq!(get(&db, account).unwrap(), Some(AccountId(3)));
+    }
+
+    /// A mark is stored as `1` or `0` and nothing else. Anything else in the
+    /// column is a corrupt setting rather than a falsy one: a reader that
+    /// took `""` or `"no"` for false would silently un-mark a row the owner
+    /// marked.
+    #[test]
+    fn a_flag_round_trips_as_one_or_zero_and_refuses_anything_else() {
+        let db = db::open_in_memory().unwrap();
+        let k: Key<bool> = Key::new("some.flag");
+
+        assert_eq!(get(&db, k).unwrap(), None);
+
+        set(&db, k, true).unwrap();
+        assert_eq!(get_raw(&db, k.name()).unwrap().as_deref(), Some("1"));
+        assert_eq!(get(&db, k).unwrap(), Some(true));
+
+        set(&db, k, false).unwrap();
+        assert_eq!(get_raw(&db, k.name()).unwrap().as_deref(), Some("0"));
+        assert_eq!(get(&db, k).unwrap(), Some(false));
+
+        set_raw(&db, k.name(), "true").unwrap();
+        assert!(get(&db, k).is_err());
     }
 
     #[test]

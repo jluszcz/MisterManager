@@ -96,7 +96,12 @@ about a figure, one of them is wrong.
   `Kind::Blank` draws nothing at all -- the screen's separator is an empty
   line, and this medium's is `tr.head td`'s padding. Before this, the tab and
   the screen were hand-transcriptions of each other and had already come to
-  disagree about which blocks were headed.
+  disagree about which blocks were headed. A row the Biweekly Expenses figure
+  counts takes a third class, `counted`, drawn as a `::after` on its label cell
+  the way an expired goal's `!` is -- it costs the table no column on a phone.
+  That it is a class here and a character in the screen's label column is the
+  whole reason `Row::counts_as_expense` is a flag rather than a glyph, the same
+  argument `Row::depth` is a number for.
 - **A cell says what it may do with its width, and a table never widens past the
   phone.** Three classes carry it: `n` is a figure and `d` a date, and neither
   wraps — a comma and a hyphen are both break opportunities, and a column narrow

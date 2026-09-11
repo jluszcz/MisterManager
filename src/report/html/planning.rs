@@ -94,6 +94,12 @@ fn render(row: &plan_rows::Row) -> String {
     if row.kind == Kind::Total {
         classes.push("tot".to_string());
     }
+    // What the Expenses total counted, marked the way an expired goal's row
+    // is: a `::after` on the label cell, so the mark costs the table no
+    // column on a phone.
+    if row.counts_as_expense {
+        classes.push("counted".to_string());
+    }
     classes.extend(sub_class(row.depth));
     let class = match classes.is_empty() {
         true => String::new(),
@@ -112,6 +118,10 @@ fn render(row: &plan_rows::Row) -> String {
         Extra::Biweekly(cents) => escape(&cents.to_whole_dollars()),
         Extra::Gap(cents) => gap(cents),
         Extra::Date(date) => escape(&format!("{date}*")),
+        // The unit is on the figure: the column beside it carries
+        // percentages, biweekly figures and dates too, and nothing about the
+        // column itself says which.
+        Extra::Annual(cents) => escape(&format!("{}/yr", cents.to_whole_dollars())),
         Extra::None => String::new(),
     };
     format!("<tr{class}><td>{label}</td>{figure}<td class=\"n\">{extra}</td></tr>")
@@ -124,6 +134,7 @@ fn waterfall(view: &PlanView) -> Vec<plan_rows::Row> {
         settings: &view.settings,
         housing: &view.housing,
         other_bills: &view.other_bills,
+        expense_constants: &view.expense_constants,
         transfers: match &view.transfers {
             Ok(transfers) => Ok(transfers.as_slice()),
             Err(message) => Err(message.as_str()),
@@ -209,6 +220,7 @@ mod tests {
             depth,
             target: None,
             edit: String::new(),
+            counts_as_expense: false,
         }
     }
 
@@ -259,6 +271,43 @@ mod tests {
             }
         }
         assert!(indented > 0, "no indented row on the page at all: {drawn}");
+    }
+
+    /// The year the biweekly figure adds up to, beside it. A page read on a
+    /// phone has no second row to spare for it and no cursor to open one
+    /// with, so the unit is on the figure.
+    #[test]
+    fn the_annual_figure_beside_the_expenses_total_names_the_year() {
+        let mut row = at_depth(1);
+        row.extra = super::Extra::Annual(crate::money::Cents::from_dollars(110_760));
+
+        assert!(super::render(&row).contains("110,760/yr"), "{row:?}");
+    }
+
+    /// A total with no working behind it is a number to take on trust, so the
+    /// rows it counted say so. The screen spends a character in its label
+    /// column; the page spends a class, which is why the row carries a flag
+    /// rather than a glyph.
+    #[test]
+    fn a_row_the_expenses_figure_counts_takes_a_class_of_its_own() {
+        let mut row = at_depth(1);
+        row.counts_as_expense = true;
+        let drawn = super::render(&row);
+
+        assert!(drawn.contains("counted"), "{drawn}");
+        assert!(!super::render(&at_depth(1)).contains("counted"));
+    }
+
+    /// The class has to reach the stylesheet, or a marked row draws exactly
+    /// like an unmarked one -- the same drift an indent class with no rule
+    /// behind it would be.
+    #[test]
+    fn the_counted_class_has_a_rule_behind_it() {
+        let page = page(&snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000));
+        assert!(
+            page.contains("tr.counted td"),
+            "nothing draws a counted row"
+        );
     }
 
     /// The fixture's snapshot with its plan reshaped. These tests are about

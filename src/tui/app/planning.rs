@@ -20,6 +20,14 @@ use anyhow::{Result, bail};
 use chrono::NaiveDate;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
+/// Which rows `f` counts, for the press that landed on one it does not.
+///
+/// The list rather than a rule: it is four items long, and an owner who has
+/// just pressed the key on the wrong row wants to know where to press it
+/// instead.
+const COUNTABLE_ROWS: &str =
+    "only a bill, the Cap, Mom & Dad's Annual and the Goals Floor count towards Biweekly Expenses";
+
 impl App {
     pub(super) fn planning_key(&mut self, key: KeyEvent) -> Result<()> {
         if cursor::scroll_key(&mut self.planning, key.code) {
@@ -33,6 +41,7 @@ impl App {
             KeyCode::Char('p') => self.pin()?,
             KeyCode::Char('P') => self.unpin()?,
             KeyCode::Char('t') => self.open_plan_transfers()?,
+            KeyCode::Char('f') => self.toggle_counts_as_expense()?,
             KeyCode::Enter => self.open_plan_details(),
             _ => {}
         }
@@ -212,6 +221,43 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Count the selected row into the Biweekly Expenses figure, or stop
+    /// counting it.
+    ///
+    /// `f` for the reason Savings' `f` is `f`: both are the owner's own mark
+    /// on the selected row, and one action wearing two letters is exactly the
+    /// reflex these keys are picked to protect.
+    ///
+    /// Two writers under one key, because a bill has a row of its own to
+    /// carry the mark and a waterfall constant does not. Which rows may be
+    /// counted at all is [`Target::counts_as_expense_key`]'s to say and not
+    /// this handler's; a row outside that set is *told*, because a key that
+    /// silently does nothing reads as a key that failed.
+    fn toggle_counts_as_expense(&mut self) -> Result<()> {
+        let selected = self.planning.selected().and_then(|row| row.editable);
+        let Some(planning_screen::Editable::Constant(target)) = selected else {
+            self.status = COUNTABLE_ROWS.to_string();
+            return Ok(());
+        };
+        match target {
+            Target::Bill(id) => {
+                let counts = bill::get(&self.db, id)?.counts_as_expense;
+                bill::set_counts_as_expense(&self.db, id, !counts)?;
+            }
+            _ => match target.counts_as_expense_key() {
+                Some(key) => {
+                    let counts = setting::get_or(&self.db, key, false)?;
+                    setting::set(&self.db, key, !counts)?;
+                }
+                None => {
+                    self.status = COUNTABLE_ROWS.to_string();
+                    return Ok(());
+                }
+            },
+        }
+        self.reload()
     }
 
     /// Why the transfers are unresolved, in full.
@@ -535,6 +581,7 @@ impl App {
             spread_ask_total,
             transfer_error,
             transfer_detail,
+            expense_constants: crate::plan::expense_constants(&self.db)?,
         })
     }
 }
@@ -567,6 +614,10 @@ mod tests {
     /// the settings read once and handed to it, quoted at `app.adhoc`.
     fn computed_plan(app: &App, adhoc: NaiveDate) -> crate::calc::planning::Plan {
         plan::compute_from_db(&app.db, &plan::settings_from_db(&app.db).unwrap(), adhoc).unwrap()
+    }
+
+    fn has_row(app: &App, label: &str) -> bool {
+        app.planning.rows().iter().any(|r| r.label.trim() == label)
     }
 
     fn planning_row<'a>(app: &'a App, label: &str) -> &'a crate::tui::planning::Row {
@@ -787,6 +838,124 @@ mod tests {
         assert!(app.modal.is_some(), "the form must survive a bad parse");
         assert!(app.status.contains("lots"), "{}", app.status);
         assert_eq!(setting::get(&app.db, key::PLANNING_TARGET).unwrap(), None);
+    }
+
+    /// The mark has to land in the database *and* be back on screen without
+    /// another keystroke, the same reload every other commit here makes --
+    /// and the Expenses line is drawn only when something is counted, so the
+    /// first `f` is what brings it into existence at all.
+    #[test]
+    fn f_counts_the_selected_bill_into_the_biweekly_expenses() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        let bill = select_first_bill(&mut app);
+        assert!(
+            !has_row(&app, "Expenses"),
+            "an unconfigured database draws the line"
+        );
+
+        press(&mut app, KeyCode::Char('f'));
+
+        assert!(
+            crate::db::bill::get(&app.db, bill.id)
+                .unwrap()
+                .counts_as_expense
+        );
+        assert!(has_row(&app, "Expenses"));
+        assert!(
+            has_row(&app, &format!("{} \u{2022}", bill.label)),
+            "the counted bill is not marked"
+        );
+        assert_eq!(
+            app.planning.selected_target(),
+            Some(Target::Bill(bill.id)),
+            "the cursor stays where the mark was"
+        );
+    }
+
+    /// A budget figure to the dollar is a figure nobody thinks in, and it
+    /// rounds up rather than to nearest: a pay period budgeted short is the
+    /// failure worth avoiding. The year beside it is that rounded figure
+    /// annualized, so the two multiply.
+    #[test]
+    fn the_expenses_line_is_a_whole_hundred_and_its_year_follows_it() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        select_first_bill(&mut app);
+        press(&mut app, KeyCode::Char('f'));
+
+        let line = planning_row(&app, "Expenses");
+        let dollars = |text: &str| -> i64 { text.replace(',', "").parse().unwrap() };
+        let biweekly = dollars(&line.value);
+        let annual = dollars(line.extra.strip_suffix("/yr").unwrap());
+
+        assert_eq!(biweekly % 100, 0, "{}", line.value);
+        assert_eq!(
+            annual,
+            biweekly * app.periods_per_year().unwrap(),
+            "{}",
+            line.extra
+        );
+    }
+
+    /// One key, both directions. A second key to unmark would be a second
+    /// spelling of the same decision.
+    #[test]
+    fn pressing_f_again_stops_counting_the_bill_and_takes_the_line_away() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        let bill = select_first_bill(&mut app);
+
+        press(&mut app, KeyCode::Char('f'));
+        press(&mut app, KeyCode::Char('f'));
+
+        assert!(
+            !crate::db::bill::get(&app.db, bill.id)
+                .unwrap()
+                .counts_as_expense
+        );
+        assert!(!has_row(&app, "Expenses"));
+    }
+
+    /// A constant has no row in any table to carry a mark, so it is a
+    /// setting -- and the one key answers for both, because marking a bill
+    /// and marking a constant are the same decision about the same figure.
+    #[test]
+    fn f_counts_the_selected_waterfall_constant() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        walk_until!(
+            app.planning.selected_target() == Some(Target::GoalsFloor),
+            press(&mut app, KeyCode::Down)
+        );
+
+        press(&mut app, KeyCode::Char('f'));
+
+        assert_eq!(
+            setting::get(&app.db, key::GOALS_FLOOR_COUNTS_AS_EXPENSE).unwrap(),
+            Some(true)
+        );
+        assert!(has_row(&app, "Expenses"));
+        assert!(
+            has_row(&app, "Goals Floor \u{2022}"),
+            "the counted constant is not marked"
+        );
+    }
+
+    /// Target and Buffer are cash to hold rather than money that leaves, and
+    /// a percentage is a shape rather than a sum. Nothing happening silently
+    /// on those rows reads as a key that failed, so the screen says which
+    /// rows the key is for.
+    #[test]
+    fn f_on_a_row_that_cannot_be_counted_says_which_rows_can() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        assert_eq!(app.planning.selected_target(), Some(Target::Target));
+
+        press(&mut app, KeyCode::Char('f'));
+
+        assert!(app.status.contains("Cap"), "{}", app.status);
+        assert!(!has_row(&app, "Expenses"));
     }
 
     #[test]

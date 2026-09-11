@@ -39,6 +39,23 @@ impl Cents {
         Cents(self.0 / 100 * 100)
     }
 
+    /// Round *up* to a whole hundred dollars, which is what the Planning
+    /// screen's Biweekly Expenses line spends.
+    ///
+    /// Up rather than to-nearest because that figure is a plan rather than a
+    /// measurement: a pay period budgeted short is the failure worth
+    /// avoiding, and nobody budgets to the dollar. Toward positive infinity
+    /// on both signs, the way a ceiling goes -- the figure cannot be negative
+    /// through any path the app offers, and a rounding that reversed
+    /// direction below zero would be a second rule to remember for a case
+    /// nobody sees.
+    pub fn ceil_to_hundred_dollars(self) -> Cents {
+        match self.0.rem_euclid(10_000) {
+            0 => self,
+            over => Cents(self.0 + 10_000 - over),
+        }
+    }
+
     /// Grouped dollars with the cents dropped rather than rounded: `500.23`
     /// and `200.99` both print as their own dollar figure.
     ///
@@ -160,6 +177,26 @@ impl FromStr for Cents {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Biweekly Expenses figure is a plan rather than a measurement, so
+    /// it rounds *up*: a pay period budgeted short is the failure worth
+    /// avoiding, and a hundred is the unit somebody actually thinks in.
+    ///
+    /// A figure already on a hundred stays where it is. Stepping it to the
+    /// next one would claim a hundred dollars of cost that is not there, and
+    /// would make the rounding visible on exactly the figures it should be
+    /// invisible on.
+    #[test]
+    fn a_ceiling_to_a_hundred_dollars_leaves_a_figure_already_there_alone() {
+        let d = Cents::from_dollars;
+        assert_eq!(d(4_260).ceil_to_hundred_dollars(), d(4_300));
+        assert_eq!(d(4_300).ceil_to_hundred_dollars(), d(4_300));
+        assert_eq!(Cents::ZERO.ceil_to_hundred_dollars(), Cents::ZERO);
+        // A single cent over is still over.
+        assert_eq!(Cents(430_001).ceil_to_hundred_dollars(), d(4_400));
+        // Up is toward zero from below, not away from it.
+        assert_eq!(d(-4_260).ceil_to_hundred_dollars(), d(-4_200));
+    }
 
     #[test]
     fn formats_with_thousands_separators() {

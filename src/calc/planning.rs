@@ -147,7 +147,7 @@ pub struct Plan {
 ///
 /// `periods` is clamped by the caller, which is what keeps the divide here
 /// safe -- it comes from a user-editable setting.
-fn per_period(annual: Cents, periods: i64) -> Cents {
+pub(crate) fn per_period(annual: Cents, periods: i64) -> Cents {
     Cents(annual.0 / periods)
 }
 

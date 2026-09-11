@@ -354,7 +354,7 @@ const SAVINGS: [Entry; 17] = [
     },
 ];
 
-const PLANNING: [Entry; 8] = [
+const PLANNING: [Entry; 9] = [
     Entry {
         key: "e",
         label: Label::Own("edit"),
@@ -379,6 +379,11 @@ const PLANNING: [Entry; 8] = [
         key: "t",
         label: Label::Own("transfers"),
         detail: "Confirm the computed plan: writes its payday transfers, then opens the allocation worksheets prefilled.",
+    },
+    Entry {
+        key: "f",
+        label: Label::Own("expense"),
+        detail: "Count the selected row towards Biweekly Expenses, or stop counting it -- a bill at its biweekly figure, the Cap and the Goals Floor at their own, Mom & Dad at its share of a paycheck. No other row counts. The Expenses line under the transfers is that total rounded up to a hundred, with the year beside it, and every row it counted is dotted. An import that replaces the bills clears the marks.",
     },
     Entry {
         key: "Enter",
@@ -1483,7 +1488,7 @@ mod tests {
         );
         assert_eq!(
             Topic::Planning.footer(),
-            "e edit · E/a/d bill · t transfers · Enter why · p pin · P unpin"
+            "e edit · E/a/d bill · t transfers · f expense · Enter why · p pin · P unpin"
         );
         assert_eq!(
             Topic::RecurringTxns.footer(),
@@ -1519,7 +1524,7 @@ mod tests {
     fn omitting_a_key_inside_a_shared_group_shrinks_it() {
         assert_eq!(
             Topic::Planning.footer_without(&["a"]),
-            "e edit · E/d bill · t transfers · Enter why · p pin · P unpin"
+            "e edit · E/d bill · t transfers · f expense · Enter why · p pin · P unpin"
         );
     }
 
