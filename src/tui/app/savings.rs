@@ -153,6 +153,7 @@ impl App {
             row.interest_eligible,
             row.taxed,
             row.floating,
+            row.note.as_deref(),
             setting::get(&self.db, key::TAX_RATE)?,
             self.today,
         )));
@@ -187,6 +188,7 @@ impl App {
                         sort: goal::next_sort(&self.db, container)?,
                         taxed: edit.taxed,
                         floating: edit.floating,
+                        note: edit.note.clone(),
                     },
                 )?;
                 self.status = format!("created {}", crate::demo::text(&edit.name));
@@ -449,6 +451,7 @@ mod tests {
                     sort: i as i64,
                     taxed: false,
                     floating: false,
+                    note: None,
                 },
             )
             .unwrap();
@@ -1075,6 +1078,7 @@ mod tests {
                 sort: 0,
                 taxed: true,
                 floating: false,
+                note: None,
             },
         )
         .unwrap();
@@ -1265,6 +1269,36 @@ mod tests {
         assert!(row.floating);
         assert_eq!(row.percent, Some(Percent(100)));
         assert_eq!(row.goal, Cents::ZERO, "a goal nothing has been put in yet");
+    }
+
+    /// `n` and `e` share a form, so they share every field of it -- and the
+    /// note is the one field nothing else in the database records, so a create
+    /// path dropping it loses prose the owner cannot retype off any screen.
+    #[test]
+    fn a_goal_created_with_a_note_arrives_carrying_it() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('n'));
+        type_str(&mut app, "Bike");
+        walk_until!(
+            app_goal_form(&app).focus == goal_form::GoalField::Target,
+            press(&mut app, KeyCode::Tab)
+        );
+        type_str(&mut app, "800");
+        walk_until!(
+            app_goal_form(&app).focus == goal_form::GoalField::Note,
+            press(&mut app, KeyCode::Tab)
+        );
+        type_str(&mut app, "the blue one");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "the form stayed open");
+        let rows = app.savings.rows();
+        let row = rows
+            .iter()
+            .find(|r| r.name == "Bike")
+            .expect("the new goal is not on the screen");
+        assert_eq!(row.note.as_deref(), Some("the blue one"));
     }
 
     /// The same guard `A` and `i` have: with no container there is nowhere for

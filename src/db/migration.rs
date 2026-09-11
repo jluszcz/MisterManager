@@ -195,6 +195,18 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // Nothing to move: an index is derived from the rows already there.
         data: None,
     },
+    Migration {
+        version: 9,
+        // Whatever the owner wants to remember about a goal -- which model,
+        // which shop, what the quote covered. Prose rather than a flag, so it
+        // is nullable where `taxed`, `favorite` and `floating` are
+        // `NOT NULL DEFAULT 0`: having nothing to say is an ordinary state and
+        // an empty string would be a second spelling of it.
+        sql: "ALTER TABLE goal ADD COLUMN note TEXT",
+        // Nothing to move. No sheet carries a note, so every existing goal is
+        // one nobody has annotated yet, which is what `NULL` reads as.
+        data: None,
+    },
 ];
 
 /// The version this build's chain leaves a database at.

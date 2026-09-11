@@ -27,6 +27,24 @@ use anyhow::{Context, Result};
 /// and the form that refuses to *store* one say the same sentence.
 pub const NO_TAX_RATE: &str = "no sales tax rate is configured; import Constants first";
 
+/// The longest note a goal may carry, in characters.
+///
+/// Here rather than in `tui`, beside [`NO_TAX_RATE`] and for the same reason:
+/// the form that refuses an over-long note and the modal that draws one in a
+/// single line have to agree about one number, and a second copy of it is a
+/// note that commits and then draws clipped.
+///
+/// The figure is what the **goal form** can show, which is the narrower of the
+/// two readers: `tui::widget::FORM_WIDTH` less its two border columns and less
+/// the label gutter every field line is padded to. A text field has no
+/// horizontal scrolling, so a longer limit would be an invitation to type
+/// blind -- the characters past the edge invisible and the caret gone with
+/// them -- into a field the commit then accepts. Stated here rather than
+/// derived from those three, because `goal` must not reach into `tui` for a
+/// number; `tui::goal_form`'s `a_note_at_the_limit_is_drawn_whole_on_the_form`
+/// is what holds the two together.
+pub const NOTE_LIMIT: usize = 48;
+
 /// A goal, its balance, and the target it is funded to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Funding {
@@ -179,6 +197,7 @@ mod tests {
             sort: 0,
             taxed,
             floating: false,
+            note: None,
         }
     }
 
@@ -199,6 +218,7 @@ mod tests {
             favorite: false,
             taxed: false,
             floating: false,
+            note: None,
         };
         assert_eq!(
             target(&g, Cents::from_dollars(250), Some(BasisPoints(625))).unwrap(),
@@ -382,6 +402,7 @@ mod tests {
             favorite: false,
             taxed: false,
             floating: true,
+            note: None,
         };
 
         assert_eq!(

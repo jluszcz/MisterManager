@@ -311,6 +311,7 @@ mod tests {
             sort: 0,
             taxed: false,
             floating: false,
+            note: None,
         };
         crate::db::goal::insert(&db, &new_goal("Lego", lego)).unwrap();
         crate::db::goal::insert(&db, &new_goal("Lego", lego)).unwrap();
@@ -392,6 +393,7 @@ mod tests {
                 sort: 0,
                 taxed: false,
                 floating: false,
+                note: None,
             },
         )
         .unwrap();

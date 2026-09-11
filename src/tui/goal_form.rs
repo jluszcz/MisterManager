@@ -249,26 +249,29 @@ pub enum GoalField {
     Floating,
     Taxed,
     Interest,
+    Note,
 }
 
 impl GoalField {
     /// Every field, which is what a goal funded towards a figure offers.
     /// [`GoalForm::fields`] is what a form actually walks.
-    pub const ORDER: [GoalField; 6] = [
+    pub const ORDER: [GoalField; 7] = [
         GoalField::Name,
         GoalField::Target,
         GoalField::Date,
         GoalField::Floating,
         GoalField::Taxed,
         GoalField::Interest,
+        GoalField::Note,
     ];
 
     /// The same list without the two fields that describe a fixed target.
-    const FLOATING: [GoalField; 4] = [
+    const FLOATING: [GoalField; 5] = [
         GoalField::Name,
         GoalField::Date,
         GoalField::Floating,
         GoalField::Interest,
+        GoalField::Note,
     ];
 
     pub fn label(self) -> &'static str {
@@ -279,11 +282,12 @@ impl GoalField {
             GoalField::Date => "Goal Date",
             GoalField::Taxed => "Taxed",
             GoalField::Interest => "Interest",
+            GoalField::Note => "Note",
         }
     }
 }
 
-use crate::goal::NO_TAX_RATE;
+use crate::goal::{NO_TAX_RATE, NOTE_LIMIT};
 
 /// What committing a `GoalForm` does. `Subject` without the name the border
 /// needs, which is the whole of what a caller has to decide between.
@@ -336,6 +340,10 @@ pub struct GoalForm {
     taxed: bool,
     floating: bool,
     eligible: bool,
+    /// Whatever the owner keeps about this goal. Nothing derives from it and
+    /// no import writes it, so the form is its only source -- which is why the
+    /// over-long refusal below is the only guard the column has.
+    note: Field,
     /// The sales tax rate `Taxed` applies, as it stood when the form
     /// opened. `None` is a database no `Constants` sheet has been imported
     /// into: the form still opens, since an untaxed goal needs no rate, and
@@ -376,6 +384,7 @@ impl GoalForm {
             // A goal typed from scratch takes interest, like every goal the
             // sheet ever had.
             eligible: true,
+            note: Field::prefilled(""),
             rate,
         }
     }
@@ -392,6 +401,7 @@ impl GoalForm {
         interest_eligible: bool,
         taxed: bool,
         floating: bool,
+        note: Option<&str>,
         rate: Option<BasisPoints>,
         today: NaiveDate,
     ) -> GoalForm {
@@ -410,6 +420,7 @@ impl GoalForm {
             taxed,
             floating,
             eligible: interest_eligible,
+            note: Field::given(note.unwrap_or_default()),
             rate,
         }
     }
@@ -441,6 +452,9 @@ impl GoalForm {
             GoalField::Floating => if self.floating { "yes" } else { "no" }.to_string(),
             GoalField::Taxed => if self.taxed { "yes" } else { "no" }.to_string(),
             GoalField::Interest => if self.eligible { "yes" } else { "no" }.to_string(),
+            // Owner-entered prose, so it draws through the mask the goal's
+            // own name does.
+            GoalField::Note => crate::demo::text(self.note.value()).into_owned(),
         })
     }
 
@@ -495,6 +509,16 @@ impl GoalForm {
         if self.taxed && !self.floating {
             self.rate.context(NO_TAX_RATE)?;
         }
+        let note = self.note.value().trim();
+        // Counted in characters rather than bytes, which is what every other
+        // length in the terminal layer counts -- `TextBuffer`'s own caret
+        // included -- so the figure the refusal quotes is the figure the caret
+        // is sitting at.
+        let typed = note.chars().count();
+        ensure!(
+            typed <= NOTE_LIMIT,
+            "note must be {NOTE_LIMIT} characters or fewer (is {typed})"
+        );
         Ok(GoalEdit {
             name,
             base_cents,
@@ -503,6 +527,9 @@ impl GoalForm {
             interest_eligible: self.eligible,
             taxed: self.taxed,
             floating: self.floating,
+            // One spelling of having said nothing, so a note cleared to
+            // spaces reads back as the `None` an unannotated goal carries.
+            note: (!note.is_empty()).then(|| note.to_string()),
         })
     }
 }
@@ -520,13 +547,14 @@ impl FormFields for GoalForm {
             GoalField::Taxed => self.taxed = !self.taxed,
             GoalField::Floating => self.floating = !self.floating,
             GoalField::Interest => self.eligible = !self.eligible,
-            GoalField::Name | GoalField::Target | GoalField::Date => {}
+            GoalField::Name | GoalField::Target | GoalField::Date | GoalField::Note => {}
         }
     }
 
     fn focused(&mut self) -> Focused<'_> {
         match self.focus {
             GoalField::Name => Focused::Text(&mut self.name),
+            GoalField::Note => Focused::Text(&mut self.note),
             GoalField::Target => Focused::Text(&mut self.target),
             GoalField::Date => Focused::Date(&mut self.date),
             GoalField::Taxed | GoalField::Floating | GoalField::Interest => Focused::Selector,
@@ -1176,6 +1204,7 @@ mod tests {
             true,
             false,
             false,
+            None,
             Some(BasisPoints(625)),
             today(),
         )
@@ -1198,6 +1227,7 @@ mod tests {
             true,
             false,
             false,
+            None,
             None,
             today(),
         );
@@ -1226,6 +1256,7 @@ mod tests {
             true,
             false,
             false,
+            None,
             None,
             today(),
         );
@@ -1256,6 +1287,7 @@ mod tests {
             false,
             false,
             None,
+            None,
             today(),
         );
         walk_until!(form.focus == GoalField::Date, form.next_field());
@@ -1276,6 +1308,7 @@ mod tests {
             false,
             false,
             None,
+            None,
             today(),
         );
         assert_eq!(form.display(GoalField::Date).plain_text(), "");
@@ -1294,6 +1327,7 @@ mod tests {
             false,
             false,
             false,
+            None,
             None,
             today(),
         );
@@ -1318,6 +1352,7 @@ mod tests {
             false,
             false,
             false,
+            None,
             None,
             today(),
         );
@@ -1405,6 +1440,7 @@ mod tests {
             false,
             false,
             None,
+            None,
             today(),
         );
         typed_goal(&mut form, GoalField::Interest, "no");
@@ -1423,6 +1459,7 @@ mod tests {
             true,
             false,
             false,
+            None,
             None,
             today(),
         );
@@ -1462,6 +1499,7 @@ mod tests {
             true,
             true,
             false,
+            None,
             Some(BasisPoints(625)),
             today(),
         );
@@ -1534,6 +1572,7 @@ mod tests {
             false,
             false,
             None,
+            None,
             today(),
         );
         walk_until!(form.focus == GoalField::Taxed, form.next_field());
@@ -1598,6 +1637,115 @@ mod tests {
         }
     }
 
+    /// Prose the owner keeps about the goal, which the form carries across
+    /// untouched -- nothing derives from it and nothing else writes it.
+    #[test]
+    fn a_goals_note_is_prefilled_and_commits_as_typed() {
+        let mut form = GoalForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(100_000),
+            None,
+            true,
+            false,
+            false,
+            Some("the grey one"),
+            Some(BasisPoints(625)),
+            today(),
+        );
+        assert_eq!(
+            form.display(GoalField::Note).plain_text(),
+            "the grey one",
+            "the note opened blank"
+        );
+
+        typed_goal(&mut form, GoalField::Note, ", not the sectional");
+
+        assert_eq!(
+            form.commit().unwrap().note.as_deref(),
+            Some("the grey one, not the sectional")
+        );
+    }
+
+    /// One spelling of having nothing to say, so the column never holds a
+    /// second: a note cleared to spaces reads back as the `None` an
+    /// unannotated goal carries.
+    #[test]
+    fn a_note_of_only_whitespace_commits_as_no_note() {
+        let mut form = taxable("Couch", Cents(100_000));
+        typed_goal(&mut form, GoalField::Note, "  ");
+
+        assert_eq!(form.commit().unwrap().note, None);
+    }
+
+    /// The limit is what fits the history modal's one line, so the commit is
+    /// where an over-long note has to be caught: the field accepts the
+    /// keystrokes, and Enter says what is wrong and by how much.
+    #[test]
+    fn a_note_longer_than_the_limit_is_refused_and_the_limit_itself_is_not() {
+        let mut form = taxable("Couch", Cents(100_000));
+        typed_goal(&mut form, GoalField::Note, &"x".repeat(NOTE_LIMIT));
+        assert_eq!(
+            form.commit().unwrap().note,
+            Some("x".repeat(NOTE_LIMIT)),
+            "a note exactly at the limit fits"
+        );
+
+        form.edit(char_key('x'));
+
+        let refusal = form.commit().unwrap_err().to_string();
+        assert!(refusal.contains(&NOTE_LIMIT.to_string()), "{refusal}");
+        assert!(refusal.contains(&(NOTE_LIMIT + 1).to_string()), "{refusal}");
+    }
+
+    fn rendered_goal(form: &mut GoalForm) -> String {
+        use crate::tui::MIN_WIDTH;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_goal(frame, form);
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    /// What bounds [`NOTE_LIMIT`]: the field has no horizontal scrolling, so a
+    /// note the form cannot draw is one being typed blind, with the caret off
+    /// the right edge of a field the commit then accepts. The form is the
+    /// narrower of the two readers -- `FORM_WIDTH` less its border and the
+    /// label gutter every field line is padded to -- so a note that fits here
+    /// fits the history modal as well.
+    #[test]
+    fn a_note_at_the_limit_is_drawn_whole_on_the_form() {
+        let mut form = GoalForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(100_000),
+            None,
+            true,
+            false,
+            false,
+            Some(&"x".repeat(NOTE_LIMIT)),
+            Some(BasisPoints(625)),
+            today(),
+        );
+
+        let text = rendered_goal(&mut form);
+        assert!(
+            text.contains(&"x".repeat(NOTE_LIMIT)),
+            "the note is cut short: {text}"
+        );
+    }
+
     /// A floating goal has no target and nothing to tax, so the two fields
     /// that describe one come off the form rather than sitting there
     /// unreachable-looking but typeable.
@@ -1612,7 +1760,8 @@ mod tests {
                 GoalField::Date,
                 GoalField::Floating,
                 GoalField::Taxed,
-                GoalField::Interest
+                GoalField::Interest,
+                GoalField::Note
             ]
         );
 
@@ -1624,6 +1773,7 @@ mod tests {
             walk(&mut form),
             vec![
                 GoalField::Interest,
+                GoalField::Note,
                 GoalField::Name,
                 GoalField::Date,
                 GoalField::Floating
@@ -1702,6 +1852,7 @@ mod tests {
             true,
             false,
             None,
+            None,
             today(),
         );
         assert!(form.commit().is_err(), "taxed with no rate is refused");
@@ -1726,6 +1877,7 @@ mod tests {
             true,
             false,
             true,
+            None,
             None,
             today(),
         );
@@ -1815,6 +1967,30 @@ mod tests {
     /// The balance is the whole point of the title -- it is what is about to
     /// move -- and the goal's own name sits right beside it, so a demo has
     /// to hide both.
+    /// The goal's note is the owner's own prose, the way the goal's name on
+    /// the field above it is.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_scrambles_a_goals_note() {
+        crate::demo::install_with_salt(7);
+        let form = GoalForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(100_000),
+            None,
+            true,
+            false,
+            false,
+            Some("the grey one"),
+            Some(BasisPoints(625)),
+            today(),
+        );
+
+        let drawn = form.display(GoalField::Note).plain_text();
+        assert_ne!(drawn, "the grey one", "the note survived");
+        assert_eq!(drawn, crate::demo::text("the grey one"));
+    }
+
     #[cfg(feature = "demo")]
     #[test]
     fn a_demo_scrambles_the_balance_a_close_out_is_about_to_move() {
@@ -2024,6 +2200,7 @@ mod tests {
             false,
             false,
             None,
+            None,
             today(),
         );
         form.choice(Step::NEXT);
@@ -2050,6 +2227,7 @@ mod tests {
             true,
             false,
             false,
+            None,
             None,
             today(),
         );

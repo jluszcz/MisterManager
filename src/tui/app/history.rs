@@ -24,6 +24,9 @@ impl App {
             return self.nothing_selected();
         };
         let (goal_id, name, container) = (row.goal_id, row.name.clone(), row.container.id());
+        // The goal's own note, off the row the cursor is on rather than out of
+        // the table again: the row already carries it for `e`.
+        let note = row.note.clone();
         let container_name = self.savings.account_name(container).to_string();
         let rows = goal::allocations(&self.db, goal_id)?;
         self.modal = Some(Modal::History(History::new(
@@ -31,6 +34,7 @@ impl App {
             &name,
             container,
             &container_name,
+            note.as_deref(),
             rows,
         )));
         Ok(())
@@ -214,7 +218,7 @@ mod tests {
     use crate::test_support::{day, walk_until};
     use crate::tui::app::Screen;
     use crate::tui::app::test_support::*;
-    use crate::tui::goal_form::AllocField;
+    use crate::tui::goal_form::{AllocField, GoalField};
     use crate::tui::help::Topic;
     use ratatui::crossterm::event::KeyCode;
 
@@ -227,6 +231,19 @@ mod tests {
             Mode::Editing(form) => form,
             _ => panic!(
                 "the history is not editing, with {:?} on the status line",
+                app.status
+            ),
+        }
+    }
+
+    /// The goal form `e` opened, the way [`editing`] is the allocation form
+    /// `e` opens inside this modal. Local for the reason that one is: it
+    /// reads a modal this module's own tests put up.
+    fn goal_form(app: &App) -> &crate::tui::goal_form::GoalForm {
+        match &app.modal {
+            Some(crate::tui::modal::Modal::Goal(form)) => form,
+            _ => panic!(
+                "the goal form is not open, with {:?} on the status line",
                 app.status
             ),
         }
@@ -253,6 +270,31 @@ mod tests {
         assert_eq!(history.goal_name(), "Vacation 2027");
         assert_eq!(history.rows().len(), 1);
         assert_eq!(history.total(), Cents(1_000_000));
+    }
+
+    /// The note is on the goal rather than on any of its rows, so the modal
+    /// has to be handed it: the `Note` column below is each allocation's.
+    /// Written through the form it is edited on, which is the only thing that
+    /// writes one.
+    #[test]
+    fn the_history_draws_the_goals_own_note_above_its_rows() {
+        let mut app = on_vacation();
+        press(&mut app, KeyCode::Char('e'));
+        walk_until!(
+            goal_form(&app).focus == GoalField::Note,
+            press(&mut app, KeyCode::Tab)
+        );
+        type_str(&mut app, "book flights by March");
+        press(&mut app, KeyCode::Enter);
+
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(
+            history(&app).note_line().as_deref(),
+            Some("book flights by March")
+        );
+        let screen = drawn(&mut app);
+        assert!(screen.contains("book flights by March"), "{screen}");
     }
 
     /// The border, the total and the one row are all on screen without

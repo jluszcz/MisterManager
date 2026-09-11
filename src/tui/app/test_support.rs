@@ -68,6 +68,7 @@ pub(super) fn app() -> App {
             sort: 0,
             taxed: false,
             floating: false,
+            note: None,
         },
     )
     .unwrap();
@@ -84,6 +85,7 @@ pub(super) fn app() -> App {
             sort: 1,
             taxed: false,
             floating: false,
+            note: None,
         },
     )
     .unwrap();
@@ -270,6 +272,7 @@ pub(super) fn planning_app() -> App {
                 sort: 0,
                 taxed: false,
                 floating: false,
+                note: None,
             },
         )
         .unwrap()

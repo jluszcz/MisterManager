@@ -51,6 +51,11 @@ pub struct Row {
     /// sort, because standing out and coming first are different requests
     /// and only the first one was made.
     pub favorite: bool,
+    /// Whatever the owner keeps about this goal. Carried for the reason the
+    /// base and the flags above are -- `e` prefills the goal form from the
+    /// row -- and for one more: `Enter` opens the history modal, which draws
+    /// it above the rows.
+    pub note: Option<String>,
 }
 
 /// `current / goal`, as a whole percent rounded to nearest.
@@ -165,6 +170,7 @@ pub fn rows(
             per_paycheck,
             interest_eligible: g.goal.interest_eligible,
             favorite: g.goal.favorite,
+            note: g.goal.note,
         });
     }
     Ok(rows)
@@ -223,10 +229,18 @@ mod tests {
                 favorite: false,
                 taxed: false,
                 floating: false,
+                note: None,
             },
             current: Cents(current),
             target: Cents(target),
         }
+    }
+
+    /// The same goal, annotated. A helper for the same reason `favorited` is
+    /// one: nothing else here has anything to say about its goal.
+    fn annotated(mut g: Funding, note: &str) -> Funding {
+        g.goal.note = Some(note.to_string());
+        g
     }
 
     /// The same goal, marked. A helper rather than an eighth parameter on
@@ -453,6 +467,29 @@ mod tests {
         assert_eq!(rows[0].percent, Some(Percent(94)));
     }
 
+    /// Carried rather than re-queried, the way the base and the three flags
+    /// are: `e` prefills the goal form from the row, and `Enter` hands the
+    /// note to the history modal it opens.
+    #[test]
+    fn a_goals_note_is_carried_onto_its_row() {
+        let rows = rows(
+            vec![
+                annotated(goal(1, 1, "Couch", 100_000, 100_000, None), "the grey one"),
+                goal(2, 1, "Rug", 0, 50_000, None),
+            ],
+            &accounts(),
+            today(),
+            26,
+        )
+        .unwrap();
+
+        assert_eq!(rows[0].note.as_deref(), Some("the grey one"));
+        assert_eq!(
+            rows[1].note, None,
+            "a goal nobody annotated carries nothing"
+        );
+    }
+
     /// Past its date and still short of the *taxed* figure is overdue. Reading
     /// the base would clear the mark on a goal that cannot yet buy the thing.
     #[test]
@@ -562,6 +599,7 @@ mod tests {
                     interest_eligible: false,
                     sort: 0,
                     floating: false,
+                    note: None,
                 },
             )
             .unwrap();
