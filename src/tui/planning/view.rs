@@ -196,7 +196,20 @@ impl Row {
             ),
             // Marked `*` like the Overview column it follows.
             plan_rows::Extra::Date(date) => (format!("{date}*"), Tone::Plain),
+            // The unit is on the figure: this column carries percentages,
+            // biweekly figures and dates too, and nothing about the column
+            // itself says which.
+            plan_rows::Extra::Annual(cents) => (
+                format!("{}/yr", crate::demo::whole_figure(cents)),
+                Tone::Plain,
+            ),
             plan_rows::Extra::None => (String::new(), Tone::Plain),
+        };
+        // What the Expenses total counted, in the column that names the row.
+        // The page spells the same flag as a class on the `<tr>`.
+        let label = match row.counts_as_expense {
+            true => format!("{label} \u{2022}"),
+            false => label,
         };
         Row {
             label,
@@ -377,6 +390,9 @@ pub struct View {
     /// the plan resolves, which is what tells `Enter` there is nothing to
     /// open.
     pub transfer_detail: Vec<String>,
+    /// The waterfall constants the owner has marked as biweekly expenses.
+    /// The bills beside them carry their own mark as a column.
+    pub expense_constants: Vec<Target>,
 }
 
 /// The transfers `t` would write, then `Planning!C1:G41` top to bottom under
@@ -395,6 +411,7 @@ pub(super) fn build(view: &View) -> Result<Vec<Row>> {
                     // that cannot fire, and the report's copy of this mapping
                     // does not make it either.
                     biweekly: calc::biweekly(b.cents, view.settings.periods_per_year)?,
+                    counts_as_expense: b.counts_as_expense,
                 })
             })
             .collect()
@@ -407,6 +424,7 @@ pub(super) fn build(view: &View) -> Result<Vec<Row>> {
         settings: &view.settings,
         housing: &housing,
         other_bills: &other_bills,
+        expense_constants: &view.expense_constants,
         // A misconfigured destination is a block's content, not the screen's:
         // every figure below it is still right.
         transfers: match &view.transfer_error {
@@ -470,7 +488,59 @@ mod tests {
             depth: 1,
             target: None,
             edit: String::new(),
+            counts_as_expense: false,
         })
+    }
+
+    /// One waterfall row in this medium, with the two cells these tests are
+    /// about set by hand.
+    fn mapped_with(extra: plan_rows::Extra, counts_as_expense: bool) -> Row {
+        Row::of(&plan_rows::Row {
+            extra,
+            counts_as_expense,
+            ..plan_rows::Row {
+                kind: plan_rows::Kind::Total,
+                label: plan_rows::RowLabel::Text("Expenses".to_string()),
+                value: plan_rows::Value::Money(Cents::from_dollars(4_260)),
+                extra: plan_rows::Extra::None,
+                depth: 1,
+                target: None,
+                edit: String::new(),
+                counts_as_expense: false,
+            }
+        })
+    }
+
+    /// The year the biweekly figure adds up to, in the one cell this row has
+    /// spare. It carries its unit because the column beside it carries
+    /// percentages, biweekly figures and dates too -- nothing about the
+    /// column says which.
+    #[test]
+    fn the_annual_figure_beside_the_expenses_total_names_the_year() {
+        let row = mapped_with(
+            plan_rows::Extra::Annual(Cents::from_dollars(110_760)),
+            false,
+        );
+        assert_eq!(row.extra, "110,760/yr");
+    }
+
+    /// A total with no working behind it is a number to take on trust, so the
+    /// rows it counted say so in the column that names them. The page spells
+    /// the same flag as a class.
+    #[test]
+    fn a_row_the_expenses_figure_counts_is_marked_in_its_label() {
+        assert!(
+            mapped_with(plan_rows::Extra::None, true)
+                .label
+                .ends_with('\u{2022}'),
+            "{:?}",
+            mapped_with(plan_rows::Extra::None, true).label
+        );
+        assert!(
+            !mapped_with(plan_rows::Extra::None, false)
+                .label
+                .contains('\u{2022}')
+        );
     }
 
     /// The value column carries figures, counts and gate verdicts alike, so

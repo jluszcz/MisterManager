@@ -93,10 +93,19 @@ about a figure, one of them is wrong.
   one per month. One `sub` for every level past the first would draw flat a
   row the screen draws nested, which is the drift one shared list of rows
   exists to prevent. A
-  `Kind::Blank` draws nothing at all -- the screen's separator is an empty
-  line, and this medium's is `tr.head td`'s padding. Before this, the tab and
+  `Kind::Blank` draws no row at all: the screen's separator is an empty line,
+  and this medium's is padding on the row *below* it. `tr.head td` carries it
+  where a heading follows, which is every break in the list but one -- the
+  Biweekly Expenses line is an ordinary row under a blank, and takes `tr.gap`
+  for the same measure. That class is decided in `resolved`, from the list,
+  because a row does not know what sits above it. Before this, the tab and
   the screen were hand-transcriptions of each other and had already come to
-  disagree about which blocks were headed.
+  disagree about which blocks were headed. A row the Biweekly Expenses figure
+  counts takes a third class, `counted`, drawn as a `::after` on its label cell
+  the way an expired goal's `!` is -- it costs the table no column on a phone.
+  That it is a class here and a character in the screen's label column is the
+  whole reason `Row::counts_as_expense` is a flag rather than a glyph, the same
+  argument `Row::depth` is a number for.
 - **A cell says what it may do with its width, and a table never widens past the
   phone.** Three classes carry it: `n` is a figure and `d` a date, and neither
   wraps — a comma and a hyphen are both break opportunities, and a column narrow

@@ -123,17 +123,20 @@ pub(super) fn plan_view() -> PlanView {
     let plan = crate::calc::planning::compute(&settings, &inputs).unwrap();
     PlanView {
         settings,
+        expense_constants: Vec::new(),
         housing: vec![Bill {
             id: crate::db::BillId(1),
             label: "Mortgage".into(),
             monthly: dollars(2_000),
             biweekly: dollars(923),
+            counts_as_expense: false,
         }],
         other_bills: vec![Bill {
             id: crate::db::BillId(2),
             label: "Internet".into(),
             monthly: dollars(300),
             biweekly: dollars(139),
+            counts_as_expense: false,
         }],
         transfers: Ok(vec![
             Transfer {

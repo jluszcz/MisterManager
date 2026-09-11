@@ -39,6 +39,32 @@ impl Cents {
         Cents(self.0 / 100 * 100)
     }
 
+    /// Round *up* to a whole hundred dollars, which is what the Planning
+    /// screen's Biweekly Expenses line spends.
+    ///
+    /// Up rather than to-nearest because that figure is a plan rather than a
+    /// measurement: a pay period budgeted short is the failure worth
+    /// avoiding, and nobody budgets to the dollar. Toward positive infinity
+    /// on both signs, the way a ceiling goes -- the figure cannot be negative
+    /// through any path the app offers, and a rounding that reversed
+    /// direction below zero would be a second rule to remember for a case
+    /// nobody sees.
+    ///
+    /// Saturating, because what reaches this is a figure the owner typed:
+    /// `Goals Floor` and `Cap` are bounded only by what a `Cents` can hold,
+    /// so the step up to the next hundred can run off the top of the range.
+    /// It stops at `i64::MAX` rather than at the hundred below it -- not a
+    /// round figure, but the half of the contract worth keeping is that a
+    /// ceiling never comes out under what it was given.
+    pub fn ceil_to_hundred_dollars(self) -> Cents {
+        match self.0.rem_euclid(10_000) {
+            0 => self,
+            // `self.0 - over` is the hundred below and cannot overflow; only
+            // the step up to the next one can.
+            over => Cents((self.0 - over).saturating_add(10_000)),
+        }
+    }
+
     /// Grouped dollars with the cents dropped rather than rounded: `500.23`
     /// and `200.99` both print as their own dollar figure.
     ///
@@ -160,6 +186,47 @@ impl FromStr for Cents {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Biweekly Expenses figure is a plan rather than a measurement, so
+    /// it rounds *up*: a pay period budgeted short is the failure worth
+    /// avoiding, and a hundred is the unit somebody actually thinks in.
+    ///
+    /// A figure already on a hundred stays where it is. Stepping it to the
+    /// next one would claim a hundred dollars of cost that is not there, and
+    /// would make the rounding visible on exactly the figures it should be
+    /// invisible on.
+    #[test]
+    fn a_ceiling_to_a_hundred_dollars_leaves_a_figure_already_there_alone() {
+        let d = Cents::from_dollars;
+        assert_eq!(d(4_260).ceil_to_hundred_dollars(), d(4_300));
+        assert_eq!(d(4_300).ceil_to_hundred_dollars(), d(4_300));
+        assert_eq!(Cents::ZERO.ceil_to_hundred_dollars(), Cents::ZERO);
+        // A single cent over is still over.
+        assert_eq!(Cents(430_001).ceil_to_hundred_dollars(), d(4_400));
+        // Up is toward zero from below, not away from it.
+        assert_eq!(d(-4_260).ceil_to_hundred_dollars(), d(-4_200));
+    }
+
+    /// `Goals Floor` and `Cap` are typed by the owner and bounded only by
+    /// what a `Cents` can hold, so a figure near the top of the range reaches
+    /// this once it is marked. Stepping up to the next hundred overflows: a
+    /// panic mid-frame in a debug build, and in release a large negative --
+    /// a budget figure below zero drawn where a ceiling should be.
+    ///
+    /// It saturates at `i64::MAX` rather than at the whole hundred below it,
+    /// which is not a round figure but is the half of the contract worth
+    /// keeping: a ceiling may not come out under what it was given.
+    #[test]
+    fn a_ceiling_over_the_top_of_the_range_saturates_rather_than_wrapping() {
+        assert_eq!(Cents(i64::MAX).ceil_to_hundred_dollars(), Cents(i64::MAX));
+        for over in [1, 5_807, 9_999] {
+            let figure = Cents(i64::MAX - over);
+            assert!(
+                figure.ceil_to_hundred_dollars() >= figure,
+                "{figure:?} rounded down"
+            );
+        }
+    }
 
     #[test]
     fn formats_with_thousands_separators() {

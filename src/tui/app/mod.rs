@@ -2121,7 +2121,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '5'),
-            "e edit · E/a/d bill · t transfers · Enter why · p pin"
+            "e edit · E/a/d bill · t transfers · f expense · Enter why · p pin"
         );
         assert_eq!(
             footer_of(&mut app, '6'),
@@ -2571,7 +2571,7 @@ mod tests {
             ),
             (
                 Topic::Planning,
-                &["e", "a", "E", "d", "t", "Enter", "p", "P"],
+                &["e", "a", "E", "d", "t", "f", "Enter", "p", "P"],
             ),
             (Topic::Funds, &["a", "e", "E", "d"]),
             (Topic::RecurringTxns, &["a", "e", "d", "g", "G", "x", "P"]),

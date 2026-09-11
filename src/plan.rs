@@ -5,6 +5,7 @@ use crate::db::{Db, bill, setting, txn};
 use crate::gate::Gate;
 use crate::goal as goal_engine;
 use crate::money::Cents;
+use crate::plan_rows::Target;
 use crate::rate::Percent;
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
@@ -53,6 +54,33 @@ pub fn settings_from_db(db: &Db) -> Result<PlanSettings> {
         retirement_pct: s.get_or(key::SPLIT_RETIREMENT_PCT, Percent(20))?,
         investment_pct: s.get_or(key::SPLIT_INVESTMENT_PCT, Percent(10))?,
     })
+}
+
+/// The waterfall constants the owner has marked as biweekly expenses.
+///
+/// A mark is a key that is *set to true*. An unset key is the state every
+/// database starts in and a key set to `false` is one the owner has unmarked,
+/// and the two have to read the same way -- a reader taking any stored value
+/// for a mark would go on counting a constant that had been turned off.
+///
+/// Walks [`Target::COUNTABLE_AS_EXPENSE`] rather than a list of keys, so
+/// which constants can be marked is stated once, on the enum that owns both
+/// the key and the figure.
+pub fn expense_constants(db: &Db) -> Result<Vec<Target>> {
+    let s = setting::all(db)?;
+    Target::COUNTABLE_AS_EXPENSE
+        .into_iter()
+        .filter_map(|target| {
+            let key = target
+                .counts_as_expense_key()
+                .expect("every countable constant owns a key");
+            match s.get_or(key, false) {
+                Ok(true) => Some(Ok(target)),
+                Ok(false) => None,
+                Err(e) => Some(Err(e)),
+            }
+        })
+        .collect()
 }
 
 /// Refuse a set of splits that leaves Goals less than nothing.
@@ -462,6 +490,27 @@ mod tests {
         // rounds each up to a whole dollar before summing.
         assert_eq!(plan.housing_biweekly, Cents::from_dollars(693));
         assert_eq!(plan.other_bills_biweekly, Cents::from_dollars(462));
+    }
+
+    /// A key set to `false` is not a mark. An unset key is the state every
+    /// database starts in, so the two have to read the same way, and a reader
+    /// that took any stored value for a mark would count a constant the owner
+    /// had explicitly unmarked.
+    #[test]
+    fn only_the_constants_whose_mark_is_set_are_counted() {
+        let db = db::open_in_memory().unwrap();
+        assert!(expense_constants(&db).unwrap().is_empty());
+
+        setting::set(&db, key::GOALS_FLOOR_COUNTS_AS_EXPENSE, true).unwrap();
+        setting::set(&db, key::BILL_PAYMENT_CAP_COUNTS_AS_EXPENSE, false).unwrap();
+
+        assert_eq!(expense_constants(&db).unwrap(), vec![Target::GoalsFloor]);
+
+        setting::set(&db, key::BILL_PAYMENT_CAP_COUNTS_AS_EXPENSE, true).unwrap();
+        assert_eq!(
+            expense_constants(&db).unwrap(),
+            vec![Target::BillPaymentCap, Target::GoalsFloor]
+        );
     }
 
     /// The screen renders every tuned constant beside the figure it produces,

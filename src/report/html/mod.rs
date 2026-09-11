@@ -207,7 +207,9 @@ const STYLE: &str = "\
     td.w{overflow-wrap:anywhere}\
     tr.fav{background:#fff6d8}\
     tr.expired td:first-child::after{content:' !'}\
+    tr.counted td:first-child::after{content:' \u{2022}'}\
     tr.head td{padding-top:0.9rem;font-weight:600}\
+    tr.gap td{padding-top:0.9rem}\
     tr.tot td{font-weight:600}\
     tr.future{opacity:0.55}\
     tr.note td{color:#666666}\

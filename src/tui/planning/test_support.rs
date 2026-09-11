@@ -40,6 +40,7 @@ pub(super) fn bill(id: i64, label: &str, dollars: i64, category: Category, sort:
         cents: Cents::from_dollars(dollars),
         category,
         sort,
+        counts_as_expense: false,
     }
 }
 
@@ -204,6 +205,7 @@ pub(super) fn view(pinned: Option<Cents>, pinned_at: Option<NaiveDate>) -> View 
         spread_ask_total: Cents::ZERO,
         transfer_error: None,
         transfer_detail: Vec::new(),
+        expense_constants: Vec::new(),
     }
 }
 

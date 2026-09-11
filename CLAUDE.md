@@ -148,7 +148,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/db/` | Schema and queries — one module per aggregate. |
 | `src/db/migration.rs` | The frozen v1 baseline, the chain of arms above it, and the runner that applies whichever of them a database is missing. |
 | `src/db/date.rs` | The stored date format, in one place: `iso` writes it, `parse`/`parse_opt` read it back for a `from_row`. |
-| `src/db/bill.rs` | The monthly bill block, labelled — the `Planning!C6:E12` rows. |
+| `src/db/bill.rs` | The monthly bill block, labelled — the `Planning!C6:E12` rows, and the owner's mark saying which of them the Biweekly Expenses figure counts. |
 | `src/db/fund.rs` | The `fund` table — the asset-allocation block, `Planning!I1:M5`. `Target` is the age rule or a share of what it leaves. |
 | `src/db/recurring_txn.rs` | The `recurring_txn` table — rows whose amount and date are known in advance. CRUD plus the queries regeneration needs. |
 | `src/import/` | Reads `Money.xlsx` via `calamine`. Behind the non-default `import` Cargo feature — it is the only module naming `calamine`, which is what lets that dependency be `optional`, so a default build compiles no spreadsheet parser and offers no `mm import`. |
@@ -367,6 +367,46 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   took everything, which is also the payday `transfer::plan` finds nothing to move on, with not a
   line in the block to hang a `Δ` off. There is no checksum: it reported exactly the condition the
   caps now prevent, and a figure provably zero for every input is not a check.
+- **The Biweekly Expenses figure reads the waterfall and nothing reads it back.** It is the owner's
+  own reckoning of what a pay period has to carry: a sum over what they have marked, drawn on the
+  Planning screen and the report's Planning tab as one line — `Expenses`, standing at the depth a
+  heading would since there is nothing beneath it to head — with the year it comes to beside it. It
+  moves no money, gates nothing, and no figure above it moves when a mark does: the waterfall does
+  not know it exists, which is what makes marking a constant safe to do while reading one.
+  - **It sits under the transfers, above every block it counts.** Both are answers rather than
+    working, and the blocks below are what produced them — an owner who wants to know what a pay
+    period costs should not have to read the whole waterfall to reach the figure, even though every
+    input it counts is down there.
+  - **A bill carries its mark as a column and a constant carries it as a key**, because a bill has a
+    row of its own and a constant has none. `bill.counts_as_expense` is the first, and
+    `bill::set_counts_as_expense` is its one writer for the reason `goal::set_favorite` is its
+    column's: the bill form has no box for it, so `E` would clear a mark the owner never touched.
+    The second is `plan_rows::Target::counts_as_expense_key`, which owns both the key and the
+    per-period figure the constant contributes — the `gate::Gate` construction, so no call site ever
+    pairs them, and `Target::COUNTABLE_AS_EXPENSE` is the list `plan::expense_constants` walks.
+    `f` on Planning presses both.
+  - **Each side reaches a per-paycheck figure before being added.** A bill is stored by the month
+    and counts as its biweekly column; the Cap and the Goals Floor are already per paycheck; Mom &
+    Dad is stored as a year's commitment, so counting what is stored would put a year of it into
+    every pay period. What no constant contributes is a percentage, or Target, Buffer and the
+    pinned excess — a share is a shape rather than a sum, and those three are cash to hold rather
+    than money that leaves.
+  - **A key set to `false` is not a mark, and reads exactly as an unset one.** A reader taking any
+    stored value for a mark would go on counting a constant the owner had turned off.
+  - **`--replace` takes the whole reckoning at once.** `bill` and `setting` are both in
+    `IMPORTED_TABLES`, so an import that replaces the bills clears the three keys with them rather
+    than leaving half a figure standing. Nothing can re-attach the bills' marks afterwards: bill
+    labels are no more a key than goal names are.
+  - **It rounds up to a whole hundred, and the year is the *rounded* figure annualized.** A plan
+    rather than a measurement: a pay period budgeted short is the failure worth avoiding, and
+    nobody budgets to the dollar, so `Cents::ceil_to_hundred_dollars` is the rounding and `up` is
+    the direction. The year follows the rounded figure rather than rounding the raw sum a second
+    time, because the two sit on one line and a reader who multiplies the first by the pay cadence
+    has to land on the second. `plan_rows::counted_biweekly` is the sum before any of that, which
+    is what the arithmetic is asserted against.
+  - **The line is drawn only when something is marked**, the way the two transfer footers are. A
+    figure nobody has chosen the inputs to is not a figure, and a row reading zero on every
+    unconfigured database is a row nobody reads.
 - **The three discretionary splits are bounded as a set and one at a time, at both writers.** Goals
   takes `100 − (fh + rt + inv)`, so a set over 100 leaves it nothing and sends every discretionary
   dollar elsewhere. `tui::planning::write_split` refuses one percentage at a time — the shape the

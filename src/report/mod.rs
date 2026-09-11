@@ -97,6 +97,8 @@ pub struct PlanView {
     /// The figure the Goals line is measured against, and the same one the
     /// Planning screen measures it against.
     pub spread_ask_total: Cents,
+    /// The waterfall constants the owner has marked as biweekly expenses.
+    pub expense_constants: Vec<plan_rows::Target>,
 }
 
 /// Everything the report draws, read in one pass.
@@ -178,6 +180,7 @@ fn plan_view(db: &Db, today: NaiveDate, adhoc: NaiveDate) -> Result<PlanView> {
                     label: b.label,
                     monthly: b.cents,
                     biweekly: calc::biweekly(b.cents, periods)?,
+                    counts_as_expense: b.counts_as_expense,
                 })
             })
             .collect()
@@ -212,6 +215,7 @@ fn plan_view(db: &Db, today: NaiveDate, adhoc: NaiveDate) -> Result<PlanView> {
         plan,
         transfers,
         spread_ask_total,
+        expense_constants: plan::expense_constants(db)?,
     })
 }
 
