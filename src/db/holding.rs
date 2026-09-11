@@ -8,9 +8,10 @@
 //!
 //! **A ticker arrives here already normalised to uppercase**, and this module
 //! takes it as given rather than folding case itself. `UNIQUE (account_id,
-//! ticker)`, [`update`]'s duplicate guard and `fund_mix`'s lookup by ticker
-//! all compare the string exactly, so `usm` and `USM` would be two holdings,
-//! two tickers and two compositions. `tui::fund::HoldingForm::commit` is where
+//! ticker)`, [`insert`]'s and [`update`]'s duplicate guards and `fund_mix`'s
+//! lookup by ticker all compare the string exactly, so `usm` and `USM` would
+//! be two holdings, two tickers and two compositions.
+//! `tui::fund::HoldingForm::commit` is where
 //! that normalisation happens, being the only writer; a second writer owes the
 //! same thing before it calls [`insert`] or [`update`].
 
@@ -56,9 +57,18 @@ macro_rules! select_holding {
 /// Refuses an account that is not [`Kind::Investment`], naming it in the
 /// message -- the guard the schema cannot express, since a `CHECK` sees only
 /// the row being written and not the account it names.
-/// `UNIQUE (account_id, ticker)` is the backstop for the other mistake this
-/// could be: one ticker twice in one account is a typo, and the constraint is
-/// what catches it once the kind is already right.
+///
+/// Refuses a ticker the account already holds too, in the same sentence
+/// [`update`] refuses it with: one ticker twice in one account is a typo, and
+/// buying more of a fund already listed is the ordinary mistake the form
+/// makes it easy to make. `UNIQUE (account_id, ticker)` stays the backstop,
+/// but a raw constraint violation on the status line is not a sentence a
+/// person can act on, so both writers say it in prose.
+///
+/// `sort` appends: the new holding takes the position past whatever its
+/// account already holds, the same placement [`super::account::insert`]'s
+/// caller computes, so [`reorder`]'s `0..n-1` renumbering cannot leave a
+/// later insert sorting into the middle of the list.
 pub fn insert(db: &Db, account_id: AccountId, ticker: &str, balance: Cents) -> Result<HoldingId> {
     let owner = account::get(db, account_id)?;
     ensure!(
@@ -68,9 +78,17 @@ pub fn insert(db: &Db, account_id: AccountId, ticker: &str, balance: Cents) -> R
         // reaches the mask here rather than through `account_label::Account`.
         crate::demo::text(owner.name.as_str())
     );
+    let held = list_for_account(db, account_id)?;
+    if held.iter().any(|h| h.ticker == ticker) {
+        bail!(
+            "{} already holds {}",
+            crate::demo::text(owner.name.as_str()),
+            crate::demo::text(ticker)
+        );
+    }
     db.conn.execute(
-        "INSERT INTO holding (account_id, ticker, balance_cents) VALUES (?1, ?2, ?3)",
-        params![account_id, ticker, balance.0],
+        "INSERT INTO holding (account_id, ticker, balance_cents, sort) VALUES (?1, ?2, ?3, ?4)",
+        params![account_id, ticker, balance.0, held.len() as i64],
     )?;
     Ok(HoldingId(db.conn.last_insert_rowid()))
 }
@@ -119,12 +137,11 @@ pub fn tickers(db: &Db) -> Result<Vec<String>> {
 ///
 /// Refuses the same two ways [`insert`] does, for the same reasons: an
 /// account that is not [`Kind::Investment`], and a ticker the destination
-/// account already holds under a different id. The second is `insert`'s
-/// `UNIQUE (account_id, ticker)` reached from a new direction -- moving a
-/// holding into an account can collide with one already there, and a raw
-/// constraint violation on the status line is not a sentence a person can
-/// act on, so it is checked and refused here rather than left to the
-/// constraint.
+/// account already holds. The second is that refusal reached from a new
+/// direction -- moving a holding into an account can collide with one
+/// already there -- and it is `h.id != id` that keeps a holding from
+/// clashing with itself, which is the whole of what this guard adds to
+/// `insert`'s.
 pub fn update(
     db: &Db,
     id: HoldingId,
@@ -243,6 +260,48 @@ mod tests {
             insert(&db, id, "USM", Cents(250_000)).is_err(),
             "the same ticker was inserted twice into one account"
         );
+    }
+
+    /// Buying more of a fund the account already lists is the ordinary
+    /// mistake `a` makes easy, so the refusal has to be a sentence: the raw
+    /// `UNIQUE constraint failed: holding.account_id, holding.ticker` the
+    /// constraint alone would put on the Funds status line names an index
+    /// the owner never typed.
+    #[test]
+    fn the_duplicate_ticker_refusal_names_the_account_and_the_ticker() {
+        let db = crate::db::open_in_memory().unwrap();
+        let id = account(&db);
+
+        insert(&db, id, "USM", Cents(100_000)).unwrap();
+        let err = insert(&db, id, "USM", Cents(250_000))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("Long Haul"), "{err}");
+        assert!(err.contains("USM"), "{err}");
+        assert!(!err.contains("UNIQUE constraint"), "{err}");
+    }
+
+    /// `reorder` renumbers a whole account's holdings to `0..n-1`, so an
+    /// insert that took the column's default would land at zero and sort
+    /// second rather than last -- the placement `account::insert`'s caller
+    /// computes for the same reason.
+    #[test]
+    fn a_new_holding_sorts_past_the_ones_its_account_already_holds() {
+        let db = crate::db::open_in_memory().unwrap();
+        let id = account(&db);
+
+        let first = insert(&db, id, "USM", Cents(100_000)).unwrap();
+        let second = insert(&db, id, "USB", Cents(50_000)).unwrap();
+        reorder(&db, second, 0).unwrap();
+        let third = insert(&db, id, "ISM", Cents(30_000)).unwrap();
+
+        let order: Vec<HoldingId> = list_for_account(&db, id)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.id)
+            .collect();
+        assert_eq!(order, vec![second, first, third]);
     }
 
     #[test]

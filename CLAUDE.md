@@ -338,9 +338,9 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
 - **`holding` and `fund_mix` are in `PRESERVED_TABLES`**, and the reason is uniform: the workbook
   carries neither, so a `--replace` has nothing to say about them.
 - **A ticker is uppercased once, where it is typed.** It is a key in three places and not one of
-  them folds case: `holding`'s `UNIQUE (account_id, ticker)`, `db::holding::update`'s duplicate
-  guard, and `fund_mix`'s `PRIMARY KEY (ticker, asset_class)`, which is looked up by the string a
-  holding carries. So `usm` and `USM` would be two holdings in one account, two entries in
+  them folds case: `holding`'s `UNIQUE (account_id, ticker)`, `db::holding`'s `insert` and `update`
+  duplicate guards, and `fund_mix`'s `PRIMARY KEY (ticker, asset_class)`, which is looked up by the
+  string a holding carries. So `usm` and `USM` would be two holdings in one account, two entries in
   `holding::tickers`, and two independent compositions — a mix fetched under one spelling never
   reaching a holding typed in the other. It is the failure `account::by_code` folds case against,
   answered the other way round: the form is the only writer, so `tui::fund::HoldingForm::commit`
