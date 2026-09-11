@@ -30,13 +30,24 @@ impl App {
     /// breaks ties by code, so "after the ones already there" is the only
     /// placement that does not depend on rows nobody has seen. Moving it
     /// anywhere else is `e`'s `Order` selector, which renumbers the kind.
+    ///
+    /// `new.tax_treatment` is already `Some` or `None` exactly as the schema's
+    /// paired `CHECK` requires -- `AccountForm::commit_new` is the guard, and
+    /// this write is only ever handed its answer.
     fn commit_new_account(&mut self) -> Result<()> {
         let Some(Modal::Account(form)) = &self.modal else {
             return Ok(());
         };
         let new = form.commit_new()?;
         let sort = account::list_by_kind(&self.db, new.kind)?.len() as i64;
-        account::insert(&self.db, &new.code, &new.name, new.kind, sort, None)?;
+        account::insert(
+            &self.db,
+            &new.code,
+            &new.name,
+            new.kind,
+            sort,
+            new.tax_treatment,
+        )?;
         self.status = format!("{} added", crate::demo::text(new.name.as_str()));
         self.close_modal();
         self.reload()
@@ -181,15 +192,17 @@ impl App {
         Ok(defaults)
     }
 
-    /// `a`'s one write, or the six `e` stands for.
+    /// `a`'s one write, or the seven `e` stands for.
     ///
-    /// The six are ordered so `reorder` means what it says: it renumbers by
+    /// The seven are ordered so `reorder` means what it says: it renumbers by
     /// position, so it goes after the band change rather than before one that
     /// could move the row. The two `setting` writes under it read no column
-    /// at all, which is why they can follow. `a` writes none of the six -- a
+    /// at all, which is why they can follow. `a` writes none of the seven -- a
     /// new account takes its kind's default band, no color, no interest
     /// policy, no `Savings` block and neither money form's default, and `e`
-    /// is where it is placed.
+    /// is where it is placed -- except the tax treatment, which `a` writes
+    /// itself for an investment account (see `commit_new_account`) because
+    /// the schema's paired `CHECK` will not let the row exist without one.
     pub(super) fn commit_account(&mut self) -> Result<()> {
         let Some(Modal::Account(form)) = &self.modal else {
             return Ok(());
@@ -205,6 +218,13 @@ impl App {
         account::reorder(&self.db, id, edit.position)?;
         self.set_savings_block(id, edit.block)?;
         self.set_default_sources(id, &edit.defaults)?;
+        // Gated on the account being an investment: `set_tax_treatment`
+        // itself refuses any other kind, and `edit.tax_treatment` is `None`
+        // on every kind but that one, so a cash or credit account never
+        // reaches the call.
+        if let Some(treatment) = edit.tax_treatment {
+            account::set_tax_treatment(&self.db, id, treatment)?;
+        }
         self.status = format!("{} saved", crate::demo::text(edit.name.as_str()));
         self.close_modal();
         self.reload()
@@ -237,7 +257,7 @@ fn sources_of(defaults: &Defaults, id: AccountId) -> Vec<Source> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::account::{self, Group, Kind};
+    use crate::db::account::{self, Group, Kind, TaxTreatment};
     use crate::db::{AccountId, setting};
     use crate::default_source::Source;
     use crate::savings_block::Block as SavingsBlock;
@@ -403,6 +423,173 @@ mod tests {
         let added = cards.last().unwrap();
         assert_eq!(added.name, "Card Three");
         assert_eq!(added.group, Group::Credit);
+    }
+
+    /// The account form the app has open, for a test that has to walk its
+    /// fields through the app's own keys.
+    fn account_form(app: &App) -> &accounts_screen::AccountForm {
+        match &app.modal {
+            Some(Modal::Account(form)) => form,
+            _ => panic!("no account form is open"),
+        }
+    }
+
+    /// Only an investment account carries a tax treatment: the paired
+    /// `CHECK` is what `account::insert` refuses without one, and this form
+    /// is where that combination is made unrepresentable rather than
+    /// refused after the fact.
+    #[test]
+    fn creating_an_investment_account_shows_a_tax_treatment_field() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('a'));
+        press(&mut app, KeyCode::Tab);
+        walk_until!(
+            account_form(&app).kind() == Kind::Investment,
+            press(&mut app, KeyCode::Right)
+        );
+
+        assert!(
+            account_form(&app).shows_tax_treatment(),
+            "the tax-treatment field is hidden on an investment account"
+        );
+        assert!(
+            account_form(&app)
+                .fields()
+                .contains(&accounts_screen::AccountField::TaxTreatment),
+            "the field does not appear in the form's tab order"
+        );
+    }
+
+    /// Cash and credit carry no tax treatment, and the schema's `CHECK`
+    /// refuses one on either -- so the field the account form offers must
+    /// agree, or a database the form built and the constraint it answers to
+    /// would disagree about the same account.
+    #[test]
+    fn the_tax_treatment_field_is_hidden_on_a_cash_account() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('a'));
+
+        assert_eq!(
+            account_form(&app).kind(),
+            Kind::Cash,
+            "the selector opens on Cash"
+        );
+        assert!(!account_form(&app).shows_tax_treatment());
+        assert!(
+            !account_form(&app)
+                .fields()
+                .contains(&accounts_screen::AccountField::TaxTreatment),
+            "the field appears in the form's tab order on a cash account"
+        );
+    }
+
+    /// An investment account's `tax_treatment` is written on insert, because
+    /// the schema's paired `CHECK` refuses the row without one and there is
+    /// no second write to leave it for. This drives the form to Investment,
+    /// picks a treatment other than the one it opens on, and asserts the
+    /// row lands with it.
+    #[test]
+    fn a_creates_an_investment_account_with_the_chosen_tax_treatment() {
+        let mut app = app();
+        let before = account::list_by_kind(&app.db, Kind::Investment)
+            .unwrap()
+            .len();
+
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, "RET");
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(account_form(&app).kind(), Kind::Investment);
+        press(&mut app, KeyCode::Tab);
+        type_str(&mut app, "Long Haul");
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(
+            account_form(&app)
+                .display(accounts_screen::AccountField::TaxTreatment)
+                .plain_text(),
+            TaxTreatment::TaxDeferred.label()
+        );
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        let accounts = account::list_by_kind(&app.db, Kind::Investment).unwrap();
+        assert_eq!(accounts.len(), before + 1);
+        let added = accounts.last().unwrap();
+        assert_eq!(added.code, "RET");
+        assert_eq!(added.tax_treatment, Some(TaxTreatment::TaxDeferred));
+    }
+
+    /// The treatment is a placement like every other field `e` offers, so it
+    /// is correctable after creation the same way a name or a band is,
+    /// rather than fixed the moment `a` writes it.
+    #[test]
+    fn editing_an_investment_account_changes_its_tax_treatment() {
+        let mut app = app();
+        let id = account::insert(
+            &app.db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::Taxable),
+        )
+        .unwrap();
+        app.reload().unwrap();
+
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.accounts.selected().unwrap().account.id(), id);
+        press(&mut app, KeyCode::Char('e'));
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Account(f))
+                if f.focus == accounts_screen::AccountField::TaxTreatment),
+            press(&mut app, KeyCode::Tab)
+        );
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        assert_eq!(
+            account::get(&app.db, id).unwrap().tax_treatment,
+            Some(TaxTreatment::TaxDeferred)
+        );
+    }
+
+    /// The selector has to open on the account's own treatment rather than
+    /// the default: an owner who presses `e` for an unrelated reason --
+    /// renaming the account, say -- and then `Enter` must not silently
+    /// rewrite a field they never looked at. `TaxFree` is index 2 of
+    /// `TaxTreatment::ALL`, so a form that opened on the default (index 0)
+    /// instead of the account's own would fail this.
+    #[test]
+    fn editing_an_investment_account_for_an_unrelated_reason_leaves_its_tax_treatment_alone() {
+        let mut app = app();
+        let id = account::insert(
+            &app.db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxFree),
+        )
+        .unwrap();
+        app.reload().unwrap();
+
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::End);
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        assert_eq!(
+            account::get(&app.db, id).unwrap().tax_treatment,
+            Some(TaxTreatment::TaxFree)
+        );
     }
 
     /// A code the kind already holds is what the next import would match two

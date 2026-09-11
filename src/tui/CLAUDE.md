@@ -871,9 +871,16 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   import would put a sheet's account straight back — so there is no `d`, and a code typed wrongly is
   corrected by renaming around it rather than by starting over. `a` asks the code, the kind and the
   name — the two an account cannot be given afterwards, plus the one it needs to draw as a row —
-  and `e` asks what the sheet does not say. Which fields each shows, and why the split falls there,
-  are `AccountForm::fields`' to state, including why an edit form's length depends on the kind: no
-  count is written down here, because there is no one number to write.
+  and `e` asks what the sheet does not say. Both forms also ask the tax treatment, for an investment
+  account only: `a`'s reason is that the schema's paired `CHECK` refuses that kind's row without one,
+  and there is no moment between insert and a second write at which the row could exist half
+  finished, so the field is conditional on the kind selector rather than always asked and sometimes
+  ignored. `e`'s is that a mis-pick at creation would otherwise be uncorrectable short of
+  hand-editing the database — the same reason `Interest`, `Savings` and `Default` are conditional on
+  `Kind::Cash` below: the column means something for exactly one kind, and only that kind is asked
+  about it. Which fields each shows, and why the split falls there, are `AccountForm::fields`' to
+  state, including why an edit form's length depends on the kind: no count is written down here,
+  because there is no one number to write.
   - **The `Savings` field is the one thing on this screen an import *reads*.** Every other field is
     a placement the import leaves alone; this one gates it, because the sheet names its two blocks
     by position and carries no account code, so until both are pointed at a container `mm import`

@@ -17,7 +17,7 @@ use super::Label;
 use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::form::{Field, Focused, FormFields, Step, next_in, step_index};
 use crate::db::AccountId;
-use crate::db::account::{Account, AccountColor, Group, InterestPolicy, Kind};
+use crate::db::account::{Account, AccountColor, Group, InterestPolicy, Kind, TaxTreatment};
 use crate::default_source::Source;
 use crate::savings_block::Block as SavingsBlock;
 use anyhow::{Result, ensure};
@@ -125,6 +125,11 @@ pub enum AccountField {
     /// `a` only, for `Code`'s reason: the other half of what `by_code`
     /// matches on.
     Kind,
+    /// Both forms, and only for an investment account: the schema's paired
+    /// `CHECK` refuses the column on any other kind, so the field is
+    /// unrepresentable rather than blank wherever the row it would be saved
+    /// to could not hold it.
+    TaxTreatment,
     Name,
     Color,
     Band,
@@ -140,6 +145,7 @@ impl AccountField {
         match self {
             AccountField::Code => "Code",
             AccountField::Kind => "Kind",
+            AccountField::TaxTreatment => "Tax Treatment",
             AccountField::Name => "Name",
             AccountField::Color => "Color",
             AccountField::Band => "Band",
@@ -252,6 +258,11 @@ pub struct AccountEdit {
     /// answers for, so dropping a source is the only way a form's default
     /// goes away from here.
     pub defaults: Vec<Source>,
+    /// `Some` for an investment account, `None` for every other kind --
+    /// `account::set_tax_treatment` refuses a kind that is not `Investment`,
+    /// so this is what tells `App::commit_account` whether to call it at
+    /// all.
+    pub tax_treatment: Option<TaxTreatment>,
 }
 
 /// What `a` commits: an account the workbook has not named.
@@ -264,6 +275,10 @@ pub struct NewAccount {
     pub code: String,
     pub name: String,
     pub kind: Kind,
+    /// `Some` when `kind` is `Investment`, `None` otherwise -- the schema
+    /// pairs the column with the kind, and this is where that pairing is
+    /// made rather than left to the `CHECK` behind it.
+    pub tax_treatment: Option<TaxTreatment>,
 }
 
 /// One account: `a` creating one, or `e` saying the rest about one that
@@ -295,6 +310,12 @@ pub struct AccountForm {
     /// An index into [`Kind::ALL`] rather than a `Kind`, because `a` cycles
     /// it. An edit form opens on the account's own and never shows the field.
     kind: usize,
+    /// An index into [`TaxTreatment::ALL`], read only where
+    /// [`AccountForm::shows_tax_treatment`] says this is an investment
+    /// account -- which is also what keeps a value set here and then
+    /// abandoned by a later kind change (on `a`) from ever reaching
+    /// `commit_new`.
+    tax_treatment: usize,
     name: Field,
     color: usize,
     band: usize,
@@ -318,6 +339,10 @@ impl AccountForm {
             focus: AccountField::Code,
             code: Field::default(),
             kind: 0,
+            // `TaxTreatment::ALL[0]` is `Taxable`, which is what an ordinary
+            // brokerage account is -- a plain default for the common case,
+            // read only while the kind selector is on `Investment`.
+            tax_treatment: 0,
             name: Field::default(),
             // None of the seven is on an add form. They are what `e` asks,
             // and an account takes its kind's defaults until it is asked: the
@@ -356,6 +381,13 @@ impl AccountForm {
             kind: Kind::ALL
                 .iter()
                 .position(|k| *k == account.kind)
+                .unwrap_or(0),
+            // `None` on every kind but `Investment`, which is exactly the
+            // kind this field is shown for -- so the fallback index is never
+            // read on the kinds it would otherwise be wrong for.
+            tax_treatment: TaxTreatment::ALL
+                .iter()
+                .position(|t| Some(*t) == account.tax_treatment)
                 .unwrap_or(0),
             // seeds the form's editable Name field, not a display of an account
             name: Field::given(account.name.as_str().to_string()),
@@ -409,14 +441,39 @@ impl AccountForm {
         Kind::ALL[self.kind]
     }
 
+    /// Whether the `Tax Treatment` field belongs on this form right now.
+    ///
+    /// True exactly for an investment account, whichever form is asking:
+    /// `a`'s kind selector for one not yet inserted, `e`'s fixed kind for
+    /// one that already exists (`Kind` is never offered to `e`, but
+    /// `self.kind()` still reads the account's own). It is the same
+    /// predicate [`AccountForm::commit_new`] and [`AccountForm::commit`] use
+    /// to decide `Some`/`None`, so the field shown and the value written can
+    /// never disagree about which kind this is.
+    pub fn shows_tax_treatment(&self) -> bool {
+        self.kind() == Kind::Investment
+    }
+
     /// The fields this form shows, which is also its tab order.
     ///
-    /// An add form asks the code, the kind and the name, and stops. Every
-    /// field the kind would decide is a *placement*, and an account is
-    /// placed by `e` once it exists.
+    /// An add form asks the code, the kind and the name, and stops -- plus,
+    /// for an investment account, the tax treatment: the one placement
+    /// [`AccountForm::commit_new`] cannot leave for a second write, because
+    /// the schema's paired `CHECK` refuses the row without it, and there is
+    /// no moment between insert and a second write at which the row could
+    /// exist half finished. An edit form offers the same field for the
+    /// reason `Interest`, `Savings` and `Default` are gated on `Kind::Cash`
+    /// below: the column means something for exactly one kind, so only that
+    /// kind is asked about it -- `set_tax_treatment` refuses any other.
+    /// Every other field an edit form's kind decides is an ordinary
+    /// placement, gated the same way.
     pub fn fields(&self) -> Vec<AccountField> {
         if self.editing.is_none() {
-            return vec![AccountField::Code, AccountField::Kind, AccountField::Name];
+            let mut fields = vec![AccountField::Code, AccountField::Kind, AccountField::Name];
+            if self.shows_tax_treatment() {
+                fields.push(AccountField::TaxTreatment);
+            }
+            return fields;
         }
         // Every kind, unlike the three below it: a card is named on the
         // Credit ledger and on Recurring Transactions, so it is tinted there
@@ -428,6 +485,9 @@ impl AccountForm {
             fields.push(AccountField::Band);
         }
         fields.push(AccountField::Order);
+        if self.shows_tax_treatment() {
+            fields.push(AccountField::TaxTreatment);
+        }
         if self.kind() == Kind::Cash {
             fields.push(AccountField::Interest);
             fields.push(AccountField::Savings);
@@ -452,6 +512,7 @@ impl AccountForm {
         Label::plain(match field {
             AccountField::Code => crate::demo::text(self.code.value()).into_owned(),
             AccountField::Kind => self.kind().label().to_string(),
+            AccountField::TaxTreatment => TaxTreatment::ALL[self.tax_treatment].label().to_string(),
             AccountField::Name => crate::demo::text(self.name.value()).into_owned(),
             AccountField::Color => match color_choices()[self.color] {
                 None => "—".to_string(),
@@ -501,6 +562,9 @@ impl AccountForm {
             code,
             name,
             kind: self.kind(),
+            tax_treatment: self
+                .shows_tax_treatment()
+                .then(|| TaxTreatment::ALL[self.tax_treatment]),
         })
     }
 
@@ -515,6 +579,9 @@ impl AccountForm {
             policy: InterestPolicy::ALL[self.policy],
             block: savings_choices()[self.block],
             defaults: default_choices()[self.defaults].clone(),
+            tax_treatment: self
+                .shows_tax_treatment()
+                .then(|| TaxTreatment::ALL[self.tax_treatment]),
         })
     }
 }
@@ -536,6 +603,7 @@ impl FormFields for AccountForm {
             AccountField::Code => Focused::Text(&mut self.code),
             AccountField::Name => Focused::Text(&mut self.name),
             AccountField::Kind
+            | AccountField::TaxTreatment
             | AccountField::Color
             | AccountField::Band
             | AccountField::Order
@@ -552,6 +620,9 @@ impl AccountForm {
             AccountField::Code | AccountField::Name => {}
             AccountField::Kind => {
                 self.kind = step_index(self.kind, Kind::ALL.len(), step);
+            }
+            AccountField::TaxTreatment => {
+                self.tax_treatment = step_index(self.tax_treatment, TaxTreatment::ALL.len(), step);
             }
             AccountField::Color => {
                 self.color = step_index(self.color, color_choices().len(), step);
@@ -799,6 +870,61 @@ mod tests {
         assert_eq!(
             card.fields(),
             vec![AccountField::Name, AccountField::Color, AccountField::Order]
+        );
+    }
+
+    /// The tax treatment is a placement for an investment account exactly as
+    /// `Interest`, `Savings` and `Default` are for a cash one: only the kind
+    /// the column means something for is asked about it. Credit gets neither
+    /// -- it has no bands, no goals, and no tax treatment.
+    #[test]
+    fn the_edit_form_offers_a_tax_treatment_only_for_an_investment_account() {
+        let cash = AccountForm::edit(
+            &account(1, "Everyday", Kind::Cash, Group::Checking),
+            InterestPolicy::Manual,
+            0,
+            3,
+            None,
+            &[],
+        );
+        assert!(
+            !cash.fields().contains(&AccountField::TaxTreatment),
+            "{:?}",
+            cash.fields()
+        );
+
+        let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
+        investment.tax_treatment = Some(TaxTreatment::Taxable);
+        let form = AccountForm::edit(&investment, InterestPolicy::Manual, 0, 1, None, &[]);
+        assert_eq!(
+            form.fields(),
+            vec![
+                AccountField::Name,
+                AccountField::Color,
+                AccountField::Order,
+                AccountField::TaxTreatment,
+            ]
+        );
+    }
+
+    /// An edit form has to open on what the account already holds, the same
+    /// rule every other selector on this form follows (see
+    /// `the_form_opens_on_the_color_the_account_already_holds`): opening on
+    /// the default and pressing Enter straight away would silently rewrite
+    /// the treatment of an account the owner opened `e` for an unrelated
+    /// reason.
+    #[test]
+    fn an_edit_form_opens_on_the_accounts_current_tax_treatment() {
+        let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
+        investment.tax_treatment = Some(TaxTreatment::TaxDeferred);
+        let form = AccountForm::edit(&investment, InterestPolicy::Manual, 0, 1, None, &[]);
+        assert_eq!(
+            form.display(AccountField::TaxTreatment).plain_text(),
+            TaxTreatment::TaxDeferred.label()
+        );
+        assert_eq!(
+            form.commit().unwrap().tax_treatment,
+            investment.tax_treatment
         );
     }
 
