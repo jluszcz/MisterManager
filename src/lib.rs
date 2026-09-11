@@ -13,6 +13,7 @@ pub mod goal;
 /// `calamine` an optional dependency: this is the only module that names it.
 #[cfg(feature = "import")]
 pub mod import;
+pub mod mix;
 pub mod money;
 pub mod overview;
 pub mod palette;
