@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="us-ascii"?>
+<!--
+  A minimal, invented N-PORT primary_doc.xml for a fund-of-funds -- the
+  element names and nesting a real filing carries, with every name, id and
+  figure invented per CLAUDE.md's fixture vocabulary. TDF45 (Target 2045
+  Fund) holds four other funds from the same vocabulary.
+-->
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nport">
+  <headerData>
+    <submissionType>NPORT-P</submissionType>
+    <filerInfo>
+      <filer>
+        <issuerCredentials>
+          <cik>0000000001</cik>
+        </issuerCredentials>
+      </filer>
+    </filerInfo>
+  </headerData>
+  <formData>
+    <genInfo>
+      <regName>Some Investment Trust</regName>
+      <regCik>0000000001</regCik>
+      <regInvestCoType>N-1A</regInvestCoType>
+      <seriesId>S0000000001</seriesId>
+      <seriesName>Target 2045 Fund</seriesName>
+      <repPdDate>2026-06-30</repPdDate>
+      <repPdEndDate>2026-06-30</repPdEndDate>
+      <isFinalFiling>N</isFinalFiling>
+    </genInfo>
+    <fundInfo>
+      <totAssets>500000000.00</totAssets>
+      <totLiabs>1000000.00</totLiabs>
+      <netAssets>499000000.00</netAssets>
+    </fundInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>Total Market Index Fund</name>
+        <title>Total Market Index Fund</title>
+        <cusip>000000001</cusip>
+        <balance>1000000.000000000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>250000000.00</valUSD>
+        <pctVal>50.000000000000</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>RF</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+        <fairValLevel>1</fairValLevel>
+      </invstOrSec>
+      <invstOrSec>
+        <name>International Stock Index Fund</name>
+        <title>International Stock Index Fund</title>
+        <cusip>000000002</cusip>
+        <balance>600000.000000000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>150000000.00</valUSD>
+        <pctVal>30.000000000000</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>RF</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+        <fairValLevel>1</fairValLevel>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Total Bond Index Fund</name>
+        <title>Total Bond Index Fund</title>
+        <cusip>000000003</cusip>
+        <balance>300000.000000000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>75000000.00</valUSD>
+        <pctVal>15.000000000000</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>RF</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+        <fairValLevel>1</fairValLevel>
+      </invstOrSec>
+      <invstOrSec>
+        <name>International Bond Index Fund</name>
+        <title>International Bond Index Fund</title>
+        <cusip>000000004</cusip>
+        <balance>100000.000000000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>25000000.00</valUSD>
+        <pctVal>5.000000000000</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>RF</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+        <fairValLevel>1</fairValLevel>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</edgarSubmission>

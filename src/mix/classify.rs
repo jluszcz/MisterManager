@@ -13,6 +13,7 @@ use crate::rate::BasisPoints;
 /// SEC's field names carry -- `pct_val`, `assetCat` and `invCountry` are its
 /// own spelling, kept here so a caller reading a raw filing does not have to
 /// translate twice.
+#[derive(Debug)]
 pub struct RawHolding {
     pub name: String,
     pub title: String,
@@ -261,6 +262,16 @@ mod tests {
         );
     }
 
+    /// `CASH` is checked first among the fund-of-funds keywords, so a name
+    /// naming a cash-equivalent holding must land in `Cash` rather than
+    /// falling through to `Unclassified` -- the one class the mandated test
+    /// set never exercised, on either path.
+    #[test]
+    fn a_fund_of_funds_names_a_cash_holding_by_keyword() {
+        let slices = classify(&[fund("Short-Term Reserve Fund", "", 100.0)]);
+        assert_eq!(weight(&slices, AssetClass::Cash), BasisPoints(10_000));
+    }
+
     /// A direct fund holds securities, and a fund share's `EC` would call the
     /// whole thing stock. Over the threshold, `assetCat` classifies instead.
     #[test]
@@ -287,6 +298,20 @@ mod tests {
         let slices = classify(&holdings);
 
         assert_eq!(weight(&slices, AssetClass::UsBond), BasisPoints(10_000));
+    }
+
+    /// `STIV` is the direct-fund path's own `Cash` category -- the
+    /// counterpart to the fund-of-funds keyword test above, since neither
+    /// path's mandated test set exercised `Cash` on its own.
+    #[test]
+    fn a_direct_funds_short_term_investment_vehicle_counts_as_cash() {
+        let holdings: Vec<RawHolding> = (0..FUND_OF_FUNDS_MAX + 1)
+            .map(|_| security("STIV", "US", 100.0 / (FUND_OF_FUNDS_MAX + 1) as f64))
+            .collect();
+
+        let slices = classify(&holdings);
+
+        assert_eq!(weight(&slices, AssetClass::Cash), BasisPoints(10_000));
     }
 
     #[test]

@@ -6,5 +6,6 @@
 //! wrong.
 
 mod classify;
+pub mod sec;
 
-pub use classify::{RawHolding, classify};
+pub use classify::{FUND_OF_FUNDS_MAX, RawHolding, classify};
