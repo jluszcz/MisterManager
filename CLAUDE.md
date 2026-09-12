@@ -25,6 +25,12 @@ cargo run --features import --bin mm -- --db /tmp/scratch.db --today 2026-08-12 
 # from the environment.
 MM_REQUIRE_WORKBOOK=1 MM_WORKBOOK=<workbook> \
   MM_ACCOUNTS=<checking>,<goals>,<buckets> cargo test --features import
+
+# The live SEC test names a fund the owner holds, which is as unwritable here
+# as an account code, and reads its contact out of the config file. `--test`
+# names the binary: the test inside it is named for what it asserts, so a bare
+# `cargo test sec_live` filter matches nothing and runs nothing.
+MM_REQUIRE_SEC=1 MM_SEC_TICKER=<ticker> cargo test --test sec_live
 ```
 
 ## The workbook is the test oracle

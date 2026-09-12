@@ -40,8 +40,10 @@ fn color(class: AssetClass) -> String {
 /// **Never a zero.** A bond target with no birth date behind it is a
 /// question rather than a share of nothing, and a cell reading `0.00%` would
 /// answer it -- wrongly, and with a figure the Δ beside it would then measure
-/// the whole portfolio against. The answer is a date typed on the Accounts
-/// screen, and until it is typed there is nothing here to state.
+/// the whole portfolio against. The birth date the rule counts from is
+/// imported from the workbook's `Constants` sheet, so a database nobody has
+/// imported into has no age to derive a bond target from -- and until it
+/// does, there is nothing here to state.
 ///
 /// The mark is `optional_money`'s and `savings::percent`'s, because the page
 /// has one. A reader meets this column beside those two with no way to hover
