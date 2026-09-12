@@ -73,6 +73,17 @@ is the only test in the crate that can notice the hops coming apart.
   matching nothing becomes is `classify`'s to say, and the root `CLAUDE.md` states the rule it
   answers to.
 
+- **A weight the parser cannot believe is refused at the seam, because `classify` cannot refuse
+  it later.** `sec::PCT_VAL_LIMIT` bounds a single position's `pctVal` either side of zero, and
+  `PendingHolding::finish` is where it is applied, beside the refusal a missing `pctVal` already
+  earns. The reason is downstream and in another module: `classify` scales every figure by 10,000
+  and sums the lot into an `i64`, so an infinity — `1e999` is a legal `f64` parse — saturates that
+  cast to `i64::MAX` and the next holding of its class overflows the accumulation. That is a
+  composition quietly wrong where a missing figure is loudly refused, and by the time `classify`
+  sees it there is no filing left to name. The constant is a range rather than an `is_finite`
+  check so it refuses `NaN` too, which would otherwise cast to a zero and read as a holding this
+  parser dropped.
+
 ## Checking it against the live service
 
 `tests/sec_live.rs` is the only test that reaches SEC, and it is the only thing that would notice

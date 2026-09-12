@@ -20,7 +20,7 @@
 //! in XML.
 
 use super::RawHolding;
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use chrono::NaiveDate;
 use jluszcz_rust_utils::query;
 use quick_xml::Reader;
@@ -29,6 +29,7 @@ use quick_xml::events::Event;
 use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::time::Duration;
 
 /// `company_tickers_mf.json`'s own address, unversioned and unparameterized
@@ -233,14 +234,16 @@ async fn fetch_text(contact: &str, url: &str) -> Result<String> {
         .with_context(|| format!("reading response body from {url}"))
 }
 
-async fn fetch_bytes(contact: &str, url: &str) -> Result<Vec<u8>> {
+/// The body unread, rather than a `Vec<u8>` copied out of it: a filing runs
+/// to tens of megabytes and [`parse_filing`] only borrows it, so the owning
+/// type stays opaque and the bytes are never moved.
+async fn fetch_bytes(contact: &str, url: &str) -> Result<impl Deref<Target = [u8]>> {
     let client = query::http_client()?;
     let response = send_with_retry(client, url, contact).await?;
-    let body = response
+    response
         .bytes()
         .await
-        .with_context(|| format!("reading response body from {url}"))?;
-    Ok(body.to_vec())
+        .with_context(|| format!("reading response body from {url}"))
 }
 
 /// Which of a holding's fields the next `Text` event fills in -- set on the
@@ -256,6 +259,22 @@ enum Field {
     AssetCat,
     InvCountry,
 }
+
+/// How far either side of zero a single position's `pctVal` may run before
+/// this parser stops believing the filing.
+///
+/// A position is a percentage of the fund's net assets: a long one runs
+/// `0..100`, a short one is negative, and a leveraged fund can carry one past
+/// 100. None of them reaches ten times the fund, so the bound refuses nothing
+/// a filer could mean.
+///
+/// What it is really for is the arithmetic downstream. `classify` scales every
+/// figure by 10,000 and sums the lot into an `i64`: an infinity saturates that
+/// cast to `i64::MAX` and the next holding of the same class overflows the
+/// accumulation, which is a composition quietly wrong rather than a filing
+/// loudly refused. A range test is the spelling because it refuses `NaN` too,
+/// which `is_finite` alone would let through as a zero.
+const PCT_VAL_LIMIT: f64 = 1_000.0;
 
 /// A holding as it is read out of one `<invstOrSec>`.
 ///
@@ -300,6 +319,13 @@ impl PendingHolding {
                 self.cusip
             )
         })?;
+        ensure!(
+            (-PCT_VAL_LIMIT..=PCT_VAL_LIMIT).contains(&pct_val),
+            "invstOrSec #{ordinal} ({:?}, cusip {:?}) carries a pctVal of {pct_val}, \
+             which is not a share of a fund",
+            self.name,
+            self.cusip
+        );
         Ok(RawHolding {
             name: self.name,
             title: self.title,
@@ -548,6 +574,35 @@ mod tests {
         );
         assert_eq!(filing.holdings[0].name, "AT&T Inc");
         assert_eq!(filing.holdings[0].title, "AT&T Inc");
+    }
+
+    /// `classify` scales every `pctVal` by 10,000 and sums the lot into an
+    /// `i64`, so a weight that is not a share of a fund is refused here
+    /// rather than cast: `1e999` parses to an infinity, saturates that cast
+    /// to `i64::MAX`, and the next holding of its class overflows the
+    /// accumulation -- a composition quietly wrong where a missing `pctVal`
+    /// is loudly refused. `NaN` casts to zero instead, which reads as a
+    /// holding this parser dropped, and the range test refuses both.
+    #[test]
+    fn a_pct_val_that_is_not_a_share_of_a_fund_is_refused_naming_the_position() {
+        for pct_val in ["1e999", "-1e999", "NaN", "100000.0"] {
+            let xml = format!(
+                r#"<edgarSubmission><formData>
+                     <genInfo><repPdDate>2026-06-30</repPdDate></genInfo>
+                     <invstOrSecs><invstOrSec>
+                       <name>Acme Holding</name>
+                       <cusip>000000000</cusip>
+                       <pctVal>{pct_val}</pctVal>
+                       <assetCat>EC</assetCat>
+                     </invstOrSec></invstOrSecs>
+                   </formData></edgarSubmission>"#
+            );
+            let err = parse_filing(xml.as_bytes()).unwrap_err().to_string();
+            assert!(
+                err.contains("Acme Holding") && err.contains("pctVal"),
+                "{pct_val} was not refused by name: {err}"
+            );
+        }
     }
 
     /// A filing that carries no name is still a filing: the composition is
