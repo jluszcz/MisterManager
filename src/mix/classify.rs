@@ -36,8 +36,23 @@ pub const FUND_OF_FUNDS_MAX: usize = 25;
 /// the stock-ish `index` keyword, and the bond reading is the one that
 /// matters -- a `STOCK` match only ever picks the domestic/international
 /// variant once nothing narrower has already claimed the holding.
+///
+/// The order is what makes `BOND` carry the inflation-protected spellings:
+/// a fund named for the securities rather than for the instrument --
+/// "Short-Term Inflation-Protected Securities Index Fund" -- says "bond"
+/// nowhere and "index" once, so without them the one holding a near-dated
+/// target-date fund carries double digits of lands in `UsStock`. A bond
+/// counted as equity is the miss `Unclassified` exists to prevent, since it
+/// moves the age rule's own comparison rather than showing up beside it.
 const CASH: [&str; 4] = ["liquidity", "money market", "short-term reserve", "cash"];
-const BOND: [&str; 3] = ["bond", "treasury", "fixed income"];
+const BOND: [&str; 6] = [
+    "bond",
+    "treasury",
+    "fixed income",
+    "inflation-protected",
+    "inflation protected",
+    "tips",
+];
 const STOCK: [&str; 3] = ["index", "stock", "market"];
 const INTL: [&str; 7] = [
     "international",
@@ -84,22 +99,24 @@ fn classify_by_keyword(text: &str) -> AssetClass {
 /// 20.5% of one measured bond fund, and missing it would quietly lose a
 /// fifth of that fund into `Unclassified`.
 fn classify_by_category(asset_cat: &str, inv_country: &str) -> AssetClass {
-    let intl = inv_country != "US";
+    // A filing that carries no `invCountry` has not said the security is
+    // foreign, and `!= "US"` would read it as exactly that -- the one shape
+    // of miss in this module that states a class rather than admitting it
+    // could not find one. `None` is that absence, and it lands in
+    // `Unclassified` beside every other gap. Cash is never asked: `STIV` is
+    // one class whatever country it sits in.
+    let intl = (!inv_country.is_empty()).then(|| inv_country != "US");
     match asset_cat {
-        "EC" | "EP" => {
-            if intl {
-                AssetClass::IntlStock
-            } else {
-                AssetClass::UsStock
-            }
-        }
-        "DBT" | "ABS-MBS" | "ABS-CBDO" | "ABS-O" | "LON" => {
-            if intl {
-                AssetClass::IntlBond
-            } else {
-                AssetClass::UsBond
-            }
-        }
+        "EC" | "EP" => match intl {
+            Some(true) => AssetClass::IntlStock,
+            Some(false) => AssetClass::UsStock,
+            None => AssetClass::Unclassified,
+        },
+        "DBT" | "ABS-MBS" | "ABS-CBDO" | "ABS-O" | "LON" => match intl {
+            Some(true) => AssetClass::IntlBond,
+            Some(false) => AssetClass::UsBond,
+            None => AssetClass::Unclassified,
+        },
         "STIV" => AssetClass::Cash,
         _ => AssetClass::Unclassified,
     }
@@ -293,6 +310,21 @@ mod tests {
         assert_eq!(weight(&slices, AssetClass::Cash), BasisPoints(10_000));
     }
 
+    /// A target-date fund's inflation-protected sleeve is named for the
+    /// securities rather than for the instrument, so it says "bond" nowhere
+    /// and "index" once. Without the inflation-protected spellings it lands
+    /// in `UsStock`, moving the age rule's own comparison by whatever the
+    /// sleeve is worth.
+    #[test]
+    fn an_inflation_protected_sleeve_counts_as_a_bond_rather_than_an_index_fund() {
+        let slices = classify(&[fund(
+            "Short-Term Inflation-Protected Securities Index Fund",
+            "",
+            100.0,
+        )]);
+        assert_eq!(weight(&slices, AssetClass::UsBond), BasisPoints(10_000));
+    }
+
     /// A direct fund holds securities, and a fund share's `EC` would call the
     /// whole thing stock. Over the threshold, `assetCat` classifies instead.
     #[test]
@@ -319,6 +351,24 @@ mod tests {
         let slices = classify(&holdings);
 
         assert_eq!(weight(&slices, AssetClass::UsBond), BasisPoints(10_000));
+    }
+
+    /// A filing that does not say where a security is invested has not said
+    /// it is foreign. Read as international it would state a class it has no
+    /// basis for; `Unclassified` says what happened and foots all the same.
+    #[test]
+    fn a_security_whose_filing_names_no_country_is_unclassified_rather_than_international() {
+        let holdings: Vec<RawHolding> = (0..FUND_OF_FUNDS_MAX + 1)
+            .map(|_| security("EC", "", 100.0 / (FUND_OF_FUNDS_MAX + 1) as f64))
+            .collect();
+
+        let slices = classify(&holdings);
+
+        assert_eq!(weight(&slices, AssetClass::IntlStock), BasisPoints::ZERO);
+        assert_eq!(
+            weight(&slices, AssetClass::Unclassified),
+            BasisPoints(10_000)
+        );
     }
 
     /// `STIV` is the direct-fund path's own `Cash` category -- the
