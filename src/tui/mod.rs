@@ -39,6 +39,7 @@ pub mod worksheet;
 
 use crate::account_label::{Account, Label};
 use crate::db::Db;
+use crate::db::account::TaxTreatment;
 use account_label::{account_cell, label_line};
 use anyhow::{Result, ensure};
 use app::App;
@@ -141,6 +142,56 @@ fn whole_amount(cents: Cents) -> Cell<'static> {
 /// of one per screen, and so a new screen has something obvious to reach for.
 fn right_header(text: &str) -> Cell<'static> {
     Cell::from(TextLine::from(text.to_string()).right_aligned())
+}
+
+/// How wide a column of labels has to be: the widest label that can land in
+/// it, and the heading standing over them.
+///
+/// Measured off the enum's own `ALL` rather than written out as a number.
+/// A column holding one of a closed set of strings is a length two places
+/// state -- the width, and the longest label -- and a hardcoded one is the
+/// copy that goes stale, since a variant added or renamed moves the other
+/// without touching it. What that costs is not an ellipsis: a right-hand
+/// truncation drops the end of a word that is still perfectly readable
+/// without it, so `Investment` reported itself as `Investme` and a reader
+/// had no mark saying it had been cut.
+///
+/// Shared rather than kept on the screen that first needed it, for
+/// [`right_header`]'s reason and one better: the Accounts and Funds screens
+/// both draw a column off `TaxTreatment::ALL`, and a number on one of them
+/// is a width the other's list can outgrow in silence.
+///
+/// The widths still have to *fit*. Each screen gives exactly one column a
+/// [`Constraint::Min`], which absorbs what the others leave, so a column
+/// widened here is paid for out of that one rather than out of the terminal
+/// -- `accounts::every_column_fits_the_minimum_width` and
+/// `fund::the_longest_fund_name_a_filing_carries_is_drawn_whole_at_the_minimum_width`
+/// are what hold each screen's set to [`MIN_WIDTH`].
+fn label_width(header: &str, labels: impl IntoIterator<Item = impl AsRef<str>>) -> Constraint {
+    let widest = labels
+        .into_iter()
+        .map(|label| label.as_ref().chars().count())
+        .chain([header.chars().count()])
+        .max()
+        .unwrap_or_default();
+    Constraint::Length(widest as u16)
+}
+
+/// How a treatment draws in a table, on either screen that has a column for
+/// one.
+///
+/// `None` is `—` rather than blank, and is not a gap: the schema's paired
+/// `CHECK` refuses the column on any kind but investment, so the cell is
+/// unrepresentable on that row rather than unanswered -- the same reading
+/// the Accounts screen's `Interest` and `Savings` columns give a row their
+/// own column means nothing for. Shared so that the screen that *sets* a
+/// treatment and the screen that groups holdings by one cannot come to spell
+/// it two ways.
+fn tax_treatment_cell(treatment: Option<TaxTreatment>) -> Cell<'static> {
+    Cell::from(match treatment {
+        Some(treatment) => treatment.label(),
+        None => "—",
+    })
 }
 
 fn money_cell(cents: Cents, text: String) -> Cell<'static> {
