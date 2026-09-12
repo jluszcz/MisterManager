@@ -410,9 +410,9 @@ spec says about the three hops, SEC etiquette, and the two classification paths.
 
 ## Open items
 
-- The rust-utils change is sequenced alongside this work rather than ahead of it; see
-  `docs/superpowers/plans/2026-09-11-rust-utils-tls-provider.md`. Until it lands, `features =
-  ["query"]` builds and works — it just carries `aws-lc-sys`.
+- The rust-utils change is sequenced alongside this work rather than ahead of it, and is
+  planned in that repository rather than here. Until it lands, `features = ["query"]` builds and
+  works — it just carries `aws-lc-sys`.
 - The `remove-funds-screen` branch holds a single commit planning an abandoned approach — deleting
   the Funds feature outright rather than replacing it. It should be deleted rather than merged, so
   no agent following `superpowers:executing-plans` picks that plan up.

@@ -19,8 +19,8 @@ for streaming N-PORT, `tokio` current-thread runtime, `rusqlite`, `ratatui`.
 assumes `db::fund_mix`, `db::holding`, `account::Kind::Investment` and the fund vocabulary in
 `src/test_support.rs` all exist.
 
-**Optional companion:** `docs/superpowers/plans/2026-09-11-rust-utils-tls-provider.md`. Until it
-lands, `features = ["query"]` builds and works — it just carries `aws-lc-sys` as well as the `ring`
+**Optional companion:** the rust-utils TLS-provider change, planned in that repository rather
+than this one. Until it lands, `features = ["query"]` builds and works — it just carries `aws-lc-sys` as well as the `ring`
 already present via `aws-sdk-s3`. Task 1 says what to do in either case.
 
 ## Global Constraints
