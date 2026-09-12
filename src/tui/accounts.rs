@@ -13,9 +13,9 @@
 //! View state only -- no ratatui above the render functions at the bottom,
 //! and no `Db` on the type. `App` runs the queries and hands the results in.
 
-use super::Label;
 use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::form::{Field, Focused, FormFields, Step, next_in, step_index};
+use super::{Label, label_width, tax_treatment_cell};
 use crate::db::AccountId;
 use crate::db::account::{Account, AccountColor, Group, InterestPolicy, Kind, TaxTreatment};
 use crate::default_source::Source;
@@ -707,39 +707,6 @@ pub fn render_form(frame: &mut Frame, form: &mut AccountForm) {
     render_fields(frame, form.title(), lines);
 }
 
-/// How wide a column of labels has to be: the widest label that can land in
-/// it, and the heading standing over them.
-///
-/// Measured off the enum's own `ALL` rather than written out as a number, the
-/// way `defaults_label(&Source::ALL)` already was. Every column here but
-/// `Code` and `Account` holds one of a closed set of strings, and a hardcoded
-/// width is a second statement of how long the longest of them is -- one that
-/// a new variant, or a renamed one, moves without touching. What that costs
-/// is not an ellipsis: a right-hand truncation drops the end of a word that
-/// is still perfectly readable without it, so `Investment` reported itself as
-/// `Investme` and a reader had no mark saying it had been cut.
-///
-/// It is also why this screen's own test could not catch it. The fixture
-/// behind `every_column_fits_the_minimum_width` holds cash and credit
-/// accounts, and `Investment` is the one `Kind` label longer than the column
-/// it was given -- so the widest content the column could hold was never
-/// drawn. The test now asserts every label in each of these sets, which is
-/// the same closed list the width is taken from.
-///
-/// The widths still have to *fit*: `Account` is the one `Constraint::Min`
-/// and it absorbs what the others leave, so a column widened here is paid
-/// for out of the name beside it rather than out of the terminal. Both are
-/// held to [`super::MIN_WIDTH`] by that test.
-fn label_width(header: &str, labels: impl IntoIterator<Item = impl AsRef<str>>) -> Constraint {
-    let widest = labels
-        .into_iter()
-        .map(|label| label.as_ref().chars().count())
-        .chain([header.chars().count()])
-        .max()
-        .unwrap_or_default();
-    Constraint::Length(widest as u16)
-}
-
 /// The table's seven columns.
 ///
 /// Named rather than inline so a test can read them: the claim each one
@@ -772,12 +739,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
             TableRow::new(vec![
                 Cell::from(crate::demo::text(&r.code).into_owned()),
                 account_cell(&r.account),
-                // Only an investment account is taxed as a pot of its own,
-                // which is the same `CHECK` the field's `Option` reads back.
-                Cell::from(match r.tax {
-                    Some(treatment) => treatment.label(),
-                    None => "—",
-                }),
+                tax_treatment_cell(r.tax),
                 Cell::from(r.group.label()),
                 // Only a cash account holds goals, so only a cash account has
                 // an interest posting to divide.

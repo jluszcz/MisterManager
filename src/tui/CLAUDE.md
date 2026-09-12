@@ -322,7 +322,7 @@ screen rather than out of the terminal, and why a test that pins a cell by absol
 derive it from `MIN_WIDTH` rather than write the offset out.
 
 **A column holding one of a closed set of labels takes its width from that set, never from a
-number.** `accounts::label_width` is that measurement and `accounts::widths` is where the screen's
+number.** `tui::label_width` is that measurement and `accounts::widths` is where the screen's
 seven are assembled — five of them off `TaxTreatment::ALL`, `Group::ALL`, `InterestPolicy::ALL`,
 `Block::ALL` and `Source::ALL`, the same lists the cells are drawn from. A hardcoded width is a
 second statement of how long the longest label is, and a variant added or renamed moves one of the
@@ -338,6 +338,14 @@ test still earns its place, being the one that holds the seven to `MIN_WIDTH` to
 `an_investment_account_spells_its_band_whole` pins the widest of them in a drawn row, and
 `an_investment_account_spells_its_tax_treatment_whole` the one column whose header is shorter than
 every label it can hold.
+
+`label_width` sits in `tui/mod.rs` rather than on the screen that first needed it, for
+`right_header`'s reason and one better: **the Accounts and Funds screens both draw a column off
+`TaxTreatment::ALL`**, and a number on one of them is a width the other's list can outgrow in
+silence. That is not hypothetical — the Funds column was a hardcoded `13` that cleared
+`Tax-deferred` by two characters, with the only test over it naming `Taxable`, seven.
+`fund::the_widest_tax_treatment_is_drawn_whole_at_the_minimum_width` is what asks after the widest
+of the set now, on the screen that had no such question.
 
 **`Band` is a reading of the kind as well, which is why there is no `Kind` column.** `Group::kind`
 is total — `Checking` and `Savings` are the two bands cash breaks into, and credit and investment
@@ -1021,7 +1029,9 @@ deferred to nothing.
     gives a card and `Savings` an account that is no container: the field is unrepresentable on
     that row rather than unanswered, which is the `Option` on `accounts::Row::tax` reading the
     schema's paired `CHECK` back. It leads the `Band` column, which is the nearest thing to the
-    kind the table still draws, and that is the order the two forms ask in.
+    kind the table still draws. The cell itself is `tui::tax_treatment_cell`, shared with the
+    Funds screen's column of the same name, so the screen that *sets* a treatment and the screen
+    that groups holdings by one cannot come to spell it two ways.
   - **The `Savings` field is the one thing on this screen an import *reads*.** Every other field is
     a placement the import leaves alone; this one gates it, because the sheet names its two blocks
     by position and carries no account code, so until both are pointed at a container `mm import`

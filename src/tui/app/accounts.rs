@@ -593,6 +593,52 @@ mod tests {
         );
     }
 
+    /// The treatment reaches the *screen*, which is a separate claim from
+    /// its reaching the database.
+    ///
+    /// `reload_accounts` is the one place `accounts::Row::tax` is ever
+    /// filled, and every test in `tui::accounts` builds its rows by hand
+    /// through a fixture that leaves it `None`. So a regression there would
+    /// draw `—` in the `Tax` column for every investment account the owner
+    /// has, with the whole suite green and the column doing nothing -- the
+    /// silent shape the truncation tests on that screen exist to refuse.
+    #[test]
+    fn a_reloaded_row_carries_the_treatment_its_account_is_stored_with() {
+        let mut app = app();
+        account::insert(
+            &app.db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxDeferred),
+        )
+        .unwrap();
+        app.reload().unwrap();
+
+        let row = app
+            .accounts
+            .rows()
+            .iter()
+            .find(|r| r.code == "RET")
+            .expect("the account is on the screen");
+        assert_eq!(row.tax, Some(TaxTreatment::TaxDeferred));
+    }
+
+    /// And every other kind carries none, which is what the column draws its
+    /// `—` for. The schema's paired `CHECK` is why this cannot be anything
+    /// else, and `Row::tax` is an `Option` to say so rather than to leave
+    /// room for a gap.
+    #[test]
+    fn a_reloaded_row_of_any_other_kind_carries_no_treatment() {
+        let mut app = app();
+        app.reload().unwrap();
+
+        for row in app.accounts.rows() {
+            assert_eq!(row.tax, None, "{} is not an investment account", row.code);
+        }
+    }
+
     /// A code the kind already holds is what the next import would match two
     /// rows against. The modal stays open with the message on it, rather than
     /// a `UNIQUE constraint failed` naming an index the owner never typed.

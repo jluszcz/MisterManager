@@ -446,20 +446,6 @@ fn stock_percent_cell(stock_percent: Option<BasisPoints>) -> Cell<'static> {
     Cell::from(TextLine::from(text).right_aligned())
 }
 
-/// How the account holding a fund is taxed -- the Accounts screen's own
-/// wording, so one account reads the same on both screens.
-///
-/// The `—` is the app's absence mark and is unreachable here: the schema puts
-/// a treatment on exactly the investment accounts, and a holding has nowhere
-/// else to live. Drawn rather than asserted, because a cell is not the place
-/// to take a database down over.
-fn tax_treatment_cell(treatment: Option<TaxTreatment>) -> Cell<'static> {
-    Cell::from(match treatment {
-        Some(treatment) => treatment.label(),
-        None => "—",
-    })
-}
-
 /// How many of the screen's lines the summary panel costs the list: its
 /// border, its header, a row per [`Class`], the gap, and a line per bar [`bars`]
 /// has to draw -- or none at all when it has nothing to say.
@@ -884,7 +870,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
                 fund_name_cell(row.name.as_deref()),
                 whole_amount(row.balance),
                 stock_percent_cell(row.stock_percent),
-                tax_treatment_cell(row.tax_treatment),
+                super::tax_treatment_cell(row.tax_treatment),
             ])
         })
         .collect();
@@ -905,7 +891,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
         Constraint::Length(FUND_NAME_WIDTH),
         Constraint::Length(14),
         Constraint::Length(7),
-        Constraint::Length(13),
+        super::label_width("Tax", TaxTreatment::ALL.iter().map(|t| t.label())),
     ];
 
     render_table(
@@ -1807,6 +1793,45 @@ mod tests {
         assert!(
             unnamed.contains('—'),
             "an unfetched fund drew something other than the absence mark: {unnamed:?}"
+        );
+    }
+
+    /// The `Tax` column holds one of a closed set, so it is sized off that
+    /// set: the widest treatment, drawn whole.
+    ///
+    /// It passes at any width the labels happen to fit in, which is the
+    /// point -- the column was a hardcoded `13` that fit `Tax-deferred` by
+    /// two characters of luck, and the only test over it named `Taxable`,
+    /// seven characters, so a variant renamed longer would have truncated
+    /// here with nothing going red. The Accounts screen paid for exactly
+    /// that on its `Kind` column.
+    #[test]
+    fn the_widest_tax_treatment_is_drawn_whole_at_the_minimum_width() {
+        let all = accounts();
+        let widest = TaxTreatment::ALL
+            .iter()
+            .max_by_key(|t| t.label().chars().count())
+            .expect("a treatment");
+        let account = all
+            .iter()
+            .find(|a| a.tax_treatment.is_some())
+            .expect("an investment account")
+            .id;
+
+        let mut funds = Funds::new();
+        funds.set_accounts(all.clone());
+        funds.set_rows(vec![Row {
+            tax_treatment: Some(*widest),
+            ..fixture_row(1, account, &all, "USM", 10_000)
+        }]);
+
+        let row = drawn(&funds, 6)
+            .into_iter()
+            .find(|l| l.contains("USM"))
+            .expect("the row is drawn");
+        assert!(
+            row.contains(widest.label()),
+            "the treatment is cut: {row:?}"
         );
     }
 
