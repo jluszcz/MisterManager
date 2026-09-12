@@ -59,6 +59,11 @@ fn percent(share: Option<BasisPoints>) -> String {
 /// `palette::NEGATIVE` is what the page already spells every other shortfall
 /// with -- the decision [`super::money`] makes from a `Cents`, made here from
 /// a share, which is all this column has.
+///
+/// `SummaryRow::delta` is `actual - target`, so short is the negative one and
+/// this reads the same way [`super::money`] does. The screen's own `delta`
+/// closure makes the identical test, which is what keeps the two mediums from
+/// coloring opposite halves of the same column.
 fn delta(share: Option<BasisPoints>) -> String {
     match share {
         Some(share) if share.0 < 0 => format!(

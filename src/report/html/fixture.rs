@@ -40,7 +40,7 @@ pub(super) fn accounts() -> Vec<Account> {
         // Tax-deferred where the other is taxable, so the summary's tax
         // columns have two treatments to divide the portfolio between --
         // one treatment everywhere would let a column drawn over the wrong
-        // band still pass.
+        // treatment still pass.
         Account {
             color: Some(AccountColor::Violet),
             tax_treatment: Some(TaxTreatment::TaxDeferred),

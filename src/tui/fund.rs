@@ -506,25 +506,27 @@ fn summary_bar(slices: &[Slice]) -> Vec<Span<'static>> {
 /// total, and a column reads down to what that treatment holds.
 fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
     let allocation = funds.allocation();
-    let percent = |bp: Option<BasisPoints>| {
-        Cell::from(
-            TextLine::from(match bp {
-                Some(bp) => format!("{bp}%"),
-                None => "—".to_string(),
-            })
-            .right_aligned(),
-        )
+    let share = |bp: Option<BasisPoints>| {
+        TextLine::from(match bp {
+            Some(bp) => format!("{bp}%"),
+            None => "—".to_string(),
+        })
+        .right_aligned()
     };
+    let percent = |bp: Option<BasisPoints>| Cell::from(share(bp));
     // Red where the portfolio is short of what the rule asks and plain where
     // it is not: a gap is the only thing in this table a reader has to act
     // on, and `palette::NEGATIVE` is what every other shortfall in the app
-    // already spells it with.
+    // already spells it with. `delta` is `actual - target`, so short is the
+    // negative one.
+    //
+    // Through `super::tinted` rather than `Cell::style`, the rule every
+    // colored cell in the crate answers to: a cell's own style covers its
+    // padding as well as its text, which on the cursor row turns into a
+    // solid block the full width of the column.
     let delta = |bp: Option<BasisPoints>| {
-        let cell = percent(bp);
-        match bp {
-            Some(bp) if bp.0 < 0 => cell.style(Style::default().fg(super::style::negative())),
-            _ => cell,
-        }
+        let color = bp.filter(|bp| bp.0 < 0).map(|_| super::style::negative());
+        super::tinted(share(bp), color)
     };
 
     let rows: Vec<TableRow> = Class::ALL
@@ -532,8 +534,14 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
         .filter_map(|class| funds.summary_row(*class))
         .map(|row| {
             let mut cells = vec![
-                Cell::from(row.class.label())
-                    .style(Style::default().fg(super::style::class(row.class))),
+                // The label is what names the bar's segment below, so it
+                // carries that segment's color -- and it carries it the way
+                // every other colored cell does, on the text rather than on
+                // the cell.
+                super::tinted(
+                    TextLine::from(row.class.label()),
+                    Some(super::style::class(row.class)),
+                ),
                 percent(row.target),
                 percent(Some(row.actual)),
                 delta(row.delta),

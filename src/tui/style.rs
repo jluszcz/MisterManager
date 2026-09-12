@@ -19,7 +19,7 @@
 //! the funding ramp all reach a screen through a wrapper here, so the report
 //! cannot come to a second opinion about what half funded looks like. What is
 //! chosen in this file is what nothing outside a terminal draws: the warning
-//! amber, the favorite class and the foreground it has to bring with it, and,
+//! amber, the favorite band and the foreground it has to bring with it, and,
 //! for all of them, which value wears which color.
 
 use crate::db::AccountId;
@@ -74,25 +74,25 @@ pub const POSITIVE: Color = Color::Rgb(70, 170, 70);
 /// suggestion worth looking at must not wear the color of a failure.
 pub const WARNING: Color = Color::Rgb(230, 160, 30);
 
-/// The class behind a favorited row on the Savings screen.
+/// The band behind a favorited row on the Savings screen.
 ///
 /// A pale slate, and the lightest thing the app draws. Every other color here
 /// is a mid-tone chosen to read against a terminal's own background, and they
-/// all have to stay legible drawn *on* this -- which means the class cannot sit
+/// all have to stay legible drawn *on* this -- which means the band cannot sit
 /// among them. It has to be at one end of the range or the other, and the
 /// light end is the end with room: from here the ramp's halfway yellow, the
-/// lightest thing ever drawn on the class, is 45 points of luma below. A dark
-/// class clears its own tightest neighbour, [`NEGATIVE`], by eight.
+/// lightest thing ever drawn on the band, is 45 points of luma below. A dark
+/// band clears its own tightest neighbour, [`NEGATIVE`], by eight.
 ///
 /// Cool rather than a flat grey, which reads as dirt beside the saturated
 /// colors around it -- but a *cast* and not a hue: its channels spread 12
 /// where the least saturated entry in [`palette`] spreads 70, so no account
-/// is drawn on a class of its own shade.
+/// is drawn on a band of its own shade.
 pub const FAVORITE_BG: Color = Color::Rgb(214, 218, 226);
 
-/// The text on that class, for every cell that sets no color of its own.
+/// The text on that band, for every cell that sets no color of its own.
 ///
-/// The class has to bring its own foreground: the terminal's default text is
+/// The band has to bring its own foreground: the terminal's default text is
 /// dark on a light theme and light on a dark one, so a background alone would
 /// be readable on exactly one of the two. Near-black rather than black, which
 /// reads as a hole punched in the row beside the mid-tones around it.
@@ -101,7 +101,7 @@ pub const FAVORITE_FG: Color = Color::Rgb(32, 38, 48);
 /// The style a favorited row is drawn in, as one value.
 ///
 /// A `Style` rather than the two colors, so the screen applying it never has
-/// to know that a class is a pair -- the same reason the ramp is a function
+/// to know that a band is a pair -- the same reason the ramp is a function
 /// and not three stops.
 pub fn favorite() -> Style {
     Style::default().bg(FAVORITE_BG).fg(FAVORITE_FG)
@@ -212,40 +212,40 @@ mod tests {
         }
     }
 
-    /// The class is a background, so it has to bring its own foreground: the
+    /// The band is a background, so it has to bring its own foreground: the
     /// terminal's default text color is dark on a light theme and light on a
     /// dark one, and either one alone would be unreadable against a fixed
-    /// class. Both halves or neither.
+    /// band. Both halves or neither.
     #[test]
     fn the_favorite_band_sets_both_halves_of_its_own_contrast() {
-        let class = favorite();
-        assert_eq!(class.bg, Some(FAVORITE_BG));
-        assert_eq!(class.fg, Some(FAVORITE_FG));
+        let band = favorite();
+        assert_eq!(band.bg, Some(FAVORITE_BG));
+        assert_eq!(band.fg, Some(FAVORITE_FG));
     }
 
-    /// Every color a cell may set is a mid-tone drawn *on* the class, so the
-    /// class has to sit at one end of the range rather than among them -- and
+    /// Every color a cell may set is a mid-tone drawn *on* the band, so the
+    /// band has to sit at one end of the range rather than among them -- and
     /// it sits at the light end, which is the end with room. It must also be
     /// neutral, or an account whose shade is near it would be the one account
-    /// the class hides.
+    /// the band hides.
     #[test]
     fn the_favorite_band_is_lighter_than_every_color_drawn_on_it() {
-        let class = luma(FAVORITE_BG);
+        let band = luma(FAVORITE_BG);
         for color in AccountColor::ALL {
-            assert!(luma(palette(color)) < class, "{color:?}");
+            assert!(luma(palette(color)) < band, "{color:?}");
         }
         for on_band in [NEGATIVE, POSITIVE, WARNING, FAVORITE_FG] {
-            assert!(luma(on_band) < class, "{on_band:?}");
+            assert!(luma(on_band) < band, "{on_band:?}");
         }
         for percent in [Percent::ZERO, Percent(50), Percent::ONE_HUNDRED] {
-            assert!(luma(percent_color(percent)) < class, "{percent:?}");
+            assert!(luma(percent_color(percent)) < band, "{percent:?}");
         }
     }
 
-    /// The class may carry a cast but not a hue, or it would be the one class
+    /// The band may carry a cast but not a hue, or it would be the one band
     /// that hides the account whose shade sits nearest it. Measured against
     /// the palette rather than a number picked out of the air: the least
-    /// saturated color the class could be confused with is what says how
+    /// saturated color the band could be confused with is what says how
     /// desaturated "desaturated" has to be.
     #[test]
     fn the_favorite_band_is_far_less_saturated_than_any_color_it_could_hide() {
@@ -258,15 +258,15 @@ mod tests {
             .map(|c| spread(palette(*c)))
             .min()
             .expect("the palette is not empty");
-        let class = spread(FAVORITE_BG);
+        let band = spread(FAVORITE_BG);
         assert!(
-            class * 3 < flattest,
-            "{FAVORITE_BG:?} spreads {class}, against a palette whose flattest spreads {flattest}"
+            band * 3 < flattest,
+            "{FAVORITE_BG:?} spreads {band}, against a palette whose flattest spreads {flattest}"
         );
     }
 
-    /// Which color the class is about to collide with if it is ever softened.
-    /// The ramp's halfway yellow is the lightest thing drawn on the class, so
+    /// Which color the band is about to collide with if it is ever softened.
+    /// The ramp's halfway yellow is the lightest thing drawn on the band, so
     /// it is the one that runs out of contrast first -- and naming it here
     /// means a future tweak reads the constraint rather than rediscovering
     /// it.
