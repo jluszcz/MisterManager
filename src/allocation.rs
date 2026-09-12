@@ -128,21 +128,25 @@ pub fn weight(slices: &[Slice], class: AssetClass) -> BasisPoints {
 pub fn apportion(holdings: &[(Cents, Option<&[Slice]>)]) -> Allocation {
     let covered = holdings.iter().filter(|(_, mix)| mix.is_some()).count();
     let whole = i128::from(BasisPoints::ONE.0);
-    let mut cents = [0i128; AssetClass::ALL.len()];
+    // Cents times basis points, undivided. A share resolved to whole cents
+    // here would leave the classes summing to less than the balance they came
+    // from, by up to a cent per class per holding -- and the largest remainder
+    // below has exactly one basis point per class to give, so a gap that grows
+    // with the holdings is one it cannot close. Carried in the product, every
+    // holding contributes its balance exactly, which is what leaves the
+    // leftover inside what the method can divide. The gap a mix itself left
+    // rides in the same unit, being the same arithmetic about the same
+    // balance.
+    let mut scaled = [0i128; AssetClass::ALL.len()];
     let mut basis = 0i128;
     for (balance, mix) in holdings {
         let Some(mix) = mix else { continue };
         basis += i128::from(balance.0);
         for slice in *mix {
-            cents[slice.class.index()] +=
-                i128::from(balance.0) * i128::from(slice.weight.0) / whole;
+            scaled[slice.class.index()] += i128::from(balance.0) * i128::from(slice.weight.0);
         }
-        // The gap in basis points rather than in cents, so the per-slice
-        // truncation above -- a few cents at most, and genuinely nobody's
-        // miss -- stays dust for the largest remainder to absorb instead of
-        // drawing an `Unclassified` row reading 0.01%.
         let unplaced = whole - mix.iter().map(|s| i128::from(s.weight.0)).sum::<i128>();
-        cents[AssetClass::Unclassified.index()] += i128::from(balance.0) * unplaced / whole;
+        scaled[AssetClass::Unclassified.index()] += i128::from(balance.0) * unplaced;
     }
 
     let mut allocation = Allocation {
@@ -157,14 +161,13 @@ pub fn apportion(holdings: &[(Cents, Option<&[Slice]>)]) -> Allocation {
     let mut weights = [0i64; AssetClass::ALL.len()];
     // (class index, what the floor left owing) -- who is most owed the next
     // basis point.
-    let mut fractions: Vec<(usize, i128)> = Vec::with_capacity(cents.len());
+    let mut fractions: Vec<(usize, i128)> = Vec::with_capacity(scaled.len());
     let mut floors = 0i128;
-    for (index, class_cents) in cents.iter().enumerate() {
-        let numerator = whole * class_cents;
-        let floor = numerator.div_euclid(basis);
+    for (index, class_scaled) in scaled.iter().enumerate() {
+        let floor = class_scaled.div_euclid(basis);
         floors += floor;
         weights[index] = floor as i64;
-        fractions.push((index, numerator.rem_euclid(basis)));
+        fractions.push((index, class_scaled.rem_euclid(basis)));
     }
     fractions.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
@@ -298,6 +301,28 @@ mod tests {
             ]),
             slices(&[(AssetClass::IntlStock, 9_500), (AssetClass::Cash, 500)]),
         )
+    }
+
+    /// The footing does not depend on the balance being large enough for a
+    /// class's share to land on a whole cent. A dollar split three ways
+    /// resolves to whole cents nowhere, and a summary short by the rounding
+    /// would draw an `Unclassified` row where nothing went unplaced.
+    #[test]
+    fn a_look_through_of_a_balance_below_a_cent_a_class_still_foots() {
+        let mix = slices(&[
+            (AssetClass::UsStock, 3_333),
+            (AssetClass::IntlStock, 3_333),
+            (AssetClass::UsBond, 3_334),
+        ]);
+        let held = [(Cents(100), Some(mix.as_slice()))];
+        let allocation = apportion(&held);
+        let total: i64 = allocation.slices.iter().map(|s| s.weight.0).sum();
+        assert_eq!(total, BasisPoints::ONE.0);
+        assert_eq!(
+            weight(&allocation.slices, AssetClass::Unclassified),
+            BasisPoints::ZERO,
+            "a mix that places everything leaves nothing unplaced"
+        );
     }
 
     #[test]
