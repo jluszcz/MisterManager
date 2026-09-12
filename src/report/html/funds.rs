@@ -431,6 +431,47 @@ mod tests {
         assert!(panel.contains("1.00%"), "the gap has no figure: {panel}");
     }
 
+    /// The same rule with the sign flipped: a mix claiming more than the
+    /// whole of itself leaves a negative residual and puts the four bar
+    /// classes past 100% between them. The row states the negative share --
+    /// that is what says the composition over-foots -- while the bar's own
+    /// segments are cut at the cumulative share and clamped, so none of them
+    /// runs backwards over the one before it.
+    #[test]
+    fn a_mix_that_over_foots_states_a_negative_residual_and_draws_no_backwards_segment() {
+        let mut over = snapshot(vec![], 1_000);
+        let claimed = vec![Slice {
+            class: AssetClass::UsStock,
+            weight: BasisPoints(10_100),
+        }];
+        over.allocation.lookthrough =
+            allocation::apportion(&[(Cents::from_dollars(1_000), Some(claimed.as_slice()))]);
+        over.allocation.summary = TargetClass::ALL
+            .iter()
+            .map(|class| {
+                SummaryRow::new(
+                    *class,
+                    &over.allocation.lookthrough.slices,
+                    fixture::targets(),
+                )
+            })
+            .collect();
+
+        let panel = funds_panel(&over);
+        assert!(
+            panel.contains(AssetClass::Unclassified.label()),
+            "the excess went unreported: {panel}"
+        );
+        assert!(
+            panel.contains("-1.00%"),
+            "the excess is not stated as a negative share: {panel}"
+        );
+        assert!(
+            !panel.contains("width:-"),
+            "a segment ran backwards over the one before it: {panel}"
+        );
+    }
+
     /// `Tab` on the screen narrows the summary and the list together, and a
     /// page has no `Tab` -- so each account is a section carrying both,
     /// under its own name in its own color.

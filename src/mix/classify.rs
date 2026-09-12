@@ -105,19 +105,21 @@ fn classify_by_category(asset_cat: &str, inv_country: &str) -> AssetClass {
     }
 }
 
-/// [`AssetClass::ALL`]'s own index of `class` -- a plain match rather than a
-/// linear search, since every class in a filing's holdings is looked up once
-/// per holding.
-fn index(class: AssetClass) -> usize {
-    match class {
-        AssetClass::UsStock => 0,
-        AssetClass::IntlStock => 1,
-        AssetClass::UsBond => 2,
-        AssetClass::IntlBond => 3,
-        AssetClass::Cash => 4,
-        AssetClass::Unclassified => 5,
-    }
-}
+/// The most this function's own arithmetic can leave a mix out by, in basis
+/// points.
+///
+/// Holdings accumulate in hundredths of a basis point and convert to whole
+/// basis points **once**, per class, at the end -- so the only rounding
+/// between a filing's own figures and the mix is that one conversion, and it
+/// can move a class by at most half a point in either direction. One class
+/// per entry in [`AssetClass::ALL`] gives half a point apiece, rounded up to
+/// the whole point the arithmetic is counted in. Derived from `ALL` rather
+/// than written as a number, because it is a bound on how many classes there
+/// are and a seventh would widen it.
+///
+/// This is what separates the two answers below: a total inside it came from
+/// this conversion, and a total outside it came from the filing.
+const DUST: i64 = (AssetClass::ALL.len() as i64 + 1) / 2;
 
 /// `n / d`, rounded to the nearest integer rather than truncated. Every
 /// value this divides is non-negative -- a filing's `pct_val` is a share of
@@ -137,6 +139,19 @@ fn round_div(n: i64, d: i64) -> i64 {
 /// a neighbour -- that is what makes the heuristic safe to run unattended,
 /// since a miss surfaces as a labelled row instead of money silently in the
 /// wrong bucket.
+///
+/// **The row foots two different ways, and which one is used says where the
+/// gap came from.** A gap no wider than [`DUST`] is this function's own
+/// conversion and is absorbed into the largest slice, where a point either
+/// way is invisible. A wider one is the filing's: an N-PORT whose `pctVal`s
+/// come to 99.3% is ordinary, and folding those seventy basis points into
+/// whichever class happens to be biggest is money in the wrong bucket with
+/// nothing on the row to say so. That gap goes to `Unclassified`, the class
+/// that exists for exactly this, on the same footing as a holding the
+/// keywords could not read. A filing that over-*foots* is the same statement
+/// with the sign flipped -- the excess is weight the filing claims and the
+/// classes cannot account for -- so it lands there as a negative share, which
+/// is what both sinks already draw a class over 100% as.
 pub fn classify(holdings: &[RawHolding]) -> Vec<Slice> {
     if holdings.is_empty() {
         // Not a filing the classifier ever fetched a holding for, so there
@@ -152,8 +167,9 @@ pub fn classify(holdings: &[RawHolding]) -> Vec<Slice> {
     let fund_of_funds = holdings.len() <= FUND_OF_FUNDS_MAX;
     // Accumulated in hundredths of a basis point (1 bp = 100 of these):
     // rounding each holding to whole basis points before summing would let a
-    // filing of two dozen small holdings drift the total away from 10,000
-    // by more than the one-point remainder step below is meant to absorb.
+    // filing of two dozen small holdings drift the total away from 10,000 by
+    // more than `DUST`, and a whole filing would be read as under-reporting
+    // on the strength of this function's own arithmetic.
     let mut totals = [0i64; AssetClass::ALL.len()];
     for holding in holdings {
         let class = if fund_of_funds {
@@ -161,22 +177,27 @@ pub fn classify(holdings: &[RawHolding]) -> Vec<Slice> {
         } else {
             classify_by_category(&holding.asset_cat, &holding.inv_country)
         };
-        totals[index(class)] += (holding.pct_val * 10_000.0).round() as i64;
+        totals[class.index()] += (holding.pct_val * 10_000.0).round() as i64;
     }
 
     let mut weights: [i64; AssetClass::ALL.len()] =
         totals.map(|hundredths| round_div(hundredths, 100));
     let total: i64 = weights.iter().sum();
-    // The remainder lands on the largest slice rather than being spread
-    // across all of them: a one-point correction folded into the biggest
-    // number is invisible, while spreading it moves several figures to fix
-    // the one that was actually short.
-    let (largest, _) = weights
-        .iter()
-        .enumerate()
-        .max_by_key(|&(_, &w)| w)
-        .expect("AssetClass::ALL is non-empty");
-    weights[largest] += 10_000 - total;
+    let gap = BasisPoints::ONE.0 - total;
+    if gap.abs() <= DUST {
+        // Dust lands on the largest slice rather than being spread across all
+        // of them: a one-point correction folded into the biggest number is
+        // invisible, while spreading it moves several figures to fix the one
+        // that was actually short.
+        let (largest, _) = weights
+            .iter()
+            .enumerate()
+            .max_by_key(|&(_, &w)| w)
+            .expect("AssetClass::ALL is non-empty");
+        weights[largest] += gap;
+    } else {
+        weights[AssetClass::Unclassified.index()] += gap;
+    }
 
     AssetClass::ALL
         .into_iter()
@@ -341,6 +362,67 @@ mod tests {
 
         let total: i64 = slices.iter().map(|s| s.weight.0).sum();
         assert_eq!(total, 10_000, "the slices did not foot to 100%");
+    }
+
+    /// An N-PORT whose `pctVal`s come to 99.3% rather than 100% is ordinary,
+    /// and the seven tenths it is short belong to no class the filing named.
+    /// Folding them into the largest slice would put them in a bucket the
+    /// filing never claimed, with nothing on the row to say so.
+    #[test]
+    fn a_filing_that_under_reports_materially_surfaces_the_gap_as_unclassified() {
+        let slices = classify(&[
+            fund("Total Market Index Fund", "", 50.0),
+            fund("Total Bond Index Fund", "", 49.3),
+        ]);
+
+        assert_eq!(
+            weight(&slices, AssetClass::UsStock),
+            BasisPoints(5_000),
+            "the largest slice was inflated to cover the filing's own gap"
+        );
+        assert_eq!(weight(&slices, AssetClass::UsBond), BasisPoints(4_930));
+        assert_eq!(weight(&slices, AssetClass::Unclassified), BasisPoints(70));
+        let total: i64 = slices.iter().map(|s| s.weight.0).sum();
+        assert_eq!(total, 10_000);
+    }
+
+    /// The other side of the same bound: three thirds are a whole filing that
+    /// foots, and the basis point the conversion leaves over is this
+    /// function's rounding rather than anything the filing failed to place.
+    /// An `Unclassified` row reading `0.01%` would report the classifier for
+    /// the arithmetic.
+    #[test]
+    fn the_point_the_conversion_leaves_over_is_absorbed_rather_than_called_a_miss() {
+        let slices = classify(&[
+            fund("Total Market Index Fund", "", 33.333),
+            fund("International Stock Index Fund", "", 33.333),
+            fund("Total Bond Index Fund", "", 33.334),
+        ]);
+
+        assert!(
+            !slices.iter().any(|s| s.class == AssetClass::Unclassified),
+            "rounding dust was drawn as a classifier miss: {slices:?}"
+        );
+        let total: i64 = slices.iter().map(|s| s.weight.0).sum();
+        assert_eq!(total, 10_000);
+    }
+
+    /// A filing claiming more than the whole of itself is the same statement
+    /// with the sign flipped: the excess is weight no class accounts for, and
+    /// it surfaces as a negative `Unclassified` rather than being trimmed off
+    /// a class that did report honestly.
+    #[test]
+    fn a_filing_that_over_foots_surfaces_the_excess_as_a_negative_unclassified() {
+        let slices = classify(&[
+            fund("Total Market Index Fund", "", 50.0),
+            fund("Total Bond Index Fund", "", 51.0),
+        ]);
+
+        assert_eq!(weight(&slices, AssetClass::UsStock), BasisPoints(5_000));
+        assert_eq!(weight(&slices, AssetClass::UsBond), BasisPoints(5_100));
+        assert_eq!(weight(&slices, AssetClass::Unclassified), BasisPoints(-100));
+        let total: i64 = slices.iter().map(|s| s.weight.0).sum();
+        assert_eq!(total, 10_000);
     }
 
     #[test]

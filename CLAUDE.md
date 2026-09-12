@@ -384,11 +384,15 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   before it calls `holding::insert` or `holding::update`.
 - **`Unclassified` is a class, not a gap.** A holding the classifier cannot place is stored under
   it and drawn as its own row rather than folded into a neighbour — the stance `transfer::resolve`
-  takes toward a dangling key, and `classify` is where it is argued.
-  `allocation::apportion` routes a second thing there — what a filing's own weights fail to place,
-  since nothing guards a `fund_mix` row's footing — so the summary foots *and* says what it could
-  not place. A zero `Unclassified` is dropped rather than drawn, the way the two Planning transfer
-  footers are: a defect report reading "none" every time is one nobody finishes reading.
+  takes toward a dangling key, and `classify` is where it is argued. **What a filing itself fails
+  to place goes there too, and the same function decides which of the two a gap is.** A total
+  inside `classify`'s own conversion rounding is dust and lands on the largest slice, where a point
+  either way is invisible; a wider one came from the filing — an N-PORT footing to 99.3% is
+  ordinary — and is `Unclassified`, positive where the filing under-reports and negative where it
+  over-foots. `allocation::apportion` answers a `fund_mix` row the same way for the row no refresh
+  wrote, the table constraining no footing of its own, so the summary foots *and* says what it
+  could not place. A zero `Unclassified` is dropped rather than drawn, the way the two Planning
+  transfer footers are: a defect report reading "none" every time is one nobody finishes reading.
 - **A fund with no `fund_mix` row has never been fetched, which is not the same as holding
   nothing.** `tui::fund::Row::stock_percent` and `Row::as_of` are `Option` for that reason, and
   both sinks draw their own "nothing here" rather than a zero — a fund genuinely reported to hold

@@ -14,7 +14,7 @@
 //! costs the summary is said where the reader can act on it: the `—` on its
 //! own row, and [`Allocation::coverage`] in the panel's title. A holding whose
 //! mix exists but does not *foot* is a different case and stays inside: what
-//! that filing failed to place lands in `Unclassified`, which is
+//! that mix failed to place lands in `Unclassified`, which is
 //! [`apportion`]'s to argue.
 
 use crate::calc::fund::Targets;
@@ -103,16 +103,22 @@ pub fn weight(slices: &[Slice], class: AssetClass) -> BasisPoints {
 /// `None` for a holding's mix is a fund nobody has fetched: it counts toward
 /// [`Allocation::holdings`] and toward nothing else.
 ///
-/// **What a filing does not place lands in `Unclassified`.** Nothing guards a
-/// `fund_mix` row's own footing, so a composition coming to 99% is reachable
-/// rather than theoretical -- and the two other answers both lose the fact.
-/// Dividing by what was placed instead of by the balance renormalises the gap
-/// away across the classes that *were* placed, which says nothing; leaving it
-/// out would foot to 99% in a table whose one unreadable state is a total
-/// that does not foot. `Unclassified` is the class that exists for exactly
-/// this, drawn only when non-zero, so routing the gap there foots *and*
-/// surfaces it as the labelled row a miss is supposed to show up as. A filing
-/// that over-foots surfaces the same way, as a negative one.
+/// **What a mix does not place lands in `Unclassified`.** `mix::classify` is
+/// what guards a composition's own footing, and it guards it to within its
+/// own rounding -- so a mix this app fetched arrives whole, and the gap that
+/// filing left is already an `Unclassified` slice of its own by the time it
+/// reaches here. What is *not* guarded is `fund_mix` itself: it is an
+/// ordinary table with no constraint on what its rows sum to, and a row put
+/// there by anything but a refresh -- a hand edit, a restored database, a
+/// second writer -- can come to 99% with nothing to stop it. The two other
+/// answers to that both lose the fact. Dividing by what was placed instead of
+/// by the balance renormalises the gap away across the classes that *were*
+/// placed, which says nothing; leaving it out would foot to 99% in a table
+/// whose one unreadable state is a total that does not foot. `Unclassified`
+/// is the class that exists for exactly this, drawn only when non-zero, so
+/// routing the gap there foots *and* surfaces it as the labelled row a miss
+/// is supposed to show up as. A row that over-foots surfaces the same way, as
+/// a negative one.
 ///
 /// Truncating each share and dividing the leftover by largest remainder is
 /// [`crate::calc::interest::pro_rata`]'s method and is here for its reason:
@@ -128,7 +134,7 @@ pub fn apportion(holdings: &[(Cents, Option<&[Slice]>)]) -> Allocation {
         let Some(mix) = mix else { continue };
         basis += i128::from(balance.0);
         for slice in *mix {
-            cents[index_of(slice.class)] +=
+            cents[slice.class.index()] +=
                 i128::from(balance.0) * i128::from(slice.weight.0) / whole;
         }
         // The gap in basis points rather than in cents, so the per-slice
@@ -136,7 +142,7 @@ pub fn apportion(holdings: &[(Cents, Option<&[Slice]>)]) -> Allocation {
         // miss -- stays dust for the largest remainder to absorb instead of
         // drawing an `Unclassified` row reading 0.01%.
         let unplaced = whole - mix.iter().map(|s| i128::from(s.weight.0)).sum::<i128>();
-        cents[index_of(AssetClass::Unclassified)] += i128::from(balance.0) * unplaced / whole;
+        cents[AssetClass::Unclassified.index()] += i128::from(balance.0) * unplaced / whole;
     }
 
     let mut allocation = Allocation {
@@ -181,13 +187,6 @@ pub fn apportion(holdings: &[(Cents, Option<&[Slice]>)]) -> Allocation {
         })
         .collect();
     allocation
-}
-
-fn index_of(class: AssetClass) -> usize {
-    AssetClass::ALL
-        .iter()
-        .position(|c| *c == class)
-        .expect("AssetClass::ALL names every variant")
 }
 
 /// A class the age rule has a target for.
@@ -318,7 +317,7 @@ mod tests {
     /// stock and $400 cash, over $8,000. Two of those are exact halves of a
     /// basis point, and only one of them can round up.
     #[test]
-    fn each_class_is_its_own_share_of_everything_the_mixes_place() {
+    fn each_class_is_its_own_share_of_the_covered_balance() {
         let (bond, intl) = portfolio();
         let held = [
             (Cents::from_dollars(5_000), Some(bond.as_slice())),
@@ -366,9 +365,11 @@ mod tests {
         assert_eq!(apportion(&with_a_stranger).holdings, 2);
     }
 
-    /// A filing whose own slices come to 99% is a miss, and a miss has to
-    /// surface as the labelled row it is rather than being renormalised away
-    /// across the classes that were placed.
+    /// `mix::classify` foots what it writes, so a `fund_mix` row coming to
+    /// 99% is one nothing in this crate wrote -- a hand edit, a restored
+    /// database. It is still a miss, and a miss has to surface as the
+    /// labelled row it is rather than being renormalised away across the
+    /// classes that were placed.
     #[test]
     fn what_a_mix_does_not_place_lands_in_unclassified_rather_than_renormalising() {
         let short = slices(&[(AssetClass::UsStock, 9_900)]);

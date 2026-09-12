@@ -288,8 +288,10 @@ not parse, the request is refused — is reported on its own and leaves the rest
 along with whatever composition that ticker already had.
 
 The classification is a heuristic, and it says so when it misses: what it cannot place lands in
-`Unclassified` and is drawn as its own row rather than folded in with something else. Money in a
-labelled bucket is a question you can answer; money in the wrong bucket is invisible.
+`Unclassified` and is drawn as its own row rather than folded in with something else. So does what
+the filing itself leaves out — holdings coming to 99.3% of a fund rather than 100% is ordinary, and
+the seven tenths it is short belongs to no class the filing named. Money in a labelled bucket is a
+question you can answer; money in the wrong bucket is invisible.
 
 ## Demo mode
 
