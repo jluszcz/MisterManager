@@ -285,7 +285,8 @@ There is no default. A run without one refuses and says so rather than asking an
 Requests go out one at a time, well under SEC's published limit of ten a second, and a throttled
 one backs off and tries again. A ticker that fails — SEC lists no series for it, the filing will
 not parse, the request is refused — is reported on its own and leaves the rest of the run alone,
-along with whatever composition that ticker already had.
+along with whatever composition that ticker already had. A run where every ticker failed exits
+non-zero, so a script can tell it from one where some got through.
 
 The classification is a heuristic, and it says so when it misses: what it cannot place lands in
 `Unclassified` and is drawn as its own row rather than folded in with something else. So does what

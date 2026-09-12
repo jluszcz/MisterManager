@@ -46,10 +46,17 @@ is the only test in the crate that can notice the hops coming apart.
 - **A fund's composition is keyed on the ticker and nothing else.** One fetch of `USM` prices every
   account holding it, and a refresh asked for "everything" reads `holding::tickers` rather than the
   rows a screen is showing — the account filter and the search narrow a list, not a portfolio.
-  `refresh_every_mix` and `mm mixes` with no `--ticker` are the same reading. Both take their
-  tickers out of `holding`, where the form has already uppercased them — `mm mixes --ticker` is the
-  one route that does not, and it fails at the first hop rather than writing a row nothing reads,
-  since `parse_ticker_file` matches SEC's own symbols exactly.
+  `refresh_every_mix` and `mm mixes` with no `--ticker` are the same reading, and both take their
+  tickers out of `holding`, where `tui::fund::HoldingForm::commit` has already uppercased them.
+  `mm mixes --ticker` is the one route that reads no holding, so it uppercases and trims its own
+  argument where the argument is read — the root `CLAUDE.md`'s rule that a ticker is normalised
+  once, by whichever writer takes it, since neither `fund_mix`'s primary key nor `holding`'s
+  duplicate guards fold case.
+- **A refresh with no tickers touches neither SEC nor the database.** `resolve_series` is the first
+  hop and downloads the whole 1.2 MB ticker file whatever it is handed, so `refresh` answers an
+  empty list before it — which is what `G` on a Funds screen holding nothing and `mm mixes` against
+  a database with no holdings both ask for. It is also what makes the screen's `nothing to refresh`
+  true rather than the report of a round trip that found nothing.
 - **A failure reason is prose a screen prints verbatim, so the one that names a ticker masks it
   where it is built.** `fetch_ticker`'s "SEC lists no series for" is that one; every other reason
   here names a URL, a series id or an element, none of them the owner's. The Funds screen draws
@@ -94,3 +101,13 @@ on the first attempt with an error that names the 403; too broad, a permanent 40
 requests over six seconds. Neither reading can hammer SEC, whose own published limit is 10 requests
 a second and which this module stays orders of magnitude under by running every request
 sequentially.
+
+Two facts about the client sit here rather than being re-derived from `query`'s own source. **The
+client outlives the runtime that built it**: `query::http_client()` is a process-wide
+`OnceLock<Client>`, while every function in `sec.rs` opens a current-thread runtime for the span of
+its own call and drops it — so the singleton is created inside the first of those runtimes and
+handed to every one after. If this test ever fails with a transport or `Canceled` error rather than
+a parse error, that is the cause and not `THROTTLE_MARKER`. **And `gzip` is on end to end**: the
+shared client sets it and reqwest asks for and decodes it, so the "3.2–20.6 MB filing"
+`parse_filing` is sized against is roughly a 2 MB transfer — which is why that client's 30-second
+whole-request timeout is far less tight than the filing figure makes it read.

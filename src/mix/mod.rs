@@ -48,7 +48,16 @@ pub struct Refreshed {
 /// Resolves `tickers` to their SEC series once, then fetches, classifies and
 /// writes each in turn. See [`fetch_and_write`] for the two-phase shape and
 /// why fetching runs before any transaction opens.
+///
+/// Nothing asked for is answered without touching SEC or the database at
+/// all. `resolve_series` downloads 1.2 MB whatever it is handed, and it is
+/// the *first* hop, so an empty list would pay for the whole of it and then
+/// open a transaction to write nothing -- which is what `G` on a Funds screen
+/// with no holdings and `mm mixes` against a database with none both ask for.
 pub fn refresh(db: &Db, contact: &str, tickers: &[String]) -> Result<Refreshed> {
+    if tickers.is_empty() {
+        return Ok(Refreshed::default());
+    }
     let series = sec::resolve_series(contact, tickers)?;
     fetch_and_write(db, tickers, |ticker| fetch_ticker(contact, &series, ticker))
 }
@@ -160,6 +169,19 @@ mod tests {
     use crate::rate::BasisPoints;
     use crate::test_support::day;
     use anyhow::anyhow;
+
+    /// `resolve_series` is the first hop and downloads 1.2 MB whatever it is
+    /// handed, so a refresh with nothing to refresh has to answer before it.
+    /// A network call here would fail the test rather than return, since
+    /// nothing in the suite reaches SEC -- but the point stands either way:
+    /// the contact is deliberately nonsense.
+    #[test]
+    fn a_refresh_of_no_tickers_answers_without_reaching_sec() {
+        let db = crate::db::open_in_memory().unwrap();
+        let refreshed = refresh(&db, "nobody@example.com", &[]).unwrap();
+        assert!(refreshed.updated.is_empty());
+        assert!(refreshed.failed.is_empty());
+    }
 
     /// The Funds screen prints this sentence on its status line next to the
     /// ticker it belongs to, and that label is masked -- so an unmasked

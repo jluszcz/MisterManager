@@ -379,9 +379,11 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   string a holding carries. So `usm` and `USM` would be two holdings in one account, two entries in
   `holding::tickers`, and two independent compositions — a mix fetched under one spelling never
   reaching a holding typed in the other. It is the failure `account::by_code` folds case against,
-  answered the other way round: the form is the only writer, so `tui::fund::HoldingForm::commit`
-  normalises the typing and the three keys agree by construction. A second writer owes the same
-  before it calls `holding::insert` or `holding::update`.
+  answered the other way round: a ticker is normalised once, where it is typed, so the three keys
+  agree by construction. `tui::fund::HoldingForm::commit` is where the form does it, and
+  `mm mixes --ticker` is the other — the one route that refreshes a composition without reading
+  `holding` first, so it has nothing already normalised to read. Any further writer owes the same
+  before it calls `holding::insert`, `holding::update` or `mix::refresh`.
 - **`Unclassified` is a class, not a gap.** A holding the classifier cannot place is stored under
   it and drawn as its own row rather than folded into a neighbour — the stance `transfer::resolve`
   takes toward a dangling key, and `classify` is where it is argued. **What a filing itself fails

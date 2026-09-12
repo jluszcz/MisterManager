@@ -440,7 +440,7 @@ const FUNDS: [Entry; 9] = [
     Entry {
         key: "g",
         label: Label::Own("refresh"),
-        detail: "Refresh the selected holding's ticker from SEC's latest N-PORT filing. Needs a contact configured in the config file's [sec] section.",
+        detail: "Refresh the selected holding's ticker from SEC's latest N-PORT filing. SEC refuses a request declaring no contact, so a run without one on record refuses too, saying what to add to the config file.",
     },
     Entry {
         key: "G",

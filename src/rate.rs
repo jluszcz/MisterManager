@@ -85,7 +85,14 @@ impl Sub for BasisPoints {
     }
 }
 
-/// A percentage with two decimals, no sign: `BasisPoints(3_600)` is `36.00`.
+/// A percentage with two decimals: `BasisPoints(3_600)` is `36.00`, and
+/// `BasisPoints(-500)` is `-5.00`.
+///
+/// Signed because [`Sub`] above produces negative ones and both of the places
+/// that spend them draw the result: the gap between a target and an actual,
+/// and a composition whose slices claim more than the whole of themselves. A
+/// `Display` dropping the sign would draw an over-weight class as an
+/// under-weight one.
 ///
 /// On the type rather than beside a screen, because the Funds screen and the
 /// report both print these and a share the two rendered differently would
@@ -143,6 +150,18 @@ mod tests {
             Percent::ONE_HUNDRED.saturating_sub(Percent(120)),
             Percent::ZERO
         );
+    }
+
+    /// `Sub` produces these and both sinks draw them, so the sign is part of
+    /// the figure rather than something a screen adds back.
+    #[test]
+    fn a_negative_basis_point_figure_prints_its_sign() {
+        assert_eq!(BasisPoints(3_600).to_string(), "36.00");
+        assert_eq!(
+            (BasisPoints(1_800) - BasisPoints(5_937)).to_string(),
+            "-41.37"
+        );
+        assert_eq!(BasisPoints(-5).to_string(), "-0.05");
     }
 
     #[test]

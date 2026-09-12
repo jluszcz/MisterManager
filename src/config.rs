@@ -96,7 +96,12 @@ pub struct Sec {
 /// `sec_contact` reaches it as a bare `Option<String>`. What both already
 /// say the same way lives here, the same reason `goal::NO_TAX_RATE` is one
 /// constant rather than two hand-written sentences: the TOML key this names
-/// has one spelling, and the sentence naming it should too.
+/// has one spelling, and the sentence naming it should too. The Funds help
+/// panel is the third reader and deliberately spells no key at all -- a
+/// `detail` is a `&'static str` in a `const` table, so it could only carry
+/// this by restating it, and what an owner pressing `?` needs is that the key
+/// has a prerequisite rather than the TOML to satisfy it with. The refusal
+/// itself is one keystroke away and says the rest.
 pub const ADD_SEC_CONTACT: &str = "add a [sec] section with a contact line";
 
 /// `$XDG_CONFIG_HOME/mistermanager/config.toml`, or `~/.config` when it is

@@ -198,11 +198,29 @@ fn main() -> Result<()> {
                 })?
                 .contact
                 .clone();
+            // Uppercased and trimmed where it is typed, the rule the Funds
+            // form's `commit` already answers to: a ticker is the key
+            // `fund_mix` is stored under and none of the three places it is
+            // one folds case, so a row written under `usm` would be a second
+            // composition no holding typed `USM` could ever read. Every
+            // other route into `refresh` reads `holding`, where the form has
+            // already normalised it; this is the one that does not.
             let tickers = match ticker {
-                Some(ticker) => vec![ticker],
+                Some(ticker) => vec![ticker.trim().to_uppercase()],
                 None => db::holding::tickers(&db)?,
             };
-            print_refreshed(&mix::refresh(&db, &contact, &tickers)?);
+            let refreshed = mix::refresh(&db, &contact, &tickers)?;
+            print_refreshed(&refreshed);
+            // The scriptable route, so a run where nothing succeeded says so
+            // in its exit code as well as on stderr. A partial run still
+            // exits 0 -- some tickers did update, and their compositions are
+            // written.
+            if refreshed.updated.is_empty() && !refreshed.failed.is_empty() {
+                anyhow::bail!(
+                    "no ticker was refreshed: all {} failed",
+                    refreshed.failed.len()
+                );
+            }
         }
         Some(Command::Backup { force, status }) => {
             if status {
