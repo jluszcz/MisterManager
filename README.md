@@ -288,11 +288,16 @@ not parse, the request is refused — is reported on its own and leaves the rest
 along with whatever composition that ticker already had. A run where every ticker failed exits
 non-zero, so a script can tell it from one where some got through.
 
-The classification is a heuristic, and it says so when it misses: what it cannot place lands in
-`Unclassified` and is drawn as its own row rather than folded in with something else. So does what
-the filing itself leaves out — holdings coming to 99.3% of a fund rather than 100% is ordinary, and
-the seven tenths it is short belongs to no class the filing named. Money in a labelled bucket is a
-question you can answer; money in the wrong bucket is invisible.
+The classification is a heuristic, and what it cannot place lands in `Unclassified` rather than
+being folded into whichever class looks closest. So does what the filing itself leaves out —
+holdings coming to 99.3% of a fund rather than 100% is ordinary, and the seven tenths it is short
+belongs to no class the filing named. Both reach the summary inside `Other`, the row the age rule
+has no opinion on, alongside the cash: a residual is a rounding artefact far more often than a
+real miss, and a row of its own reading `-0.03%` on every ordinary portfolio is a row nobody
+finishes reading. What the summary will not do is renormalise a gap away across the classes that
+*were* placed — `Other` goes negative when a mix claims more than the whole of itself, and the
+holdings no filing was fetched for at all are counted out of the denominator and named above the
+table.
 
 ## Demo mode
 

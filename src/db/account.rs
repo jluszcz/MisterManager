@@ -251,6 +251,18 @@ impl TaxTreatment {
             TaxTreatment::TaxFree => "Tax-free",
         }
     }
+
+    /// This treatment's own place in [`TaxTreatment::ALL`].
+    ///
+    /// `allocation::apportion` keys a column of its grid by it, for the
+    /// reason `AssetClass::index` exists: a second copy of this mapping is
+    /// a reordering of `ALL` away from labelling every column wrongly.
+    pub fn index(self) -> usize {
+        TaxTreatment::ALL
+            .iter()
+            .position(|treatment| *treatment == self)
+            .expect("TaxTreatment::ALL names every variant")
+    }
 }
 
 impl FromStr for TaxTreatment {

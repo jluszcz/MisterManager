@@ -385,16 +385,43 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   `holding` first, so it has nothing already normalised to read. Any further writer owes the same
   before it calls `holding::insert`, `holding::update` or `mix::refresh`.
 - **`Unclassified` is a class, not a gap.** A holding the classifier cannot place is stored under
-  it and drawn as its own row rather than folded into a neighbour — the stance `transfer::resolve`
-  takes toward a dangling key, and `classify` is where it is argued. **What a filing itself fails
-  to place goes there too, and the same function decides which of the two a gap is.** A total
-  inside `classify`'s own conversion rounding is dust and lands on the largest slice, where a point
-  either way is invisible; a wider one came from the filing — an N-PORT footing to 99.3% is
-  ordinary — and is `Unclassified`, positive where the filing under-reports and negative where it
-  over-foots. `allocation::apportion` answers a `fund_mix` row the same way for the row no refresh
-  wrote, the table constraining no footing of its own, so the summary foots *and* says what it
-  could not place. A zero `Unclassified` is dropped rather than drawn, the way the two Planning
-  transfer footers are: a defect report reading "none" every time is one nobody finishes reading.
+  it rather than folded into a neighbour — the stance `transfer::resolve` takes toward a dangling
+  key, and `classify` is where it is argued. **What a filing itself fails to place goes there too,
+  and the same function decides which of the two a gap is.** A total inside `classify`'s own
+  conversion rounding is dust and lands on the largest slice, where a point either way is
+  invisible; a wider one came from the filing — an N-PORT footing to 99.3% is ordinary — and is
+  `Unclassified`, positive where the filing under-reports and negative where it over-foots.
+  `allocation::apportion` answers a `fund_mix` row the same way for the row no refresh wrote, the
+  table constraining no footing of its own, so the summary foots *and* keeps what it could not
+  place in a labelled bucket.
+  **What it does not get is a row of its own.** `allocation::Class::Other` is the row, and it
+  carries cash and the residual together: two rows about what the age rule is not asking about is
+  a third of the panel spent saying nothing, and the residual is a rounding artefact far more
+  often than a real miss. The cost is real and is the owner's decision — a fund the classifier
+  silently misreads now reaches the summary inside `Other` rather than under a name that says
+  what went wrong. What still surfaces is the arithmetic: `Other` states a negative share when a
+  mix over-foots, and `Allocation::coverage` goes on naming the holdings no filing was fetched
+  for at all.
+- **Every class keeps its zero, the residual included.** `slices` carries one entry per
+  `AssetClass` whatever the portfolio holds, because the six are the vocabulary the targets and
+  the bar are stated in. The residual used to be dropped when it was nothing, the way the two
+  Planning transfer footers are; it is not, now that `Other` draws it beside the cash and the row
+  exists whatever it holds.
+- **The look-through is drawn as four classes, not six, and the two mediums read one list.**
+  `allocation::Class` is that list — `Bonds`, the two equities, and `Other` — and it owns each
+  one's label, the `AssetClass`es behind it, its place in `palette::CLASSES`, and whether the age
+  rule targets it. The summary's rows and the bar's segments are both spellings of it, so a
+  segment and the row above it are one statement; before it they were two lists, and the bar
+  split a bond number the row beside it could not. `AssetClass` keeps all six variants, `fund_mix`
+  still stores the bond split and `mix::classify` still finds it — what collapses is the drawing.
+- **The summary is one grid, rounded once, read two ways.** `apportion` apportions over class ×
+  tax treatment in a single largest-remainder pass, so a class's three tax columns foot to its
+  `Actual` and a treatment's four classes foot to what that treatment holds. Rounding the two
+  summaries separately would have each foot on its own and disagree with the other by the point
+  one of them rounded differently, which is the one thing a table read in both directions cannot
+  afford. A holding whose account states no treatment is in the classes and in no column, so the
+  columns visibly sum short rather than landing somewhere the database never said; the schema's
+  paired `CHECK` is what makes that unreachable through the app.
 - **A fund with no `fund_mix` row has never been fetched, which is not the same as holding
   nothing.** `tui::fund::Row::stock_percent` and `Row::as_of` are `Option` for that reason, and
   both sinks draw their own "nothing here" rather than a zero — a fund genuinely reported to hold
