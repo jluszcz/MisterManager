@@ -12,7 +12,8 @@
 //! changes every quarter and its holdings change every day, so a golden
 //! weight here would rot on a schedule rather than report a defect: what is
 //! pinned is that the three hops resolve to each other, that a filing comes
-//! back with holdings in it, that the classified weights foot to
+//! back with holdings in it, that those holdings' own `pctVal`s come to
+//! roughly the whole of the fund, that the classified weights foot to
 //! `BasisPoints::ONE`, and that something landed in a class the age rule can
 //! read.
 //!
@@ -120,6 +121,21 @@ fn the_three_hops_resolve_and_the_weights_foot() {
         filing.report_date <= chrono::Local::now().date_naive(),
         "the filing reports as of {}, which has not happened",
         filing.report_date
+    );
+
+    // Every holding's own `pctVal`, before `classify` touches any of it.
+    // `classify` *makes* its output foot, so the assertion below cannot
+    // notice a holding whose weight was read off the wrong element -- and
+    // N-PORT nests subtrees inside `<invstOrSec>` carrying the same element
+    // names, which is what `parse_filing`'s depth guard exists for. A
+    // filing's holdings are shares of its net assets, so they come to
+    // roughly the whole of it; the band is wide because derivatives, cash
+    // and payables push a real filing off 100 by a few points either way,
+    // and a nested weight read as a holding's own lands nowhere near it.
+    let reported: f64 = filing.holdings.iter().map(|h| h.pct_val).sum();
+    assert!(
+        (90.0..=110.0).contains(&reported),
+        "the filing's holdings come to {reported}% of its net assets"
     );
 
     let slices = mix::classify(&filing.holdings);

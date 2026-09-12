@@ -242,12 +242,13 @@ enum Field {
 ///
 /// `pct_val` is the one field with no sensible default: every other scalar
 /// stands in for the filing having simply not said something, but a missing
-/// weight is not "zero" the way a missing title is "no title" --
-/// `classify`'s remainder step (`weights[largest] += 10_000 - total`) dumps
-/// whatever a filing under-reports onto its largest slice, so a holding read
-/// as `0.0` here does not shrink the mix, it silently becomes points of
-/// whatever class happens to be biggest. `Option` is what keeps that
-/// distinguishable from an honestly-reported zero for as long as it can be.
+/// weight is not "zero" the way a missing title is "no title". A holding read
+/// as `0.0` here is a holding this parser dropped, and `classify` has no way
+/// to tell it from a filing that genuinely under-reports -- so the weight
+/// goes to `Unclassified`, and a fund reads as unplaceable when what is
+/// actually wrong is that a row was lost on the way in. `Option` is what
+/// keeps that distinguishable from an honestly-reported zero for as long as
+/// it can be.
 struct PendingHolding {
     name: String,
     title: String,
@@ -299,6 +300,16 @@ impl PendingHolding {
 /// Only the elements [`RawHolding`] and [`Filing::report_date`] need are
 /// tracked; everything else in the filing -- `fundInfo`, `derivativeInfo`,
 /// identifiers other than `cusip` -- is walked over rather than read.
+///
+/// **A holding's fields are read as its direct children and at no other
+/// depth**, which is what `holding_depth` is counted for. N-PORT nests
+/// subtrees inside `<invstOrSec>` that carry the very element names this
+/// reads: a repurchase agreement's `repurchaseCollaterals/
+/// repurchaseCollateral` has an `<assetCat>` of its own, and the derivative
+/// subtrees carry name-, title- and cusip-shaped leaves. Matched at any
+/// depth, the last of those to be walked wins, and a repo position takes its
+/// collateral's category into `classify` -- a holding reclassified out of
+/// the class the filing actually put it in, with nothing anywhere to say so.
 pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
     let mut reader = Reader::from_reader(xml);
 
@@ -307,22 +318,34 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
     let mut current: Option<PendingHolding> = None;
     let mut holdings: Vec<RawHolding> = Vec::new();
     let mut pending: Option<Field> = None;
+    // How many elements are open, and which of those depths the holding
+    // being read was opened at -- so `depth == holding_depth + 1` is "a
+    // direct child of this `<invstOrSec>`" and nothing deeper qualifies.
+    let mut depth: usize = 0;
+    let mut holding_depth: Option<usize> = None;
 
     loop {
         match reader.read_event()? {
             Event::Eof => break,
-            Event::Start(e) => match e.local_name().as_ref() {
-                b"genInfo" => in_gen_info = true,
-                b"repPdDate" if in_gen_info => pending = Some(Field::ReportDate),
-                b"invstOrSec" => current = Some(PendingHolding::new()),
-                b"name" if current.is_some() => pending = Some(Field::Name),
-                b"title" if current.is_some() => pending = Some(Field::Title),
-                b"cusip" if current.is_some() => pending = Some(Field::Cusip),
-                b"pctVal" if current.is_some() => pending = Some(Field::PctVal),
-                b"assetCat" if current.is_some() => pending = Some(Field::AssetCat),
-                b"invCountry" if current.is_some() => pending = Some(Field::InvCountry),
-                _ => {}
-            },
+            Event::Start(e) => {
+                depth += 1;
+                let child_of_holding = current.is_some() && holding_depth == Some(depth - 1);
+                match e.local_name().as_ref() {
+                    b"genInfo" => in_gen_info = true,
+                    b"repPdDate" if in_gen_info => pending = Some(Field::ReportDate),
+                    b"invstOrSec" => {
+                        current = Some(PendingHolding::new());
+                        holding_depth = Some(depth);
+                    }
+                    b"name" if child_of_holding => pending = Some(Field::Name),
+                    b"title" if child_of_holding => pending = Some(Field::Title),
+                    b"cusip" if child_of_holding => pending = Some(Field::Cusip),
+                    b"pctVal" if child_of_holding => pending = Some(Field::PctVal),
+                    b"assetCat" if child_of_holding => pending = Some(Field::AssetCat),
+                    b"invCountry" if child_of_holding => pending = Some(Field::InvCountry),
+                    _ => {}
+                }
+            }
             // A self-closing element carries no text, so it is opened and
             // closed in this one step -- there is no `Text` event coming to
             // fill `pending`, and setting it anyway would let the next
@@ -375,6 +398,7 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
                         if let Some(holding) = current.take() {
                             holdings.push(holding.finish(holdings.len() + 1)?);
                         }
+                        holding_depth = None;
                     }
                     _ => {}
                 }
@@ -383,6 +407,7 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
                 // leaf's `pending` is cleared here instead of surviving to
                 // catch the whitespace before its next sibling.
                 pending = None;
+                depth = depth.saturating_sub(1);
             }
             _ => {}
         }
@@ -486,6 +511,54 @@ mod tests {
         assert_eq!(holding.inv_country, "US");
     }
 
+    /// N-PORT nests subtrees inside `<invstOrSec>` that carry the same
+    /// element names a holding's own fields do: a repurchase agreement's
+    /// collateral has an `<assetCat>`, and the derivative subtrees carry
+    /// name-, title- and cusip-shaped leaves. Read at any depth, the nested
+    /// ones are walked last and win, so a repo position is classified as its
+    /// collateral -- money moved to another class with nothing on the row
+    /// saying it was. Neither committed fixture nests anything, which is why
+    /// this is written out here.
+    #[test]
+    fn a_nested_subtrees_fields_never_overwrite_the_holdings_own() {
+        let xml = br#"<edgarSubmission><formData>
+            <genInfo><repPdDate>2026-06-30</repPdDate></genInfo>
+            <invstOrSecs>
+                <invstOrSec>
+                    <name>A Held Company</name>
+                    <title>A Held Company</title>
+                    <cusip>000000001</cusip>
+                    <pctVal>100.0</pctVal>
+                    <assetCat>DBT</assetCat>
+                    <invCountry>US</invCountry>
+                    <repurchaseAgrmt>
+                        <repurchaseCollaterals>
+                            <repurchaseCollateral>
+                                <name>Some Collateral</name>
+                                <title>Some Collateral</title>
+                                <cusip>000000009</cusip>
+                                <pctVal>12.5</pctVal>
+                                <assetCat>EC</assetCat>
+                                <invCountry>DE</invCountry>
+                            </repurchaseCollateral>
+                        </repurchaseCollaterals>
+                    </repurchaseAgrmt>
+                </invstOrSec>
+            </invstOrSecs>
+        </formData></edgarSubmission>"#;
+
+        let filing = parse_filing(xml).unwrap();
+
+        assert_eq!(filing.holdings.len(), 1);
+        let holding = &filing.holdings[0];
+        assert_eq!(holding.asset_cat, "DBT", "the collateral's category won");
+        assert_eq!(holding.inv_country, "US", "the collateral's country won");
+        assert_eq!(holding.name, "A Held Company");
+        assert_eq!(holding.title, "A Held Company");
+        assert_eq!(holding.cusip, "000000001");
+        assert_eq!(holding.pct_val, 100.0);
+    }
+
     #[test]
     fn a_document_that_is_not_a_filing_is_an_error_naming_what_was_missing() {
         let err = parse_filing(b"<nonsense/>").unwrap_err();
@@ -495,10 +568,10 @@ mod tests {
         );
     }
 
-    /// `classify`'s remainder step dumps whatever a filing under-reports
-    /// onto its largest slice, so a holding silently read as `0.0` does not
-    /// shrink the mix -- it becomes points of whatever class is biggest.
-    /// This is the "absent entirely" shape: no `<pctVal>` at all.
+    /// A holding read as `0.0` is one this parser lost, and `classify`
+    /// cannot tell that from a filing that under-reports -- it would send
+    /// the weight to `Unclassified` and call the fund unplaceable. This is
+    /// the "absent entirely" shape: no `<pctVal>` at all.
     #[test]
     fn a_holding_with_no_percentage_element_is_an_error_naming_the_holding() {
         let xml = br#"<edgarSubmission><formData>
