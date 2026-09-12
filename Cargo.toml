@@ -31,8 +31,7 @@ ratatui = "0.30"
 # (`cargo tree -i aws-lc-sys` walks it back through rustls and reqwest), which
 # is the second backend beside the ring above, and the C it compiles. Nothing
 # written on this line can drop it -- the reqwest declaration that decides it
-# is rust-utils', and the change is there: see
-# docs/superpowers/plans/2026-09-11-rust-utils-tls-provider.md. What it buys
+# is rust-utils', and the change belongs in that repository. What it buys
 # is build weight and coherence rather than a build that works, which this
 # one does on every target CI builds.
 reqwest = { version = "0.13", default-features = false }
