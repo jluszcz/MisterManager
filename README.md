@@ -222,9 +222,9 @@ steps — the mapping is read before anything is cleared and written back
 after, so `--replace` cannot reopen it.
 
 The accounts arrive named after their codes, in the kind's default band. The
-name, color, band, position, interest policy, `Savings` block and which of the
-two money forms open on the account are all yours, set on screen `9`, and no
-import touches them again: `account` is deliberately outside the tables a
+name, color, band, position, interest policy, tax treatment, `Savings` block
+and which of the two money forms open on the account are all yours, set on
+screen `9`, and no import touches them again: `account` is deliberately outside the tables a
 `--replace` clears. Neither is `recurring_txn` — the rules you typed, and the
 paycheck flag among them, survive a re-import.
 

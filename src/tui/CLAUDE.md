@@ -323,20 +323,48 @@ derive it from `MIN_WIDTH` rather than write the offset out.
 
 **A column holding one of a closed set of labels takes its width from that set, never from a
 number.** `accounts::label_width` is that measurement and `accounts::widths` is where the screen's
-seven are assembled — five of them off `Kind::ALL`, `Group::ALL`, `InterestPolicy::ALL`,
+seven are assembled — five of them off `TaxTreatment::ALL`, `Group::ALL`, `InterestPolicy::ALL`,
 `Block::ALL` and `Source::ALL`, the same lists the cells are drawn from. A hardcoded width is a
 second statement of how long the longest label is, and a variant added or renamed moves one of the
 two; what it costs is not an ellipsis but a word that still reads, so `Investment` reported itself
 as `Investme` with nothing on screen saying it had been cut.
 
 The claim is checked against `widths()` rather than against a drawn table, in
-`every_column_is_as_wide_as_the_widest_label_it_can_hold`. A drawn table cannot make it: `Kind` and
-`Band` can both hold `Investment`, so a `Kind` cell cut short still leaves the word whole one
-column over and a `contains` check passes — and the fixture behind
-`every_column_fits_the_minimum_width` held no investment account, so the widest `Kind` label was
-never drawn at all. That test still earns its place, being the one that holds the seven to
-`MIN_WIDTH` together; `an_investment_account_spells_its_kind_and_its_band_whole` is what pins the
-pair in the drawn row.
+`every_column_is_as_wide_as_the_widest_label_it_can_hold`. A drawn table cannot make it: a
+`contains` check passes on a cut cell wherever some other column spells the same word whole, which
+is how `Investment` stood as `Investme` for as long as it did — `Kind` and `Band` both held it, and
+the fixture behind `every_column_fits_the_minimum_width` held no investment account at all. That
+test still earns its place, being the one that holds the seven to `MIN_WIDTH` together;
+`an_investment_account_spells_its_band_whole` pins the widest of them in a drawn row, and
+`an_investment_account_spells_its_tax_treatment_whole` the one column whose header is shorter than
+every label it can hold.
+
+**`Band` is a reading of the kind as well, which is why there is no `Kind` column.** `Group::kind`
+is total — `Checking` and `Savings` are the two bands cash breaks into, and credit and investment
+break into nothing, so their band *is* their kind — and `account::set_group` is what refuses a pair
+that disagrees. A `Kind` column therefore printed a word the band beside it already implied, and
+twice over for a card. What dropping it buys is eleven columns of `Account`, which is most of what
+`Tax` spends; `a_cash_row_names_its_band_rather_than_its_kind` and
+`a_credit_row_names_credit_once_rather_than_twice` are what hold the reading up. `Row::kind`
+survives the column, since the `Interest` cell still asks which kind it is drawing for.
+
+**The one `Min` column is a budget, and an empty screen's message is what it is spent against.**
+`Account` takes what `accounts::widths`' fixed columns leave, and the Accounts screen draws its
+account-less message as a table cell *in* that column — the only one wide enough to hold a
+sentence. So every column added to the screen shortens the sentence the empty state is allowed to
+be, and because a clipped cell draws no ellipsis the screen goes on looking like a screen that
+finished its sentence: adding `Tax` cut `run mm import` off the end of it and left the two tests
+asking after particular words both passing. `the_empty_message_is_drawn_whole` is what refuses that
+trade rather than letting it pass unseen, and `accounts::EMPTY` is where the budget it leaves is
+written down. A screen whose placeholder no longer fits pays for the column in the message, gives
+back a column that was saying something twice, or does not add the column — `Tax` did the first two
+in that order, and the message is a comma shorter for the two the trade came up short by.
+
+**A drawn cell is read at its own header's column, never as one string with its neighbour.** Every
+column but `Account` is a `Constraint::Length`, so a column one character short draws no ellipsis:
+it slides every column right of it one place left. A cell that no longer starts under its header is
+therefore exactly that truncation — and stated that way the drawn-row tests above go on holding
+whatever the screen grows or drops to the left of the columns they name.
 
 **A key that blocks the event loop announces itself one frame early.** `mix::refresh` is the only
 one — nothing in this crate is async, so `g`/`G` freeze the app for as long as SEC takes. The key
@@ -986,6 +1014,14 @@ deferred to nothing.
   about it. Which fields each shows, and why the split falls there, are `AccountForm::fields`' to
   state, including why an edit form's length depends on the kind: no count is written down here,
   because there is no one number to write.
+  - **The `Tax` column draws what those two fields write, and `—` where the kind can hold
+    nothing.** Headed the word the Funds screen heads its own with, and spelled out of
+    `TaxTreatment::label` there too, so one account's treatment reads the same on the screen that
+    sets it and the screen that groups holdings by it. The dash is the idiom `Interest` already
+    gives a card and `Savings` an account that is no container: the field is unrepresentable on
+    that row rather than unanswered, which is the `Option` on `accounts::Row::tax` reading the
+    schema's paired `CHECK` back. It leads the `Band` column, which is the nearest thing to the
+    kind the table still draws, and that is the order the two forms ask in.
   - **The `Savings` field is the one thing on this screen an import *reads*.** Every other field is
     a placement the import leaves alone; this one gates it, because the sheet names its two blocks
     by position and carries no account code, so until both are pointed at a container `mm import`

@@ -38,8 +38,21 @@ const CODE_WIDTH: u16 = 8;
 /// behind the `import` feature, so a default build naming it would send the
 /// owner to a subcommand its own binary refuses. `a` is the way out either
 /// build has, and on a build without an importer it is the whole message.
+///
+/// **It is drawn as a table cell, so its length is bounded by `Account`** --
+/// the one [`Constraint::Min`] on this screen, whose width is whatever
+/// [`widths`]'s fixed columns leave at [`super::MIN_WIDTH`]. That is a
+/// budget every column added here spends out of, and a clipped cell draws no
+/// ellipsis, so the screen goes on looking like a screen that finished its
+/// sentence. `the_empty_message_is_drawn_whole` is what refuses that trade
+/// rather than letting it pass unseen.
+///
+/// The budget is forty-two characters and this is forty-two, which is why
+/// the comma a reader might expect after `a` is not there: the `Tax` column
+/// cost thirteen and dropping `Kind` -- whose cells `Band` already implied,
+/// [`Group::kind`] being total -- gave back only eleven.
 #[cfg(feature = "import")]
-const EMPTY: &str = "no accounts yet — press a, or run mm import";
+const EMPTY: &str = "no accounts yet — press a or run mm import";
 #[cfg(not(feature = "import"))]
 const EMPTY: &str = "no accounts yet — press a";
 
@@ -51,6 +64,11 @@ pub struct Row {
     pub kind: Kind,
     pub group: Group,
     pub policy: InterestPolicy,
+    /// How the money in this account is taxed. `Some` for an investment
+    /// account and `None` for every other kind -- not a gap but the schema's
+    /// paired `CHECK` read back, which refuses the column on any kind but
+    /// that one.
+    pub tax: Option<TaxTreatment>,
     /// Which block of the `Savings` sheet this account is the container for,
     /// if either. The one thing on this screen that the import *reads* rather
     /// than merely leaves alone: without both blocks pointed somewhere,
@@ -736,7 +754,7 @@ fn widths() -> [Constraint; 7] {
     [
         Constraint::Length(CODE_WIDTH),
         Constraint::Min(16),
-        label_width("Kind", Kind::ALL.iter().map(|k| k.label())),
+        label_width("Tax", TaxTreatment::ALL.iter().map(|t| t.label())),
         label_width("Band", Group::ALL.iter().map(|g| g.label())),
         label_width("Interest", InterestPolicy::ALL.iter().map(|p| p.label())),
         label_width("Savings", SavingsBlock::ALL.iter().map(|b| b.label())),
@@ -754,7 +772,12 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
             TableRow::new(vec![
                 Cell::from(crate::demo::text(&r.code).into_owned()),
                 account_cell(&r.account),
-                Cell::from(r.kind.label()),
+                // Only an investment account is taxed as a pot of its own,
+                // which is the same `CHECK` the field's `Option` reads back.
+                Cell::from(match r.tax {
+                    Some(treatment) => treatment.label(),
+                    None => "—",
+                }),
                 Cell::from(r.group.label()),
                 // Only a cash account holds goals, so only a cash account has
                 // an interest posting to divide.
@@ -782,7 +805,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
     let header = TableRow::new(vec![
         Cell::from("Code"),
         Cell::from("Account"),
-        Cell::from("Kind"),
+        Cell::from("Tax"),
         Cell::from("Band"),
         Cell::from("Interest"),
         Cell::from("Savings"),
@@ -828,6 +851,7 @@ mod tests {
             kind,
             group,
             policy: InterestPolicy::Manual,
+            tax: None,
             block: None,
             defaults: Vec::new(),
         }
@@ -1217,6 +1241,26 @@ mod tests {
         assert!(drawn.contains("press a"), "{drawn}");
     }
 
+    /// The message is drawn *whole*, which is a claim about its length
+    /// rather than about its words.
+    ///
+    /// It is a table cell, so it is clipped to `Account` -- and `Account` is
+    /// the one `Constraint::Min`, whose width is whatever the fixed columns
+    /// leave. So every column added to this screen shortens the sentence the
+    /// empty state is allowed to be, and a clipped cell draws no ellipsis:
+    /// the `Tax` column cut `run mm import` off the end and the screen went
+    /// on looking like a screen that had finished its sentence. The two
+    /// tests below ask after particular words and would both still pass with
+    /// the last one missing; this is the one that fails when a column takes
+    /// the room.
+    #[test]
+    fn the_empty_message_is_drawn_whole() {
+        let mut accounts = Accounts::new();
+        accounts.set_rows(Vec::new());
+        let drawn = drawn(&accounts).join("\n");
+        assert!(drawn.contains(EMPTY), "{EMPTY:?} was cut:\n{drawn}");
+    }
+
     /// The second way out is the import, and it is offered only by a build
     /// that has one. The `not` half is the half worth pinning: a default
     /// build has no `mm import` subcommand, so naming it here would hand a
@@ -1270,13 +1314,20 @@ mod tests {
         rows[1].block = Some(SavingsBlock::Goals);
         rows[1].defaults = Source::ALL.to_vec();
         rows[2].block = Some(SavingsBlock::Buckets);
+        // The investment account this fixture otherwise lacks: `Investment`
+        // is the widest `Band` label there is, and `Tax-deferred` is the
+        // widest the `Tax` column ever holds.
+        let mut held = row(6, "RET", "Long Haul", Kind::Investment, Group::Investment);
+        held.tax = Some(TaxTreatment::TaxDeferred);
+        rows.push(held);
         accounts.set_rows(rows);
         let table = drawn(&accounts).join("\n");
 
         for expected in [
             "Code",
             "Account",
-            "Kind",
+            "Tax",
+            "Tax-deferred",
             "Band",
             "Interest",
             "Savings",
@@ -1294,13 +1345,14 @@ mod tests {
 
     /// Every column is as wide as the widest label that can land in it.
     ///
-    /// Over [`widths`] rather than over a drawn table, because the drawn
-    /// table cannot make this claim: `Kind` and `Band` can both hold
-    /// `Investment`, so a `Kind` column cut to `Investme` still leaves the
-    /// word whole one column over and a `contains` check passes. That is
-    /// what let the truncation stand -- and the fixture behind
-    /// `every_column_fits_the_minimum_width` held no investment account, so
-    /// the widest `Kind` label was never drawn at all.
+    /// Over [`widths`] rather than over a drawn table, because a drawn table
+    /// cannot make this claim: a `contains` check passes on a cut cell
+    /// wherever some other column spells the same word whole, which is how
+    /// `Investment` stood as `Investme` for as long as it did -- `Kind` and
+    /// `Band` both held it, and the fixture behind
+    /// `every_column_fits_the_minimum_width` held no investment account at
+    /// all. `Band` is the only column naming that word now, and this is
+    /// still the test that would catch it.
     ///
     /// The five lists here are the same ones `label_width` measures, so a
     /// variant added to any of them arrives with its column already checked.
@@ -1322,7 +1374,11 @@ mod tests {
         let labels = |iter: &mut dyn Iterator<Item = &'static str>| {
             iter.map(str::to_string).collect::<Vec<String>>()
         };
-        check(2, "Kind", labels(&mut Kind::ALL.iter().map(|k| k.label())));
+        check(
+            2,
+            "Tax",
+            labels(&mut TaxTreatment::ALL.iter().map(|t| t.label())),
+        );
         check(3, "Band", labels(&mut Group::ALL.iter().map(|g| g.label())));
         check(
             4,
@@ -1338,11 +1394,17 @@ mod tests {
     }
 
     /// And the widest of them, drawn: an investment account spells
-    /// `Investment` in `Kind` and again in `Band`, one column-space apart, so
-    /// a `Kind` cell one character short shows up as the gap closing rather
-    /// than as a word a reader can still guess at.
+    /// `Investment` in `Band`.
+    ///
+    /// Read at the header's own column rather than as one string with a
+    /// neighbour, because every column here but `Account` is a
+    /// `Constraint::Length`: one that is a character short draws no
+    /// ellipsis, it slides every column right of it one place left, so a
+    /// cell that no longer starts under its header is exactly the truncation
+    /// this is looking for. Stated that way it goes on holding whatever the
+    /// screen grows between the columns it names.
     #[test]
-    fn an_investment_account_spells_its_kind_and_its_band_whole() {
+    fn an_investment_account_spells_its_band_whole() {
         let mut accounts = Accounts::new();
         accounts.set_rows(vec![row(
             1,
@@ -1351,14 +1413,115 @@ mod tests {
             Kind::Investment,
             Group::Investment,
         )]);
+        let table = drawn(&accounts);
+        let at = usize::from(crate::tui::column_of(
+            table
+                .iter()
+                .find(|line| line.contains("Band"))
+                .expect("the header was not drawn"),
+            "Band",
+        ));
+        let label = Group::Investment.label();
+        let cell: String = table
+            .iter()
+            .find(|line| line.contains("Long Haul"))
+            .expect("the account row was not drawn")
+            .chars()
+            .skip(at)
+            .take(label.chars().count())
+            .collect();
+        assert_eq!(
+            cell,
+            label,
+            "a truncated cell left of Band:\n{}",
+            table.join("\n")
+        );
+    }
+
+    /// A cash account's row names the band and never the kind, because
+    /// `Group::kind` is total: `Checking` and `Savings` are the two bands
+    /// cash breaks into, so either of them says `Cash` without spending a
+    /// column on the word. That is what makes the band column a reading of
+    /// both, and what bought back the room the `Tax` column spends.
+    #[test]
+    fn a_cash_row_names_its_band_rather_than_its_kind() {
+        let mut accounts = Accounts::new();
+        accounts.set_rows(vec![row(2, "SAV", "Rainy Day", Kind::Cash, Group::Savings)]);
+        let table = drawn(&accounts);
+        let cells = table
+            .iter()
+            .find(|line| line.contains("Rainy Day"))
+            .expect("the account row was not drawn");
+        assert!(
+            cells.contains(Group::Savings.label()),
+            "no band on\n{}",
+            table.join("\n")
+        );
+        assert!(
+            !cells.contains(Kind::Cash.label()),
+            "the kind is drawn beside the band that already implies it:\n{}",
+            table.join("\n")
+        );
+    }
+
+    /// Credit does not break into bands at all, so `Group::Credit` *is* the
+    /// kind -- the one case where dropping the kind column dropped a word
+    /// the screen was printing twice. Once, now.
+    #[test]
+    fn a_credit_row_names_credit_once_rather_than_twice() {
+        let mut accounts = Accounts::new();
+        accounts.set_rows(vec![row(4, "CC1", "Card One", Kind::Credit, Group::Credit)]);
+        let table = drawn(&accounts);
+        let cells = table
+            .iter()
+            .find(|line| line.contains("Card One"))
+            .expect("the account row was not drawn");
+        assert_eq!(cells.matches(Group::Credit.label()).count(), 1, "{cells:?}");
+    }
+
+    /// The `Tax` column spells an investment account's treatment whole, and
+    /// the widest of the three is the one that has to prove it: `Tax-deferred`
+    /// is four characters longer than the header above it, so a column sized
+    /// off `Tax` rather than off `TaxTreatment::ALL` cuts it to `Tax-`, which
+    /// still reads as a treatment and names the wrong one.
+    #[test]
+    fn an_investment_account_spells_its_tax_treatment_whole() {
+        let mut accounts = Accounts::new();
+        let mut held = row(1, "RET", "Long Haul", Kind::Investment, Group::Investment);
+        held.tax = Some(TaxTreatment::TaxDeferred);
+        accounts.set_rows(vec![held]);
         let table = drawn(&accounts).join("\n");
         assert!(
-            table.contains(&format!(
-                "{} {}",
-                Kind::Investment.label(),
-                Group::Investment.label()
-            )),
-            "a truncated Kind cell:\n{table}"
+            table.contains(TaxTreatment::TaxDeferred.label()),
+            "a truncated Tax cell:\n{table}"
+        );
+    }
+
+    /// A cash or credit account cannot hold a treatment at all -- the
+    /// schema's paired `CHECK` refuses the column on any kind but
+    /// investment -- so its cell draws the same `—` the `Interest` column
+    /// gives a card and the `Savings` column gives an account that is no
+    /// container. Read at the `Tax` header's own column, because three other
+    /// columns on this row draw that character too.
+    #[test]
+    fn an_account_that_can_hold_no_treatment_draws_a_dash_for_one() {
+        let mut accounts = Accounts::new();
+        accounts.set_rows(vec![row(1, "CHK", "Everyday", Kind::Cash, Group::Checking)]);
+        let table = drawn(&accounts);
+        let header = table
+            .iter()
+            .find(|line| line.contains("Tax"))
+            .expect("the Tax header was not drawn");
+        let at = usize::from(crate::tui::column_of(header, "Tax"));
+        let cell = table
+            .iter()
+            .find(|line| line.contains("Everyday"))
+            .expect("the account row was not drawn");
+        assert_eq!(
+            cell.chars().nth(at),
+            Some('—'),
+            "the Tax cell at column {at} of\n{}",
+            table.join("\n")
         );
     }
 

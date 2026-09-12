@@ -70,6 +70,7 @@ impl App {
                 kind: account.kind,
                 group: account.group,
                 policy: account::interest_policy(&self.db, account.id)?,
+                tax: account.tax_treatment,
                 block: block_of(&containers, account.id),
                 defaults: sources_of(&defaults, account.id),
             });
