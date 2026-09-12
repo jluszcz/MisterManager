@@ -108,10 +108,23 @@ fund under two spellings is two funds. Nothing here moves money, so a delete mov
 either — and none of these balances reaches the Overview or Net, which stay the spendable net
 worth the dated ledgers add up to.
 
-The `Mix`, `Stock%` and `As of` columns read `—` on every row: a fund's composition is published
-rather than typed, and nothing in the app fetches one yet. A holding whose fund has never been
-looked up and a fund that genuinely holds no stock are different states, so the columns say
-nothing rather than drawing a zero.
+`g` refreshes the selected row's fund from its latest SEC filing and `G` refreshes every fund you
+hold — every one, not only what the account filter and the search are showing. Both need a contact
+in the config file; see [Fund compositions](#fund-compositions), which is also where `mm mixes`
+does the same thing without tying up the screen. Until a fund has been looked up its `Mix`,
+`Stock%` and `As of` columns read `—`: a fund nobody has fetched and a fund that genuinely holds no
+stock are different states, so the columns say nothing rather than drawing a zero.
+
+Above the list sits what the whole portfolio is made of, once anything on screen has a composition
+behind it: a row per asset class with what the age rule asks for beside what you hold and the gap
+between them, and a bar splitting the four classes — U.S. and international stock, U.S. and
+international bond — where the target rows have one number for bonds. What the four leave over,
+cash and anything a filing did not place, is the unfilled tail of the bar. The summary narrows with
+the filters, so `Tab` asks the same question of one account that the unfiltered screen asks of the
+portfolio, and it covers only the funds it has a composition for — when some holding is missing
+one, the title says how many of them it is speaking for. The bond target comes from the birth date
+the workbook import reads; with none on record, the bond row's target reads `—` rather than
+claiming a share of nothing.
 
 ### `7` Recurring Goals
 
@@ -242,6 +255,40 @@ out of that one is the same as it ever was: delete the file and re-import.
 Every figure comes back out of the workbook; what does not — the recurring
 transactions, and the naming, banding and ordering of the accounts — is quick
 to re-enter.
+
+## Fund compositions
+
+What a fund is made of is published rather than typed: `mm` reads it out of the fund's latest
+N-PORT filing on SEC's EDGAR, classifies each of its holdings, and stores the result against the
+ticker — so one lookup prices every account holding that fund.
+
+```bash
+mm mixes                # every ticker any holding names
+mm mixes --ticker USM   # just this one
+```
+
+`g` and `G` on the Funds screen do the same thing without leaving the application, at the cost of
+freezing it until the fetch returns; `mm mixes` is the route that does not.
+
+SEC refuses a request that does not say who is making it, so this is off until a config file gives
+it a contact:
+
+```toml
+# ~/.config/mistermanager/config.toml
+[sec]
+contact = "user@example.com"   # required
+```
+
+There is no default. A run without one refuses and says so rather than asking anonymously.
+
+Requests go out one at a time, well under SEC's published limit of ten a second, and a throttled
+one backs off and tries again. A ticker that fails — SEC lists no series for it, the filing will
+not parse, the request is refused — is reported on its own and leaves the rest of the run alone,
+along with whatever composition that ticker already had.
+
+The classification is a heuristic, and it says so when it misses: what it cannot place lands in
+`Unclassified` and is drawn as its own row rather than folded in with something else. Money in a
+labelled bucket is a question you can answer; money in the wrong bucket is invisible.
 
 ## Demo mode
 
@@ -451,8 +498,8 @@ dependencies that would otherwise reach everywhere are confined by name — `rat
 and a default build carry no spreadsheet parser at all — everything outside `src/db/` reaches the
 database through the query modules rather than a connection, ids are one type per table, and
 `Cents` is the only money type in it. `CLAUDE.md` carries the path-by-path map and states each of those rules in
-full; the module `CLAUDE.md` files under `src/import/`, `src/calc/`, `src/tui/`, `src/report/` and
-`src/backup/` go a level below it.
+full; the module `CLAUDE.md` files under `src/import/`, `src/calc/`, `src/tui/`, `src/report/`,
+`src/backup/` and `src/mix/` go a level below it.
 
 ## Development
 
@@ -475,11 +522,24 @@ MM_REQUIRE_WORKBOOK=1 MM_WORKBOOK=path/to/Money.xlsx \
 `MM_WORKBOOK` is the path to the workbook, `MM_ACCOUNTS` the three accounts no cell of it names —
 the current account and the two `Savings` block containers — and `MM_REQUIRE_WORKBOOK=1` turns a
 skip into a failure. `--features import` is part of that invocation rather than an extra on it:
-every one of these binaries is behind the feature, so without it they compile to nothing and the
+every one of the workbook binaries is behind the feature, so without it they compile to nothing and the
 run goes green having asserted nothing.
 
 Why there is no default path, and the rest of what that sentence is protecting, are in `CLAUDE.md`
 under "The workbook is the test oracle". `tests/common/mod.rs` is what reads the three variables.
+
+One test has a different oracle: `tests/sec_live.rs` asks SEC about a real fund, and is the only
+thing that would notice EDGAR changing a URL or a field name under the fetcher. It runs outside
+`--features import`, and it needs a ticker and the contact
+[Fund compositions](#fund-compositions) sets up:
+
+```bash
+MM_REQUIRE_SEC=1 MM_SEC_TICKER=<ticker> cargo test --test sec_live
+```
+
+`MM_SEC_TICKER` names the fund — a ticker is no more committable than an account code — and
+`MM_REQUIRE_SEC=1` turns its skip into a failure, exactly as `MM_REQUIRE_WORKBOOK=1` does.
+Everything it asserts is structural, so a quarter's worth of new holdings does not turn it red.
 
 ## No real data in the repository
 
