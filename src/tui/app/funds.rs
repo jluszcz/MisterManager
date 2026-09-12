@@ -174,6 +174,10 @@ impl App {
                     balance: h.balance,
                     stock_percent: mix.map(stock_share),
                     as_of: mix.map(|m| m.report_date),
+                    tax_treatment: accounts
+                        .iter()
+                        .find(|a| a.id == h.account_id)
+                        .and_then(|a| a.tax_treatment),
                 }
             })
             .collect();
@@ -227,7 +231,7 @@ fn refresh_status(refreshed: &Refreshed) -> String {
 #[cfg(test)]
 mod tests {
     use super::{Refreshed, refresh_status, stock_share};
-    use crate::allocation::{self, TargetClass};
+    use crate::allocation::{self, Class};
     use crate::db::fund_mix::{self, AssetClass, Slice};
     use crate::db::setting::{self, key};
     use crate::money::Cents;
@@ -683,19 +687,19 @@ mod tests {
         assert_eq!(total, 10_000, "the summary does not foot to 100%");
     }
 
-    /// The classifier's residual is a defect report, so a portfolio with
-    /// nothing unplaced says nothing rather than drawing a zero.
+    /// The residual keeps its slice whatever it holds -- `Class::Other`
+    /// draws it beside the cash, so a portfolio with nothing unplaced reports
+    /// a zero rather than a missing class.
     #[test]
-    fn the_unclassified_row_is_absent_when_nothing_is_unclassified() {
+    fn the_residual_keeps_its_zero_when_nothing_is_unclassified() {
         let mut app = test_support::app_with_mixes();
         test_support::press(&mut app, KeyCode::Char('6'));
 
+        let summary = app.funds.summary();
         assert!(
-            !app.funds
-                .summary()
-                .iter()
-                .any(|s| s.class == AssetClass::Unclassified),
-            "an empty Unclassified row was drawn"
+            summary.iter().any(|s| s.class == AssetClass::Unclassified
+                && s.weight == crate::rate::BasisPoints::ZERO),
+            "the residual lost its slice: {summary:?}"
         );
     }
 
@@ -725,10 +729,7 @@ mod tests {
         let mut app = test_support::app_with_mixes();
         test_support::press(&mut app, KeyCode::Char('6'));
 
-        let bonds = app
-            .funds
-            .summary_row(TargetClass::Bonds)
-            .expect("a Bonds row");
+        let bonds = app.funds.summary_row(Class::Bonds).expect("a Bonds row");
         let summary = app.funds.summary();
         assert_eq!(
             bonds.actual,
@@ -751,7 +752,7 @@ mod tests {
         test_support::press(&mut app, KeyCode::Char('6'));
         app.reload().unwrap();
 
-        let bonds = app.funds.summary_row(TargetClass::Bonds).unwrap();
+        let bonds = app.funds.summary_row(Class::Bonds).unwrap();
         assert_eq!(
             bonds.target, None,
             "a missing birth date drew a zero bond target"

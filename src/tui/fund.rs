@@ -25,9 +25,10 @@ use super::widget::{field_stack, render_fields};
 use super::{
     Account, Chrome, GUTTER, Label, account_cell, render_table, right_header, whole_amount,
 };
-use crate::allocation::{self, Allocation, SummaryRow, TargetClass, UNTARGETED};
+use crate::allocation::{self, Allocation, Class, Held, SummaryRow};
 use crate::calc::fund::Targets;
 use crate::db::account;
+use crate::db::account::TaxTreatment;
 use crate::db::fund_mix::Slice;
 use crate::db::{AccountId, HoldingId};
 use crate::money::Cents;
@@ -37,7 +38,7 @@ use chrono::NaiveDate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Line as TextLine;
+use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Block, Cell, Padding, Paragraph, Row as TableRow, Table};
 use std::collections::HashMap;
 
@@ -56,6 +57,13 @@ pub struct Row {
     pub balance: Cents,
     pub stock_percent: Option<BasisPoints>,
     pub as_of: Option<NaiveDate>,
+    /// How the account holding it is taxed.
+    ///
+    /// `Some` for every account a holding can live in -- the schema's paired
+    /// `CHECK` puts a treatment on exactly the investment accounts -- and the
+    /// `Option` is the shape `db::account` hands over rather than a state
+    /// this screen can reach.
+    pub tax_treatment: Option<TaxTreatment>,
 }
 
 /// The Funds screen's view state: every holding, which account the `Tab`
@@ -143,13 +151,13 @@ impl Funds {
         self.allocation.slices.clone()
     }
 
-    /// One targeted class as the summary draws it, or `None` when there is no
+    /// One class as the summary draws it, or `None` when there is no
     /// composition to draw it against.
     ///
     /// Absent rather than zeroed, for the reason [`Row::stock_percent`] is:
     /// a portfolio nobody has fetched a mix for holds an unknown share of
     /// bonds, not none.
-    pub fn summary_row(&self, class: TargetClass) -> Option<SummaryRow> {
+    pub fn summary_row(&self, class: Class) -> Option<SummaryRow> {
         (!self.allocation.slices.is_empty())
             .then(|| SummaryRow::new(class, &self.allocation.slices, self.targets))
     }
@@ -160,11 +168,15 @@ impl Funds {
 
     fn recompute_allocation(&mut self) {
         let allocation = {
-            let held: Vec<(Cents, Option<&[Slice]>)> = self
+            let held: Vec<Held<'_>> = self
                 .visible
                 .iter()
                 .map(|i| &self.rows[*i])
-                .map(|row| (row.balance, self.mixes.get(&row.ticker).map(Vec::as_slice)))
+                .map(|row| Held {
+                    balance: row.balance,
+                    treatment: row.tax_treatment,
+                    mix: self.mixes.get(&row.ticker).map(Vec::as_slice),
+                })
                 .collect();
             allocation::apportion(&held)
         };
@@ -299,25 +311,6 @@ impl Search for Funds {
 
 impl_scroll!(Funds, visible);
 
-/// How many glyph cells [`mix_bar`] fills for a whole fund's worth of stock
-/// -- also its own column's width, so a bar never grows past it.
-const MIX_BAR_WIDTH: usize = 14;
-
-/// A 14-glyph bar, filled left to right by the stock share of a fund's
-/// composition -- or the same `—` every other absence in the app draws, when
-/// no mix is on record. A fund reported to hold no stock at all still draws
-/// a full bar of the empty glyph, which is a different mark than the single
-/// dash a fund nobody has asked SEC about draws -- the one thing this column
-/// must never spell alike.
-fn mix_bar(stock_percent: Option<BasisPoints>) -> String {
-    let Some(percent) = stock_percent else {
-        return "—".to_string();
-    };
-    let clamped = percent.0.clamp(0, BasisPoints::ONE.0) as u64;
-    let filled = (clamped * MIX_BAR_WIDTH as u64 / BasisPoints::ONE.0 as u64) as usize;
-    "█".repeat(filled) + &"░".repeat(MIX_BAR_WIDTH - filled)
-}
-
 /// The stock share, as the app's own percentage format -- or the `—` every
 /// other absence in the app draws.
 fn stock_percent_cell(stock_percent: Option<BasisPoints>) -> Cell<'static> {
@@ -328,16 +321,23 @@ fn stock_percent_cell(stock_percent: Option<BasisPoints>) -> Cell<'static> {
     Cell::from(TextLine::from(text).right_aligned())
 }
 
-fn as_of_cell(as_of: Option<NaiveDate>) -> Cell<'static> {
-    match as_of {
-        Some(date) => Cell::from(date.to_string()),
-        None => Cell::from("—"),
-    }
+/// How the account holding a fund is taxed -- the Accounts screen's own
+/// wording, so one account reads the same on both screens.
+///
+/// The `—` is the app's absence mark and is unreachable here: the schema puts
+/// a treatment on exactly the investment accounts, and a holding has nowhere
+/// else to live. Drawn rather than asserted, because a cell is not the place
+/// to take a database down over.
+fn tax_treatment_cell(treatment: Option<TaxTreatment>) -> Cell<'static> {
+    Cell::from(match treatment {
+        Some(treatment) => treatment.label(),
+        None => "—",
+    })
 }
 
 /// How many of the screen's lines the summary panel costs the list: its
-/// border, its header, and a row per class it has something to say about --
-/// or none at all when it has nothing.
+/// border, its header, a row per [`Class`], and the bar -- or none at all when
+/// it has nothing to say.
 ///
 /// The first two terms are [`super::Chrome::lines`]'s arithmetic, said here
 /// rather than borrowed: the panel is not a list, so it has no cursor to
@@ -353,12 +353,7 @@ fn summary_lines(allocation: &Allocation) -> u16 {
     if allocation.slices.is_empty() {
         return 0;
     }
-    let untargeted = allocation
-        .slices
-        .iter()
-        .filter(|s| UNTARGETED.contains(&s.class))
-        .count();
-    2 + super::HEADER_LINES + (TargetClass::ALL.len() + untargeted) as u16 + BAR_LINES
+    2 + super::HEADER_LINES + Class::ALL.len() as u16 + BAR_LINES
 }
 
 /// The one line [`summary_bar`] and its legend take, under the table.
@@ -366,56 +361,54 @@ const BAR_LINES: u16 = 1;
 
 /// How many glyph cells the four-class bar spends.
 ///
-/// Fixed rather than the panel's width, for the reason [`MIX_BAR_WIDTH`] is:
-/// a glyph run truncates from the right like text, where a cell sized off the
-/// terminal would reflow every segment as the window moved. Forty is what
-/// makes the smallest segment worth drawing -- one glyph is 2.5%, and an
-/// international-bond sliver below that is the thing the bar exists to show.
+/// Fixed rather than the panel's width: a glyph run truncates from the right
+/// like text, where a cell sized off the terminal would reflow every segment
+/// as the window moved. Forty is what makes the smallest segment worth
+/// drawing -- one glyph is 2.5%, and a sliver below that is the thing the bar
+/// exists to show.
 const SUMMARY_BAR_WIDTH: usize = 40;
 
-/// One glyph per [`allocation::BAR_CLASSES`] entry, in that order.
+/// The glyph every segment of the summary bar is drawn with.
 ///
-/// Four marks rather than four colours: what a colour *is* is `tui::style`'s
-/// to say and no class has one yet, and a bar that only reads in colour reads
-/// as nothing in the report beside it. The legend is drawn with them, since
-/// four shades in a fixed order is a key a reader would otherwise have to
-/// hold.
-const BAR_GLYPHS: [&str; 4] = ["█", "▓", "▒", "▚"];
+/// One mark in four colors rather than four marks in one: `█▓▒▚` differ in
+/// *texture*, and a run of them reads as a gradient -- a thing shading into
+/// another thing -- where the four classes are four separate quantities. The
+/// colors are `palette::CLASSES`, which the report's own bar already spends, so
+/// the terminal and the phone agree about what bonds look like.
+const BAR_GLYPH: &str = "█";
 
-/// What the four leave over: cash, the classifier's residual, and whatever no
-/// filing placed. The same glyph the per-row bar below spends on the share a
-/// fund does *not* hold, so "nothing of mine is here" is one mark on this
-/// screen rather than two.
+/// What the four leave over -- nothing, now that [`Class::Other`] is one of
+/// them. It is the track the segments are laid on, so a bar that cannot fill
+/// its width (a portfolio whose mixes over-foot, leaving the classes past 100%
+/// between them, or one clamped short) still draws to the same length.
 const BAR_REST: &str = "░";
 
-/// The whole portfolio as one bar: the two equity classes, then the two bond
-/// classes the target rows combine.
-///
-/// **This is the one thing in the summary that splits the bonds.** The age
-/// rule produces a single bond number, so the row beside it cannot say whether
-/// the share is domestic or foreign, and a bar per row would have said nothing
-/// the `Actual` cell one column to its right did not already.
+/// The whole portfolio as one bar: one segment per [`Class`], in the order the
+/// rows above it are listed, so a segment and its row are the same statement.
 ///
 /// Segments are cut at the *cumulative* share and differenced, rather than
 /// each rounded on its own: that is what keeps them summing to the bar's own
-/// width, so the tail is exactly what the four classes leave rather than a
-/// glyph of accumulated rounding.
-fn summary_bar(slices: &[Slice]) -> String {
+/// width, so the tail is exactly what the classes leave rather than a glyph of
+/// accumulated rounding.
+fn summary_bar(slices: &[Slice]) -> Vec<Span<'static>> {
     let width = SUMMARY_BAR_WIDTH as i64;
-    let mut bar = String::new();
+    let mut spans = Vec::new();
     let mut cumulative = 0i64;
     let mut drawn = 0i64;
-    for (glyph, class) in BAR_GLYPHS.iter().zip(allocation::BAR_CLASSES) {
-        cumulative += allocation::weight(slices, class).0;
-        // Monotonic whatever the weights are: a negative `Unclassified` --
-        // a filing that over-foots -- puts the four classes past 100%
-        // between them, and a bar that ran backwards would draw a segment
-        // over the one before it.
+    for class in Class::ALL {
+        cumulative += class.actual(slices).0;
+        // Monotonic whatever the weights are: a mix that over-foots puts the
+        // classes past 100% between them, and a bar that ran backwards would
+        // draw a segment over the one before it.
         let end = (cumulative.clamp(0, BasisPoints::ONE.0) * width / BasisPoints::ONE.0).max(drawn);
-        bar.push_str(&glyph.repeat((end - drawn) as usize));
+        spans.push(Span::styled(
+            BAR_GLYPH.repeat((end - drawn) as usize),
+            Style::default().fg(super::style::class(class)),
+        ));
         drawn = end;
     }
-    bar + &BAR_REST.repeat((width - drawn) as usize)
+    spans.push(Span::raw(BAR_REST.repeat((width - drawn) as usize)));
+    spans
 }
 
 /// Class, Target, Actual, Δ, with the four-class bar and its legend beneath.
@@ -429,10 +422,17 @@ fn summary_bar(slices: &[Slice]) -> String {
 /// show a bond split at all, and the bar is *one* statement about the whole
 /// portfolio where a table column is one per row.
 ///
-/// `Cash` keeps its row at zero and `Unclassified` does not have one: cash is
-/// part of what the bar accounts for, while the residual is a defect report,
-/// and a defect report reading "none" every time is one nobody finishes
-/// reading.
+/// **Every class keeps its row, whatever it holds.** The four are the
+/// vocabulary the age rule is stated in, so a zero is an answer rather than
+/// an absence -- and `Other` is drawn even at nothing, cash and the
+/// classifier's residual now sharing it.
+///
+/// The three tax columns are a second question about the same portfolio:
+/// not what it holds but where it is held, which is the one thing the age
+/// rule has no opinion on and the owner has the most control over. They are
+/// columns rather than a table of their own because each is a share of the
+/// same denominator as `Actual` beside it -- a row reads across to its own
+/// total, and a column reads down to what that treatment holds.
 fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
     let allocation = funds.allocation();
     let percent = |bp: Option<BasisPoints>| {
@@ -444,54 +444,65 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
             .right_aligned(),
         )
     };
+    // Red where the portfolio is short of what the rule asks and plain where
+    // it is not: a gap is the only thing in this table a reader has to act
+    // on, and `palette::NEGATIVE` is what every other shortfall in the app
+    // already spells it with.
+    let delta = |bp: Option<BasisPoints>| {
+        let cell = percent(bp);
+        match bp {
+            Some(bp) if bp.0 < 0 => cell.style(Style::default().fg(super::style::negative())),
+            _ => cell,
+        }
+    };
 
-    let mut rows: Vec<TableRow> = TargetClass::ALL
+    let rows: Vec<TableRow> = Class::ALL
         .iter()
         .filter_map(|class| funds.summary_row(*class))
         .map(|row| {
-            TableRow::new(vec![
+            let mut cells = vec![
                 Cell::from(row.class.label()),
                 percent(row.target),
                 percent(Some(row.actual)),
-                percent(row.delta),
-            ])
+                delta(row.delta),
+            ];
+            cells.extend(
+                TaxTreatment::ALL
+                    .iter()
+                    .map(|treatment| percent(Some(allocation.class_in(row.class, *treatment)))),
+            );
+            TableRow::new(cells)
         })
         .collect();
-    rows.extend(
-        allocation
-            .slices
-            .iter()
-            .filter(|slice| UNTARGETED.contains(&slice.class))
-            .map(|slice| {
-                TableRow::new(vec![
-                    Cell::from(slice.class.label()),
-                    // No target and so no gap: the age rule says nothing
-                    // about cash, and a target for money the classifier
-                    // could not place would be a claim about nothing.
-                    percent(None),
-                    percent(Some(slice.weight)),
-                    percent(None),
-                ])
-            }),
-    );
 
-    let header = TableRow::new(vec![
+    let mut header_cells = vec![
         Cell::from("Class"),
         right_header("Target"),
         right_header("Actual"),
         right_header("Δ"),
-    ])
-    .style(Style::default().add_modifier(Modifier::BOLD));
+    ];
+    header_cells.extend(
+        TaxTreatment::ALL
+            .iter()
+            .map(|treatment| right_header(treatment.label())),
+    );
+    let header = TableRow::new(header_cells).style(Style::default().add_modifier(Modifier::BOLD));
 
-    // `Class` takes the single `Constraint::Min`; the three percentage
-    // columns are sized for `100.00%` and, on the last, the sign a gap the
-    // other way carries.
-    let widths = [
+    // `Class` takes the single `Constraint::Min`; the percentage columns are
+    // sized for `100.00%` and, on the Δ, the sign a gap the other way
+    // carries. The three tax columns are sized for their own headings, which
+    // are wider than the figures under them.
+    let mut widths = vec![
         Constraint::Min(20),
         Constraint::Length(7),
         Constraint::Length(7),
         Constraint::Length(8),
     ];
+    widths.extend(
+        TaxTreatment::ALL
+            .iter()
+            .map(|treatment| Constraint::Length(treatment.label().len() as u16 + 1)),
+    );
 
     let title = match allocation.coverage() {
         None => "Allocation".to_string(),
@@ -513,19 +524,18 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
         table_area,
     );
 
-    let legend = BAR_GLYPHS
-        .iter()
-        .zip(allocation::BAR_CLASSES)
-        .map(|(glyph, class)| format!("{glyph} {}", class.label()))
-        .collect::<Vec<_>>()
-        .join("  ");
-    frame.render_widget(
-        Paragraph::new(TextLine::from(format!(
-            "{}  {legend}",
-            summary_bar(&allocation.slices)
-        ))),
-        bar_area,
-    );
+    // The legend's key is the bar's own glyph in the bar's own color, so the
+    // two are read together rather than by matching a texture to a word.
+    let mut line = summary_bar(&allocation.slices);
+    for class in Class::ALL {
+        line.push(Span::raw("  "));
+        line.push(Span::styled(
+            BAR_GLYPH,
+            Style::default().fg(super::style::class(class)),
+        ));
+        line.push(Span::raw(format!(" {}", class.label())));
+    }
+    frame.render_widget(Paragraph::new(TextLine::from(line)), bar_area);
 }
 
 /// The fewest lines the list is left before the summary gives up the screen
@@ -540,7 +550,7 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
 /// state, so the panel returns the moment the window does.
 const LIST_FLOOR: u16 = 2 + super::HEADER_LINES + 1;
 
-/// Account, Ticker, Balance, Mix, Stock%, As of, under the allocation summary.
+/// Account, Ticker, Balance, Stock%, Tax, under the allocation summary.
 ///
 /// `Account` takes the single `Constraint::Min` and absorbs the slack,
 /// `tui::GUTTER` included; the other five are `Constraint::Length` sized to
@@ -564,9 +574,8 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
                 account_cell(&row.account),
                 Cell::from(crate::demo::text(&row.ticker).into_owned()),
                 whole_amount(row.balance),
-                Cell::from(mix_bar(row.stock_percent)),
                 stock_percent_cell(row.stock_percent),
-                as_of_cell(row.as_of),
+                tax_treatment_cell(row.tax_treatment),
             ])
         })
         .collect();
@@ -575,9 +584,8 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
         Cell::from("Account"),
         Cell::from("Ticker"),
         right_header("Balance"),
-        Cell::from("Mix"),
         right_header("Stock%"),
-        Cell::from("As of"),
+        Cell::from("Tax"),
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
 
@@ -585,9 +593,8 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
         Constraint::Min(20),
         Constraint::Length(8),
         Constraint::Length(14),
-        Constraint::Length(14),
         Constraint::Length(7),
-        Constraint::Length(11),
+        Constraint::Length(13),
     ];
 
     render_table(
@@ -768,6 +775,7 @@ mod tests {
             balance: Cents::from_dollars(dollars),
             stock_percent: None,
             as_of: None,
+            tax_treatment: Some(TaxTreatment::Taxable),
         }
     }
 
@@ -890,15 +898,18 @@ mod tests {
             .find(|l| l.contains("USM"))
             .expect("the never-fetched row is drawn");
         assert!(never_fetched.contains('—'), "{never_fetched:?}");
-        assert!(!never_fetched.contains('░'), "{never_fetched:?}");
 
         let zero_stock = lines
             .iter()
             .find(|l| l.contains("USB"))
             .expect("the zero-stock row is drawn");
         assert!(
-            zero_stock.contains(&"░".repeat(MIX_BAR_WIDTH)),
-            "a fully unfilled bar should draw, not a dash: {zero_stock:?}"
+            zero_stock.contains("0.00%"),
+            "a fund reported to hold no stock should say so, not dash: {zero_stock:?}"
+        );
+        assert!(
+            !zero_stock.contains('—'),
+            "and must not spell it the way an unfetched fund does: {zero_stock:?}"
         );
     }
 
@@ -1019,16 +1030,12 @@ mod tests {
                 .any(|l| l.contains("U.S. Stock") && l.contains("49.20%") && l.contains("0.00%")),
             "{lines:#?}"
         );
-        // Cash is accounted for and carries no target; the classifier placed
-        // everything, so there is no Unclassified row at all.
+        // `Other` is accounted for and carries no target -- the age rule
+        // says nothing about cash, and here it is all the row holds.
         assert!(
             lines
                 .iter()
-                .any(|l| l.contains("Cash") && l.contains("5.00%")),
-            "{lines:#?}"
-        );
-        assert!(
-            !lines.iter().any(|l| l.contains("Unclassified")),
+                .any(|l| l.contains("Other") && l.contains("5.00%")),
             "{lines:#?}"
         );
 
@@ -1063,12 +1070,12 @@ mod tests {
     }
 
     /// $10,000 all U.S. stock, $5,000 of a 70/25/5 bond fund and $3,000 of a
-    /// 95/5 international fund, over $18,000: 55.56 / 15.83 / 19.45 / 6.94,
-    /// with cash taking the 2.22 the four leave.
+    /// 95/5 international fund, over $18,000: 55.56 U.S. stock, 15.83
+    /// international, 19.45 + 6.94 bonds and 2.22 cash.
     ///
-    /// The bar cuts at the cumulative share, so its segments are that split
-    /// scaled to forty glyphs -- 22, 6, 8, 3 -- and the tail is the one glyph
-    /// the four do not account for.
+    /// In class order that is 26.39 / 55.56 / 15.83 / 2.22, and the bar cuts
+    /// at the cumulative share -- so its segments are that split scaled to
+    /// forty glyphs, 10 / 22 / 7 / 1, with nothing left for the track.
     #[test]
     fn the_mix_bar_is_one_run_of_four_segments_in_the_portfolios_own_proportions() {
         let funds = funds_fully_priced();
@@ -1079,39 +1086,117 @@ mod tests {
         );
 
         let bar = summary_bar(&summary);
+        let widths: Vec<usize> = bar.iter().map(|s| s.content.chars().count()).collect();
+        assert_eq!(widths, vec![10, 22, 7, 1, 0]);
         assert_eq!(
-            bar,
-            "█".repeat(22) + &"▓".repeat(6) + &"▒".repeat(8) + &"▚".repeat(3) + "░"
+            widths.iter().sum::<usize>(),
+            SUMMARY_BAR_WIDTH,
+            "the segments and the track have to fill the bar"
         );
-        assert_eq!(bar.chars().count(), SUMMARY_BAR_WIDTH);
+        for (span, class) in bar.iter().zip(Class::ALL) {
+            assert_eq!(
+                span.style.fg,
+                Some(super::super::style::class(class)),
+                "{class:?} is drawn in another class's color"
+            );
+        }
     }
 
-    /// The bond classes are two segments where the rows above are one, which
-    /// is the whole of what the bar adds: the age rule produces a single bond
-    /// number, so nothing else on the panel can say which half is which.
+    /// A segment and the row above it are the same statement now, so what the
+    /// legend has to do is name all four classes -- the bar being the only
+    /// place the colors are explained.
     #[test]
-    fn the_bar_splits_the_bonds_the_target_rows_combine() {
+    fn every_band_is_named_in_the_legend_beside_the_bar() {
         let funds = funds_fully_priced();
         let lines = drawn(&funds, 24);
         let bar = lines
             .iter()
-            .find(|l| l.contains("▚"))
+            .find(|l| l.contains(BAR_GLYPH))
             .expect("the bar is drawn");
 
-        for (glyph, class) in BAR_GLYPHS.iter().zip(allocation::BAR_CLASSES) {
+        for class in Class::ALL {
             assert!(
-                bar.contains(&format!("{glyph} {}", class.label())),
+                bar.contains(&format!("{BAR_GLYPH} {}", class.label())),
                 "{class:?} is drawn with no legend: {bar:?}"
             );
         }
-        let bonds = funds
-            .summary_row(TargetClass::Bonds)
-            .expect("a Bonds row")
-            .actual;
+        let bonds = funds.summary_row(Class::Bonds).expect("a Bonds row").actual;
         assert_eq!(
             bonds,
             BasisPoints(1_945 + 694),
-            "the row combines what the bar splits"
+            "the row and the segment are one statement"
+        );
+    }
+
+    /// The list answers "what do I hold and how is it taxed", and the two
+    /// columns it used to spend on the mix bar and the filing date answered
+    /// neither: the bar restated the `Stock%` beside it, and the date is on
+    /// the report for the one reader who wants it.
+    #[test]
+    fn the_list_names_each_holdings_tax_treatment_and_spends_no_column_on_a_bar() {
+        let funds = funds_with_mixes();
+        let lines = drawn(&funds, 24);
+        let header = lines
+            .iter()
+            .find(|l| l.contains("Ticker"))
+            .expect("the list header is drawn");
+
+        assert!(header.contains("Tax"), "{header:?}");
+        assert!(!header.contains("Mix"), "{header:?}");
+        assert!(!header.contains("As of"), "{header:?}");
+
+        let row = lines
+            .iter()
+            .find(|l| l.contains("USB"))
+            .expect("a holding is drawn");
+        assert!(
+            row.contains(TaxTreatment::Taxable.label()),
+            "a holding does not say how it is taxed: {row:?}"
+        );
+    }
+
+    /// The Δ is the one cell on the panel a reader has to act on, so being
+    /// short of the target reads as a color rather than only as a sign.
+    #[test]
+    fn a_shortfall_in_the_delta_column_is_drawn_in_the_negative_color() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let funds = funds_with_mixes();
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &funds);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+
+        // The Bonds row runs over target, so its Δ is negative; U.S. Stock is
+        // short of one, so its Δ is not.
+        let row_of = |label: &str| {
+            (0..24)
+                .find(|y| {
+                    (0..MIN_WIDTH)
+                        .map(|x| buffer[(x, *y)].symbol())
+                        .collect::<String>()
+                        .contains(label)
+                })
+                .unwrap_or_else(|| panic!("{label} is drawn"))
+        };
+        let colors = |y: u16| {
+            (0..MIN_WIDTH)
+                .filter(|x| buffer[(*x, y)].symbol() != " ")
+                .map(|x| buffer[(x, y)].style().fg)
+                .collect::<Vec<_>>()
+        };
+
+        assert!(
+            colors(row_of("Bonds")).contains(&Some(super::super::style::negative())),
+            "an over-weight class draws no warning"
+        );
+        assert!(
+            !colors(row_of("U.S. Stock")).contains(&Some(super::super::style::negative())),
+            "a class inside its target was drawn as a shortfall"
         );
     }
 
@@ -1129,8 +1214,12 @@ mod tests {
             .find(|l| l.contains("Bonds"))
             .expect("the Bonds row is drawn");
         super::super::ends_in_order(bonds, &["—", "59.37%", "—"]);
+        // The tax columns beyond the Δ genuinely read zero here -- the
+        // fixture holds everything in one treatment -- so the claim is about
+        // the two cells the target owns, not the whole row.
+        let through_delta = &bonds[..bonds.find('—').expect("the target cell") + "—".len()];
         assert!(
-            !bonds.contains("0.00%"),
+            !through_delta.contains("0.00%"),
             "a missing target drew a zero: {bonds:?}"
         );
     }

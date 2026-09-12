@@ -256,10 +256,13 @@ slack, it is spent whether or not a list is long enough to scroll, and it is the
 edge — so the selection bar and the favorite band stop with it.
 
 **A bar drawn in glyphs spends a fixed count of them, never a share of its column** — Funds draws
-two, `MIX_BAR_WIDTH` in the per-row mix column and `SUMMARY_BAR_WIDTH` under the allocation
-summary, and each constant carries its own reasoning. What the four classes leave over is the
-unfilled track rather than a fifth segment: `BAR_REST` is that glyph, and the report's Funds tab
-makes the same split in CSS.
+one, `SUMMARY_BAR_WIDTH` under the allocation summary, and the constant carries its own reasoning.
+It is one glyph in four colours rather than four glyphs: `█▓▒▚` differ in *texture*, and a run of
+them reads as a gradient — a thing shading into another thing — where the four classes are four
+separate quantities. `palette::CLASSES` is where the colours are, the same table the report's Funds
+tab spells in CSS, so the terminal and the phone cannot disagree about what bonds look like. What
+the four leave over is the unfilled track rather than a fifth segment — `BAR_REST` is that glyph —
+and with `Class::Other` among the four there is normally nothing left for it.
 
 **Funds is the one screen whose list pays for a panel above it**, where Savings and Planning spend
 their extra lines on a footer below. What the allocation summary costs the rows is
@@ -1522,5 +1525,11 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   to is a goal or a transaction, and its balance is always typed, never imported — `holding` and
   `fund_mix` are in `PRESERVED_TABLES` because the workbook carries neither.
   **What is *not* typed is what the fund is made of**: `g`/`G` fetch that from the fund's latest
-  filing, and every column the mix feeds — the bar, `Stock%`, `As of`, and the summary above the
-  list — is drawn from `fund_mix` rather than from anything the form asks for.
+  filing, and what the mix feeds — `Stock%` and the summary above the list — is drawn from
+  `fund_mix` rather than from anything the form asks for.
+- **The list's columns are Account, Ticker, Balance, Stock%, Tax.** `Tax` is the holding account's
+  `tax_treatment` in the Accounts screen's own wording, so one account reads the same on both
+  screens. What the list does *not* carry is a mix bar or the filing date: a fourteen-glyph bar
+  restated the `Stock%` in the next column over, and the date a composition was read from is a
+  fact about the fetch rather than about the holding — it stays on the report's own holdings
+  table, for the reader who is away from the app and cannot press `g`.
