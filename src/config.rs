@@ -89,6 +89,16 @@ pub struct Sec {
     pub contact: String,
 }
 
+/// The instruction every refusal over a missing `[sec]` section shares --
+/// `mm mixes` and `g`/`G` on the Funds screen each build their own sentence
+/// around it, `mm mixes` naming the config file it looked in and the Funds
+/// screen unable to, since `tui` does not otherwise name this module and
+/// `sec_contact` reaches it as a bare `Option<String>`. What both already
+/// say the same way lives here, the same reason `goal::NO_TAX_RATE` is one
+/// constant rather than two hand-written sentences: the TOML key this names
+/// has one spelling, and the sentence naming it should too.
+pub const ADD_SEC_CONTACT: &str = "add a [sec] section with a contact line";
+
 /// `$XDG_CONFIG_HOME/mistermanager/config.toml`, or `~/.config` when it is
 /// unset or empty.
 pub fn default_path() -> Result<PathBuf> {

@@ -191,9 +191,9 @@ fn main() -> Result<()> {
                 .as_ref()
                 .with_context(|| {
                     format!(
-                        "no [sec] contact configured in {} -- add a [sec] section with a \
-                         contact line",
-                        config_path.display()
+                        "no [sec] contact configured in {} -- {}",
+                        config_path.display(),
+                        config::ADD_SEC_CONTACT
                     )
                 })?
                 .contact

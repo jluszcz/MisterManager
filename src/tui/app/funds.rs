@@ -6,6 +6,7 @@
 //! that does nothing is worse than a key that is absent.
 
 use super::{Account, App, NOTHING_SELECTED};
+use crate::config::ADD_SEC_CONTACT;
 use crate::db::account::{self, Kind};
 use crate::db::fund_mix::{self, AssetClass};
 use crate::db::holding;
@@ -18,14 +19,6 @@ use crate::tui::search::{self, Search};
 use anyhow::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use std::collections::HashMap;
-
-/// Printed on the status line by `g`/`G` when no `[sec]` section names a
-/// contact. SEC refuses a request that declares none at all, and the
-/// repository may hold no real address, so the contact is configuration
-/// rather than a constant -- this is the refusal that says what to set,
-/// never a request sent anonymously.
-const NO_SEC_CONTACT: &str =
-    "no SEC contact configured -- add a [sec] section with a contact line to the config file";
 
 impl App {
     pub(super) fn funds_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -74,7 +67,11 @@ impl App {
     /// than solved.
     fn refresh_mixes(&mut self, tickers: &[String]) -> Result<()> {
         let Some(contact) = self.sec_contact.clone() else {
-            self.status = NO_SEC_CONTACT.to_string();
+            // `tui` cannot name the config file's path the way `mm mixes`
+            // does: `sec_contact` reaches it as a bare `Option<String>` so
+            // that this module need not name `config`.
+            self.status =
+                format!("no SEC contact configured -- {ADD_SEC_CONTACT} to the config file");
             return Ok(());
         };
         let refreshed = mix::refresh(&self.db, &contact, tickers)?;
@@ -270,6 +267,19 @@ mod tests {
             refresh_status(&refreshed),
             "failed to refresh USM: throttled; ISM: SEC lists no series for ticker"
         );
+    }
+
+    /// Reachable only if `G` is pressed with no holdings in the database at
+    /// all -- an empty ticker list is neither an update nor a failure, so it
+    /// earns its own phrase rather than falling into either of the arms
+    /// above.
+    #[test]
+    fn a_refresh_of_nothing_says_there_was_nothing_to_refresh() {
+        let refreshed = Refreshed {
+            updated: vec![],
+            failed: vec![],
+        };
+        assert_eq!(refresh_status(&refreshed), "nothing to refresh");
     }
 
     #[test]
