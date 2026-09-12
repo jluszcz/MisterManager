@@ -1,4 +1,5 @@
 pub mod account_label;
+pub mod allocation;
 pub mod backup;
 pub mod calc;
 pub mod config;

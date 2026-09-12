@@ -142,6 +142,8 @@ impl App {
     pub(super) fn reload_funds(&mut self) -> Result<()> {
         let accounts = account::list_by_kind(&self.db, Kind::Investment)?;
         self.funds.set_accounts(accounts.clone());
+        self.funds
+            .set_targets(crate::fund::targets_from_db(&self.db, self.today)?);
 
         let holdings = holding::list(&self.db)?;
         let mut mixes: HashMap<String, fund_mix::Mix> = HashMap::new();
@@ -150,6 +152,15 @@ impl App {
                 mixes.insert(ticker, mix);
             }
         }
+        // The summary reads the whole composition where a row reads only its
+        // stock share, so the slices go in beside the rows rather than onto
+        // them -- a fund is one composition however many accounts hold it.
+        self.funds.set_mixes(
+            mixes
+                .iter()
+                .map(|(ticker, mix)| (ticker.clone(), mix.slices.clone()))
+                .collect(),
+        );
 
         let rows = holdings
             .into_iter()
@@ -216,7 +227,9 @@ fn refresh_status(refreshed: &Refreshed) -> String {
 #[cfg(test)]
 mod tests {
     use super::{Refreshed, refresh_status, stock_share};
+    use crate::allocation::{self, TargetClass};
     use crate::db::fund_mix::{self, AssetClass, Slice};
+    use crate::db::setting::{self, key};
     use crate::money::Cents;
     use crate::rate::BasisPoints;
     use crate::test_support::day;
@@ -656,5 +669,93 @@ mod tests {
         let unpriced = rows.iter().find(|r| r.ticker == "USB").unwrap();
         assert_eq!(unpriced.stock_percent, None);
         assert_eq!(unpriced.as_of, None);
+    }
+
+    /// The look-through is a share of what it covers, so whatever the mixes
+    /// carry it foots to a whole hundred percent.
+    #[test]
+    fn the_summary_totals_every_holding_weighted_by_its_mix() {
+        let mut app = test_support::app_with_mixes();
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        let summary = app.funds.summary();
+        let total: i64 = summary.iter().map(|s| s.weight.0).sum();
+        assert_eq!(total, 10_000, "the summary does not foot to 100%");
+    }
+
+    /// The classifier's residual is a defect report, so a portfolio with
+    /// nothing unplaced says nothing rather than drawing a zero.
+    #[test]
+    fn the_unclassified_row_is_absent_when_nothing_is_unclassified() {
+        let mut app = test_support::app_with_mixes();
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        assert!(
+            !app.funds
+                .summary()
+                .iter()
+                .any(|s| s.class == AssetClass::Unclassified),
+            "an empty Unclassified row was drawn"
+        );
+    }
+
+    /// "Where do the bonds live" is answered by the filter the screen already
+    /// had: `BRK` holds the bond fund and `RET` the international one, so the
+    /// two narrowings cannot come to the same summary.
+    #[test]
+    fn the_account_filter_recomputes_the_summary_for_that_account_alone() {
+        let mut app = test_support::app_with_mixes();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        let all = app.funds.summary();
+
+        test_support::press(&mut app, KeyCode::Tab);
+
+        assert_ne!(
+            app.funds.summary(),
+            all,
+            "Tab did not recompute the summary"
+        );
+    }
+
+    /// The age rule produces one bond number, so the row it is drawn against
+    /// is one bond figure: the two bond classes added, not whichever of them
+    /// happens to be larger.
+    #[test]
+    fn the_bond_target_is_drawn_against_the_combined_bond_share() {
+        let mut app = test_support::app_with_mixes();
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        let bonds = app
+            .funds
+            .summary_row(TargetClass::Bonds)
+            .expect("a Bonds row");
+        let summary = app.funds.summary();
+        assert_eq!(
+            bonds.actual,
+            allocation::weight(&summary, AssetClass::UsBond)
+                + allocation::weight(&summary, AssetClass::IntlBond)
+        );
+        assert_ne!(
+            allocation::weight(&summary, AssetClass::IntlBond),
+            BasisPoints::ZERO,
+            "a fixture with only one bond class would pass either way"
+        );
+    }
+
+    /// No birth date is a question rather than a zero, all the way to the
+    /// cell: a `0.00%` bond target reads as advice nobody gave.
+    #[test]
+    fn with_no_birth_date_on_record_the_bond_target_is_blank_rather_than_zero() {
+        let mut app = test_support::app_with_mixes();
+        setting::clear(&app.db, key::BIRTH_DATE).unwrap();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        app.reload().unwrap();
+
+        let bonds = app.funds.summary_row(TargetClass::Bonds).unwrap();
+        assert_eq!(
+            bonds.target, None,
+            "a missing birth date drew a zero bond target"
+        );
+        assert_eq!(bonds.delta, None);
     }
 }

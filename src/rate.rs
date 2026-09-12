@@ -7,7 +7,7 @@
 use crate::money::Cents;
 use std::fmt;
 use std::iter::Sum;
-use std::ops::Add;
+use std::ops::{Add, Sub};
 
 /// A proportion in whole percent: `Percent(35)` is 35%, the way the Planning
 /// splits are written in `Planning!F25:F27`.
@@ -65,6 +65,24 @@ impl BasisPoints {
     pub const ZERO: BasisPoints = BasisPoints(0);
     /// One whole unit -- the multiplier `1.0` at this scaling.
     pub const ONE: BasisPoints = BasisPoints(10_000);
+}
+
+impl Add for BasisPoints {
+    type Output = BasisPoints;
+    fn add(self, rhs: BasisPoints) -> BasisPoints {
+        BasisPoints(self.0 + rhs.0)
+    }
+}
+
+/// Plain subtraction rather than `Percent`'s saturating one: the difference
+/// between two of these is a *gap*, and a portfolio over-weight in bonds has
+/// to be able to say so. What the floor at zero protects on `Percent` -- a
+/// negative share of money being divided up -- has no counterpart here.
+impl Sub for BasisPoints {
+    type Output = BasisPoints;
+    fn sub(self, rhs: BasisPoints) -> BasisPoints {
+        BasisPoints(self.0 - rhs.0)
+    }
 }
 
 /// A percentage with two decimals, no sign: `BasisPoints(3_600)` is `36.00`.
