@@ -456,7 +456,7 @@ mod tests {
             )
             .unwrap();
         }
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
         press(&mut app, KeyCode::Char('4'));
         app
     }
@@ -622,7 +622,7 @@ mod tests {
     #[test]
     fn f_with_nothing_selected_says_so() {
         let db = db::open_in_memory().unwrap();
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
         press(&mut app, KeyCode::Char('4'));
 
         press(&mut app, KeyCode::Char('f'));
@@ -1083,7 +1083,7 @@ mod tests {
         )
         .unwrap();
 
-        let app = App::new(db, today()).unwrap();
+        let app = App::new(db, today(), None).unwrap();
         let row = app
             .savings
             .rows()
@@ -1308,7 +1308,7 @@ mod tests {
         let db = db::open_in_memory().unwrap();
         let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
         press(&mut app, KeyCode::Char('4'));
         press(&mut app, KeyCode::Char('n'));
 

@@ -404,7 +404,7 @@ const PLANNING: [Entry; 9] = [
     },
 ];
 
-const FUNDS: [Entry; 7] = [
+const FUNDS: [Entry; 9] = [
     Entry::filter(
         ACCOUNT_FILTER,
         "Cycle the account filter: All, then one entry per investment account.",
@@ -436,6 +436,16 @@ const FUNDS: [Entry; 7] = [
         key: "d",
         label: Label::Shared("holding"),
         detail: "Delete the selected holding. Confirms first, because the write commits immediately.",
+    },
+    Entry {
+        key: "g",
+        label: Label::Own("refresh"),
+        detail: "Refresh the selected holding's ticker from SEC's latest N-PORT filing. SEC refuses a request declaring no contact, so a run without one on record refuses too, saying what to add to the config file.",
+    },
+    Entry {
+        key: "G",
+        label: Label::Own("all"),
+        detail: "Refresh every ticker any holding names.",
     },
 ];
 
@@ -1511,7 +1521,7 @@ mod tests {
         );
         assert_eq!(
             Topic::Funds.footer(),
-            "Tab acct · Esc clear · / search · a/e/d holding"
+            "Tab acct · Esc clear · / search · a/e/d holding · g refresh · G all"
         );
         assert_eq!(
             Topic::RecurringTxns.footer(),

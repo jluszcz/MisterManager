@@ -671,7 +671,7 @@ mod tests {
         write(&db, checking, day(2026, 9, 1), -120_000, "Mortgage");
         write(&db, checking, day(2026, 10, 1), -120_000, "Mortgage");
         write(&db, checking, day(2026, 8, 28), 500_000, "Salary");
-        App::new(db, today()).unwrap()
+        App::new(db, today(), None).unwrap()
     }
 
     fn add_mortgage_rule(app: &mut App) {

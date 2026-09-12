@@ -44,7 +44,12 @@ forget, and the copy that goes stale is always the one further from the code.
 
 A capital is the same verb on a wider or a second object: `A` opens a whole payday where `a`
 allocates one goal, `G` regenerates every recurring transaction where `g` regenerates the selected
-one, `E` edits the selected bill in full where `e` edits just the figure on its row.
+one, `E` edits the selected bill in full where `e` edits just the figure on its row. `g`/`G` is
+that same pair on Funds, over a second object — bring what is stored up to date with what it is
+derived from, a schedule on the eighth screen and a published filing on the sixth. **The one
+divergence is what "every" means there**: `G` on Funds refreshes every ticker any holding names
+rather than the rows the account filter and the search have left standing, which is the reading
+`mm mixes` takes as well, and `app::funds::refresh_every_mix` is where it is stated.
 
 A new screen takes what it needs from that list before inventing a letter, and invents one only for
 an action with no relative anywhere else — or when the obvious key is already spoken for on that
@@ -178,7 +183,11 @@ will not resolve, and `t`, which confirms a computed plan, writes its payday thr
 the one plan and wiring the other four test against, for the reason `app/test_support.rs` is one
 fixture rather than nine. `destination` is the list `e` opens on one of its destination rows. `fund`
 is the sixth screen and its form: one row per holding, filtered by investment account and by a
-search over ticker and account, with `a`/`e`/`d` adding, editing and deleting one. `recurring_goal` is the seventh screen and `recurring_txn` the
+search over ticker and account, with `a`/`e`/`d` adding, editing and deleting one and `g`/`G`
+refreshing what a fund is made of. Above that list it draws the allocation summary — the portfolio
+by asset class against what the age rule asks for, over whatever the filters have left — whose rows
+and apportioning are `crate::allocation`'s rather than this module's, the report's Funds tab
+spelling the same ones. `recurring_goal` is the seventh screen and `recurring_txn` the
 eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
 smallest: `a`, which creates an account the workbook does not name, and `e`, over everything the
 workbook does not say about one.
@@ -245,6 +254,16 @@ off the border to their right so the scroll indicator is read against a space ra
 the last digit of a figure. It comes out of the `Constraint::Min` column with the rest of the
 slack, it is spent whether or not a list is long enough to scroll, and it is the row's own right
 edge — so the selection bar and the favorite band stop with it.
+
+**A bar drawn in glyphs spends a fixed count of them, never a share of its column** — Funds draws
+two, `MIX_BAR_WIDTH` in the per-row mix column and `SUMMARY_BAR_WIDTH` under the allocation
+summary, and each constant carries its own reasoning. What the four classes leave over is the
+unfilled track rather than a fifth segment: `BAR_REST` is that glyph, and the report's Funds tab
+makes the same split in CSS.
+
+**Funds is the one screen whose list pays for a panel above it**, where Savings and Planning spend
+their extra lines on a footer below. What the allocation summary costs the rows is
+`fund::summary_lines`'s to count.
 
 Why those tests are worth their weight: **a right-aligned cell that gets truncated loses its
 *leading* characters.** A `Goal Date` column one column short turns `2026-11-27` into a wrong year,
@@ -1502,3 +1521,6 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   there is no `r`. A holding does link to an account, through `account_id`; what it does not link
   to is a goal or a transaction, and its balance is always typed, never imported — `holding` and
   `fund_mix` are in `PRESERVED_TABLES` because the workbook carries neither.
+  **What is *not* typed is what the fund is made of**: `g`/`G` fetch that from the fund's latest
+  filing, and every column the mix feeds — the bar, `Stock%`, `As of`, and the summary above the
+  list — is drawn from `fund_mix` rather than from anything the form asks for.

@@ -9,10 +9,11 @@
 pub mod html;
 
 use crate::account_label::Account;
+use crate::allocation::{SummaryRow, TargetClass};
 use crate::calc;
 use crate::calc::planning::PlanSettings;
 use crate::db::account::Kind;
-use crate::db::{Db, account, bill, txn};
+use crate::db::{Db, account, bill, fund_mix, holding, txn};
 use crate::goal as goal_engine;
 use crate::money::Cents;
 use crate::overview::Overview;
@@ -25,6 +26,7 @@ use crate::transfer;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local, NaiveDate};
 use minify_html::Cfg;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// One container's goals and its unallocated remainder.
@@ -32,6 +34,54 @@ pub struct Container {
     pub account: Account,
     pub rows: Vec<savings::Row>,
     pub excess: Cents,
+}
+
+/// The portfolio's look-through, the age rule it is read against, and the
+/// same pair again per investment account.
+///
+/// `crate::allocation::Allocation` is the apportioning itself and this is
+/// what a tab needs beside it: the targeted rows already resolved, and the
+/// accounts stacked, since a page has no `Tab` to cycle one at a time with.
+pub struct Allocation {
+    /// Every holding in every investment account, apportioned by class.
+    pub lookthrough: crate::allocation::Allocation,
+    /// The three targeted classes as `Target`/`Actual`/`Δ`, or nothing at
+    /// all when there is no composition to read them against -- the state
+    /// every database starts in, and the one the tab answers with a sentence
+    /// rather than a table of dashes.
+    pub summary: Vec<SummaryRow>,
+    /// One section per investment account holding something, in
+    /// `account::list_by_kind`'s order.
+    ///
+    /// An account holding nothing is left out. The screen's `Tab` cycle
+    /// still reaches it, because a filter has to be able to say "this one",
+    /// but a heading over an empty table costs a phone a screen height to
+    /// say the same.
+    pub accounts: Vec<AccountAllocation>,
+}
+
+/// One investment account's own look-through, and the holdings behind it.
+///
+/// Both halves, because `Tab` on the screen narrows the summary and the list
+/// together: a section carrying only the list would be a spelling of half of
+/// what the screen does.
+pub struct AccountAllocation {
+    pub account: Account,
+    pub lookthrough: crate::allocation::Allocation,
+    pub summary: Vec<SummaryRow>,
+    pub holdings: Vec<Holding>,
+}
+
+/// One holding, as the Funds tab lists it: `tui::fund::Row`'s columns less
+/// the account, which the section heading already names.
+pub struct Holding {
+    pub ticker: String,
+    pub balance: Cents,
+    /// The filing this fund's composition was read out of, and `None`
+    /// exactly when there is no composition on record -- which is also
+    /// exactly what puts the holding outside the summary above it. One
+    /// column says both because they are one fact.
+    pub as_of: Option<NaiveDate>,
 }
 
 /// One ledger's rows, grouped into the months the page's filter switches
@@ -110,6 +160,7 @@ pub struct Snapshot {
     pub credit: Ledger,
     pub containers: Vec<Container>,
     pub planning: Planning,
+    pub allocation: Allocation,
 }
 
 /// One ledger, every row of it, grouped by month.
@@ -157,6 +208,82 @@ fn ledger(db: &Db, accounts: &[account::Account], kind: Kind, today: NaiveDate) 
         kind,
         months,
         current,
+    })
+}
+
+/// The three targeted classes over one look-through, or none at all when
+/// there is nothing to look through.
+///
+/// Absent rather than zeroed, exactly as `tui::fund::Funds::summary_row` is
+/// absent: a portfolio nobody has fetched a mix for holds an *unknown* share
+/// of bonds, and a table of zeroes against the age rule's targets would
+/// report it as the worst-allocated portfolio on record.
+fn summary(
+    lookthrough: &crate::allocation::Allocation,
+    targets: calc::fund::Targets,
+) -> Vec<SummaryRow> {
+    if lookthrough.slices.is_empty() {
+        return Vec::new();
+    }
+    TargetClass::ALL
+        .iter()
+        .map(|class| SummaryRow::new(*class, &lookthrough.slices, targets))
+        .collect()
+}
+
+/// Every investment account's holdings, apportioned by class -- each account
+/// on its own, and all of them together.
+///
+/// The whole portfolio is apportioned over the same holdings the sections
+/// are, rather than summed out of them: a weighted average of six shares is
+/// the apportioning again in a form that can round differently, and one
+/// portfolio may not have two compositions.
+///
+/// The mixes are read once, by ticker, for the reason the screen reads them
+/// that way: a fund's composition is a property of the fund, so one fetch
+/// prices every account holding it.
+fn allocation_view(db: &Db, today: NaiveDate, accounts: &[account::Account]) -> Result<Allocation> {
+    let targets = crate::fund::targets_from_db(db, today)?;
+    let mut mixes: HashMap<String, fund_mix::Mix> = HashMap::new();
+    for ticker in holding::tickers(db)? {
+        if let Some(mix) = fund_mix::for_ticker(db, &ticker)? {
+            mixes.insert(ticker, mix);
+        }
+    }
+
+    let mut sections = Vec::new();
+    let mut portfolio: Vec<(Cents, Option<&[fund_mix::Slice]>)> = Vec::new();
+    for account in account::list_by_kind(db, Kind::Investment)? {
+        let holdings = holding::list_for_account(db, account.id)?;
+        if holdings.is_empty() {
+            continue;
+        }
+        let held: Vec<(Cents, Option<&[fund_mix::Slice]>)> = holdings
+            .iter()
+            .map(|h| (h.balance, mixes.get(&h.ticker).map(|m| m.slices.as_slice())))
+            .collect();
+        portfolio.extend(held.iter().copied());
+        let lookthrough = crate::allocation::apportion(&held);
+        sections.push(AccountAllocation {
+            account: Account::named(accounts, account.id),
+            summary: summary(&lookthrough, targets),
+            lookthrough,
+            holdings: holdings
+                .into_iter()
+                .map(|h| Holding {
+                    as_of: mixes.get(&h.ticker).map(|m| m.report_date),
+                    ticker: h.ticker,
+                    balance: h.balance,
+                })
+                .collect(),
+        });
+    }
+
+    let lookthrough = crate::allocation::apportion(&portfolio);
+    Ok(Allocation {
+        summary: summary(&lookthrough, targets),
+        lookthrough,
+        accounts: sections,
     })
 }
 
@@ -260,6 +387,7 @@ impl Snapshot {
                 Ok(view) => Planning::Resolved(Box::new(view)),
                 Err(e) => Planning::Unresolvable(format!("{e:#}")),
             },
+            allocation: allocation_view(db, today, &accounts)?,
         })
     }
 }
@@ -475,6 +603,116 @@ mod tests {
     /// rather than the page.
     fn is_the_page(text: &str) -> bool {
         text.to_ascii_lowercase().starts_with("<!doctype html>")
+    }
+
+    /// Two investment accounts holding something, one holding nothing, and a
+    /// fund nobody has fetched a filing for. Every figure invented; see
+    /// `CLAUDE.md`.
+    fn with_holdings() -> Db {
+        use crate::db::fund_mix::{AssetClass, Slice};
+        let db = seeded();
+        let insert = |code: &str, name: &str| {
+            account::insert(
+                &db,
+                code,
+                name,
+                Kind::Investment,
+                0,
+                Some(account::TaxTreatment::Taxable),
+            )
+            .unwrap()
+        };
+        let brokerage = insert("BRK", "Holdings");
+        let retirement = insert("RET", "Long Haul");
+        insert("HSA", "Health Pot");
+
+        holding::insert(&db, brokerage, "USM", Cents::from_dollars(6_000)).unwrap();
+        holding::insert(&db, brokerage, "UNC", Cents::from_dollars(2_000)).unwrap();
+        holding::insert(&db, retirement, "USB", Cents::from_dollars(2_000)).unwrap();
+        let filed = NaiveDate::from_ymd_opt(2026, 6, 30).unwrap();
+        let whole = |class| {
+            vec![Slice {
+                class,
+                weight: crate::rate::BasisPoints::ONE,
+            }]
+        };
+        fund_mix::set_for_ticker(&db, "USM", filed, &whole(AssetClass::UsStock)).unwrap();
+        fund_mix::set_for_ticker(&db, "USB", filed, &whole(AssetClass::UsBond)).unwrap();
+        db
+    }
+
+    /// The portfolio is apportioned over the same holdings the sections are,
+    /// so the two cannot round to different compositions -- and an account
+    /// holding nothing is left out rather than drawn as a heading over an
+    /// empty table.
+    #[test]
+    fn the_look_through_is_read_per_account_and_over_the_whole_portfolio() {
+        use crate::allocation::weight;
+        use crate::db::fund_mix::AssetClass;
+        use crate::rate::BasisPoints;
+
+        let db = with_holdings();
+        let accounts = account::list(&db).unwrap();
+        let view = allocation_view(&db, today(), &accounts).unwrap();
+
+        // $6,000 of stock and $2,000 of bonds priced, out of $10,000 held.
+        assert_eq!(
+            weight(&view.lookthrough.slices, AssetClass::UsStock),
+            BasisPoints(7_500)
+        );
+        assert_eq!(
+            weight(&view.lookthrough.slices, AssetClass::UsBond),
+            BasisPoints(2_500)
+        );
+        assert_eq!(
+            view.lookthrough.coverage().as_deref(),
+            Some("2 of 3 holdings")
+        );
+
+        let sections: Vec<String> = view
+            .accounts
+            .iter()
+            .map(|a| a.account.render_with(|text, _| text.to_string()))
+            .collect();
+        assert_eq!(
+            sections,
+            ["Holdings", "Long Haul"],
+            "an account holding nothing drew a section"
+        );
+        // The bond account holds one fund and all of it is bonds, where the
+        // portfolio above is a quarter bonds.
+        assert_eq!(
+            weight(&view.accounts[1].lookthrough.slices, AssetClass::UsBond),
+            BasisPoints::ONE
+        );
+        assert_eq!(view.accounts[1].lookthrough.coverage(), None);
+        assert_eq!(view.accounts[0].holdings.len(), 2);
+        assert!(
+            view.accounts[0].holdings.iter().any(|h| h.as_of.is_none()),
+            "the unfetched fund came back with a filing date"
+        );
+    }
+
+    /// A summary with no composition behind it is no summary at all, rather
+    /// than three zeroes measured against the age rule's targets.
+    #[test]
+    fn a_portfolio_with_no_filing_on_record_carries_no_summary_rows() {
+        let db = seeded();
+        let account = account::insert(
+            &db,
+            "BRK",
+            "Holdings",
+            Kind::Investment,
+            0,
+            Some(account::TaxTreatment::Taxable),
+        )
+        .unwrap();
+        holding::insert(&db, account, "UNC", Cents::from_dollars(1_000)).unwrap();
+        let view = allocation_view(&db, today(), &account::list(&db).unwrap()).unwrap();
+
+        assert!(view.summary.is_empty(), "a summary over nothing");
+        assert_eq!(view.accounts.len(), 1, "the holdings went missing with it");
+        assert!(view.accounts[0].summary.is_empty());
     }
 
     /// The grouping leans on `txn::list` returning rows in date order, so a
@@ -831,6 +1069,32 @@ mod tests {
             written.bytes,
             page.len() as u64,
             "the reported size is not the size that landed"
+        );
+    }
+
+    /// The bar is a row of empty `<span>`s whose whole content is an inline
+    /// width, which is the one shape on the page an aggressive minifier
+    /// could take for nothing at all -- and a blank track would draw as a
+    /// portfolio holding none of anything. No other test would see it:
+    /// `html`'s own run before any of this.
+    #[test]
+    fn minification_leaves_the_allocation_bar_its_widths() {
+        let dir = scratch("bar");
+        let written = write(&with_holdings(), &dir, today()).unwrap();
+        let page = std::fs::read_to_string(&written.path).unwrap();
+        // Quotes come off ahead of the match rather than into it, so which
+        // attributes the minifier unquotes stays its business.
+        // `75.00%` as `html` writes it: the CSS minifier reaches inside a
+        // `style` attribute too, and drops a trailing zero the same as it
+        // would in the stylesheet.
+        let unquoted = page.replace('"', "");
+        assert!(
+            unquoted.contains("width:75%"),
+            "the U.S. stock segment lost its width: {page}"
+        );
+        assert!(
+            page.contains("div.bar{"),
+            "the bar lost the rule that gives it a track"
         );
     }
 

@@ -88,6 +88,36 @@ pub fn percent(percent: Percent) -> Rgb {
     }
 }
 
+/// The six asset classes, in [`crate::db::fund_mix::AssetClass::ALL`]'s
+/// order -- the index every reader looks one up by.
+///
+/// Here rather than beside the report that spells them, for the reason the
+/// funding ramp is here: the portfolio's composition is drawn on the Funds
+/// screen and again on the report's Funds tab, and a second table of colors
+/// in either would have the terminal and the phone disagreeing about what
+/// bonds look like on the first re-tint.
+///
+/// **An index is safe here where it is not for an account**, which holds a
+/// name in the database precisely so a reordered array cannot repaint it:
+/// nothing stores an asset class as a number, so the position is derived from
+/// the enum on every read and a reorder moves both halves at once.
+///
+/// Stocks are the blues and bonds the greens, each pair one step apart in
+/// lightness, so a bar reads as its two halves before it reads as its four
+/// segments -- which is the order the summary beside it asks the question in,
+/// the age rule having one bond number and no opinion on where the bonds are.
+/// Cash is the neutral, being what the portfolio is *not* invested in, and
+/// `Unclassified` sits off that scale entirely: it reports what a filing
+/// failed to place rather than anything anybody holds.
+pub const ASSET_CLASSES: [Rgb; 6] = [
+    (45, 105, 175),
+    (110, 170, 220),
+    (55, 135, 100),
+    (125, 190, 150),
+    (150, 150, 145),
+    (150, 95, 150),
+];
+
 /// `#rrggbb`, for a medium that spells its colors.
 pub fn hex(rgb: Rgb) -> String {
     format!("#{:02x}{:02x}{:02x}", rgb.0, rgb.1, rgb.2)
@@ -105,6 +135,30 @@ mod tests {
         for color in AccountColor::ALL {
             let rgb = account(color);
             assert!(!seen.contains(&rgb), "{color:?} repeats a triple");
+            seen.push(rgb);
+        }
+    }
+
+    /// Six segments of one bar, four of them adjacent: two classes drawn
+    /// alike would make the bar unreadable exactly where it says the most,
+    /// since the four it splits are what the target rows beside it cannot.
+    ///
+    /// The length is checked against the enum for the reason the triples are
+    /// checked against each other: the colors are reached by position, so a
+    /// seventh class would take the color of nothing at all.
+    #[test]
+    fn every_asset_class_color_has_a_distinct_triple() {
+        assert_eq!(
+            ASSET_CLASSES.len(),
+            crate::db::fund_mix::AssetClass::ALL.len(),
+            "a class has no color, or a color has no class"
+        );
+        let mut seen = Vec::new();
+        for (class, rgb) in crate::db::fund_mix::AssetClass::ALL
+            .iter()
+            .zip(ASSET_CLASSES)
+        {
+            assert!(!seen.contains(&rgb), "{class:?} repeats a triple");
             seen.push(rgb);
         }
     }

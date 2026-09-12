@@ -1,14 +1,16 @@
-//! Screen 6's key handling: adding, editing and deleting a holding, and the
-//! account filter and the search over the list.
+//! Screen 6's key handling: adding, editing and deleting a holding, the
+//! account filter and the search over the list, and `g`/`G`, which refresh a
+//! fund's composition from SEC.
 //!
-//! No `g`/`G` and no `Enter` here -- nothing yet resolves a fund's
-//! composition, and a key that does nothing is worse than a key that is
-//! absent.
+//! No `Enter` here -- nothing yet draws a holding's long form, and a key
+//! that does nothing is worse than a key that is absent.
 
 use super::{Account, App, NOTHING_SELECTED};
+use crate::config::ADD_SEC_CONTACT;
 use crate::db::account::{self, Kind};
 use crate::db::fund_mix::{self, AssetClass};
 use crate::db::holding;
+use crate::mix::{self, Refreshed};
 use crate::rate::BasisPoints;
 use crate::tui::cursor;
 use crate::tui::fund::{HoldingForm, Row};
@@ -35,9 +37,46 @@ impl App {
             KeyCode::Char('a') => self.open_add_holding()?,
             KeyCode::Char('e') => self.open_edit_holding()?,
             KeyCode::Char('d') => self.open_delete_holding(),
+            KeyCode::Char('g') => self.refresh_selected_mix()?,
+            KeyCode::Char('G') => self.refresh_every_mix()?,
             _ => {}
         }
         Ok(())
+    }
+
+    /// Refreshes the selected row's ticker alone.
+    fn refresh_selected_mix(&mut self) -> Result<()> {
+        let Some(row) = self.funds.selected().cloned() else {
+            return self.nothing_selected();
+        };
+        self.refresh_mixes(&[row.ticker])
+    }
+
+    /// Refreshes every ticker any holding names, not only the ones the
+    /// account filter or a search is currently showing -- the same reading
+    /// `mm mixes` takes, off `holding::tickers` rather than the rows on
+    /// screen.
+    fn refresh_every_mix(&mut self) -> Result<()> {
+        let tickers = holding::tickers(&self.db)?;
+        self.refresh_mixes(&tickers)
+    }
+
+    /// Blocks the event loop for as long as the fetch takes: nothing in this
+    /// crate is async and `mix::sec`'s calls are blocking. `mm mixes` is the
+    /// route that does not tie up the screen; this is accepted here rather
+    /// than solved.
+    fn refresh_mixes(&mut self, tickers: &[String]) -> Result<()> {
+        let Some(contact) = self.sec_contact.clone() else {
+            // `tui` cannot name the config file's path the way `mm mixes`
+            // does: `sec_contact` reaches it as a bare `Option<String>` so
+            // that this module need not name `config`.
+            self.status =
+                format!("no SEC contact configured -- {ADD_SEC_CONTACT} to the config file");
+            return Ok(());
+        };
+        let refreshed = mix::refresh(&self.db, &contact, tickers)?;
+        self.status = refresh_status(&refreshed);
+        self.reload()
     }
 
     /// Opens on the account the screen is filtered to, or on the first
@@ -103,6 +142,8 @@ impl App {
     pub(super) fn reload_funds(&mut self) -> Result<()> {
         let accounts = account::list_by_kind(&self.db, Kind::Investment)?;
         self.funds.set_accounts(accounts.clone());
+        self.funds
+            .set_targets(crate::fund::targets_from_db(&self.db, self.today)?);
 
         let holdings = holding::list(&self.db)?;
         let mut mixes: HashMap<String, fund_mix::Mix> = HashMap::new();
@@ -111,6 +152,15 @@ impl App {
                 mixes.insert(ticker, mix);
             }
         }
+        // The summary reads the whole composition where a row reads only its
+        // stock share, so the slices go in beside the rows rather than onto
+        // them -- a fund is one composition however many accounts hold it.
+        self.funds.set_mixes(
+            mixes
+                .iter()
+                .map(|(ticker, mix)| (ticker.clone(), mix.slices.clone()))
+                .collect(),
+        );
 
         let rows = holdings
             .into_iter()
@@ -144,16 +194,106 @@ fn stock_share(mix: &fund_mix::Mix) -> BasisPoints {
     BasisPoints(bp)
 }
 
+/// What `g`/`G` leave on the status line: honest about a run that updated
+/// some tickers and failed others, rather than reporting success on the
+/// strength of `updated` alone. Every ticker is masked through
+/// `crate::demo::text` on the way out, the same as every other name a
+/// screen draws.
+fn refresh_status(refreshed: &Refreshed) -> String {
+    let updated = || {
+        refreshed
+            .updated
+            .iter()
+            .map(|t| crate::demo::text(t))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let failed = || {
+        refreshed
+            .failed
+            .iter()
+            .map(|(t, e)| format!("{}: {e}", crate::demo::text(t)))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    match (refreshed.updated.is_empty(), refreshed.failed.is_empty()) {
+        (true, true) => "nothing to refresh".to_string(),
+        (false, true) => format!("refreshed {}", updated()),
+        (true, false) => format!("failed to refresh {}", failed()),
+        (false, false) => format!("refreshed {}; failed to refresh {}", updated(), failed()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::stock_share;
+    use super::{Refreshed, refresh_status, stock_share};
+    use crate::allocation::{self, TargetClass};
     use crate::db::fund_mix::{self, AssetClass, Slice};
+    use crate::db::setting::{self, key};
     use crate::money::Cents;
     use crate::rate::BasisPoints;
     use crate::test_support::day;
     use crate::tui::app::test_support;
     use crate::tui::modal::Modal;
     use ratatui::crossterm::event::KeyCode;
+
+    /// A refresh with no failures says only what was updated.
+    #[test]
+    fn a_fully_successful_refresh_names_every_updated_ticker() {
+        let refreshed = Refreshed {
+            updated: vec!["USM".to_string(), "USB".to_string()],
+            failed: vec![],
+        };
+        assert_eq!(refresh_status(&refreshed), "refreshed USM, USB");
+    }
+
+    /// A run where some tickers updated and some failed is reported as one:
+    /// the status line must carry both halves rather than reading as a
+    /// success on the strength of `updated` alone.
+    #[test]
+    fn a_partial_refresh_names_both_what_updated_and_what_failed() {
+        let refreshed = Refreshed {
+            updated: vec!["USM".to_string()],
+            failed: vec![("ISM".to_string(), "throttled".to_string())],
+        };
+        assert_eq!(
+            refresh_status(&refreshed),
+            "refreshed USM; failed to refresh ISM: throttled"
+        );
+    }
+
+    /// Every ticker failing is still reported, not silently swallowed as
+    /// "nothing to refresh" -- that phrase is reserved for an empty list.
+    #[test]
+    fn a_refresh_where_everything_failed_names_every_failure() {
+        let refreshed = Refreshed {
+            updated: vec![],
+            failed: vec![
+                ("USM".to_string(), "throttled".to_string()),
+                (
+                    "ISM".to_string(),
+                    "SEC lists no series for ticker".to_string(),
+                ),
+            ],
+        };
+        assert_eq!(
+            refresh_status(&refreshed),
+            "failed to refresh USM: throttled; ISM: SEC lists no series for ticker"
+        );
+    }
+
+    /// Reachable only if `G` is pressed with no holdings in the database at
+    /// all -- an empty ticker list is neither an update nor a failure, so it
+    /// earns its own phrase rather than falling into either of the arms
+    /// above.
+    #[test]
+    fn a_refresh_of_nothing_says_there_was_nothing_to_refresh() {
+        let refreshed = Refreshed {
+            updated: vec![],
+            failed: vec![],
+        };
+        assert_eq!(refresh_status(&refreshed), "nothing to refresh");
+    }
 
     #[test]
     fn a_holding_with_no_mix_on_record_reads_as_never_fetched() {
@@ -466,6 +606,41 @@ mod tests {
         assert_eq!(stock_share(&mix), BasisPoints(7_500));
     }
 
+    /// `mix::refresh` always reaches the network, so this crate's tests
+    /// must never call it with a contact configured -- `app_with_holdings`
+    /// carries none, which is what lets this run offline and still exercise
+    /// the refusal.
+    #[test]
+    fn refreshing_with_no_sec_contact_configured_says_what_to_set() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        test_support::press(&mut app, KeyCode::Char('G'));
+
+        assert!(
+            app.status.contains("contact"),
+            "the refusal does not name the setting to fix: {}",
+            app.status
+        );
+    }
+
+    /// The other key of the pair: `g` refuses the same way over the
+    /// selected row alone, rather than silently doing nothing because
+    /// nothing is selected.
+    #[test]
+    fn refreshing_the_selected_row_with_no_sec_contact_configured_says_what_to_set() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        test_support::press(&mut app, KeyCode::Char('g'));
+
+        assert!(
+            app.status.contains("contact"),
+            "the refusal does not name the setting to fix: {}",
+            app.status
+        );
+    }
+
     /// The end-to-end reading: a mix on record for one holding's ticker
     /// reaches the row as a stock share and the filing date it was read
     /// off, while the other holding's ticker -- never fetched -- stays
@@ -494,5 +669,93 @@ mod tests {
         let unpriced = rows.iter().find(|r| r.ticker == "USB").unwrap();
         assert_eq!(unpriced.stock_percent, None);
         assert_eq!(unpriced.as_of, None);
+    }
+
+    /// The look-through is a share of what it covers, so whatever the mixes
+    /// carry it foots to a whole hundred percent.
+    #[test]
+    fn the_summary_totals_every_holding_weighted_by_its_mix() {
+        let mut app = test_support::app_with_mixes();
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        let summary = app.funds.summary();
+        let total: i64 = summary.iter().map(|s| s.weight.0).sum();
+        assert_eq!(total, 10_000, "the summary does not foot to 100%");
+    }
+
+    /// The classifier's residual is a defect report, so a portfolio with
+    /// nothing unplaced says nothing rather than drawing a zero.
+    #[test]
+    fn the_unclassified_row_is_absent_when_nothing_is_unclassified() {
+        let mut app = test_support::app_with_mixes();
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        assert!(
+            !app.funds
+                .summary()
+                .iter()
+                .any(|s| s.class == AssetClass::Unclassified),
+            "an empty Unclassified row was drawn"
+        );
+    }
+
+    /// "Where do the bonds live" is answered by the filter the screen already
+    /// had: `BRK` holds the bond fund and `RET` the international one, so the
+    /// two narrowings cannot come to the same summary.
+    #[test]
+    fn the_account_filter_recomputes_the_summary_for_that_account_alone() {
+        let mut app = test_support::app_with_mixes();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        let all = app.funds.summary();
+
+        test_support::press(&mut app, KeyCode::Tab);
+
+        assert_ne!(
+            app.funds.summary(),
+            all,
+            "Tab did not recompute the summary"
+        );
+    }
+
+    /// The age rule produces one bond number, so the row it is drawn against
+    /// is one bond figure: the two bond classes added, not whichever of them
+    /// happens to be larger.
+    #[test]
+    fn the_bond_target_is_drawn_against_the_combined_bond_share() {
+        let mut app = test_support::app_with_mixes();
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        let bonds = app
+            .funds
+            .summary_row(TargetClass::Bonds)
+            .expect("a Bonds row");
+        let summary = app.funds.summary();
+        assert_eq!(
+            bonds.actual,
+            allocation::weight(&summary, AssetClass::UsBond)
+                + allocation::weight(&summary, AssetClass::IntlBond)
+        );
+        assert_ne!(
+            allocation::weight(&summary, AssetClass::IntlBond),
+            BasisPoints::ZERO,
+            "a fixture with only one bond class would pass either way"
+        );
+    }
+
+    /// No birth date is a question rather than a zero, all the way to the
+    /// cell: a `0.00%` bond target reads as advice nobody gave.
+    #[test]
+    fn with_no_birth_date_on_record_the_bond_target_is_blank_rather_than_zero() {
+        let mut app = test_support::app_with_mixes();
+        setting::clear(&app.db, key::BIRTH_DATE).unwrap();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        app.reload().unwrap();
+
+        let bonds = app.funds.summary_row(TargetClass::Bonds).unwrap();
+        assert_eq!(
+            bonds.target, None,
+            "a missing birth date drew a zero bond target"
+        );
+        assert_eq!(bonds.delta, None);
     }
 }

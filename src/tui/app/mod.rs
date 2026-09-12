@@ -253,6 +253,12 @@ pub struct App {
     recurring_txn: RecurringTxns,
     recurring_goal: RecurringGoals,
     accounts: Accounts,
+    /// The `[sec] contact` line from the config file, or `None` when the
+    /// section is absent. Carried rather than read per press because it is a
+    /// fact about the run, the same standing as `today` -- and because
+    /// `config` is not a module `tui` otherwise names, so a second read site
+    /// would have to name it too.
+    sec_contact: Option<String>,
     /// The suggestion list under whichever form is open. Lives on `App`
     /// rather than on the forms because `App` owns the `Db` the query needs.
     popup: Autocomplete,
@@ -329,7 +335,7 @@ impl App {
         setting::get_or(&self.db, key::PAY_PERIODS_PER_YEAR, 26)
     }
 
-    pub fn new(db: Db, today: NaiveDate) -> Result<App> {
+    pub fn new(db: Db, today: NaiveDate, sec_contact: Option<String>) -> Result<App> {
         let dates = projection::dates(&db, today)?;
         let range = txn::date_range(&db)?;
         let mut app = App {
@@ -352,6 +358,7 @@ impl App {
             recurring_txn: RecurringTxns::new(account::list(&db)?),
             recurring_goal: RecurringGoals::new(i64::from(today.month())),
             accounts: Accounts::new(),
+            sec_contact,
             db,
             today,
             dates,
@@ -2118,7 +2125,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '6'),
-            "Tab acct · Esc clear · / search · a/e/d holding"
+            "Tab acct · Esc clear · / search · a/e/d holding · g refresh · G all"
         );
         assert_eq!(
             footer_of(&mut app, '7'),
@@ -2566,7 +2573,10 @@ mod tests {
                 Topic::Planning,
                 &["e", "a", "E", "d", "t", "f", "Enter", "p", "P"],
             ),
-            (Topic::Funds, &["Tab", "BackTab", "Esc", "/", "a", "e", "d"]),
+            (
+                Topic::Funds,
+                &["Tab", "BackTab", "Esc", "/", "a", "e", "d", "g", "G"],
+            ),
             (Topic::RecurringTxns, &["a", "e", "d", "g", "G", "x", "P"]),
             (
                 Topic::RecurringGoals,

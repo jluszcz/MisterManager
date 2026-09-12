@@ -3,7 +3,7 @@ use chrono::{Local, NaiveDate, Utc};
 use clap::{Parser, Subcommand};
 #[cfg(feature = "import")]
 use mistermanager::import;
-use mistermanager::{backup, config, db, report, tui};
+use mistermanager::{backup, config, db, mix, report, tui};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -70,6 +70,17 @@ enum Command {
         #[arg(long)]
         dir: Option<PathBuf>,
     },
+    /// Refresh fund compositions from SEC's latest N-PORT filings.
+    ///
+    /// Not behind a feature, unlike `import`: fetching a public filing is an
+    /// ordinary network read, not the spreadsheet parser a default build
+    /// deliberately omits.
+    Mixes {
+        /// Refresh only this ticker. Without it, every ticker any holding
+        /// names is refreshed.
+        #[arg(long)]
+        ticker: Option<String>,
+    },
     /// Back the database up to S3, if the schedule says one is due.
     Backup {
         /// Upload even if the last backup is recent enough.
@@ -119,7 +130,8 @@ fn main() -> Result<()> {
         // No subcommand launches the application. `--db` and `--today` are
         // global, so the TUI honors them exactly as the importer does.
         None => {
-            let db = tui::run(db, today, demo)?;
+            let sec_contact = cfg.sec.as_ref().map(|s| s.contact.clone());
+            let db = tui::run(db, today, demo, sec_contact)?;
             write_report(&db, &cfg, today, demo);
         }
         #[cfg(feature = "import")]
@@ -169,6 +181,46 @@ fn main() -> Result<()> {
             // Asked for outright, so a failure is an error exit rather than a
             // line on stderr, exactly as an explicit `mm backup` is.
             print_written(&report::write(&db, &dir, today)?);
+        }
+        Some(Command::Mixes { ticker }) => {
+            // Named rather than defaulted: SEC refuses a request declaring no
+            // contact, and the repository may hold no real address, so the
+            // contact is configuration a run must supply.
+            let contact = cfg
+                .sec
+                .as_ref()
+                .with_context(|| {
+                    format!(
+                        "no [sec] contact configured in {} -- {}",
+                        config_path.display(),
+                        config::ADD_SEC_CONTACT
+                    )
+                })?
+                .contact
+                .clone();
+            // Uppercased and trimmed where it is typed, the rule the Funds
+            // form's `commit` already answers to: a ticker is the key
+            // `fund_mix` is stored under and none of the three places it is
+            // one folds case, so a row written under `usm` would be a second
+            // composition no holding typed `USM` could ever read. Every
+            // other route into `refresh` reads `holding`, where the form has
+            // already normalised it; this is the one that does not.
+            let tickers = match ticker {
+                Some(ticker) => vec![ticker.trim().to_uppercase()],
+                None => db::holding::tickers(&db)?,
+            };
+            let refreshed = mix::refresh(&db, &contact, &tickers)?;
+            print_refreshed(&refreshed);
+            // The scriptable route, so a run where nothing succeeded says so
+            // in its exit code as well as on stderr. A partial run still
+            // exits 0 -- some tickers did update, and their compositions are
+            // written.
+            if refreshed.updated.is_empty() && !refreshed.failed.is_empty() {
+                anyhow::bail!(
+                    "no ticker was refreshed: all {} failed",
+                    refreshed.failed.len()
+                );
+            }
         }
         Some(Command::Backup { force, status }) => {
             if status {
@@ -281,6 +333,15 @@ fn print_backup_status(cfg: &config::Config, state_path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn print_refreshed(refreshed: &mix::Refreshed) {
+    if !refreshed.updated.is_empty() {
+        println!("updated {}", refreshed.updated.join(", "));
+    }
+    for (ticker, error) in &refreshed.failed {
+        eprintln!("failed to refresh {ticker}: {error}");
+    }
 }
 
 #[cfg(feature = "import")]

@@ -1,6 +1,8 @@
 # backup — the schedule, the snapshot, and the upload
 
-`aws_config`, `aws_sdk_s3` and `tokio` are named only in `s3.rs`. The identity this code runs as,
+`aws_config` and `aws_sdk_s3` are named only in `s3.rs`, which is one of the two places in the
+crate that name `tokio` — `src/mix/sec.rs` is the other, and opens and drops a runtime per call for
+the same reason this one does. The identity this code runs as,
 and the bucket it writes to, are declared in `mistermanager.tf` at the repository root — two of the
 invariants below span that file as well as this directory, and say so where they do.
 

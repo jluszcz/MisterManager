@@ -1,6 +1,6 @@
 # report — the standing HTML report
 
-`Snapshot` reads the Overview, both ledgers, Savings and Planning in one pass; `html`
+`Snapshot` reads the Overview, both ledgers, Savings, Planning and the allocation in one pass; `html`
 renders them as one self-contained page, one module per tab, the way `tui` keeps one per screen;
 `write` minifies that page and puts it on the disk atomically; `write_if_enabled` is the quit
 path's gate over it. `minify_html` is named only in `mod.rs`.
@@ -106,6 +106,26 @@ about a figure, one of them is wrong.
   That it is a class here and a character in the screen's label column is the
   whole reason `Row::counts_as_expense` is a flag rather than a glyph, the same
   argument `Row::depth` is a number for.
+- **The Funds tab is a spelling of the Funds screen, and the bar is CSS widths on a `<div>`.**
+  The rows, the four-class split and the apportioning behind them are `allocation`'s, the same list
+  the screen draws; what is decided here is what this medium has to decide. A charting library is
+  the one thing on a page read offline that could fail to arrive, so every share is baked into a
+  `style="width:..."` at render time and written out beside the bar as a figure — which is also
+  what the legend quotes, since a figure is what a reader checks a picture against. **What the four
+  classes leave over is the track the segments sit on, not a fifth segment**, exactly as the
+  screen's is: a bar that painted cash and the unplaced remainder as a class of their own would
+  read as though those four were the whole portfolio. A class's color is
+  `palette::ASSET_CLASSES` indexed by the class's own position in `AssetClass::ALL` — nothing
+  stores that position, so the two move together, and `palette`'s own test is what holds the
+  lengths level.
+- **The page has no `Tab`, so the accounts are stacked sections instead.** The screen narrows its
+  summary and its holdings together with one key; a page has no key, and a reader scrolls. Each
+  section carries both halves for that reason, and its summary is absent where the account has no
+  composition at all — a table of dashes over every class says only that a key has not been pressed
+  yet, on a page where pressing it is not even possible.
+- **A fund's own composition is nowhere on this page, though the screen this tab spells does carry
+  it** — `Mix` and `Stock%` are the pair dropped, so a reader who knows the screen will look for
+  them and not find them; `HOLDINGS_HEADER` is where that is argued and what it costs is stated.
 - **A cell says what it may do with its width, and a table never widens past the
   phone.** Three classes carry it: `n` is a figure and `d` a date, and neither
   wraps — a comma and a hyphen are both break opportunities, and a column narrow

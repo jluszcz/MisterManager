@@ -91,7 +91,7 @@ pub(super) fn app() -> App {
     )
     .unwrap();
     goal::insert_allocation(&db, couch, day(2026, 8, 1), Cents(25_000), None, None).unwrap();
-    App::new(db, today()).unwrap()
+    App::new(db, today(), None).unwrap()
 }
 
 pub(super) fn savings_names(app: &App) -> Vec<String> {
@@ -312,7 +312,7 @@ pub(super) fn planning_app() -> App {
     setting::set(&db, key(Line::MomAndDad), mom_and_dad).unwrap();
     setting::set(&db, Gate::EmergencyFund.key(), emergency).unwrap();
 
-    App::new(db, today()).unwrap()
+    App::new(db, today(), None).unwrap()
 }
 
 /// Two investment accounts and three holdings across them, from the fund
@@ -345,7 +345,63 @@ pub(super) fn app_with_holdings() -> App {
     holding::insert(&db, first, "USM", Cents::from_dollars(10_000)).unwrap();
     holding::insert(&db, first, "USB", Cents::from_dollars(5_000)).unwrap();
     holding::insert(&db, second, "ISM", Cents::from_dollars(3_000)).unwrap();
-    App::new(db, today()).unwrap()
+    App::new(db, today(), None).unwrap()
+}
+
+/// `app_with_holdings` plus a composition for every ticker but `USM`, and a
+/// birth date so the target column has something to state.
+///
+/// **`USM` is the one left unfetched**, and which one it is decides whether
+/// the `Tab` test means anything: the holding without a mix has to sit in an
+/// account that still holds a covered one, or narrowing to it would leave the
+/// same covered set the All filter had and the summary would not move. `USM`
+/// sits in `BRK` beside the bond fund, so `BRK` summarises as bonds alone and
+/// `RET` as international stock alone -- and All, which is neither. It is also
+/// what leaves the U.S. stock row at nothing against a target of nearly half
+/// the portfolio, which is exactly the gap the panel's coverage term exists to
+/// explain.
+pub(super) fn app_with_mixes() -> App {
+    use crate::db::fund_mix::{self, AssetClass, Slice};
+    use crate::rate::BasisPoints;
+
+    let slice = |class, weight| Slice {
+        class,
+        weight: BasisPoints(weight),
+    };
+    let app = app_with_holdings();
+    // One filing date for both: what a mix is *made of* is what the summary
+    // reads, and two dates here would be two facts nothing asserts.
+    let filed = day(2026, 6, 30);
+    fund_mix::set_for_ticker(
+        &app.db,
+        "USB",
+        filed,
+        &[
+            slice(AssetClass::UsBond, 7_000),
+            slice(AssetClass::IntlBond, 2_500),
+            slice(AssetClass::Cash, 500),
+        ],
+    )
+    .unwrap();
+    fund_mix::set_for_ticker(
+        &app.db,
+        "ISM",
+        filed,
+        &[
+            slice(AssetClass::IntlStock, 9_500),
+            slice(AssetClass::Cash, 500),
+        ],
+    )
+    .unwrap();
+    // Derived from the fixture's own day rather than written out: a literal
+    // year that lands on a plausible age is a plausible real birth date in a
+    // tracked file.
+    let birth = today().with_year(today().year() - 48).unwrap();
+    setting::set(&app.db, key::BIRTH_DATE, birth).unwrap();
+
+    let mut app = app;
+    app.reload().unwrap();
+    app
 }
 
 /// `planning_app` plus one Everyday row three days after today, so the three

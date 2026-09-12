@@ -48,6 +48,21 @@ impl AssetClass {
         AssetClass::Unclassified,
     ];
 
+    /// This class's own place in [`AssetClass::ALL`].
+    ///
+    /// Both places that accumulate a figure per class key an array by it --
+    /// `mix::classify` summing a filing's holdings, `allocation::apportion`
+    /// summing a portfolio's balances -- and a second implementation of this
+    /// mapping is a reordering of `ALL` away from mislabelling every slice
+    /// one of them produces. Derived from `ALL` rather than matched out by
+    /// hand so the two cannot come apart: there is one order, and this is it.
+    pub fn index(self) -> usize {
+        AssetClass::ALL
+            .iter()
+            .position(|class| *class == self)
+            .expect("AssetClass::ALL names every variant")
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             AssetClass::UsStock => "us_stock",
@@ -311,6 +326,16 @@ mod tests {
             }
         }
         assert_eq!(AssetClass::ALL.len(), 6);
+    }
+
+    /// Two modules key a per-class array by [`AssetClass::index`], so a class
+    /// whose index did not find it back in `ALL` would put a filing's stock
+    /// weight in the bond row with nothing to say so.
+    #[test]
+    fn every_class_indexes_to_its_own_place_in_all() {
+        for (position, class) in AssetClass::ALL.iter().enumerate() {
+            assert_eq!(class.index(), position);
+        }
     }
 
     /// The enum and the schema's `CHECK (asset_class IN (...))` are two

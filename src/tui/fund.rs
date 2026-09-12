@@ -10,23 +10,36 @@
 //! and `Row::as_of` are `None` exactly when no `fund_mix` row exists for the
 //! ticker, and both columns draw the same `—` every other absence in the
 //! app draws rather than a bar or a figure that would read as zero.
+//!
+//! Above that list sits the allocation summary: what the whole portfolio
+//! holds by asset class, against what the age rule says it should. The rows
+//! and the apportioning behind them are `crate::allocation`'s, not this
+//! module's -- the report's Funds tab spells the same ones -- and what is
+//! decided here is only what a terminal has to decide: the bar's glyphs, the
+//! column widths, and how many lines the panel may take off the list.
 
 use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::form::{AccountChoice, Field, Focused, FormFields, Step, next_in, parse_whole_amount};
 use super::search::{Search, SearchBox};
 use super::widget::{field_stack, render_fields};
-use super::{Account, Chrome, Label, account_cell, render_table, right_header, whole_amount};
+use super::{
+    Account, Chrome, GUTTER, Label, account_cell, render_table, right_header, whole_amount,
+};
+use crate::allocation::{self, Allocation, SummaryRow, TargetClass, UNTARGETED};
+use crate::calc::fund::Targets;
 use crate::db::account;
+use crate::db::fund_mix::Slice;
 use crate::db::{AccountId, HoldingId};
 use crate::money::Cents;
 use crate::rate::BasisPoints;
 use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line as TextLine;
-use ratatui::widgets::{Cell, Row as TableRow};
+use ratatui::widgets::{Block, Cell, Padding, Paragraph, Row as TableRow, Table};
+use std::collections::HashMap;
 
 /// One holding, as the Funds screen lists it.
 ///
@@ -53,6 +66,19 @@ pub struct Row {
 /// hands the built rows in through [`Funds::set_rows`].
 pub struct Funds {
     accounts: Vec<account::Account>,
+    /// Every composition on record, by ticker -- keyed the way `fund_mix`
+    /// itself is, rather than copied onto each [`Row`], so two accounts
+    /// holding one fund read one answer.
+    mixes: HashMap<String, Vec<Slice>>,
+    /// What the age rule asks for. Handed in beside the rows rather than
+    /// derived here, `Funds` holding no `Db` -- and cached rather than taken
+    /// per draw, since `Tab` recomputes the summary without a reload.
+    targets: Targets,
+    /// The look-through over whatever the filters leave, recomputed wherever
+    /// [`Funds::refilter`] is: the summary answers for the rows under it, so
+    /// a narrowing that moved one and not the other would put a portfolio's
+    /// composition over one account's holdings.
+    allocation: Allocation,
     /// `None` is the All filter, an id rather than an index into `accounts`
     /// for the reason `Savings::container` is one: nothing here has to be
     /// carried across a reload the way a ledger's position would be.
@@ -68,6 +94,12 @@ impl Funds {
     pub fn new() -> Funds {
         Funds {
             accounts: Vec::new(),
+            mixes: HashMap::new(),
+            // An unconfigured database is a real state: no birth date on
+            // record, and the split `crate::fund` opens on until an import
+            // writes the sheet's own.
+            targets: crate::calc::fund::targets(None, crate::fund::DEFAULT_INTL_EQUITY_SHARE),
+            allocation: Allocation::default(),
             account: None,
             rows: Vec::new(),
             visible: Vec::new(),
@@ -91,6 +123,52 @@ impl Funds {
     pub fn set_rows(&mut self, rows: Vec<Row>) {
         self.rows = rows;
         self.refilter();
+    }
+
+    /// Take every composition on record, by ticker.
+    pub fn set_mixes(&mut self, mixes: HashMap<String, Vec<Slice>>) {
+        self.mixes = mixes;
+        self.recompute_allocation();
+    }
+
+    /// Take the age rule's three shares, as of the day the app was opened on.
+    pub fn set_targets(&mut self, targets: Targets) {
+        self.targets = targets;
+    }
+
+    /// The portfolio look-through over the rows on screen, footing to
+    /// [`BasisPoints::ONE`] -- or empty when nothing on screen has a mix on
+    /// record, which is the state every database starts in.
+    pub fn summary(&self) -> Vec<Slice> {
+        self.allocation.slices.clone()
+    }
+
+    /// One targeted class as the summary draws it, or `None` when there is no
+    /// composition to draw it against.
+    ///
+    /// Absent rather than zeroed, for the reason [`Row::stock_percent`] is:
+    /// a portfolio nobody has fetched a mix for holds an unknown share of
+    /// bonds, not none.
+    pub fn summary_row(&self, class: TargetClass) -> Option<SummaryRow> {
+        (!self.allocation.slices.is_empty())
+            .then(|| SummaryRow::new(class, &self.allocation.slices, self.targets))
+    }
+
+    pub(super) fn allocation(&self) -> &Allocation {
+        &self.allocation
+    }
+
+    fn recompute_allocation(&mut self) {
+        let allocation = {
+            let held: Vec<(Cents, Option<&[Slice]>)> = self
+                .visible
+                .iter()
+                .map(|i| &self.rows[*i])
+                .map(|row| (row.balance, self.mixes.get(&row.ticker).map(Vec::as_slice)))
+                .collect();
+            allocation::apportion(&held)
+        };
+        self.allocation = allocation;
     }
 
     /// The rows the account filter and the search leave, not every row
@@ -215,6 +293,7 @@ impl Search for Funds {
             .map(|(i, _)| i)
             .collect();
         self.cursor.clamp(self.visible.len());
+        self.recompute_allocation();
     }
 }
 
@@ -256,13 +335,227 @@ fn as_of_cell(as_of: Option<NaiveDate>) -> Cell<'static> {
     }
 }
 
-/// Account, Ticker, Balance, Mix, Stock%, As of.
+/// How many of the screen's lines the summary panel costs the list: its
+/// border, its header, and a row per class it has something to say about --
+/// or none at all when it has nothing.
+///
+/// The first two terms are [`super::Chrome::lines`]'s arithmetic, said here
+/// rather than borrowed: the panel is not a list, so it has no cursor to
+/// hand `render_table` and no `Chrome` to ask. Whatever moves there has to
+/// move here.
+///
+/// The panel is absent rather than empty when no holding on screen carries a
+/// mix, which is what a database nobody has run the fetcher against looks
+/// like. A bordered box of em dashes over every class would be the whole
+/// screen's top third saying only that a key has not been pressed yet, and
+/// the row that says it already sits under the cursor.
+fn summary_lines(allocation: &Allocation) -> u16 {
+    if allocation.slices.is_empty() {
+        return 0;
+    }
+    let untargeted = allocation
+        .slices
+        .iter()
+        .filter(|s| UNTARGETED.contains(&s.class))
+        .count();
+    2 + super::HEADER_LINES + (TargetClass::ALL.len() + untargeted) as u16 + BAR_LINES
+}
+
+/// The one line [`summary_bar`] and its legend take, under the table.
+const BAR_LINES: u16 = 1;
+
+/// How many glyph cells the four-class bar spends.
+///
+/// Fixed rather than the panel's width, for the reason [`MIX_BAR_WIDTH`] is:
+/// a glyph run truncates from the right like text, where a cell sized off the
+/// terminal would reflow every segment as the window moved. Forty is what
+/// makes the smallest segment worth drawing -- one glyph is 2.5%, and an
+/// international-bond sliver below that is the thing the bar exists to show.
+const SUMMARY_BAR_WIDTH: usize = 40;
+
+/// One glyph per [`allocation::BAR_CLASSES`] entry, in that order.
+///
+/// Four marks rather than four colours: what a colour *is* is `tui::style`'s
+/// to say and no class has one yet, and a bar that only reads in colour reads
+/// as nothing in the report beside it. The legend is drawn with them, since
+/// four shades in a fixed order is a key a reader would otherwise have to
+/// hold.
+const BAR_GLYPHS: [&str; 4] = ["█", "▓", "▒", "▚"];
+
+/// What the four leave over: cash, the classifier's residual, and whatever no
+/// filing placed. The same glyph the per-row bar below spends on the share a
+/// fund does *not* hold, so "nothing of mine is here" is one mark on this
+/// screen rather than two.
+const BAR_REST: &str = "░";
+
+/// The whole portfolio as one bar: the two equity classes, then the two bond
+/// classes the target rows combine.
+///
+/// **This is the one thing in the summary that splits the bonds.** The age
+/// rule produces a single bond number, so the row beside it cannot say whether
+/// the share is domestic or foreign, and a bar per row would have said nothing
+/// the `Actual` cell one column to its right did not already.
+///
+/// Segments are cut at the *cumulative* share and differenced, rather than
+/// each rounded on its own: that is what keeps them summing to the bar's own
+/// width, so the tail is exactly what the four classes leave rather than a
+/// glyph of accumulated rounding.
+fn summary_bar(slices: &[Slice]) -> String {
+    let width = SUMMARY_BAR_WIDTH as i64;
+    let mut bar = String::new();
+    let mut cumulative = 0i64;
+    let mut drawn = 0i64;
+    for (glyph, class) in BAR_GLYPHS.iter().zip(allocation::BAR_CLASSES) {
+        cumulative += allocation::weight(slices, class).0;
+        // Monotonic whatever the weights are: a negative `Unclassified` --
+        // a filing that over-foots -- puts the four classes past 100%
+        // between them, and a bar that ran backwards would draw a segment
+        // over the one before it.
+        let end = (cumulative.clamp(0, BasisPoints::ONE.0) * width / BasisPoints::ONE.0).max(drawn);
+        bar.push_str(&glyph.repeat((end - drawn) as usize));
+        drawn = end;
+    }
+    bar + &BAR_REST.repeat((width - drawn) as usize)
+}
+
+/// Class, Target, Actual, Δ, with the four-class bar and its legend beneath.
+///
+/// One table rather than a stack of bars: the rows are what the age rule
+/// targets and the bar is what the portfolio holds, and reading the second
+/// against the first is the only reason to draw either.
+///
+/// **The bar takes a line of its own rather than a column of the table.** A
+/// fourteen-glyph cell splits four ways into three glyphs each, which cannot
+/// show a bond split at all, and the bar is *one* statement about the whole
+/// portfolio where a table column is one per row.
+///
+/// `Cash` keeps its row at zero and `Unclassified` does not have one: cash is
+/// part of what the bar accounts for, while the residual is a defect report,
+/// and a defect report reading "none" every time is one nobody finishes
+/// reading.
+fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
+    let allocation = funds.allocation();
+    let percent = |bp: Option<BasisPoints>| {
+        Cell::from(
+            TextLine::from(match bp {
+                Some(bp) => format!("{bp}%"),
+                None => "—".to_string(),
+            })
+            .right_aligned(),
+        )
+    };
+
+    let mut rows: Vec<TableRow> = TargetClass::ALL
+        .iter()
+        .filter_map(|class| funds.summary_row(*class))
+        .map(|row| {
+            TableRow::new(vec![
+                Cell::from(row.class.label()),
+                percent(row.target),
+                percent(Some(row.actual)),
+                percent(row.delta),
+            ])
+        })
+        .collect();
+    rows.extend(
+        allocation
+            .slices
+            .iter()
+            .filter(|slice| UNTARGETED.contains(&slice.class))
+            .map(|slice| {
+                TableRow::new(vec![
+                    Cell::from(slice.class.label()),
+                    // No target and so no gap: the age rule says nothing
+                    // about cash, and a target for money the classifier
+                    // could not place would be a claim about nothing.
+                    percent(None),
+                    percent(Some(slice.weight)),
+                    percent(None),
+                ])
+            }),
+    );
+
+    let header = TableRow::new(vec![
+        Cell::from("Class"),
+        right_header("Target"),
+        right_header("Actual"),
+        right_header("Δ"),
+    ])
+    .style(Style::default().add_modifier(Modifier::BOLD));
+
+    // `Class` takes the single `Constraint::Min`; the three percentage
+    // columns are sized for `100.00%` and, on the last, the sign a gap the
+    // other way carries.
+    let widths = [
+        Constraint::Min(20),
+        Constraint::Length(7),
+        Constraint::Length(7),
+        Constraint::Length(8),
+    ];
+
+    let title = match allocation.coverage() {
+        None => "Allocation".to_string(),
+        Some(coverage) => format!("Allocation · {coverage}"),
+    };
+    // The block is drawn first and the two halves into what it leaves, rather
+    // than handed to the table: the bar is not a row, and a table owning the
+    // border would have no line below itself to put one on.
+    let block = Block::bordered()
+        .title(title)
+        .padding(Padding::right(GUTTER));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [table_area, bar_area] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(BAR_LINES)]).areas(inner);
+    frame.render_widget(
+        Table::new(rows, widths).header(header.height(super::HEADER_LINES)),
+        table_area,
+    );
+
+    let legend = BAR_GLYPHS
+        .iter()
+        .zip(allocation::BAR_CLASSES)
+        .map(|(glyph, class)| format!("{glyph} {}", class.label()))
+        .collect::<Vec<_>>()
+        .join("  ");
+    frame.render_widget(
+        Paragraph::new(TextLine::from(format!(
+            "{}  {legend}",
+            summary_bar(&allocation.slices)
+        ))),
+        bar_area,
+    );
+}
+
+/// The fewest lines the list is left before the summary gives up the screen
+/// to it: the list's own chrome -- two border lines and a header -- and the
+/// one row a cursor has to be able to sit on.
+///
+/// The panel is a fixed height and the list takes what is left, so on a
+/// short enough terminal the list is left nothing, and there is no key that
+/// hides the panel to get it back. A summary of rows the reader cannot reach
+/// is the wrong half to keep: the rows are what every other key on this
+/// screen acts on, and the summary is a reading of them. Nothing here is
+/// state, so the panel returns the moment the window does.
+const LIST_FLOOR: u16 = 2 + super::HEADER_LINES + 1;
+
+/// Account, Ticker, Balance, Mix, Stock%, As of, under the allocation summary.
 ///
 /// `Account` takes the single `Constraint::Min` and absorbs the slack,
 /// `tui::GUTTER` included; the other five are `Constraint::Length` sized to
 /// their true content, the mix bar's own width chief among them -- it is
 /// fixed and glyph-based, so it truncates from the right exactly like text.
 pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
+    let area = match summary_lines(funds.allocation()) {
+        lines if lines > 0 && area.height >= lines + LIST_FLOOR => {
+            let [summary, list] =
+                Layout::vertical([Constraint::Length(lines), Constraint::Min(1)]).areas(area);
+            render_summary(frame, summary, funds);
+            list
+        }
+        _ => area,
+    };
     let visible = funds.rows();
     let rows: Vec<TableRow> = visible
         .iter()
@@ -451,6 +744,7 @@ pub(super) fn render_holding(frame: &mut Frame, form: &mut HoldingForm) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::fund_mix::AssetClass;
     use crate::test_support::{day, investment, walk_until};
     use crate::tui::MIN_WIDTH;
     use crate::tui::form::{backspace_key, char_key};
@@ -578,9 +872,6 @@ mod tests {
     /// second is an answer.
     #[test]
     fn a_fund_never_fetched_and_a_fund_confirmed_to_hold_no_stock_draw_differently() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let all = accounts();
         let mut funds = Funds::new();
         funds.set_accounts(all.clone());
@@ -593,17 +884,7 @@ mod tests {
             },
         ]);
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &funds);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
-        let lines: Vec<String> = (0..8)
-            .map(|y| (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect();
-
+        let lines = drawn(&funds, 8);
         let never_fetched = lines
             .iter()
             .find(|l| l.contains("USM"))
@@ -621,11 +902,279 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_right_aligned_headers_end_where_their_own_columns_do() {
+    /// The portfolio the app fixture builds, at view level: `USM` never
+    /// fetched, the bond fund and the international fund both priced.
+    fn funds_with_mixes() -> Funds {
+        let all = accounts();
+        let slice = |class, weight| Slice {
+            class,
+            weight: BasisPoints(weight),
+        };
+        let bond = vec![
+            slice(AssetClass::UsBond, 7_000),
+            slice(AssetClass::IntlBond, 2_500),
+            slice(AssetClass::Cash, 500),
+        ];
+        let intl = vec![
+            slice(AssetClass::IntlStock, 9_500),
+            slice(AssetClass::Cash, 500),
+        ];
+        let filed = day(2026, 6, 30);
+
+        let mut funds = Funds::new();
+        funds.set_accounts(all.clone());
+        funds.set_targets(crate::calc::fund::targets(Some(48), BasisPoints(4_000)));
+        funds.set_mixes(HashMap::from([
+            ("USB".to_string(), bond),
+            ("ISM".to_string(), intl),
+        ]));
+        funds.set_rows(vec![
+            fixture_row(1, AccountId(1), &all, "USM", 10_000),
+            Row {
+                stock_percent: Some(BasisPoints::ZERO),
+                as_of: Some(filed),
+                ..fixture_row(2, AccountId(1), &all, "USB", 5_000)
+            },
+            Row {
+                stock_percent: Some(BasisPoints(9_500)),
+                as_of: Some(filed),
+                ..fixture_row(3, AccountId(2), &all, "ISM", 3_000)
+            },
+        ]);
+        funds
+    }
+
+    fn drawn(funds: &Funds, height: u16) -> Vec<String> {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), funds);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    /// The summary is a fixed height above a list that takes what is left,
+    /// so on a short terminal it can leave the list nothing -- and no key on
+    /// this screen hides it. The rows are what the other keys act on, so they
+    /// are the half that keeps the screen.
+    #[test]
+    fn a_terminal_too_short_for_both_keeps_the_list_and_drops_the_summary() {
+        let funds = funds_with_mixes();
+        let lines = drawn(&funds, summary_lines(funds.allocation()) + LIST_FLOOR - 1);
+
+        assert!(
+            !lines.iter().any(|l| l.contains("Target")),
+            "the summary yields: {lines:#?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("Ticker")),
+            "the list keeps its header: {lines:#?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("USM")),
+            "and a holding to sit on: {lines:#?}"
+        );
+    }
+
+    /// The summary sits above the list, so it spends the list's height as
+    /// well as the screen's width. Both are checked at once and against
+    /// `MIN_WIDTH` rather than a number: a right-aligned percentage one
+    /// column short loses its *leading* digits, which reads as a smaller
+    /// share rather than as a truncation.
+    #[test]
+    fn the_summary_and_the_list_both_fit_the_narrowest_terminal() {
+        let funds = funds_with_mixes();
+        let lines = drawn(&funds, 24);
+
+        // $5,000 of a 70/25/5 bond fund and $3,000 of a 95/5 international
+        // fund, over the $8,000 the two of them come to -- `USM` having no
+        // mix on record is outside the denominator entirely.
+        let bonds = lines
+            .iter()
+            .find(|l| l.contains("Bonds"))
+            .expect("the Bonds row is drawn");
+        let header = lines
+            .iter()
+            .find(|l| l.contains("Target"))
+            .expect("the summary header is drawn");
+        let header_ends = super::super::ends_in_order(header, &["Target", "Actual", "Δ"]);
+        let row_ends = super::super::ends_in_order(bonds, &["18.00%", "59.37%", "-41.37%"]);
+        assert_eq!(
+            header_ends, row_ends,
+            "the summary's columns over {bonds:?}"
+        );
+
+        // The class the unfetched fund would have carried, sitting at nothing
+        // against a target of nearly half the portfolio.
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("U.S. Stock") && l.contains("49.20%") && l.contains("0.00%")),
+            "{lines:#?}"
+        );
+        // Cash is accounted for and carries no target; the classifier placed
+        // everything, so there is no Unclassified row at all.
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("Cash") && l.contains("5.00%")),
+            "{lines:#?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.contains("Unclassified")),
+            "{lines:#?}"
+        );
+
+        // And the list still draws under it, header and every holding.
+        assert!(lines.iter().any(|l| l.contains("Account")), "{lines:#?}");
+        for ticker in ["USM", "USB", "ISM"] {
+            assert!(
+                lines.iter().any(|l| l.contains(ticker)),
+                "the summary crowded {ticker} off the list: {lines:#?}"
+            );
+        }
+    }
+
+    /// Every class represented, so the bar has four segments to draw rather
+    /// than three and a gap. `funds_with_mixes` deliberately does not: it
+    /// mirrors the app fixture, whose unfetched `USM` is what leaves the U.S.
+    /// stock row at nothing.
+    fn funds_fully_priced() -> Funds {
+        let mut funds = funds_with_mixes();
+        let mut mixes = HashMap::from([(
+            "USM".to_string(),
+            vec![Slice {
+                class: AssetClass::UsStock,
+                weight: BasisPoints::ONE,
+            }],
+        )]);
+        for (ticker, slices) in funds.mixes.clone() {
+            mixes.insert(ticker, slices);
+        }
+        funds.set_mixes(mixes);
+        funds
+    }
+
+    /// $10,000 all U.S. stock, $5,000 of a 70/25/5 bond fund and $3,000 of a
+    /// 95/5 international fund, over $18,000: 55.56 / 15.83 / 19.45 / 6.94,
+    /// with cash taking the 2.22 the four leave.
+    ///
+    /// The bar cuts at the cumulative share, so its segments are that split
+    /// scaled to forty glyphs -- 22, 6, 8, 3 -- and the tail is the one glyph
+    /// the four do not account for.
+    #[test]
+    fn the_mix_bar_is_one_run_of_four_segments_in_the_portfolios_own_proportions() {
+        let funds = funds_fully_priced();
+        let summary = funds.summary();
+        assert_eq!(
+            allocation::weight(&summary, AssetClass::UsStock),
+            BasisPoints(5_556)
+        );
+
+        let bar = summary_bar(&summary);
+        assert_eq!(
+            bar,
+            "█".repeat(22) + &"▓".repeat(6) + &"▒".repeat(8) + &"▚".repeat(3) + "░"
+        );
+        assert_eq!(bar.chars().count(), SUMMARY_BAR_WIDTH);
+    }
+
+    /// The bond classes are two segments where the rows above are one, which
+    /// is the whole of what the bar adds: the age rule produces a single bond
+    /// number, so nothing else on the panel can say which half is which.
+    #[test]
+    fn the_bar_splits_the_bonds_the_target_rows_combine() {
+        let funds = funds_fully_priced();
+        let lines = drawn(&funds, 24);
+        let bar = lines
+            .iter()
+            .find(|l| l.contains("▚"))
+            .expect("the bar is drawn");
+
+        for (glyph, class) in BAR_GLYPHS.iter().zip(allocation::BAR_CLASSES) {
+            assert!(
+                bar.contains(&format!("{glyph} {}", class.label())),
+                "{class:?} is drawn with no legend: {bar:?}"
+            );
+        }
+        let bonds = funds
+            .summary_row(TargetClass::Bonds)
+            .expect("a Bonds row")
+            .actual;
+        assert_eq!(
+            bonds,
+            BasisPoints(1_945 + 694),
+            "the row combines what the bar splits"
+        );
+    }
+
+    /// A `None` target has to reach the cells, not only the model: a bond
+    /// share nobody has a birth date for is a question, and `0.00%` in either
+    /// column would read as advice.
+    #[test]
+    fn a_bond_target_with_no_birth_date_draws_an_em_dash_in_both_of_its_cells() {
+        let mut funds = funds_with_mixes();
+        funds.set_targets(crate::calc::fund::targets(None, BasisPoints(4_000)));
+
+        let lines = drawn(&funds, 24);
+        let bonds = lines
+            .iter()
+            .find(|l| l.contains("Bonds"))
+            .expect("the Bonds row is drawn");
+        super::super::ends_in_order(bonds, &["—", "59.37%", "—"]);
+        assert!(
+            !bonds.contains("0.00%"),
+            "a missing target drew a zero: {bonds:?}"
+        );
+    }
+
+    /// The panel is a claim about the whole list, so it says when it is not
+    /// one: `BRK` holds the fund nobody has fetched, `RET` holds only a fund
+    /// that has been.
+    #[test]
+    fn the_summary_title_names_its_coverage_only_while_something_is_missing() {
+        let mut funds = funds_with_mixes();
+        assert!(
+            drawn(&funds, 24)
+                .iter()
+                .any(|l| l.contains("Allocation · 2 of 3 holdings")),
+            "the partial coverage went unsaid"
+        );
+
+        walk_until!(
+            funds.filter_account() == Some(AccountId(2)),
+            funds.next_account()
+        );
+        let lines = drawn(&funds, 24);
+        assert!(lines.iter().any(|l| l.contains("Allocation")), "{lines:#?}");
+        assert!(
+            !lines.iter().any(|l| l.contains("holdings")),
+            "a complete summary counted itself: {lines:#?}"
+        );
+    }
+
+    /// Every database starts with no composition on record, and a bordered
+    /// box of em dashes over the top third of the screen would say only that
+    /// a key has not been pressed yet.
+    #[test]
+    fn a_portfolio_with_no_mix_on_record_draws_no_summary_at_all() {
+        let lines = drawn(&funds(), 24);
+        assert!(
+            !lines.iter().any(|l| l.contains("Allocation")),
+            "{lines:#?}"
+        );
+        assert!(lines[0].contains("Funds"), "the list took the whole area");
+    }
+
+    #[test]
+    fn the_right_aligned_headers_end_where_their_own_columns_do() {
         let all = vec![investment(1, "BRK")];
         let mut funds = Funds::new();
         funds.set_accounts(all.clone());
@@ -635,18 +1184,14 @@ mod tests {
             ..fixture_row(1, AccountId(1), &all, "USM", 100)
         }]);
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &funds);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
-        let header: String = (0..MIN_WIDTH).map(|x| buffer[(x, 1)].symbol()).collect();
-        let row: String = (0..MIN_WIDTH).map(|x| buffer[(x, 2)].symbol()).collect();
+        // No mix on record, so no summary panel: the list still opens at the
+        // top of the area, with its header on the line under the border.
+        let lines = drawn(&funds, 6);
+        let header = &lines[1];
+        let row = &lines[2];
 
-        let header_ends = super::super::ends_in_order(&header, &["Balance", "Stock%"]);
-        let row_ends = super::super::ends_in_order(&row, &["100", "62.34%"]);
+        let header_ends = super::super::ends_in_order(header, &["Balance", "Stock%"]);
+        let row_ends = super::super::ends_in_order(row, &["100", "62.34%"]);
         assert_eq!(header_ends[0], row_ends[0], "Balance over {row:?}");
         assert_eq!(header_ends[1], row_ends[1], "Stock% over {row:?}");
     }

@@ -25,6 +25,12 @@ cargo run --features import --bin mm -- --db /tmp/scratch.db --today 2026-08-12 
 # from the environment.
 MM_REQUIRE_WORKBOOK=1 MM_WORKBOOK=<workbook> \
   MM_ACCOUNTS=<checking>,<goals>,<buckets> cargo test --features import
+
+# The live SEC test names a fund the owner holds, which is as unwritable here
+# as an account code, and reads its contact out of the config file. `--test`
+# names the binary: the test inside it is named for what it asserts, so a bare
+# `cargo test sec_live` filter matches nothing and runs nothing.
+MM_REQUIRE_SEC=1 MM_SEC_TICKER=<ticker> cargo test --test sec_live
 ```
 
 ## The workbook is the test oracle
@@ -42,10 +48,10 @@ Tests skip loudly when it is unset or the file is absent, so a clean checkout pa
 importer or the waterfall touches, run with that set — otherwise the tests that actually exercise
 it silently no-op.
 
-**`--features import` is part of that same sentence.** Every binary in `tests/` carries
-`#![cfg(feature = "import")]`, because the importer is what puts the workbook into a database to
-assert against. Without the feature they compile to nothing, and `MM_REQUIRE_WORKBOOK=1` then has
-no test left to fail — the one thing it exists to prevent. CI runs the suite twice, default
+**`--features import` is part of that same sentence.** Every workbook-oracle binary in `tests/`
+carries `#![cfg(feature = "import")]`, because the importer is what puts the workbook into a
+database to assert against. Without the feature they compile to nothing, and `MM_REQUIRE_WORKBOOK=1`
+then has no test left to fail — the one thing it exists to prevent. CI runs the suite twice, default
 features and all of them, which is what keeps the feature from rotting; a local run meant to
 exercise the importer passes it explicitly.
 
@@ -57,20 +63,31 @@ values themselves stay in the tests, where they are asserted against the workboo
 restated.
 
 The holdings model has no workbook oracle: `holding` and `fund_mix` carry data the sheet never
-carried, so `tests/` holds no binary for either and their coverage is unit tests against invented
-fixtures.
+carried, so their coverage is unit tests against invented fixtures.
+
+**The one binary in `tests/` that is not a workbook oracle is `tests/sec_live.rs`**, and it is
+outside the `import` feature because what it exercises — the fetcher behind `fund_mix` — is in an
+ordinary build. Its oracle is SEC's live service, so it asserts structurally rather than against
+any figure, and it skips on an unset `MM_SEC_TICKER` the way the others skip on `MM_WORKBOOK`,
+with `MM_REQUIRE_SEC=1` as its own turn-the-skip-into-a-failure. Which funds the owner holds is the
+same kind of fact as an account code, which is why the ticker is a variable and not a literal.
+`src/mix/CLAUDE.md` is where it is set out, including the one constant in that module no fixture
+can confirm.
 
 `src/tui/CLAUDE.md` sits beside those two and answers a different set of questions: what a key is
 allowed to mean, what each screen owns, and how much width it may spend. The app is driven entirely
 by single keystrokes, so the same action takes the same key on every screen that offers it. Read it
 before touching anything under `src/tui/` — nothing about the screens is documented here.
 
-`src/report/CLAUDE.md` and `src/backup/CLAUDE.md` complete the set. The report's invariants follow
-from two facts — the page carries no script, and it is read offline on a phone — and the backup's
-from one: the key is long-lived and unattended, so what bounds it is an IAM policy rather than a
-setting. Two of the backup's invariants span `mistermanager.tf` at the repository root as well as
-that directory, and say so where they do; read that file before changing the bucket, what it keeps,
-or what the backup identity may do, since none of that is reachable from Rust.
+`src/report/CLAUDE.md`, `src/backup/CLAUDE.md` and `src/mix/CLAUDE.md` complete the set. The
+report's invariants follow from two facts — the page carries no script, and it is read offline on a
+phone — and the backup's from one: the key is long-lived and unattended, so what bounds it is an
+IAM policy rather than a setting. Two of the backup's invariants span `mistermanager.tf` at the
+repository root as well as that directory, and say so where they do; read that file before changing
+the bucket, what it keeps, or what the backup identity may do, since none of that is reachable from
+Rust. The mix's follow from one fact of their own: the service on the other end is SEC's, so that
+file carries what no fixture here can confirm alongside the rules that span the module and the
+places a refresh is triggered from.
 
 ## No real data in the repository
 
@@ -173,18 +190,20 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/db/fund_mix.rs` | The `fund_mix` table — one fund's composition by asset class, as of the filing it was read from. |
 | `src/db/recurring_txn.rs` | The `recurring_txn` table — rows whose amount and date are known in advance. CRUD plus the queries regeneration needs. |
 | `src/import/` | Reads `Money.xlsx` via `calamine`. Behind the non-default `import` Cargo feature — it is the only module naming `calamine`, which is what lets that dependency be `optional`, so a default build compiles no spreadsheet parser and offers no `mm import`. |
+| `src/mix/` | A fund's composition, read out of SEC's N-PORT filings and written to `db::fund_mix`. `sec` is the network client — the only place `reqwest` and `jluszcz_rust_utils` are named, and one of two places `tokio` is, `src/backup/s3.rs` being the other; `classify` is pure, with neither a network nor a database in it; `mod.rs` is the policy over the two. `mm mixes` and the Funds screen's `g`/`G` are the only things that run it. |
 | `src/overview.rs` | Reads balances at the three projection dates out of `db` and bands them into the Overview's sections and Net. Read by the Overview screen and by `report`. |
 | `src/savings.rs` | A goal's derived columns — `%`, `$/Pay`, expired — and what a container has left unallocated. Read by the Savings screen and by `report`. |
 | `src/plan.rs` | Reads settings and balances out of `db`, feeds `calc::planning::compute`. |
 | `src/fund.rs` | Reads the birth date and the international-equity split out of `db`, feeds `calc::fund::targets`. |
+| `src/allocation.rs` | The look-through: each holding's balance apportioned by its fund's composition and summed by asset class, against what the age rule asks for. A peer of `overview`, `savings` and `plan_rows`, in neither medium — the Funds screen and the report's Funds tab both read it, so the apportioning, the row order, the four-class bar's classes and the combining of the two bond classes are stated once here. It is a share of what it *covers*: a holding whose fund has no composition on record is outside the denominator, and `Allocation::coverage` is what says so. |
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. `spread_asks` prices the plug's set, and `unmet_asks` says when the plug falls short of it. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
-| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings and Planning in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own; its Funds tab is a line of text, there being no fund composition on record to look through. |
+| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and the allocation in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own, and its Funds tab of `allocation`, with one stacked section per account where the screen cycles them with `Tab`. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
-| `src/backup/` | The schedule, the snapshot, and the upload. `aws_config`, `aws_sdk_s3` and `tokio` are named only in `s3.rs`. |
+| `src/backup/` | The schedule, the snapshot, and the upload. `aws_config` and `aws_sdk_s3` are named only in `s3.rs`, which is one of two places `tokio` is -- `src/mix/sec.rs` is the other. |
 | `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `tui/mod.rs` rather than in whichever screen needed it first. `app` is a directory, one module per screen over one `App`. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
-| `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `report` and `backup` are always subcommands, and `import` is a third behind the `import` feature -- a default build does not offer it. |
+| `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `report`, `mixes` and `backup` are always subcommands, and `import` is a fourth behind the `import` feature -- a default build does not offer it. |
 
 **`rusqlite` is named only inside `src/db/`.** `Db` holds a private `Connection` and deliberately does
 not `Deref` to it — handing out a `&Connection` would put every rusqlite method back within reach of
@@ -214,7 +233,8 @@ It issues a bare `BEGIN` and is **not reentrant** — anything reachable from in
 one caller already being inside the import's transaction. `txn::write_transfer` is the second: it
 writes both legs of a transfer with no transaction of its own, so several calls compose into one
 atomic payday under a single caller-owned `transaction`. `txn::insert_transfer` is the wrapper that
-opens that transaction for a single transfer.
+opens that transaction for a single transfer. `fund_mix::set_for_ticker` is the third, and composes
+the same way under the one `mix::refresh` owns for a whole batch of tickers.
 
 **The schema migrates forward, and `schema.sql` is a frozen baseline rather than the whole truth.**
 Every change since version 1 is an arm in `db::migration::MIGRATIONS` — a fresh database takes the
@@ -359,9 +379,36 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   string a holding carries. So `usm` and `USM` would be two holdings in one account, two entries in
   `holding::tickers`, and two independent compositions — a mix fetched under one spelling never
   reaching a holding typed in the other. It is the failure `account::by_code` folds case against,
-  answered the other way round: the form is the only writer, so `tui::fund::HoldingForm::commit`
-  normalises the typing and the three keys agree by construction. A second writer owes the same
-  before it calls `holding::insert` or `holding::update`.
+  answered the other way round: a ticker is normalised once, where it is typed, so the three keys
+  agree by construction. `tui::fund::HoldingForm::commit` is where the form does it, and
+  `mm mixes --ticker` is the other — the one route that refreshes a composition without reading
+  `holding` first, so it has nothing already normalised to read. Any further writer owes the same
+  before it calls `holding::insert`, `holding::update` or `mix::refresh`.
+- **`Unclassified` is a class, not a gap.** A holding the classifier cannot place is stored under
+  it and drawn as its own row rather than folded into a neighbour — the stance `transfer::resolve`
+  takes toward a dangling key, and `classify` is where it is argued. **What a filing itself fails
+  to place goes there too, and the same function decides which of the two a gap is.** A total
+  inside `classify`'s own conversion rounding is dust and lands on the largest slice, where a point
+  either way is invisible; a wider one came from the filing — an N-PORT footing to 99.3% is
+  ordinary — and is `Unclassified`, positive where the filing under-reports and negative where it
+  over-foots. `allocation::apportion` answers a `fund_mix` row the same way for the row no refresh
+  wrote, the table constraining no footing of its own, so the summary foots *and* says what it
+  could not place. A zero `Unclassified` is dropped rather than drawn, the way the two Planning
+  transfer footers are: a defect report reading "none" every time is one nobody finishes reading.
+- **A fund with no `fund_mix` row has never been fetched, which is not the same as holding
+  nothing.** `tui::fund::Row::stock_percent` and `Row::as_of` are `Option` for that reason, and
+  both sinks draw their own "nothing here" rather than a zero — a fund genuinely reported to hold
+  no stock is `Some(BasisPoints::ZERO)`. Such a holding is outside the look-through's denominator
+  entirely, because folding it in would leave every class short by the same unnamed fraction, which
+  reads as an allocation rather than as a gap; what it costs the summary is `Allocation::coverage`,
+  drawn beside it. The remedy is one keystroke away: `G` is pressed from the screen that says so.
+- **A refresh is atomic across every ticker but tolerant of any one of them.** `mix::refresh`
+  fetches and classifies every ticker first, sequentially and with no transaction open at all, and
+  only then opens the one that writes them — a SQLite write lock spanning a batch of blocking HTTP
+  requests would serialize against nothing here and cost something. A ticker whose *fetch* failed
+  is collected into `Refreshed::failed` rather than propagated, so one throttled fund cannot
+  discard nine good results and its previous mix stands untouched; a *write* failure is a database
+  problem and rolls the whole refresh back. Both halves are `mix::fetch_and_write`'s to derive.
 - **The pay cadence is one setting, and the days between paydays are derived from it.**
   `key::PAY_PERIODS_PER_YEAR` is the count; `calc::period_days` divides a year of whole weeks
   (`52 × 7`) by it, clamped at both ends, and that is what `calc::per_paycheck` counts a deadline's
@@ -568,9 +615,9 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   over a list of rows the reader can see would read as a fault. It is display-only and installed
   once, before the first frame, so nothing it touches can reach a write: what is typed into a form
   still parses, every buffer keeps its real text, and the status line that reports a write reports
-  a masked figure over a real row. `mm import` and `mm backup` do not take the flag, because
-  neither prints a figure. It compiles only under the non-default `demo` Cargo feature, so a
-  default build has no `--demo` flag and none of the code behind it. The rules for reaching the
+  a masked figure over a real row. `mm import`, `mm mixes` and `mm backup` do not take the flag,
+  because none of them prints a figure. It compiles only under the non-default `demo` Cargo
+  feature, so a default build has no `--demo` flag and none of the code behind it. The rules for reaching the
   mask — and the one place a caller has to say whether its figure is money — are in
   `src/tui/CLAUDE.md`.
 - **The quit path skips a page the day already has.** `report::is_due` rewrites only when this run

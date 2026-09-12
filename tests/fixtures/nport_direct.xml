@@ -1,0 +1,519 @@
+<?xml version="1.0" encoding="us-ascii"?>
+<!--
+  A minimal, invented N-PORT primary_doc.xml for a direct fund holding
+  individual securities rather than other funds -- the element names and
+  nesting a real filing carries, with every name, id and figure invented.
+  Thirty holdings, past classify::FUND_OF_FUNDS_MAX, so a filing this shape
+  is classified by assetCat and invCountry rather than by name.
+-->
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nport">
+  <headerData>
+    <submissionType>NPORT-P</submissionType>
+    <filerInfo>
+      <filer>
+        <issuerCredentials>
+          <cik>0000000002</cik>
+        </issuerCredentials>
+      </filer>
+    </filerInfo>
+  </headerData>
+  <formData>
+    <genInfo>
+      <regName>Some Other Investment Trust</regName>
+      <regCik>0000000002</regCik>
+      <regInvestCoType>N-1A</regInvestCoType>
+      <seriesId>S0000000002</seriesId>
+      <seriesName>Total Market Index Fund</seriesName>
+      <repPdDate>2026-06-30</repPdDate>
+      <repPdEndDate>2026-06-30</repPdEndDate>
+      <isFinalFiling>N</isFinalFiling>
+    </genInfo>
+    <fundInfo>
+      <totAssets>1000000000.00</totAssets>
+      <totLiabs>5000000.00</totLiabs>
+      <netAssets>995000000.00</netAssets>
+    </fundInfo>
+    <invstOrSecs>
+<invstOrSec>
+  <name>A Held Company 1</name>
+  <title></title>
+  <cusip>000000001</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 2</name>
+  <title></title>
+  <cusip>000000002</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 3</name>
+  <title></title>
+  <cusip>000000003</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 4</name>
+  <title></title>
+  <cusip>000000004</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 5</name>
+  <title></title>
+  <cusip>000000005</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 6</name>
+  <title></title>
+  <cusip>000000006</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 7</name>
+  <title></title>
+  <cusip>000000007</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 8</name>
+  <title></title>
+  <cusip>000000008</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 9</name>
+  <title></title>
+  <cusip>000000009</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 10</name>
+  <title></title>
+  <cusip>000000010</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 11</name>
+  <title></title>
+  <cusip>000000011</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 12</name>
+  <title></title>
+  <cusip>000000012</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 13</name>
+  <title></title>
+  <cusip>000000013</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 14</name>
+  <title></title>
+  <cusip>000000014</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 15</name>
+  <title></title>
+  <cusip>000000015</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 16</name>
+  <title></title>
+  <cusip>000000016</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 17</name>
+  <title></title>
+  <cusip>000000017</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 18</name>
+  <title></title>
+  <cusip>000000018</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 19</name>
+  <title></title>
+  <cusip>000000019</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Company 20</name>
+  <title></title>
+  <cusip>000000020</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>An Overseas Company 21</name>
+  <title></title>
+  <cusip>000000021</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>4.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>PF</issuerCat>
+  <invCountry>DE</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>An Overseas Company 22</name>
+  <title></title>
+  <cusip>000000022</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>4.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>PF</issuerCat>
+  <invCountry>GB</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>An Overseas Company 23</name>
+  <title></title>
+  <cusip>000000023</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>4.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>EC</assetCat>
+  <issuerCat>PF</issuerCat>
+  <invCountry>JP</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Bond Issuer 24</name>
+  <title></title>
+  <cusip>000000024</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>5.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>DBT</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Bond Issuer 25</name>
+  <title></title>
+  <cusip>000000025</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>5.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>DBT</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Held Bond Issuer 26</name>
+  <title></title>
+  <cusip>000000026</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>5.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>DBT</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>An Overseas Bond Issuer 27</name>
+  <title></title>
+  <cusip>000000027</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>4.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>DBT</assetCat>
+  <issuerCat>PF</issuerCat>
+  <invCountry>FR</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>An Overseas Bond Issuer 28</name>
+  <title></title>
+  <cusip>000000028</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>4.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>DBT</assetCat>
+  <issuerCat>PF</issuerCat>
+  <invCountry>CA</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Mortgage Pool</name>
+  <title></title>
+  <cusip>029000001</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>3.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>ABS-MBS</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+<invstOrSec>
+  <name>A Short-Term Reserve</name>
+  <title></title>
+  <cusip>030000001</cusip>
+  <balance>10000.000000000000</balance>
+  <units>NS</units>
+  <curCd>USD</curCd>
+  <valUSD>1000000.00</valUSD>
+  <pctVal>2.000000000000</pctVal>
+  <payoffProfile>Long</payoffProfile>
+  <assetCat>STIV</assetCat>
+  <issuerCat>RF</issuerCat>
+  <invCountry>US</invCountry>
+  <isRestrictedSec>N</isRestrictedSec>
+  <fairValLevel>1</fairValLevel>
+</invstOrSec>
+    </invstOrSecs>
+  </formData>
+</edgarSubmission>
