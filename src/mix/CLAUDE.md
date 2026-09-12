@@ -72,9 +72,6 @@ turning over does not turn it red. It skips loudly unless `MM_SEC_TICKER` names 
 MM_REQUIRE_SEC=1 MM_SEC_TICKER=<ticker> cargo test --test sec_live
 ```
 
-`--test sec_live` rather than a bare filter: the test's name is a sentence about the three hops, so
-`cargo test sec_live` matches nothing and exits green having run nothing at all.
-
 There is deliberately no default ticker. Which funds the owner holds is the same kind of fact as an
 account code, and the contact comes from the config file at run time for the same reason
 `MM_WORKBOOK` is not written down.

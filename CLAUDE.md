@@ -85,8 +85,9 @@ phone — and the backup's from one: the key is long-lived and unattended, so wh
 IAM policy rather than a setting. Two of the backup's invariants span `mistermanager.tf` at the
 repository root as well as that directory, and say so where they do; read that file before changing
 the bucket, what it keeps, or what the backup identity may do, since none of that is reachable from
-Rust. The mix's follow from one fact of their own: the service on the other end is SEC's, so what
-that file carries is everything about the fetcher no fixture in this repository can confirm.
+Rust. The mix's follow from one fact of their own: the service on the other end is SEC's, so that
+file carries what no fixture here can confirm alongside the rules that span the module and the
+places a refresh is triggered from.
 
 ## No real data in the repository
 
@@ -202,7 +203,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/backup/` | The schedule, the snapshot, and the upload. `aws_config` and `aws_sdk_s3` are named only in `s3.rs`, which is one of two places `tokio` is -- `src/mix/sec.rs` is the other. |
 | `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `tui/mod.rs` rather than in whichever screen needed it first. `app` is a directory, one module per screen over one `App`. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
-| `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `report` and `backup` are always subcommands, and `import` is a third behind the `import` feature -- a default build does not offer it. |
+| `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `report`, `mixes` and `backup` are always subcommands, and `import` is a fourth behind the `import` feature -- a default build does not offer it. |
 
 **`rusqlite` is named only inside `src/db/`.** `Db` holds a private `Connection` and deliberately does
 not `Deref` to it — handing out a `&Connection` would put every rusqlite method back within reach of
@@ -381,11 +382,9 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   answered the other way round: the form is the only writer, so `tui::fund::HoldingForm::commit`
   normalises the typing and the three keys agree by construction. A second writer owes the same
   before it calls `holding::insert` or `holding::update`.
-- **`Unclassified` is a class, not a gap.** The classifier is two heuristics — a name over a
-  fund-of-funds holding, an `assetCat` over a security — and a miss is stored and drawn as its own
-  row rather than folded into a neighbour. That is what makes the heuristics safe to run
-  unattended: money in the wrong bucket is invisible, money in a labelled bucket is a question the
-  owner can answer. The same stance `transfer::resolve` takes toward a dangling key.
+- **`Unclassified` is a class, not a gap.** A holding the classifier cannot place is stored under
+  it and drawn as its own row rather than folded into a neighbour — the stance `transfer::resolve`
+  takes toward a dangling key, and `classify` is where it is argued.
   `allocation::apportion` routes a second thing there — what a filing's own weights fail to place,
   since nothing guards a `fund_mix` row's footing — so the summary foots *and* says what it could
   not place. A zero `Unclassified` is dropped rather than drawn, the way the two Planning transfer
@@ -610,9 +609,9 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   over a list of rows the reader can see would read as a fault. It is display-only and installed
   once, before the first frame, so nothing it touches can reach a write: what is typed into a form
   still parses, every buffer keeps its real text, and the status line that reports a write reports
-  a masked figure over a real row. `mm import` and `mm backup` do not take the flag, because
-  neither prints a figure. It compiles only under the non-default `demo` Cargo feature, so a
-  default build has no `--demo` flag and none of the code behind it. The rules for reaching the
+  a masked figure over a real row. `mm import`, `mm mixes` and `mm backup` do not take the flag,
+  because none of them prints a figure. It compiles only under the non-default `demo` Cargo
+  feature, so a default build has no `--demo` flag and none of the code behind it. The rules for reaching the
   mask — and the one place a caller has to say whether its figure is money — are in
   `src/tui/CLAUDE.md`.
 - **The quit path skips a page the day already has.** `report::is_due` rewrites only when this run

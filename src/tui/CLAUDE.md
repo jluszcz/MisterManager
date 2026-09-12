@@ -255,20 +255,15 @@ the last digit of a figure. It comes out of the `Constraint::Min` column with th
 slack, it is spent whether or not a list is long enough to scroll, and it is the row's own right
 edge — so the selection bar and the favorite band stop with it.
 
-**A bar drawn in glyphs spends a fixed count of them, never a share of its column.** Funds draws
-two — `MIX_BAR_WIDTH` in the per-row mix column, `SUMMARY_BAR_WIDTH` under the allocation summary —
-and each is a constant with its own reasoning, because a run of glyphs truncates from the right the
-way text does, while one sized off the terminal would reflow every segment as the window moved.
-What the four classes leave over is drawn as the unfilled track rather than as a fifth segment, so
-a bar cannot read as though those four were the whole portfolio; `BAR_REST` is that glyph and the
-report's Funds tab makes the same split in CSS.
+**A bar drawn in glyphs spends a fixed count of them, never a share of its column** — Funds draws
+two, `MIX_BAR_WIDTH` in the per-row mix column and `SUMMARY_BAR_WIDTH` under the allocation
+summary, and each constant carries its own reasoning. What the four classes leave over is the
+unfilled track rather than a fifth segment: `BAR_REST` is that glyph, and the report's Funds tab
+makes the same split in CSS.
 
 **Funds is the one screen whose list pays for a panel above it**, where Savings and Planning spend
-their extra lines on a footer below. The allocation summary costs the rows its border, its header,
-a line per class it has something to say about, and the bar — a count `fund::summary_lines` owns,
-since the panel is not a list and has no `Chrome` to ask. It is
-absent rather than empty when nothing on screen carries a composition, which is what a database
-nobody has run the fetcher against looks like.
+their extra lines on a footer below. What the allocation summary costs the rows is
+`fund::summary_lines`'s to count.
 
 Why those tests are worth their weight: **a right-aligned cell that gets truncated loses its
 *leading* characters.** A `Goal Date` column one column short turns `2026-11-27` into a wrong year,
@@ -1528,7 +1523,4 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   `fund_mix` are in `PRESERVED_TABLES` because the workbook carries neither.
   **What is *not* typed is what the fund is made of**: `g`/`G` fetch that from the fund's latest
   filing, and every column the mix feeds — the bar, `Stock%`, `As of`, and the summary above the
-  list — is drawn from `fund_mix` rather than from anything the form asks for. A fetch blocks the
-  event loop for as long as it takes, since nothing in this crate is async; `mm mixes` is the route
-  that does not tie up a screen, and `app::funds::refresh_mixes` is where that is accepted rather
-  than solved.
+  list — is drawn from `fund_mix` rather than from anything the form asks for.

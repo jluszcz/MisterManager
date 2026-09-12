@@ -8,6 +8,7 @@ A terminal application for tracking money, replacing a per-year spreadsheet.
 mm            # launch the application
 mm --demo     # the same, with figures and names disguised (needs --features demo)
 mm report     # write the HTML report without opening the application
+mm mixes      # refresh what each fund you hold is made of, from SEC
 mm import ... # load a Money.xlsx workbook (needs --features import)
 ```
 
