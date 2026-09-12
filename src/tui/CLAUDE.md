@@ -275,6 +275,23 @@ visible ellipsis. That is also why widening one column is paid for out of anothe
 screen rather than out of the terminal, and why a test that pins a cell by absolute position must
 derive it from `MIN_WIDTH` rather than write the offset out.
 
+**A column holding one of a closed set of labels takes its width from that set, never from a
+number.** `accounts::label_width` is that measurement and `accounts::widths` is where the screen's
+seven are assembled — five of them off `Kind::ALL`, `Group::ALL`, `InterestPolicy::ALL`,
+`Block::ALL` and `Source::ALL`, the same lists the cells are drawn from. A hardcoded width is a
+second statement of how long the longest label is, and a variant added or renamed moves one of the
+two; what it costs is not an ellipsis but a word that still reads, so `Investment` reported itself
+as `Investme` with nothing on screen saying it had been cut.
+
+The claim is checked against `widths()` rather than against a drawn table, in
+`every_column_is_as_wide_as_the_widest_label_it_can_hold`. A drawn table cannot make it: `Kind` and
+`Band` can both hold `Investment`, so a `Kind` cell cut short still leaves the word whole one
+column over and a `contains` check passes — and the fixture behind
+`every_column_fits_the_minimum_width` held no investment account, so the widest `Kind` label was
+never drawn at all. That test still earns its place, being the one that holds the seven to
+`MIN_WIDTH` together; `an_investment_account_spells_its_kind_and_its_band_whole` is what pins the
+pair in the drawn row.
+
 ## Invariants worth knowing before editing a screen
 
 - **No screen formats a `Cents` itself.** Every figure a screen draws goes through `tui::amount`,

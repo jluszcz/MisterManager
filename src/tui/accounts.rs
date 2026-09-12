@@ -689,6 +689,61 @@ pub fn render_form(frame: &mut Frame, form: &mut AccountForm) {
     render_fields(frame, form.title(), lines);
 }
 
+/// How wide a column of labels has to be: the widest label that can land in
+/// it, and the heading standing over them.
+///
+/// Measured off the enum's own `ALL` rather than written out as a number, the
+/// way `defaults_label(&Source::ALL)` already was. Every column here but
+/// `Code` and `Account` holds one of a closed set of strings, and a hardcoded
+/// width is a second statement of how long the longest of them is -- one that
+/// a new variant, or a renamed one, moves without touching. What that costs
+/// is not an ellipsis: a right-hand truncation drops the end of a word that
+/// is still perfectly readable without it, so `Investment` reported itself as
+/// `Investme` and a reader had no mark saying it had been cut.
+///
+/// It is also why this screen's own test could not catch it. The fixture
+/// behind `every_column_fits_the_minimum_width` holds cash and credit
+/// accounts, and `Investment` is the one `Kind` label longer than the column
+/// it was given -- so the widest content the column could hold was never
+/// drawn. The test now asserts every label in each of these sets, which is
+/// the same closed list the width is taken from.
+///
+/// The widths still have to *fit*: `Account` is the one `Constraint::Min`
+/// and it absorbs what the others leave, so a column widened here is paid
+/// for out of the name beside it rather than out of the terminal. Both are
+/// held to [`super::MIN_WIDTH`] by that test.
+fn label_width(header: &str, labels: impl IntoIterator<Item = impl AsRef<str>>) -> Constraint {
+    let widest = labels
+        .into_iter()
+        .map(|label| label.as_ref().chars().count())
+        .chain([header.chars().count()])
+        .max()
+        .unwrap_or_default();
+    Constraint::Length(widest as u16)
+}
+
+/// The table's seven columns.
+///
+/// Named rather than inline so a test can read them: the claim each one
+/// makes is about a set of labels it has never been handed, and checking it
+/// through the drawn table cannot distinguish a `Kind` column cut to
+/// `Investme` from the `Band` column beside it spelling the same word whole.
+///
+/// `Account` is the single `Constraint::Min` and absorbs the slack, so a
+/// column widened here is paid for out of the name beside it rather than out
+/// of the terminal.
+fn widths() -> [Constraint; 7] {
+    [
+        Constraint::Length(CODE_WIDTH),
+        Constraint::Min(16),
+        label_width("Kind", Kind::ALL.iter().map(|k| k.label())),
+        label_width("Band", Group::ALL.iter().map(|g| g.label())),
+        label_width("Interest", InterestPolicy::ALL.iter().map(|p| p.label())),
+        label_width("Savings", SavingsBlock::ALL.iter().map(|b| b.label())),
+        label_width("Default", [defaults_label(&Source::ALL)]),
+    ]
+}
+
 /// One row per account. Returns the [`Viewport`] it drew: the height
 /// `PageUp`/`PageDown` move by, and the row the next draw starts from.
 pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> Viewport {
@@ -734,20 +789,6 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
         Cell::from("Default"),
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
-    let widths = [
-        Constraint::Length(CODE_WIDTH),
-        Constraint::Min(16),
-        Constraint::Length(8),
-        Constraint::Length(10),
-        Constraint::Length(16),
-        Constraint::Length(8),
-        // Measured off the widest label the column can hold rather than
-        // written out, the way the choices themselves are generated from
-        // `Source::ALL`: the column says which forms an account answers for,
-        // and a cut cell would report an account as the default for one of
-        // two.
-        Constraint::Length(defaults_label(&Source::ALL).chars().count() as u16),
-    ];
 
     // The placeholder an empty list draws is not a row the cursor may rest
     // on, so the drawn count is the list's own length rather than `rows`.
@@ -756,7 +797,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
         area,
         accounts,
         Chrome::titled(accounts.title()).header(header),
-        &widths,
+        &widths(),
         rows,
         accounts.rows().len(),
     )
@@ -1211,6 +1252,16 @@ mod tests {
 
     /// Every column's widest plausible content, whole. A truncated cell here
     /// would report an account as being in a band it is not in.
+    ///
+    /// **Every label in each closed set, not every label the fixture
+    /// happens to hold.** The five label columns take their widths from
+    /// `Kind::ALL`, `Group::ALL`, `InterestPolicy::ALL`, `SavingsBlock::ALL`
+    /// and `Source::ALL`, so those are the lists a width has to be checked
+    /// against -- a fixture with no investment account in it never drew
+    /// `Investment`, which is the one `Kind` label that was wider than the
+    /// column it had, and the truncation it reported as `Investme` went
+    /// unseen for exactly that reason. A variant added to any of the five
+    /// now fails here rather than in a screenshot.
     #[test]
     fn every_column_fits_the_minimum_width() {
         let mut accounts = screen();
@@ -1233,20 +1284,82 @@ mod tests {
             "CHK",
             "Everyday Card",
             "Rainy Day",
-            "Checking",
-            "Credit",
-            "Cash",
-            "by balance",
-            "like last time",
-            SavingsBlock::Goals.label(),
-            SavingsBlock::Buckets.label(),
-            &defaults_label(&Source::ALL),
         ] {
             assert!(
                 table.contains(expected),
                 "{expected:?} missing from\n{table}"
             );
         }
+    }
+
+    /// Every column is as wide as the widest label that can land in it.
+    ///
+    /// Over [`widths`] rather than over a drawn table, because the drawn
+    /// table cannot make this claim: `Kind` and `Band` can both hold
+    /// `Investment`, so a `Kind` column cut to `Investme` still leaves the
+    /// word whole one column over and a `contains` check passes. That is
+    /// what let the truncation stand -- and the fixture behind
+    /// `every_column_fits_the_minimum_width` held no investment account, so
+    /// the widest `Kind` label was never drawn at all.
+    ///
+    /// The five lists here are the same ones `label_width` measures, so a
+    /// variant added to any of them arrives with its column already checked.
+    #[test]
+    fn every_column_is_as_wide_as_the_widest_label_it_can_hold() {
+        let widths = widths();
+        let check = |index: usize, header: &str, labels: Vec<String>| {
+            let Constraint::Length(width) = widths[index] else {
+                panic!("{header} is not a fixed-width column");
+            };
+            for label in labels.iter().map(String::as_str).chain([header]) {
+                assert!(
+                    usize::from(width) >= label.chars().count(),
+                    "the {header} column is {width} wide and cuts {label:?}"
+                );
+            }
+        };
+
+        let labels = |iter: &mut dyn Iterator<Item = &'static str>| {
+            iter.map(str::to_string).collect::<Vec<String>>()
+        };
+        check(2, "Kind", labels(&mut Kind::ALL.iter().map(|k| k.label())));
+        check(3, "Band", labels(&mut Group::ALL.iter().map(|g| g.label())));
+        check(
+            4,
+            "Interest",
+            labels(&mut InterestPolicy::ALL.iter().map(|p| p.label())),
+        );
+        check(
+            5,
+            "Savings",
+            labels(&mut SavingsBlock::ALL.iter().map(|b| b.label())),
+        );
+        check(6, "Default", vec![defaults_label(&Source::ALL)]);
+    }
+
+    /// And the widest of them, drawn: an investment account spells
+    /// `Investment` in `Kind` and again in `Band`, one column-space apart, so
+    /// a `Kind` cell one character short shows up as the gap closing rather
+    /// than as a word a reader can still guess at.
+    #[test]
+    fn an_investment_account_spells_its_kind_and_its_band_whole() {
+        let mut accounts = Accounts::new();
+        accounts.set_rows(vec![row(
+            1,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            Group::Investment,
+        )]);
+        let table = drawn(&accounts).join("\n");
+        assert!(
+            table.contains(&format!(
+                "{} {}",
+                Kind::Investment.label(),
+                Group::Investment.label()
+            )),
+            "a truncated Kind cell:\n{table}"
+        );
     }
 
     /// The value the `Color` selector shows is drawn in the shade it names,
