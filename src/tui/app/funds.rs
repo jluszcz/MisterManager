@@ -1,14 +1,15 @@
-//! Screen 6's key handling: adding, editing and deleting a holding, and the
-//! account filter and the search over the list.
+//! Screen 6's key handling: adding, editing and deleting a holding, the
+//! account filter and the search over the list, and `g`/`G`, which refresh a
+//! fund's composition from SEC.
 //!
-//! No `g`/`G` and no `Enter` here -- nothing yet resolves a fund's
-//! composition, and a key that does nothing is worse than a key that is
-//! absent.
+//! No `Enter` here -- nothing yet draws a holding's long form, and a key
+//! that does nothing is worse than a key that is absent.
 
 use super::{Account, App, NOTHING_SELECTED};
 use crate::db::account::{self, Kind};
 use crate::db::fund_mix::{self, AssetClass};
 use crate::db::holding;
+use crate::mix::{self, Refreshed};
 use crate::rate::BasisPoints;
 use crate::tui::cursor;
 use crate::tui::fund::{HoldingForm, Row};
@@ -17,6 +18,14 @@ use crate::tui::search::{self, Search};
 use anyhow::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use std::collections::HashMap;
+
+/// Printed on the status line by `g`/`G` when no `[sec]` section names a
+/// contact. SEC refuses a request that declares none at all, and the
+/// repository may hold no real address, so the contact is configuration
+/// rather than a constant -- this is the refusal that says what to set,
+/// never a request sent anonymously.
+const NO_SEC_CONTACT: &str =
+    "no SEC contact configured -- add a [sec] section with a contact line to the config file";
 
 impl App {
     pub(super) fn funds_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -35,9 +44,42 @@ impl App {
             KeyCode::Char('a') => self.open_add_holding()?,
             KeyCode::Char('e') => self.open_edit_holding()?,
             KeyCode::Char('d') => self.open_delete_holding(),
+            KeyCode::Char('g') => self.refresh_selected_mix()?,
+            KeyCode::Char('G') => self.refresh_every_mix()?,
             _ => {}
         }
         Ok(())
+    }
+
+    /// Refreshes the selected row's ticker alone.
+    fn refresh_selected_mix(&mut self) -> Result<()> {
+        let Some(row) = self.funds.selected().cloned() else {
+            return self.nothing_selected();
+        };
+        self.refresh_mixes(&[row.ticker])
+    }
+
+    /// Refreshes every ticker any holding names, not only the ones the
+    /// account filter or a search is currently showing -- the same reading
+    /// `mm mixes` takes, off `holding::tickers` rather than the rows on
+    /// screen.
+    fn refresh_every_mix(&mut self) -> Result<()> {
+        let tickers = holding::tickers(&self.db)?;
+        self.refresh_mixes(&tickers)
+    }
+
+    /// Blocks the event loop for as long as the fetch takes: nothing in this
+    /// crate is async and `mix::sec`'s calls are blocking. `mm mixes` is the
+    /// route that does not tie up the screen; this is accepted here rather
+    /// than solved.
+    fn refresh_mixes(&mut self, tickers: &[String]) -> Result<()> {
+        let Some(contact) = self.sec_contact.clone() else {
+            self.status = NO_SEC_CONTACT.to_string();
+            return Ok(());
+        };
+        let refreshed = mix::refresh(&self.db, &contact, tickers)?;
+        self.status = refresh_status(&refreshed);
+        self.reload()
     }
 
     /// Opens on the account the screen is filtered to, or on the first
@@ -144,9 +186,39 @@ fn stock_share(mix: &fund_mix::Mix) -> BasisPoints {
     BasisPoints(bp)
 }
 
+/// What `g`/`G` leave on the status line: honest about a run that updated
+/// some tickers and failed others, rather than reporting success on the
+/// strength of `updated` alone. Every ticker is masked through
+/// `crate::demo::text` on the way out, the same as every other name a
+/// screen draws.
+fn refresh_status(refreshed: &Refreshed) -> String {
+    let updated = || {
+        refreshed
+            .updated
+            .iter()
+            .map(|t| crate::demo::text(t))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let failed = || {
+        refreshed
+            .failed
+            .iter()
+            .map(|(t, e)| format!("{}: {e}", crate::demo::text(t)))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    match (refreshed.updated.is_empty(), refreshed.failed.is_empty()) {
+        (true, true) => "nothing to refresh".to_string(),
+        (false, true) => format!("refreshed {}", updated()),
+        (true, false) => format!("failed to refresh {}", failed()),
+        (false, false) => format!("refreshed {}; failed to refresh {}", updated(), failed()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::stock_share;
+    use super::{Refreshed, refresh_status, stock_share};
     use crate::db::fund_mix::{self, AssetClass, Slice};
     use crate::money::Cents;
     use crate::rate::BasisPoints;
@@ -154,6 +226,51 @@ mod tests {
     use crate::tui::app::test_support;
     use crate::tui::modal::Modal;
     use ratatui::crossterm::event::KeyCode;
+
+    /// A refresh with no failures says only what was updated.
+    #[test]
+    fn a_fully_successful_refresh_names_every_updated_ticker() {
+        let refreshed = Refreshed {
+            updated: vec!["USM".to_string(), "USB".to_string()],
+            failed: vec![],
+        };
+        assert_eq!(refresh_status(&refreshed), "refreshed USM, USB");
+    }
+
+    /// A run where some tickers updated and some failed is reported as one:
+    /// the status line must carry both halves rather than reading as a
+    /// success on the strength of `updated` alone.
+    #[test]
+    fn a_partial_refresh_names_both_what_updated_and_what_failed() {
+        let refreshed = Refreshed {
+            updated: vec!["USM".to_string()],
+            failed: vec![("ISM".to_string(), "throttled".to_string())],
+        };
+        assert_eq!(
+            refresh_status(&refreshed),
+            "refreshed USM; failed to refresh ISM: throttled"
+        );
+    }
+
+    /// Every ticker failing is still reported, not silently swallowed as
+    /// "nothing to refresh" -- that phrase is reserved for an empty list.
+    #[test]
+    fn a_refresh_where_everything_failed_names_every_failure() {
+        let refreshed = Refreshed {
+            updated: vec![],
+            failed: vec![
+                ("USM".to_string(), "throttled".to_string()),
+                (
+                    "ISM".to_string(),
+                    "SEC lists no series for ticker".to_string(),
+                ),
+            ],
+        };
+        assert_eq!(
+            refresh_status(&refreshed),
+            "failed to refresh USM: throttled; ISM: SEC lists no series for ticker"
+        );
+    }
 
     #[test]
     fn a_holding_with_no_mix_on_record_reads_as_never_fetched() {
@@ -464,6 +581,41 @@ mod tests {
             ],
         };
         assert_eq!(stock_share(&mix), BasisPoints(7_500));
+    }
+
+    /// `mix::refresh` always reaches the network, so this crate's tests
+    /// must never call it with a contact configured -- `app_with_holdings`
+    /// carries none, which is what lets this run offline and still exercise
+    /// the refusal.
+    #[test]
+    fn refreshing_with_no_sec_contact_configured_says_what_to_set() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        test_support::press(&mut app, KeyCode::Char('G'));
+
+        assert!(
+            app.status.contains("contact"),
+            "the refusal does not name the setting to fix: {}",
+            app.status
+        );
+    }
+
+    /// The other key of the pair: `g` refuses the same way over the
+    /// selected row alone, rather than silently doing nothing because
+    /// nothing is selected.
+    #[test]
+    fn refreshing_the_selected_row_with_no_sec_contact_configured_says_what_to_set() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        test_support::press(&mut app, KeyCode::Char('g'));
+
+        assert!(
+            app.status.contains("contact"),
+            "the refusal does not name the setting to fix: {}",
+            app.status
+        );
     }
 
     /// The end-to-end reading: a mix on record for one holding's ticker

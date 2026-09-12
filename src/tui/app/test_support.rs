@@ -91,7 +91,7 @@ pub(super) fn app() -> App {
     )
     .unwrap();
     goal::insert_allocation(&db, couch, day(2026, 8, 1), Cents(25_000), None, None).unwrap();
-    App::new(db, today()).unwrap()
+    App::new(db, today(), None).unwrap()
 }
 
 pub(super) fn savings_names(app: &App) -> Vec<String> {
@@ -312,7 +312,7 @@ pub(super) fn planning_app() -> App {
     setting::set(&db, key(Line::MomAndDad), mom_and_dad).unwrap();
     setting::set(&db, Gate::EmergencyFund.key(), emergency).unwrap();
 
-    App::new(db, today()).unwrap()
+    App::new(db, today(), None).unwrap()
 }
 
 /// Two investment accounts and three holdings across them, from the fund
@@ -345,7 +345,7 @@ pub(super) fn app_with_holdings() -> App {
     holding::insert(&db, first, "USM", Cents::from_dollars(10_000)).unwrap();
     holding::insert(&db, first, "USB", Cents::from_dollars(5_000)).unwrap();
     holding::insert(&db, second, "ISM", Cents::from_dollars(3_000)).unwrap();
-    App::new(db, today()).unwrap()
+    App::new(db, today(), None).unwrap()
 }
 
 /// `planning_app` plus one Everyday row three days after today, so the three

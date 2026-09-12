@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn enter_with_nothing_selected_says_so() {
         let db = db::open_in_memory().unwrap();
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
         press(&mut app, KeyCode::Char('4'));
 
         press(&mut app, KeyCode::Enter);

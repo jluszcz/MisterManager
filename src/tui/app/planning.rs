@@ -1150,7 +1150,7 @@ mod tests {
         let db = db::open_in_memory().unwrap();
         let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
         write(&db, card_one, day(2026, 8, 11), 1_499, "Movies");
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
 
         press(&mut app, KeyCode::Char('5'));
         assert!(app.planning.rows().is_empty());
@@ -1331,7 +1331,7 @@ mod tests {
         let db = db::open_in_memory().unwrap();
         let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
         write(&db, card_one, day(2026, 8, 11), 1_499, "Movies");
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
 
         press(&mut app, KeyCode::Char('5'));
         press(&mut app, KeyCode::Char('p'));
@@ -2205,7 +2205,7 @@ mod tests {
         .unwrap();
         goal::insert_allocation(&db, id, today(), Cents::from_dollars(1_000), None, None).unwrap();
 
-        let app = App::new(db, today()).unwrap();
+        let app = App::new(db, today(), None).unwrap();
         let asks = app.spread_asks().unwrap();
         let (_, ask) = asks
             .priced()
@@ -2297,7 +2297,7 @@ mod tests {
         setting::set(&db, key::SPLIT_RETIREMENT_PCT, Percent(30)).unwrap();
         setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(30)).unwrap();
 
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
         app.screen = Screen::Planning;
         let plan = computed_plan(&app, app.adhoc);
         assert_eq!(

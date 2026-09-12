@@ -494,7 +494,7 @@ mod tests {
         write(&db, checking, day(2026, 9, 5), 100_000, "September");
         write(&db, card_one, day(2026, 7, 6), 1_000, "July card");
         write(&db, card_one, day(2026, 9, 6), 1_000, "September card");
-        App::new(db, today()).unwrap()
+        App::new(db, today(), None).unwrap()
     }
 
     #[test]
@@ -1013,7 +1013,7 @@ mod tests {
         let db = db::open_in_memory().unwrap();
         let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
         write(&db, card_one, day(2026, 8, 11), 1_499, "Movies");
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
 
         press(&mut app, KeyCode::Char('2'));
         press(&mut app, KeyCode::Char('a'));
@@ -1211,7 +1211,7 @@ mod tests {
         write(&db, checking, day(2026, 7, 4), 50_000, "July");
         write(&db, checking, day(2026, 8, 10), 30_000, "August");
         write(&db, checking, day(2026, 8, 20), 999_999, "Not yet");
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
 
         press(&mut app, KeyCode::Char('2'));
         assert_eq!(app.cash.rows().len(), 2, "August");

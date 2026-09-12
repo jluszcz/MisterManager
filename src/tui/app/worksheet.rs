@@ -538,7 +538,7 @@ mod tests {
         let mom_and_dad = add_goal("Mom & Dad", 2_500_000, true, 2_500_000);
         write(&db, brokerage, day(2026, 7, 31), 63_300_195, "Balance");
         (
-            App::new(db, today()).unwrap(),
+            App::new(db, today(), None).unwrap(),
             down_payment,
             emergency,
             mom_and_dad,
@@ -762,7 +762,7 @@ mod tests {
             Some("imported balance"),
         )
         .unwrap();
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
 
         press(&mut app, KeyCode::Char('4'));
         press(&mut app, KeyCode::Char('U'));
