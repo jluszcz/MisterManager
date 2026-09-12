@@ -48,7 +48,7 @@ pub struct Allocation {
     /// The three targeted classes as `Target`/`Actual`/`Δ`, or nothing at
     /// all when there is no composition to read them against -- the state
     /// every database starts in, and the one the tab answers with a sentence
-    /// rather than a table of em dashes.
+    /// rather than a table of dashes.
     pub summary: Vec<SummaryRow>,
     /// One section per investment account holding something, in
     /// `account::list_by_kind`'s order.

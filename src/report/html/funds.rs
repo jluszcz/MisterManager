@@ -35,16 +35,22 @@ fn color(class: AssetClass) -> String {
     palette::hex(palette::ASSET_CLASSES[index])
 }
 
-/// A share, or the `—` the screens draw an absence with.
+/// A share, or the `--` this page draws an absence with.
 ///
-/// The em dash and not `optional_money`'s `--`, which stands in for a figure
-/// that has no value to show. This absence is a different one and is the
-/// screen's own: a bond target with no birth date behind it is a question,
-/// and the answer to it is a date typed on the Accounts screen.
+/// **Never a zero.** A bond target with no birth date behind it is a
+/// question rather than a share of nothing, and a cell reading `0.00%` would
+/// answer it -- wrongly, and with a figure the Δ beside it would then measure
+/// the whole portfolio against. The answer is a date typed on the Accounts
+/// screen, and until it is typed there is nothing here to state.
+///
+/// The mark is `optional_money`'s and `savings::percent`'s, because the page
+/// has one. A reader meets this column beside those two with no way to hover
+/// for an explanation, and a second spelling of "nothing here" would be a
+/// difference they had to work out the meaning of.
 fn percent(share: Option<BasisPoints>) -> String {
     match share {
         Some(share) => format!("<td class=\"n\">{share}%</td>"),
-        None => "<td class=\"n\">—</td>".to_string(),
+        None => "<td class=\"n\">--</td>".to_string(),
     }
 }
 
@@ -165,15 +171,16 @@ fn coverage(lookthrough: &crate::allocation::Allocation) -> String {
 /// One account's holdings: the ticker, the balance the owner typed, and the
 /// filing the fund's composition was read out of.
 ///
-/// The `—` under `As of` is the whole of what a holding outside the summary
+/// The `--` under `As of` is the whole of what a holding outside the summary
 /// gets to say, and it is enough: no filing on record is exactly what put it
-/// there, and the coverage line above has already counted it.
+/// there, and the coverage line above has already counted it. The page's own
+/// absence mark, for [`percent`]'s reason -- one spelling per page.
 fn holdings(rows: &[Holding]) -> String {
     let mut table = header(&HOLDINGS_HEADER);
     for row in rows {
         let as_of = match row.as_of {
             Some(date) => escape(&date.to_string()),
-            None => "—".to_string(),
+            None => "--".to_string(),
         };
         table.push_str(&format!(
             "<tr><td class=\"w\">{}</td>{}<td class=\"d\">{as_of}</td></tr>",
@@ -189,8 +196,8 @@ fn holdings(rows: &[Holding]) -> String {
 /// Both halves, because `Tab` on the screen narrows both together. The
 /// summary is absent where the account has no composition at all, which is
 /// what the screen does with the panel when nothing on it carries a mix --
-/// the rows are still worth listing, and a table of em dashes over every
-/// class says only that a key has not been pressed yet.
+/// the rows are still worth listing, and a table of dashes over every class
+/// says only that a key has not been pressed yet.
 fn section(account_allocation: &AccountAllocation) -> String {
     let mut html = format!("<h3>{}</h3>", account(&account_allocation.account));
     if !account_allocation.summary.is_empty() {
@@ -326,20 +333,20 @@ mod tests {
         }
     }
 
-    /// No birth date on record is a question rather than a zero, so both the
-    /// target and the gap from it draw the em dash every other absence in
-    /// the app draws -- the screen's own answer, in the other medium.
+    /// No birth date on record is a question rather than a zero, so neither
+    /// the target nor the gap from it states a figure -- the screen's own
+    /// answer, spelled in this page's own mark.
     #[test]
-    fn a_bond_target_with_no_birth_date_draws_an_em_dash_in_both_of_its_cells() {
+    fn a_bond_target_with_no_birth_date_states_no_figure_in_either_of_its_cells() {
         let mut snapshot = snapshot(vec![], 1_000);
         snapshot.allocation = fixture::funds(crate::calc::fund::targets(None, BasisPoints(4_000)));
         let actual = TargetClass::Bonds.actual(&snapshot.allocation.lookthrough.slices);
         assert!(
             funds_panel(&snapshot).contains(&format!(
-                "<td>Bonds</td><td class=\"n\">—</td><td class=\"n\">{actual}%</td>\
-                 <td class=\"n\">—</td>"
+                "<td>Bonds</td><td class=\"n\">--</td><td class=\"n\">{actual}%</td>\
+                 <td class=\"n\">--</td>"
             )),
-            "the bond row lost an em dash: {}",
+            "the bond row states a figure it has none of: {}",
             funds_panel(&snapshot)
         );
     }
@@ -357,7 +364,7 @@ mod tests {
         );
         assert!(
             panel.contains(
-                "<td class=\"w\">UNC</td><td class=\"n\">1,000</td><td class=\"d\">—</td>"
+                "<td class=\"w\">UNC</td><td class=\"n\">1,000</td><td class=\"d\">--</td>"
             ),
             "the unpriced holding does not say so: {panel}"
         );
