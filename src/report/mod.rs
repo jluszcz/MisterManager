@@ -9,7 +9,7 @@
 pub mod html;
 
 use crate::account_label::Account;
-use crate::allocation::{SummaryRow, TargetClass};
+use crate::allocation::{Class, Held, SummaryRow};
 use crate::calc;
 use crate::calc::planning::PlanSettings;
 use crate::db::account::Kind;
@@ -225,7 +225,7 @@ fn summary(
     if lookthrough.slices.is_empty() {
         return Vec::new();
     }
-    TargetClass::ALL
+    Class::ALL
         .iter()
         .map(|class| SummaryRow::new(*class, &lookthrough.slices, targets))
         .collect()
@@ -252,15 +252,19 @@ fn allocation_view(db: &Db, today: NaiveDate, accounts: &[account::Account]) -> 
     }
 
     let mut sections = Vec::new();
-    let mut portfolio: Vec<(Cents, Option<&[fund_mix::Slice]>)> = Vec::new();
+    let mut portfolio: Vec<Held<'_>> = Vec::new();
     for account in account::list_by_kind(db, Kind::Investment)? {
         let holdings = holding::list_for_account(db, account.id)?;
         if holdings.is_empty() {
             continue;
         }
-        let held: Vec<(Cents, Option<&[fund_mix::Slice]>)> = holdings
+        let held: Vec<Held<'_>> = holdings
             .iter()
-            .map(|h| (h.balance, mixes.get(&h.ticker).map(|m| m.slices.as_slice())))
+            .map(|h| Held {
+                balance: h.balance,
+                treatment: account.tax_treatment,
+                mix: mixes.get(&h.ticker).map(|m| m.slices.as_slice()),
+            })
             .collect();
         portfolio.extend(held.iter().copied());
         let lookthrough = crate::allocation::apportion(&held);
@@ -636,8 +640,11 @@ mod tests {
                 weight: crate::rate::BasisPoints::ONE,
             }]
         };
-        fund_mix::set_for_ticker(&db, "USM", filed, &whole(AssetClass::UsStock)).unwrap();
-        fund_mix::set_for_ticker(&db, "USB", filed, &whole(AssetClass::UsBond)).unwrap();
+        let named = |t| Some(crate::test_support::fund_name(t));
+        fund_mix::set_for_ticker(&db, "USM", filed, named("USM"), &whole(AssetClass::UsStock))
+            .unwrap();
+        fund_mix::set_for_ticker(&db, "USB", filed, named("USB"), &whole(AssetClass::UsBond))
+            .unwrap();
         db
     }
 

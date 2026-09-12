@@ -8,6 +8,7 @@ pub mod default_source;
 pub mod demo;
 pub mod description;
 pub mod fund;
+pub mod fund_label;
 pub mod gate;
 pub mod goal;
 /// The workbook importer. Behind the `import` feature, which is what makes

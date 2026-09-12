@@ -18,34 +18,112 @@
 //! [`apportion`]'s to argue.
 
 use crate::calc::fund::Targets;
+use crate::db::account::TaxTreatment;
 use crate::db::fund_mix::{AssetClass, Slice};
 use crate::money::Cents;
 use crate::rate::BasisPoints;
 
-/// The classes the age rule says nothing about, in the order the summary
-/// lists them under the three it does.
+/// The four groups the summary draws, in the order it draws them: the share
+/// the age rule actually moves, the two equities it splits the rest between,
+/// and everything else.
 ///
-/// Here rather than at a screen for the reason [`TargetClass::ALL`] is: two
-/// sinks drawing these rows in two orders would be two answers to one
-/// question about one portfolio.
-pub const UNTARGETED: [AssetClass; 2] = [AssetClass::Cash, AssetClass::Unclassified];
+/// **One list for the rows and the bar both.** They were two -- three targeted
+/// classes in a table and four `AssetClass`es in a bar -- and a reader had to
+/// hold that the bar split a bond number the row above it could not. A class
+/// owns its label, what it is made of, and whether the rule has anything to
+/// say about it, so the table and the bar are two spellings of one sequence
+/// rather than two answers about one portfolio.
+///
+/// It is deliberately coarser than [`AssetClass`], which keeps all six:
+/// `fund_mix` stores the bond split and `mix::classify` still finds it, so
+/// nothing is lost on the way in. What collapses is the drawing.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Class {
+    Bonds,
+    UsStock,
+    IntlStock,
+    Other,
+}
 
-/// The four classes the summary's mix bar splits the portfolio into, in the
-/// order it draws them: the equities, then the bonds the target rows combine.
-///
-/// **The bar is the one thing in the summary that splits the bonds**, which
-/// is what it is for -- the age rule produces one bond number, so the row
-/// beside it cannot say whether the share is domestic or foreign. What the
-/// four leave over is cash, whatever the classifier could not place, and
-/// whatever no filing placed at all; each sink draws that remainder as its
-/// own medium's "nothing here", since a bar reading as though these four were
-/// the whole portfolio would be the one way it could lie.
-pub const BAR_CLASSES: [AssetClass; 4] = [
-    AssetClass::UsStock,
-    AssetClass::IntlStock,
-    AssetClass::UsBond,
-    AssetClass::IntlBond,
-];
+impl Class {
+    /// Every class, in the order the summary lists them and the bars run --
+    /// the two equities first and adjacent, then bonds, then `Other` last,
+    /// being what the rule says nothing about.
+    ///
+    /// Equities lead because they are the bulk of a portfolio the age rule
+    /// leaves in them, and the two sit together because the only question
+    /// anyone asks of the pair is how they divide. A bar reading
+    /// stock-stock-bonds-rest is read left to right as risk shading into
+    /// safety; bonds first put the smallest slice at the end a reader starts
+    /// from.
+    ///
+    /// **`palette::CLASSES` is written in this order and moves with it.** The
+    /// colors are reached by `Class::index`, so the two lists are one
+    /// statement -- reorder here and the array there follows, or every
+    /// segment repaints.
+    pub const ALL: [Class; 4] = [Class::UsStock, Class::IntlStock, Class::Bonds, Class::Other];
+
+    /// What the summary calls this class.
+    ///
+    /// `Bonds` and `Other` are their own words; the two equity classes borrow
+    /// [`AssetClass::label`], since they *are* that class and a second
+    /// spelling of it would read as a second thing.
+    pub fn label(self) -> &'static str {
+        match self {
+            Class::Bonds => "Bonds",
+            Class::UsStock => AssetClass::UsStock.label(),
+            Class::IntlStock => AssetClass::IntlStock.label(),
+            Class::Other => "Other",
+        }
+    }
+
+    /// The [`AssetClass`]es this class is made of.
+    ///
+    /// `Bonds` is both bond classes at once because the age rule produces one
+    /// bond number, and splitting it between domestic and foreign would
+    /// invent a precision it does not have. `Other` is cash and the
+    /// classifier's residual together: the rule has nothing to say about
+    /// either, and two rows of what it is not asking about is two rows
+    /// nobody reads.
+    pub fn classes(self) -> &'static [AssetClass] {
+        match self {
+            Class::Bonds => &[AssetClass::UsBond, AssetClass::IntlBond],
+            Class::UsStock => &[AssetClass::UsStock],
+            Class::IntlStock => &[AssetClass::IntlStock],
+            Class::Other => &[AssetClass::Cash, AssetClass::Unclassified],
+        }
+    }
+
+    /// This class's own place in [`Class::ALL`].
+    ///
+    /// `palette::CLASSES` is keyed by it, for the reason `AssetClass::index`
+    /// exists: the colors are reached by position, and a second copy of this
+    /// mapping is a reorder away from repainting every segment.
+    pub fn index(self) -> usize {
+        Class::ALL
+            .iter()
+            .position(|class| *class == self)
+            .expect("Class::ALL names every variant")
+    }
+
+    /// What the age rule targets here, or `None` where it has nothing to say
+    /// -- `Other` always, and `Bonds` with no birth date behind it.
+    pub fn target(self, targets: Targets) -> Option<BasisPoints> {
+        match self {
+            Class::Bonds => targets.bonds,
+            Class::UsStock => Some(targets.us_stock),
+            Class::IntlStock => Some(targets.intl_stock),
+            Class::Other => None,
+        }
+    }
+
+    /// What the portfolio holds here.
+    pub fn actual(self, slices: &[Slice]) -> BasisPoints {
+        self.classes()
+            .iter()
+            .fold(BasisPoints::ZERO, |sum, class| sum + weight(slices, *class))
+    }
+}
 
 /// The portfolio's composition, and how much of it the composition is of.
 ///
@@ -55,15 +133,33 @@ pub const BAR_CLASSES: [AssetClass; 4] = [
 /// one that is all cash.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Allocation {
-    /// One entry per [`AssetClass`], in `AssetClass::ALL` order, less a zero
-    /// `Unclassified`.
+    /// One entry per [`AssetClass`], in `AssetClass::ALL` order.
     ///
-    /// The other five keep their zeroes: they are the vocabulary the targets
-    /// and the bar are stated in, so a zero there is an answer. `Unclassified`
-    /// is the residual -- what the classifier could not place, plus what a
-    /// filing did not place at all -- and a row reporting that nothing went
-    /// unplaced is a row nobody reads.
+    /// Every class keeps its zero, `Unclassified` included: they are the
+    /// vocabulary the targets and the bar are stated in, so a zero is an
+    /// answer rather than a gap. The residual used to be dropped when it was
+    /// nothing, a defect report reading "none" every time being one nobody
+    /// finishes reading -- but [`Class::Other`] draws it beside cash now, so
+    /// the row exists whatever the residual is and there is nothing left for
+    /// the omission to spare a reader.
     pub slices: Vec<Slice>,
+    /// [`slices`](Allocation::slices) again, split by the tax treatment of
+    /// the account each balance sits in: one entry per [`TaxTreatment::ALL`]
+    /// member, in that order.
+    ///
+    /// **Each is a share of the whole covered balance, not of its own
+    /// treatment**, so a class's three columns sum to its `actual` and a
+    /// treatment's four classes sum to what that treatment holds. Read either
+    /// way round, the figures are about one portfolio.
+    ///
+    /// A holding in an account with no treatment on record is in `slices` and
+    /// in none of these, so the three columns visibly sum short rather than
+    /// landing somewhere they were never said to be. The schema's paired
+    /// `CHECK` makes that unreachable through the app -- `tax_treatment` is
+    /// present exactly when the kind is `investment`, and a holding has
+    /// nowhere else to live -- which is why it is a shortfall to notice
+    /// rather than an error to refuse on.
+    pub treatments: [Vec<Slice>; TaxTreatment::ALL.len()],
     /// Holdings whose ticker has a mix on record: the summary's denominator.
     pub covered: usize,
     /// Every holding the summary was asked about, covered or not.
@@ -82,6 +178,22 @@ impl Allocation {
         (self.covered < self.holdings)
             .then(|| format!("{} of {} holdings", self.covered, self.holdings))
     }
+
+    /// What one class holds inside one tax treatment.
+    ///
+    /// [`Class::actual`] read over that treatment's own slices rather than
+    /// over the whole portfolio's, which is the only difference between this
+    /// and the `Actual` column beside it.
+    pub fn class_in(&self, class: Class, treatment: TaxTreatment) -> BasisPoints {
+        class.actual(&self.treatments[treatment.index()])
+    }
+
+    /// What one tax treatment holds, across every class.
+    pub fn treatment_total(&self, treatment: TaxTreatment) -> BasisPoints {
+        Class::ALL.iter().fold(BasisPoints::ZERO, |sum, class| {
+            sum + self.class_in(*class, treatment)
+        })
+    }
 }
 
 /// One class's share of `slices`, zero for a class they do not name.
@@ -97,8 +209,38 @@ pub fn weight(slices: &[Slice], class: AssetClass) -> BasisPoints {
         .map_or(BasisPoints::ZERO, |s| s.weight)
 }
 
+/// One holding, as the look-through reads it: what it is worth, how the
+/// account holding it is taxed, and what its fund is made of.
+///
+/// A struct rather than a tuple because the second and third fields are both
+/// optional and neither is the other's kind of absence -- `None` for a mix is
+/// a fund nobody has fetched, and `None` for a treatment is a database the
+/// schema says cannot exist.
+#[derive(Copy, Clone, Debug)]
+pub struct Held<'a> {
+    pub balance: Cents,
+    pub treatment: Option<TaxTreatment>,
+    pub mix: Option<&'a [Slice]>,
+}
+
+/// Where a holding's balance accumulates: one column per [`TaxTreatment::ALL`]
+/// member, and a last for a holding whose account states none.
+///
+/// The unstated column is carried through the apportioning and drawn by
+/// nobody. It has to be carried, or the classes would foot to less than the
+/// portfolio and every share would be quietly inflated; it is not drawn,
+/// because there is no honest label for it -- see
+/// [`Allocation::treatments`].
+const COLUMNS: usize = TaxTreatment::ALL.len() + 1;
+
+/// Which column a holding's treatment accumulates in.
+fn column(treatment: Option<TaxTreatment>) -> usize {
+    treatment.map_or(TaxTreatment::ALL.len(), TaxTreatment::index)
+}
+
 /// Each holding's balance apportioned by its fund's composition, summed by
-/// class, as basis points of the covered balance.
+/// class and by the tax treatment it sits in, as basis points of the covered
+/// balance.
 ///
 /// `None` for a holding's mix is a fund nobody has fetched: it counts toward
 /// [`Allocation::holdings`] and toward nothing else.
@@ -115,161 +257,136 @@ pub fn weight(slices: &[Slice], class: AssetClass) -> BasisPoints {
 /// by the balance renormalises the gap away across the classes that *were*
 /// placed, which says nothing; leaving it out would foot to 99% in a table
 /// whose one unreadable state is a total that does not foot. `Unclassified`
-/// is the class that exists for exactly this, drawn only when non-zero, so
-/// routing the gap there foots *and* surfaces it as the labelled row a miss
-/// is supposed to show up as. A row that over-foots surfaces the same way, as
-/// a negative one.
+/// is the class that exists for exactly this, drawn inside `Other`, so
+/// routing the gap there foots *and* keeps it in a labelled bucket. A mix
+/// that over-foots surfaces the same way, as a negative.
 ///
 /// Truncating each share and dividing the leftover by largest remainder is
 /// [`crate::calc::interest::pro_rata`]'s method and is here for its reason:
 /// the shares have to foot exactly, and dumping the whole leftover on the
 /// largest of them can exceed a share when several round up at once. Ties
-/// break on `AssetClass::ALL` order, so one portfolio has one summary.
-pub fn apportion(holdings: &[(Cents, Option<&[Slice]>)]) -> Allocation {
-    let covered = holdings.iter().filter(|(_, mix)| mix.is_some()).count();
+/// break on `AssetClass::ALL` order then column order, so one portfolio has
+/// one summary.
+///
+/// **The rounding runs once, over the whole class-by-treatment grid**, rather
+/// than once per class and again per treatment. Two passes would each foot to
+/// a hundred on their own and still disagree with each other by the point one
+/// of them rounded differently, which is the one thing a table whose rows and
+/// columns are both read has to rule out. So the grid foots, and both
+/// summaries are sums over it.
+pub fn apportion(holdings: &[Held<'_>]) -> Allocation {
+    let covered = holdings.iter().filter(|held| held.mix.is_some()).count();
     let whole = i128::from(BasisPoints::ONE.0);
     // Cents times basis points, undivided. A share resolved to whole cents
     // here would leave the classes summing to less than the balance they came
-    // from, by up to a cent per class per holding -- and the largest remainder
-    // below has exactly one basis point per class to give, so a gap that grows
+    // from, by up to a cent per cell per holding -- and the largest remainder
+    // below has exactly one basis point per cell to give, so a gap that grows
     // with the holdings is one it cannot close. Carried in the product, every
     // holding contributes its balance exactly, which is what leaves the
     // leftover inside what the method can divide. The gap a mix itself left
     // rides in the same unit, being the same arithmetic about the same
     // balance.
-    let mut scaled = [0i128; AssetClass::ALL.len()];
+    let mut scaled = [[0i128; COLUMNS]; AssetClass::ALL.len()];
     let mut basis = 0i128;
-    for (balance, mix) in holdings {
-        let Some(mix) = mix else { continue };
-        basis += i128::from(balance.0);
-        for slice in *mix {
-            scaled[slice.class.index()] += i128::from(balance.0) * i128::from(slice.weight.0);
+    for held in holdings {
+        let Some(mix) = held.mix else { continue };
+        let column = column(held.treatment);
+        basis += i128::from(held.balance.0);
+        for slice in mix {
+            scaled[slice.class.index()][column] +=
+                i128::from(held.balance.0) * i128::from(slice.weight.0);
         }
         let unplaced = whole - mix.iter().map(|s| i128::from(s.weight.0)).sum::<i128>();
-        scaled[AssetClass::Unclassified.index()] += i128::from(balance.0) * unplaced;
+        scaled[AssetClass::Unclassified.index()][column] += i128::from(held.balance.0) * unplaced;
     }
 
     let mut allocation = Allocation {
-        slices: Vec::new(),
         covered,
         holdings: holdings.len(),
+        ..Allocation::default()
     };
     if basis <= 0 {
         return allocation;
     }
 
-    let mut weights = [0i64; AssetClass::ALL.len()];
-    // (class index, what the floor left owing) -- who is most owed the next
+    let mut weights = [[0i64; COLUMNS]; AssetClass::ALL.len()];
+    // (class, column, what the floor left owing) -- who is most owed the next
     // basis point.
-    let mut fractions: Vec<(usize, i128)> = Vec::with_capacity(scaled.len());
+    let mut fractions: Vec<(usize, usize, i128)> = Vec::with_capacity(scaled.len() * COLUMNS);
     let mut floors = 0i128;
-    for (index, class_scaled) in scaled.iter().enumerate() {
-        let floor = class_scaled.div_euclid(basis);
-        floors += floor;
-        weights[index] = floor as i64;
-        fractions.push((index, class_scaled.rem_euclid(basis)));
+    for (class, columns) in scaled.iter().enumerate() {
+        for (column, cell) in columns.iter().enumerate() {
+            let floor = cell.div_euclid(basis);
+            floors += floor;
+            weights[class][column] = floor as i64;
+            fractions.push((class, column, cell.rem_euclid(basis)));
+        }
     }
-    fractions.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    fractions.sort_by(|a, b| b.2.cmp(&a.2).then((a.0, a.1).cmp(&(b.0, b.1))));
 
     let mut leftover = whole - floors;
-    for (index, _) in &fractions {
+    for (class, column, _) in &fractions {
         if leftover == 0 {
             break;
         }
-        weights[*index] += 1;
+        weights[*class][*column] += 1;
         leftover -= 1;
     }
 
     allocation.slices = AssetClass::ALL
         .iter()
         .enumerate()
-        .filter(|(index, class)| **class != AssetClass::Unclassified || weights[*index] != 0)
-        .map(|(index, class)| Slice {
-            class: *class,
-            weight: BasisPoints(weights[index]),
+        .map(|(class, name)| Slice {
+            class: *name,
+            weight: BasisPoints(weights[class].iter().sum()),
         })
         .collect();
+    allocation.treatments = std::array::from_fn(|column| {
+        AssetClass::ALL
+            .iter()
+            .enumerate()
+            .map(|(class, name)| Slice {
+                class: *name,
+                weight: BasisPoints(weights[class][column]),
+            })
+            .collect()
+    });
     allocation
 }
 
-/// A class the age rule has a target for.
-///
-/// Three rather than the six [`AssetClass`] carries, and `Bonds` is both bond
-/// classes at once: the rule produces one bond number, and splitting it
-/// between domestic and foreign would invent a precision it does not have.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum TargetClass {
-    Bonds,
-    UsStock,
-    IntlStock,
-}
-
-impl TargetClass {
-    /// Every targeted class, in the order the summary lists them -- bonds
-    /// first, being the share the age rule actually moves.
-    pub const ALL: [TargetClass; 3] = [
-        TargetClass::Bonds,
-        TargetClass::UsStock,
-        TargetClass::IntlStock,
-    ];
-
-    /// What the summary calls this class. `Bonds` is its own word; the two
-    /// equity rows borrow [`AssetClass::label`], since they *are* that class
-    /// and a second spelling of it would read as a second thing.
-    pub fn label(self) -> &'static str {
-        match self {
-            TargetClass::Bonds => "Bonds",
-            TargetClass::UsStock => AssetClass::UsStock.label(),
-            TargetClass::IntlStock => AssetClass::IntlStock.label(),
-        }
-    }
-
-    /// What the age rule targets here, or `None` for a bond share with no
-    /// birth date behind it.
-    pub fn target(self, targets: Targets) -> Option<BasisPoints> {
-        match self {
-            TargetClass::Bonds => targets.bonds,
-            TargetClass::UsStock => Some(targets.us_stock),
-            TargetClass::IntlStock => Some(targets.intl_stock),
-        }
-    }
-
-    /// What the portfolio holds here.
-    pub fn actual(self, slices: &[Slice]) -> BasisPoints {
-        match self {
-            TargetClass::Bonds => {
-                weight(slices, AssetClass::UsBond) + weight(slices, AssetClass::IntlBond)
-            }
-            TargetClass::UsStock => weight(slices, AssetClass::UsStock),
-            TargetClass::IntlStock => weight(slices, AssetClass::IntlStock),
-        }
-    }
-}
-
-/// One targeted class as the summary draws it.
+/// One class as the summary draws it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct SummaryRow {
-    pub class: TargetClass,
-    /// `None` only for a bond share with no birth date on record, which both
-    /// sinks draw as the `—` every other absence in the app draws.
+    pub class: Class,
+    /// `None` where the age rule has nothing to say: `Other` always, and a
+    /// bond share with no birth date on record. Both sinks draw it as the
+    /// `—` every other absence in the app draws.
     pub target: Option<BasisPoints>,
     pub actual: BasisPoints,
-    /// `target - actual`, **signed**: over-weight in bonds is as much a thing
+    /// `actual - target`, **signed**: over-weight in bonds is as much a thing
     /// to see as under-weight, and a column that could only report one
     /// direction would read as though the other never happened. `None`
     /// wherever `target` is, since there is nothing to be short of.
+    ///
+    /// **Actual first, so the sign reads as a direction on the portfolio.**
+    /// The two columns beside it are the rule's ask and what is held, and a
+    /// reader arriving at the third has just read them left to right: a
+    /// class held past its target is *more*, a positive number, and one held
+    /// under it is the shortfall the negative colour marks. Subtracted the
+    /// other way the figure is a correction -- what would have to be moved --
+    /// and it paints red exactly the rows a reader is already over on.
     pub delta: Option<BasisPoints>,
 }
 
 impl SummaryRow {
-    pub fn new(class: TargetClass, slices: &[Slice], targets: Targets) -> SummaryRow {
+    pub fn new(class: Class, slices: &[Slice], targets: Targets) -> SummaryRow {
         let target = class.target(targets);
         let actual = class.actual(slices);
         SummaryRow {
             class,
             target,
             actual,
-            delta: target.map(|t| t - actual),
+            delta: target.map(|t| actual - t),
         }
     }
 }
@@ -278,6 +395,16 @@ impl SummaryRow {
 mod tests {
     use super::*;
     use crate::calc::fund;
+
+    /// One holding, in the treatment every fixture here uses unless it is
+    /// making a point about the split.
+    fn held(dollars: i64, mix: Option<&[Slice]>) -> Held<'_> {
+        Held {
+            balance: Cents::from_dollars(dollars),
+            treatment: Some(TaxTreatment::Taxable),
+            mix,
+        }
+    }
 
     fn slices(pairs: &[(AssetClass, i64)]) -> Vec<Slice> {
         pairs
@@ -314,7 +441,11 @@ mod tests {
             (AssetClass::IntlStock, 3_333),
             (AssetClass::UsBond, 3_334),
         ]);
-        let held = [(Cents(100), Some(mix.as_slice()))];
+        let held = [Held {
+            balance: Cents(100),
+            treatment: Some(TaxTreatment::Taxable),
+            mix: Some(mix.as_slice()),
+        }];
         let allocation = apportion(&held);
         let total: i64 = allocation.slices.iter().map(|s| s.weight.0).sum();
         assert_eq!(total, BasisPoints::ONE.0);
@@ -329,8 +460,8 @@ mod tests {
     fn a_look_through_foots_to_a_whole_hundred_percent() {
         let (bond, intl) = portfolio();
         let held = [
-            (Cents::from_dollars(5_000), Some(bond.as_slice())),
-            (Cents::from_dollars(3_000), Some(intl.as_slice())),
+            held(5_000, Some(bond.as_slice())),
+            held(3_000, Some(intl.as_slice())),
         ];
         let allocation = apportion(&held);
         let total: i64 = allocation.slices.iter().map(|s| s.weight.0).sum();
@@ -345,8 +476,8 @@ mod tests {
     fn each_class_is_its_own_share_of_the_covered_balance() {
         let (bond, intl) = portfolio();
         let held = [
-            (Cents::from_dollars(5_000), Some(bond.as_slice())),
-            (Cents::from_dollars(3_000), Some(intl.as_slice())),
+            held(5_000, Some(bond.as_slice())),
+            held(3_000, Some(intl.as_slice())),
         ];
         let allocation = apportion(&held);
 
@@ -376,11 +507,8 @@ mod tests {
     #[test]
     fn a_holding_with_no_mix_is_outside_the_denominator_rather_than_shrinking_every_class() {
         let (bond, _) = portfolio();
-        let covered = [(Cents::from_dollars(5_000), Some(bond.as_slice()))];
-        let with_a_stranger = [
-            (Cents::from_dollars(5_000), Some(bond.as_slice())),
-            (Cents::from_dollars(90_000), None),
-        ];
+        let covered = [held(5_000, Some(bond.as_slice()))];
+        let with_a_stranger = [held(5_000, Some(bond.as_slice())), held(90_000, None)];
 
         assert_eq!(
             apportion(&covered).slices,
@@ -398,7 +526,7 @@ mod tests {
     #[test]
     fn what_a_mix_does_not_place_lands_in_unclassified_rather_than_renormalising() {
         let short = slices(&[(AssetClass::UsStock, 9_900)]);
-        let held = [(Cents::from_dollars(1_000), Some(short.as_slice()))];
+        let held = [held(1_000, Some(short.as_slice()))];
         let allocation = apportion(&held);
 
         assert_eq!(
@@ -415,25 +543,26 @@ mod tests {
         assert_eq!(total, BasisPoints::ONE.0);
     }
 
-    /// Each slice's share of a balance is truncated to the cent, so a mix
-    /// that foots perfectly can still leave a few cents over. That is dust
-    /// rather than a miss, and an `Unclassified` row reading `0.01%` would
-    /// report the classifier for the arithmetic's rounding.
+    /// A mix that foots perfectly leaves nothing unplaced at any balance,
+    /// so the residual is a flat zero rather than the basis point the
+    /// arithmetic's own rounding could otherwise leave in it.
     #[test]
-    fn the_cents_a_perfect_mix_rounds_away_are_not_reported_as_unclassified() {
+    fn the_rounding_of_a_perfect_mix_is_not_reported_as_unclassified() {
         let thirds = slices(&[
             (AssetClass::UsStock, 3_333),
             (AssetClass::IntlStock, 3_333),
             (AssetClass::UsBond, 3_334),
         ]);
-        let held = [(Cents(10_001), Some(thirds.as_slice()))];
+        let held = [Held {
+            balance: Cents(10_001),
+            treatment: Some(TaxTreatment::Taxable),
+            mix: Some(thirds.as_slice()),
+        }];
         let allocation = apportion(&held);
 
-        assert!(
-            !allocation
-                .slices
-                .iter()
-                .any(|s| s.class == AssetClass::Unclassified),
+        assert_eq!(
+            weight(&allocation.slices, AssetClass::Unclassified),
+            BasisPoints::ZERO,
             "rounding dust was drawn as a classifier miss: {:?}",
             allocation.slices
         );
@@ -441,17 +570,22 @@ mod tests {
         assert_eq!(total, BasisPoints::ONE.0);
     }
 
+    /// Every class keeps its zero, the residual included: `Class::Other`
+    /// draws it beside the cash whatever it holds, so there is no row for an
+    /// omission to spare a reader and a missing slice would only make the
+    /// vocabulary uneven.
     #[test]
-    fn a_zero_unclassified_is_dropped_while_the_other_classes_keep_their_zeroes() {
+    fn every_class_keeps_its_zero_including_the_residual() {
         let (bond, _) = portfolio();
-        let held = [(Cents::from_dollars(5_000), Some(bond.as_slice()))];
+        let held = [held(5_000, Some(bond.as_slice()))];
         let allocation = apportion(&held);
 
         assert!(
-            !allocation
+            allocation
                 .slices
                 .iter()
-                .any(|s| s.class == AssetClass::Unclassified)
+                .any(|s| s.class == AssetClass::Unclassified && s.weight == BasisPoints::ZERO),
+            "the residual lost its zero"
         );
         assert!(
             allocation
@@ -468,7 +602,7 @@ mod tests {
             (AssetClass::UsStock, 9_000),
             (AssetClass::Unclassified, 1_000),
         ]);
-        let held = [(Cents::from_dollars(1_000), Some(messy.as_slice()))];
+        let held = [held(1_000, Some(messy.as_slice()))];
         let allocation = apportion(&held);
         assert_eq!(
             weight(&allocation.slices, AssetClass::Unclassified),
@@ -480,22 +614,103 @@ mod tests {
     /// composition is how the two are told apart.
     #[test]
     fn a_portfolio_with_no_mix_on_record_at_all_has_no_composition() {
-        let held = [(Cents::from_dollars(5_000), None)];
+        let held = [held(5_000, None)];
         let allocation = apportion(&held);
         assert!(allocation.slices.is_empty());
         assert_eq!(allocation.covered, 0);
     }
 
+    /// The grid is rounded once, so it foots in both directions: every
+    /// class's three columns come to its own share, and every treatment's
+    /// classes come to what that treatment holds. Two passes would each foot
+    /// on their own and disagree with each other.
+    #[test]
+    fn the_tax_columns_foot_across_to_a_class_and_down_to_a_treatment() {
+        let (bond, intl) = portfolio();
+        let held = [
+            Held {
+                balance: Cents::from_dollars(5_000),
+                treatment: Some(TaxTreatment::Taxable),
+                mix: Some(bond.as_slice()),
+            },
+            Held {
+                balance: Cents::from_dollars(3_000),
+                treatment: Some(TaxTreatment::TaxDeferred),
+                mix: Some(intl.as_slice()),
+            },
+        ];
+        let allocation = apportion(&held);
+
+        for class in Class::ALL {
+            let across: i64 = TaxTreatment::ALL
+                .iter()
+                .map(|t| allocation.class_in(class, *t).0)
+                .sum();
+            assert_eq!(
+                across,
+                class.actual(&allocation.slices).0,
+                "{class:?} does not foot across its treatments"
+            );
+        }
+        let down: i64 = TaxTreatment::ALL
+            .iter()
+            .map(|t| allocation.treatment_total(*t).0)
+            .sum();
+        assert_eq!(down, BasisPoints::ONE.0, "the treatments do not foot");
+
+        // The bond fund is the taxable one and the international fund the
+        // deferred one, so each treatment holds exactly its own fund.
+        assert_eq!(
+            allocation.treatment_total(TaxTreatment::TaxFree),
+            BasisPoints::ZERO
+        );
+        assert_eq!(
+            allocation.class_in(Class::IntlStock, TaxTreatment::Taxable),
+            BasisPoints::ZERO,
+            "the international fund is not held in the taxable account"
+        );
+    }
+
+    /// A holding whose account states no treatment is in the portfolio and
+    /// in none of the columns, so the three visibly sum short rather than
+    /// landing somewhere the database never said.
+    #[test]
+    fn a_holding_with_no_treatment_counts_in_the_class_and_in_no_column() {
+        let (bond, _) = portfolio();
+        let held = [
+            Held {
+                balance: Cents::from_dollars(5_000),
+                treatment: Some(TaxTreatment::Taxable),
+                mix: Some(bond.as_slice()),
+            },
+            Held {
+                balance: Cents::from_dollars(5_000),
+                treatment: None,
+                mix: Some(bond.as_slice()),
+            },
+        ];
+        let allocation = apportion(&held);
+
+        let total: i64 = allocation.slices.iter().map(|s| s.weight.0).sum();
+        assert_eq!(total, BasisPoints::ONE.0, "the classes have to foot");
+        let columns: i64 = TaxTreatment::ALL
+            .iter()
+            .map(|t| allocation.treatment_total(*t).0)
+            .sum();
+        assert_eq!(
+            columns,
+            BasisPoints::ONE.0 / 2,
+            "the untreated half was quietly given a treatment"
+        );
+    }
+
     #[test]
     fn coverage_is_named_only_while_something_is_missing() {
         let (bond, _) = portfolio();
-        let whole = [(Cents::from_dollars(5_000), Some(bond.as_slice()))];
+        let whole = [held(5_000, Some(bond.as_slice()))];
         assert_eq!(apportion(&whole).coverage(), None);
 
-        let partial = [
-            (Cents::from_dollars(5_000), Some(bond.as_slice())),
-            (Cents::from_dollars(1_000), None),
-        ];
+        let partial = [held(5_000, Some(bond.as_slice())), held(1_000, None)];
         assert_eq!(
             apportion(&partial).coverage().as_deref(),
             Some("1 of 2 holdings")
@@ -506,30 +721,30 @@ mod tests {
     fn the_bonds_row_is_both_bond_classes_and_its_delta_is_signed() {
         let (bond, intl) = portfolio();
         let held = [
-            (Cents::from_dollars(5_000), Some(bond.as_slice())),
-            (Cents::from_dollars(3_000), Some(intl.as_slice())),
+            held(5_000, Some(bond.as_slice())),
+            held(3_000, Some(intl.as_slice())),
         ];
         let allocation = apportion(&held);
         let targets = fund::targets(Some(48), BasisPoints(4_000));
 
-        let row = SummaryRow::new(TargetClass::Bonds, &allocation.slices, targets);
+        let row = SummaryRow::new(Class::Bonds, &allocation.slices, targets);
         assert_eq!(row.actual, BasisPoints(4_375 + 1_562));
         assert_eq!(row.target, Some(BasisPoints(1_800)));
         assert_eq!(
             row.delta,
-            Some(BasisPoints(1_800 - 5_937)),
-            "an over-weight class must report which way it is out"
+            Some(BasisPoints(5_937 - 1_800)),
+            "an over-weight class must report which way it is out, and it is over"
         );
     }
 
     #[test]
     fn a_bond_target_with_no_birth_date_behind_it_carries_no_delta_either() {
         let (bond, _) = portfolio();
-        let held = [(Cents::from_dollars(5_000), Some(bond.as_slice()))];
+        let held = [held(5_000, Some(bond.as_slice()))];
         let allocation = apportion(&held);
         let targets = fund::targets(None, BasisPoints(4_000));
 
-        let row = SummaryRow::new(TargetClass::Bonds, &allocation.slices, targets);
+        let row = SummaryRow::new(Class::Bonds, &allocation.slices, targets);
         assert_eq!(row.target, None);
         assert_eq!(row.delta, None);
         assert_eq!(

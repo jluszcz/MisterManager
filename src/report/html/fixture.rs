@@ -7,7 +7,7 @@
 
 use crate::calc::fund::Targets;
 use crate::calc::planning::{PlanInputs, PlanSettings};
-use crate::db::account::{Account, AccountColor, Group, Kind};
+use crate::db::account::{Account, AccountColor, Group, Kind, TaxTreatment};
 use crate::db::fund_mix::{AssetClass, Slice};
 use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
@@ -37,8 +37,13 @@ pub(super) fn accounts() -> Vec<Account> {
             color: Some(AccountColor::Copper),
             ..crate::test_support::investment(2, "BRK")
         },
+        // Tax-deferred where the other is taxable, so the summary's tax
+        // columns have two treatments to divide the portfolio between --
+        // one treatment everywhere would let a column drawn over the wrong
+        // treatment still pass.
         Account {
             color: Some(AccountColor::Violet),
+            tax_treatment: Some(TaxTreatment::TaxDeferred),
             ..crate::test_support::investment(3, "RET")
         },
     ]
@@ -237,10 +242,20 @@ pub(super) fn funds(targets: Targets) -> Allocation {
         holding(2, "UNC", 1_000, None),
         holding(3, "USB", 2_000, Some((bond.as_slice(), day(2026, 3, 31)))),
     ];
+    let treatment = |id: AccountId| {
+        accounts()
+            .into_iter()
+            .find(|a| a.id == id)
+            .and_then(|a| a.tax_treatment)
+    };
     let apportion = |rows: &[&Held]| {
-        let mix: Vec<(Cents, Option<&[Slice]>)> = rows
+        let mix: Vec<crate::allocation::Held<'_>> = rows
             .iter()
-            .map(|h| (Cents::from_dollars(h.dollars), h.filed.map(|(mix, _)| mix)))
+            .map(|h| crate::allocation::Held {
+                balance: Cents::from_dollars(h.dollars),
+                treatment: treatment(h.account),
+                mix: h.filed.map(|(mix, _)| mix),
+            })
             .collect();
         crate::allocation::apportion(&mix)
     };

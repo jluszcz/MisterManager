@@ -168,6 +168,36 @@ pub fn account_color(id: AccountId, chosen: Option<AccountColor>) -> Color {
     palette(chosen.unwrap_or_else(|| AccountColor::derived(id)))
 }
 
+/// One class's color, the same as the report's own bar spends on it.
+///
+/// A wrapper over [`crate::palette::CLASSES`], the way [`palette`] is one over
+/// [`crate::palette::account`]: which color a class takes is a fact about the
+/// portfolio's vocabulary rather than about a terminal.
+pub fn class(class: crate::allocation::Class) -> Color {
+    let (r, g, b) = crate::palette::CLASSES[class.index()];
+    Color::Rgb(r, g, b)
+}
+
+/// The ink a figure drawn *on* one class's color takes.
+///
+/// [`crate::palette::on`] wrapped for a terminal, the way [`class`] wraps the
+/// ground it answers to. The allocation bars write a share inside a segment,
+/// which is the only place in the app where text sits on a filled block that
+/// is not the cursor row's own reversal.
+pub fn on_class(class: crate::allocation::Class) -> Color {
+    let (r, g, b) = crate::palette::on(crate::palette::CLASSES[class.index()]);
+    Color::Rgb(r, g, b)
+}
+
+/// The color a shortfall is spelled in, wherever one is drawn as a figure
+/// rather than as an amount.
+///
+/// [`amount_color`] is the same decision made from a [`Cents`]; the
+/// allocation summary's Δ is a share, so it has no `Cents` to ask with.
+pub fn negative() -> Color {
+    NEGATIVE
+}
+
 /// How funded a goal is, as a color: red at nothing, yellow at halfway, green
 /// at fully funded.
 ///

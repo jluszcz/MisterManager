@@ -229,7 +229,27 @@ fn money_span(cents: Cents) -> Span<'static> {
 /// with `Cents`'s own formatting, and there is one place that decides where the
 /// digits and their separators go.
 fn money_text(cents: Cents) -> String {
-    let figure = crate::demo::figure(cents);
+    dollar(crate::demo::figure(cents))
+}
+
+/// [`money_span`] with the cents dropped, for a title over a table whose own
+/// figures drop them -- the Funds screen's, where every balance in the list
+/// below is a [`whole_amount`]. A title quoting cents over a column that does
+/// not would be the one figure on the screen at another precision, and it
+/// would not foot against the rows a reader adds up by eye.
+///
+/// The color comes off the truncated figure and the text off
+/// [`crate::demo::truncated_figure`], for [`whole_amount`]'s reasons.
+fn whole_money_span(cents: Cents) -> Span<'static> {
+    let span = Span::raw(dollar(crate::demo::truncated_figure(cents)));
+    match style::amount_color(cents.trunc_to_dollar()) {
+        Some(color) => span.style(Style::default().fg(color)),
+        None => span,
+    }
+}
+
+/// A figure with the `$` inside whatever sign it already carries.
+fn dollar(figure: String) -> String {
     match figure.strip_prefix('-') {
         Some(magnitude) => format!("-${magnitude}"),
         None => format!("${figure}"),
@@ -601,9 +621,13 @@ fn is_press(key: &KeyEvent) -> bool {
 ///
 /// The draw is owed rather than unconditional: at four frames a second an
 /// idle app rebuilds every visible row's strings for a buffer ratatui is
-/// about to find unchanged. What owes one is a key press, a resize, and a
-/// status message reaching its expiry -- which is why the tick goes on firing
-/// whether or not anything is drawn.
+/// about to find unchanged. What owes one is a key press, a resize, a status
+/// message reaching its expiry, and work a key deferred -- which is why the
+/// tick goes on firing whether or not anything is drawn.
+///
+/// Deferred work runs between the two: a key that starts a blocking fetch
+/// sets a status saying so and hands the fetch here, so the sentence is drawn
+/// before the loop stops answering. See [`app::App::run_deferred`].
 fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     // The first frame is owed to nothing in particular: there is no screen yet.
     let mut dirty = true;
@@ -616,6 +640,15 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
         if dirty {
             terminal.draw(|frame| app.render(frame))?;
             dirty = false;
+        }
+        // After the draw, which is the whole point: the work here blocks this
+        // loop, so the status line announcing it has to reach the screen
+        // first. `App::Deferred` is where that is argued. The `continue` is
+        // what puts the result on screen without waiting out a `poll`.
+        if app.has_deferred() {
+            app.run_deferred();
+            dirty = true;
+            continue;
         }
         if !event::poll(TICK)? {
             continue;

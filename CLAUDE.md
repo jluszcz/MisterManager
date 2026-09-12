@@ -171,7 +171,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/account_label.rs` | `Account` and `Label` — an account on its way to a display, in any medium. `render_with` is the only reader of its text, and hands the resolved color alongside. |
 | `src/money.rs` | `Cents(i64)` — the only money type. No floats anywhere in the crate. |
 | `src/palette.rs` | What a color *is*, in numbers: the eight account colors, the negative color, and the funding ramp — how funded a goal is, red through yellow to green — as `(u8, u8, u8)`. `tui::style` wraps them for a terminal; `report` spells them as `#rrggbb`. |
-| `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. `BasisPoints` prints itself as a percentage with two decimals, on the type rather than beside a screen, so the Funds screen and the report cannot render one share two ways. |
+| `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. `BasisPoints` prints itself as a percentage with two decimals, on the type rather than beside a screen, so the Funds screen and the report cannot render one share two ways; `whole_percent` is the second spelling, on the type for the same reason, for a share read down a column rather than against the target beside it. |
 | `src/gate.rs` | `Gate` — the Planning gates, each owning its setting key and goal-name substring. |
 | `src/reading.rs` | `Reading` — whether a reader refuses a row it cannot resolve or draws past it. One parameter rather than a strict function and a tolerant twin, so the two readings differ in nothing but the thing they name. Taken by `goal::all_with_balances` and by the `transfer` readers built on it. |
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the setting key naming its container account. |
@@ -187,13 +187,14 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/db/date.rs` | The stored date format, in one place: `iso` writes it, `parse`/`parse_opt` read it back for a `from_row`. |
 | `src/db/bill.rs` | The monthly bill block, labelled — the `Planning!C6:E12` rows, and the owner's mark saying which of them the Biweekly Expenses figure counts. |
 | `src/db/holding.rs` | The `holding` table — a fund held in an investment account, and the balance the owner typed. |
-| `src/db/fund_mix.rs` | The `fund_mix` table — one fund's composition by asset class, as of the filing it was read from. |
+| `src/db/fund_mix.rs` | The `fund_mix` table — one fund's composition by asset class, plus the name the fund files under, as of the filing both were read from. |
 | `src/db/recurring_txn.rs` | The `recurring_txn` table — rows whose amount and date are known in advance. CRUD plus the queries regeneration needs. |
 | `src/import/` | Reads `Money.xlsx` via `calamine`. Behind the non-default `import` Cargo feature — it is the only module naming `calamine`, which is what lets that dependency be `optional`, so a default build compiles no spreadsheet parser and offers no `mm import`. |
 | `src/mix/` | A fund's composition, read out of SEC's N-PORT filings and written to `db::fund_mix`. `sec` is the network client — the only place `reqwest` and `jluszcz_rust_utils` are named, and one of two places `tokio` is, `src/backup/s3.rs` being the other; `classify` is pure, with neither a network nor a database in it; `mod.rs` is the policy over the two. `mm mixes` and the Funds screen's `g`/`G` are the only things that run it. |
 | `src/overview.rs` | Reads balances at the three projection dates out of `db` and bands them into the Overview's sections and Net. Read by the Overview screen and by `report`. |
 | `src/savings.rs` | A goal's derived columns — `%`, `$/Pay`, expired — and what a container has left unallocated. Read by the Savings screen and by `report`. |
 | `src/plan.rs` | Reads settings and balances out of `db`, feeds `calc::planning::compute`. |
+| `src/fund_label.rs` | What a fund's filed name reads as, in any medium — `seriesName` with its trailing `Fund` dropped and its shouting undone, and the initialisms inside it left alone. A peer of `description.rs`, and for its reason: the Funds screen draws these and the report's holdings table is the obvious second reader. |
 | `src/fund.rs` | Reads the birth date and the international-equity split out of `db`, feeds `calc::fund::targets`. |
 | `src/allocation.rs` | The look-through: each holding's balance apportioned by its fund's composition and summed by asset class, against what the age rule asks for. A peer of `overview`, `savings` and `plan_rows`, in neither medium — the Funds screen and the report's Funds tab both read it, so the apportioning, the row order, the four-class bar's classes and the combining of the two bond classes are stated once here. It is a share of what it *covers*: a holding whose fund has no composition on record is outside the denominator, and `Allocation::coverage` is what says so. |
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
@@ -385,16 +386,68 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   `holding` first, so it has nothing already normalised to read. Any further writer owes the same
   before it calls `holding::insert`, `holding::update` or `mix::refresh`.
 - **`Unclassified` is a class, not a gap.** A holding the classifier cannot place is stored under
-  it and drawn as its own row rather than folded into a neighbour — the stance `transfer::resolve`
-  takes toward a dangling key, and `classify` is where it is argued. **What a filing itself fails
-  to place goes there too, and the same function decides which of the two a gap is.** A total
-  inside `classify`'s own conversion rounding is dust and lands on the largest slice, where a point
-  either way is invisible; a wider one came from the filing — an N-PORT footing to 99.3% is
-  ordinary — and is `Unclassified`, positive where the filing under-reports and negative where it
-  over-foots. `allocation::apportion` answers a `fund_mix` row the same way for the row no refresh
-  wrote, the table constraining no footing of its own, so the summary foots *and* says what it
-  could not place. A zero `Unclassified` is dropped rather than drawn, the way the two Planning
-  transfer footers are: a defect report reading "none" every time is one nobody finishes reading.
+  it rather than folded into a neighbour — the stance `transfer::resolve` takes toward a dangling
+  key, and `classify` is where it is argued. **What a filing itself fails to place goes there too,
+  and the same function decides which of the two a gap is.** A total inside `classify`'s own
+  conversion rounding is dust and lands on the largest slice, where a point either way is
+  invisible; a wider one came from the filing — an N-PORT footing to 99.3% is ordinary — and is
+  `Unclassified`, positive where the filing under-reports and negative where it over-foots.
+  `allocation::apportion` answers a `fund_mix` row the same way for the row no refresh wrote, the
+  table constraining no footing of its own, so the summary foots *and* keeps what it could not
+  place in a labelled bucket.
+  **What it does not get is a row of its own.** `allocation::Class::Other` is the row, and it
+  carries cash and the residual together: two rows about what the age rule is not asking about is
+  a third of the panel spent saying nothing, and the residual is a rounding artefact far more
+  often than a real miss. The cost is real and is the owner's decision — a fund the classifier
+  silently misreads now reaches the summary inside `Other` rather than under a name that says
+  what went wrong. What still surfaces is the arithmetic: `Other` states a negative share when a
+  mix over-foots, and `Allocation::coverage` goes on naming the holdings no filing was fetched
+  for at all.
+- **Every class keeps its zero, the residual included.** `slices` carries one entry per
+  `AssetClass` whatever the portfolio holds, because the six are the vocabulary the targets and
+  the bar are stated in. The residual used to be dropped when it was nothing, the way the two
+  Planning transfer footers are; it is not, now that `Other` draws it beside the cash and the row
+  exists whatever it holds.
+- **The look-through is drawn as four classes, not six, and the two mediums read one list.**
+  `allocation::Class` is that list — the two equities, `Bonds`, and `Other` — and it owns each
+  one's label, the `AssetClass`es behind it, its place in `palette::CLASSES`, and whether the age
+  rule targets it. The summary's rows and every bar's segments are spellings of it, so a segment
+  and the row above it are one statement; before it they were two lists, and the bar split a bond
+  number the row beside it could not. `AssetClass` keeps all six variants, `fund_mix` still stores
+  the bond split and `mix::classify` still finds it — what collapses is the drawing.
+  **`Class::ALL`'s order and `palette::CLASSES`' order are one statement too**, the colors being
+  reached by `Class::index`. Reordering the enum without reordering the array repaints every
+  segment rather than moving it, which is the one thing an index-keyed table can get wrong — and
+  what keeps it safe is that nothing *stores* a class as a number, so the two move together in one
+  commit or not at all.
+- **The Δ is `actual - target`, so its sign is a direction on the portfolio rather than a
+  correction to it.** A class held past what the age rule asks is a positive number; one held
+  under it is negative, which is the shortfall both sinks spell in `palette::NEGATIVE`.
+  Subtracted the other way the figure reads as what would have to be moved, and it paints red
+  exactly the classes a reader is already over on. `allocation::SummaryRow::delta` is the one
+  place it is computed; the Funds screen and the report's Funds tab both draw that field and
+  neither re-derives it.
+- **The summary is one grid, rounded once, read two ways.** `apportion` apportions over class ×
+  tax treatment in a single largest-remainder pass, so a class's three tax columns foot to its
+  `Actual` and a treatment's four classes foot to what that treatment holds. Rounding the two
+  summaries separately would have each foot on its own and disagree with the other by the point
+  one of them rounded differently, which is the one thing a table read in both directions cannot
+  afford. A holding whose account states no treatment is in the classes and in no column, so the
+  columns visibly sum short rather than landing somewhere the database never said; the schema's
+  paired `CHECK` is what makes that unreachable through the app.
+- **A fund's name is fetched, not typed, and is the fund's own rather than its trust's.** It is
+  `genInfo/seriesName` out of the same filing the composition comes from, stored on `fund_mix`
+  beside `report_date` and drawn as the Funds screen's `Fund` column. `Option` throughout: a
+  filing carrying none still yields a usable composition, and a mix written before the column
+  existed reads the same way until the next `g`. It names a *series*, so two share classes of one
+  fund carry one name and the ticker is what tells them apart — which is why the ticker stays the
+  row's identity and the column that is never truncated. `src/mix/CLAUDE.md` is where the choice
+  of element is argued, and `fund_label::short` is how it is drawn — a trailing `Fund` is dropped,
+  being the word the column is already headed with; a filer who shouts is title-cased and a filer
+  who cased their own name is left alone; and what is stored is untouched by either rule. **No rule drops the issuer from the front of it**, which is what would let that
+  column be narrow: the words that do the dropping are the fund families the owner holds, which
+  are brokerages, and no institution they hold may be named here. The screen is sized for the
+  whole name instead.
 - **A fund with no `fund_mix` row has never been fetched, which is not the same as holding
   nothing.** `tui::fund::Row::stock_percent` and `Row::as_of` are `Option` for that reason, and
   both sinks draw their own "nothing here" rather than a zero — a fund genuinely reported to hold
@@ -609,7 +662,7 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
 - **`mm --demo` replaces absolute figures and owner-entered text, and nothing else.** Every
   absolute dollar figure draws with another figure's digits, keyed on a per-run salt so one amount
   reads the same everywhere; every account name and code, goal name, goal note, recurring-goal name,
-  bill label, fund ticker and transaction description draws as a same-length pronounceable pseudoword,
+  bill label, fund ticker, fund name and transaction description draws as a same-length pronounceable pseudoword,
   keyed the same way so one word reads the same all run. Percentages, dates, counts, the app's own vocabulary, and every match key are
   untouched: a percentage is a shape rather than a sum, a scrambled date is not a date, and a count
   over a list of rows the reader can see would read as a fault. It is display-only and installed

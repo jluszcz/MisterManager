@@ -255,11 +255,58 @@ the last digit of a figure. It comes out of the `Constraint::Min` column with th
 slack, it is spent whether or not a list is long enough to scroll, and it is the row's own right
 edge — so the selection bar and the favorite band stop with it.
 
-**A bar drawn in glyphs spends a fixed count of them, never a share of its column** — Funds draws
-two, `MIX_BAR_WIDTH` in the per-row mix column and `SUMMARY_BAR_WIDTH` under the allocation
-summary, and each constant carries its own reasoning. What the four classes leave over is the
-unfilled track rather than a fifth segment: `BAR_REST` is that glyph, and the report's Funds tab
-makes the same split in CSS.
+**A bar spends a fixed count of cells, never a share of its column** — Funds draws four,
+`SUMMARY_BAR_WIDTH` wide under the allocation summary, and the constant carries its own reasoning.
+`palette::CLASSES` is where the colours are, the same table the report's Funds tab spells in CSS,
+so the terminal and the phone cannot disagree about what bonds look like. What the four classes
+leave over is the unfilled track rather than a fifth segment — `BAR_REST` is that glyph — and with
+`Class::Other` among the four there is normally nothing left for it on the `Total` bar.
+
+**A segment is a background, not a run of `█`.** A full block has no room inside it for the share
+it represents, and those figures are what let a reader take a number off a bar instead of tracking
+a segment up to the table. A filled background and a run of blocks are the same rectangle, so
+nothing is lost; the track keeps its own glyph, being the one part of the bar that is not a
+quantity. `style::on_class` is the ink, over `palette::on` — near-black on a light ground and
+near-white on a dark one, by Rec. 601 luma, which is what puts `CLASSES`' green and its darker blue
+on the same side of the line.
+
+**A share is written inside its segment only where a column of space fits either side of it.**
+`segment_text` is that rule and `BAR_TEXT_PADDING` is the column: flush against the join, a figure
+reads as belonging to whichever of the two neighbouring colours the eye lands on first. Below that
+width the segment says what it always said — its length against the three beside it — and the table
+above states every figure exactly, so nothing is unavailable, only uncrowded.
+
+**The bars under `Total` are the tax columns asked the other way round.** A column states one
+treatment's classes against the *whole* portfolio, which is what makes `apportion`'s grid foot in
+both directions and what stops a reader comparing one treatment's shape to another's without
+dividing. Each bar does that division, normalised to what its own pot holds, so "is the Roth
+stock-heavier than the 401k" is answered by looking. `BAR_LABEL_WIDTH` is the one column every
+name sits in, so the bars share a left edge and can be read down as well as across.
+
+**How many bars there are is a property of the data, not a constant** — `fund::bars` is the list
+and `summary_lines` counts it rather than restating it, so the panel shrinks and hands the list
+its lines back. **A treatment holding nothing gets no bar**: an empty row of track states what its
+own tax column already states, and it is the ordinary case the moment `Tab` narrows to one
+account, since an account carries exactly one treatment. **`Total` is drawn only where more than
+one treatment is left**, because with one it *is* that treatment's bar — same four shares, same
+denominator, the whole of what is on screen being what that pot holds — and two identical bars ask
+a reader to compare something with itself. Nothing qualifying at all leaves `Total` alone, which
+is the drawing of a database the schema's paired `CHECK` makes unreachable.
+
+**A blank line separates the class rows from the bars**, `BAR_GAP`. The table is figures and the
+bars are pictures of those figures; with nothing between them the left-hand labels run straight on
+and `Other` reads as one more row of the same list. It is what a panel with one border to spend
+has instead of a second.
+
+**The bars carry no legend: the class labels in the table above them are tinted instead.** A legend
+is a third copy of the four words — the rows already name them, in the order the segments run — and
+it spent the line beside the bar, which on a narrow terminal is the first thing to truncate. So a
+segment is paired with its row directly, and the name a reader looks up is the one carrying the
+colour. The report's Funds tab keeps its legend and leaves its labels plain, having the width for
+one; either way a class is named in its own colour exactly once. `palette`'s
+`no_class_color_is_the_negative_color` is what keeps a tinted label from reading as the shortfall
+the Δ column beside it spells in red, and `every_class_color_takes_a_readable_ink` is what keeps a
+share written on one legible.
 
 **Funds is the one screen whose list pays for a panel above it**, where Savings and Planning spend
 their extra lines on a footer below. What the allocation summary costs the rows is
@@ -271,6 +318,34 @@ and a money column one short turns a figure into a smaller figure — a wrong nu
 visible ellipsis. That is also why widening one column is paid for out of another on the same
 screen rather than out of the terminal, and why a test that pins a cell by absolute position must
 derive it from `MIN_WIDTH` rather than write the offset out.
+
+**A column holding one of a closed set of labels takes its width from that set, never from a
+number.** `accounts::label_width` is that measurement and `accounts::widths` is where the screen's
+seven are assembled — five of them off `Kind::ALL`, `Group::ALL`, `InterestPolicy::ALL`,
+`Block::ALL` and `Source::ALL`, the same lists the cells are drawn from. A hardcoded width is a
+second statement of how long the longest label is, and a variant added or renamed moves one of the
+two; what it costs is not an ellipsis but a word that still reads, so `Investment` reported itself
+as `Investme` with nothing on screen saying it had been cut.
+
+The claim is checked against `widths()` rather than against a drawn table, in
+`every_column_is_as_wide_as_the_widest_label_it_can_hold`. A drawn table cannot make it: `Kind` and
+`Band` can both hold `Investment`, so a `Kind` cell cut short still leaves the word whole one
+column over and a `contains` check passes — and the fixture behind
+`every_column_fits_the_minimum_width` held no investment account, so the widest `Kind` label was
+never drawn at all. That test still earns its place, being the one that holds the seven to
+`MIN_WIDTH` together; `an_investment_account_spells_its_kind_and_its_band_whole` is what pins the
+pair in the drawn row.
+
+**A key that blocks the event loop announces itself one frame early.** `mix::refresh` is the only
+one — nothing in this crate is async, so `g`/`G` freeze the app for as long as SEC takes. The key
+handler therefore sets the status and hands the work to the loop as an `app::Deferred`, which runs
+it straight after the draw: the sentence reaches the screen before the loop stops answering.
+`App::run_deferred` restarts the status clock afterwards, since a result inheriting a clock started
+before a half-minute fetch would expire on the frame it appeared in. The screen is still frozen
+throughout — `mm mixes` remains the route that does not tie the screen up — and what this buys is
+only that it says so rather than looking like a keystroke nothing answered. The two answers that
+involve no fetch, an unset SEC contact and an empty ticker list, are given in the handler and
+deferred to nothing.
 
 ## Invariants worth knowing before editing a screen
 
@@ -1521,6 +1596,76 @@ derive it from `MIN_WIDTH` rather than write the offset out.
   there is no `r`. A holding does link to an account, through `account_id`; what it does not link
   to is a goal or a transaction, and its balance is always typed, never imported — `holding` and
   `fund_mix` are in `PRESERVED_TABLES` because the workbook carries neither.
-  **What is *not* typed is what the fund is made of**: `g`/`G` fetch that from the fund's latest
-  filing, and every column the mix feeds — the bar, `Stock%`, `As of`, and the summary above the
+  **What is *not* typed is what the fund is made of, nor what it is called**: `g`/`G` fetch both
+  from the fund's latest filing, and what they feed — `Fund`, `Stock%` and the summary above the
   list — is drawn from `fund_mix` rather than from anything the form asks for.
+- **The list's columns are Account, Ticker, Fund, Balance, Stock%, Tax.** `Tax` is the holding account's
+  `tax_treatment` in the Accounts screen's own wording, so one account reads the same on both
+  screens. What the list does *not* carry is a mix bar or a filing-date column: a fourteen-glyph
+  bar restated the `Stock%` in the next column over, and the date a composition was read from is
+  one fact about the fetch rather than one per holding — a column of it repeats the same day down
+  the whole list. The fund's *name* is the opposite case and earns its column: it differs per row,
+  and it is the one thing on the screen that says what a ticker actually is.
+  **`Fund` is `genInfo/seriesName`, and it is the one column in the app whose width is neither
+  measured nor chosen but simply everything the row can spare.** Every other label column comes
+  off a closed set and is sized from it, the way `accounts::widths` sizes its five; a fund name
+  comes off a filing. `fund::FUND_NAME_WIDTH` is forty-eight, which is what the five fixed columns
+  and the chrome leave at `MIN_WIDTH` once `Account`'s own `Constraint::Min` has claimed its
+  twenty, and `the_longest_fund_name_a_filing_carries_is_drawn_whole_at_the_minimum_width` is what
+  holds the arithmetic to a drawn row.
+  Wide rather than narrow because of *where* a fund name carries its meaning: `… Target Retirement
+  2045 Fund` differs from the row above it in the year, four characters from the end, so any cut
+  short of the whole draws a column of rows that all read alike — the one thing this column exists
+  not to do. The issuer's own name leads every one of those rows and is the least informative word
+  in it; dropping it would let the column be narrow, and the words that do the dropping are
+  institutions the repository may not name, so the screen pays in width instead.
+  `src/fund_label.rs` says the same from the other end.
+  It can still truncate, on a longer name or a narrower terminal, and this is the column where that
+  is affordable: left-aligned prose loses its tail where a right-aligned figure loses its leading
+  digits. `Ticker` beside it is the row's identity and is never cut — which matters twice over,
+  because `seriesName` names a *series* and two share classes of one fund carry the same name.
+  **`fund_label::short` is what the column draws**, at the crate root rather than in this module
+  because the report's holdings table is the obvious second reader and a name shortened two ways
+  reads as two funds. Two rules, and the stored name is untouched by either, so both are a redraw
+  rather than a refetch:
+  - **A trailing `Fund` is dropped.** Every row in the column is a fund and the column is headed
+    `Fund`, so the word carries nothing while costing five characters at the end — which is where
+    a fund name keeps what distinguishes it, the year in `… Target Retirement 2045` being the part
+    a cut takes first. A whole word only, and only at the end: `Growth Funds` keeps its letters,
+    and a fund actually named `Fund` keeps its name, a blank cell saying less than a redundant one.
+  - **Shouting is undone, and nothing else is.** A name carrying any lowercase letter is left
+    exactly as filed — its author has already made every decision a title-caser could disagree
+    with. Inside one that shouts, runs of three letters or fewer stay as they are, `S&p 500` being
+    a worse answer than `S&P 500`.
+  The `/` search reaches the column, alongside the ticker and the account: a column a reader can
+  see and cannot search reads as broken, and `bond` finding every bond fund is the needle neither
+  of the other two makes possible.
+  **The border carries the total of the holdings on screen**, in whole dollars through
+  `tui::whole_money_span`, last in the chain where the ledgers put their `Today` — the figure sits
+  in one place whether or not a search is running, and a title quoting cents over a column of
+  `whole_amount`s would be the one figure on the screen at another precision. It is composed in
+  `fund::title_line` rather than in `Funds::title`, the ledgers' split and for their reason: a
+  `Label` colors account segments and nothing else, and a money figure takes
+  `style::amount_color`.
+  **It is a sum over the rows, where the ledger's total pointedly is not.** A ledger's rows are a
+  window onto a dated account, so its balance is a `SUM(cents) WHERE date <= today` that `App`
+  queries and no window may narrow. A holding carries one typed, undated balance and nothing sums
+  them anywhere else — an investment account is banded off the Overview precisely so no such sum
+  reaches Net — so here the rows *are* the figure, and it narrows with `Tab` and `/` exactly as
+  the allocation panel above it does. `Funds::total` is where that is said.
+  **The date is in the border too, as `Funds · … · as of <date> · $<total>`**, and it is the *oldest*
+  filing behind the rows on screen: every figure the panel above states is as current as its
+  stalest input, so the newest would claim a freshness the portfolio does not have. `Funds::as_of`
+  is where that is derived, over the filtered rows the way the summary is, and a holding with no
+  filing at all makes it no older — what such a holding costs the reading is
+  `Allocation::coverage`, already in the panel's own title. Nothing on screen means no stamp: a
+  border reading `as of —` would draw a question as an answer. It sits *before* the total rather
+  than after it: a date following a balance reads as the day that balance was struck, and nothing
+  in this app makes that claim about a typed holding — the stamp is about the filings the panel
+  above was computed from. The report's holdings table keeps
+  its own per-holding `As of` column, that reader being away from the app and unable to press `g`.
+  **`Stock%` is a whole number**, through `BasisPoints::whole_percent`, where the panel above
+  spends two decimals. A summary share is read *against* the target beside it, where a point is a
+  real gap; this column is read *down*, and the hundredths in it are the filing's own rounding
+  rather than anything the owner acts on. Both spellings are on `BasisPoints` for that type's own
+  reason — one share rendered two ways by two screens would read as two allocations.

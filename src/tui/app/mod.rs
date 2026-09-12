@@ -275,11 +275,33 @@ pub struct App {
     help: Option<Help>,
     status: String,
     /// When the current status message stops being shown, or `None` when
-    /// there is none. Set once, in `on_key`, from whatever `dispatch` left in
-    /// `status` -- the fifty-odd places that write a message do not each have
-    /// to remember to start its clock.
+    /// there is none. Set by [`App::start_status_clock`], from whatever the
+    /// handler left in `status` -- the fifty-odd places that write a message
+    /// do not each have to remember to start its clock.
     status_until: Option<Instant>,
+    /// Work a key asked for that must not start until the frame announcing
+    /// it is on screen -- see [`App::run_deferred`].
+    deferred: Option<Deferred>,
     quit: bool,
+}
+
+/// Work a key press hands to the event loop rather than doing itself.
+///
+/// One variant, and the shape exists for what that variant is: `mix::refresh`
+/// blocks the loop for as long as its fetches take, nothing in this crate
+/// being async. A key that starts one gets no frame out until it is over, so
+/// a status line set beside it would first reach the screen next to the
+/// result it is no longer describing -- the keystroke looks unanswered for
+/// however long SEC takes.
+///
+/// Deferring by exactly one frame is what puts the sentence on screen first:
+/// the loop draws, runs this, and draws again. The screen is still frozen for
+/// the duration; what this buys is that it says so.
+enum Deferred {
+    /// Every ticker `g` or `G` asked to refresh, already checked for a
+    /// configured contact and never empty -- both of those are answers the
+    /// announcing key gives immediately, with nothing to defer.
+    RefreshMixes(Vec<String>),
 }
 
 /// How far either side of the transfer date `t` looks for a payday it has
@@ -371,6 +393,7 @@ impl App {
             help: None,
             status: String::new(),
             status_until: None,
+            deferred: None,
             quit: false,
         };
         app.reload()?;
@@ -397,14 +420,51 @@ impl App {
         if let Err(err) = self.dispatch(key) {
             self.status = format!("{err:#}");
         }
-        // A message under an open modal keeps the footer until a key takes it
-        // away. It is there to qualify the question the modal is asking -- the
-        // duplicate rows a payday would land on top of, the field a form
-        // refused -- and the modal does not repeat it, so a message that faded
-        // out from under an unanswered question would leave the answer to be
-        // given without it. Under a modal the next key press is exactly what
-        // is being waited for, which is what makes the timeout unnecessary
-        // there rather than merely unwanted.
+        self.start_status_clock();
+    }
+
+    /// Hand work to the loop, to run once the frame announcing it is drawn.
+    fn defer(&mut self, work: Deferred) {
+        self.deferred = Some(work);
+    }
+
+    /// Whether a key left work for the loop to run after the next draw.
+    pub fn has_deferred(&self) -> bool {
+        self.deferred.is_some()
+    }
+
+    /// Run that work, and report it the way a key press reports its own.
+    ///
+    /// Called by the event loop immediately after the draw, which is the
+    /// whole point -- see [`Deferred`] for what the one frame between the
+    /// keystroke and the work buys. The status clock restarts here rather
+    /// than running from the announcement: the fetch can block for half a
+    /// minute, and a result inheriting a clock started before it would expire
+    /// on the frame it appeared in.
+    pub fn run_deferred(&mut self) {
+        let Some(work) = self.deferred.take() else {
+            return;
+        };
+        let result = match work {
+            Deferred::RefreshMixes(tickers) => self.refresh_mixes(&tickers),
+        };
+        if let Err(err) = result {
+            self.status = format!("{err:#}");
+        }
+        self.start_status_clock();
+    }
+
+    /// Start the clock on whatever `status` now holds.
+    ///
+    /// A message under an open modal keeps the footer until a key takes it
+    /// away. It is there to qualify the question the modal is asking -- the
+    /// duplicate rows a payday would land on top of, the field a form
+    /// refused -- and the modal does not repeat it, so a message that faded
+    /// out from under an unanswered question would leave the answer to be
+    /// given without it. Under a modal the next key press is exactly what
+    /// is being waited for, which is what makes the timeout unnecessary
+    /// there rather than merely unwanted.
+    fn start_status_clock(&mut self) {
         self.status_until =
             (!self.status.is_empty() && self.modal.is_none()).then(|| Instant::now() + STATUS_TTL);
     }

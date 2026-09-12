@@ -88,8 +88,8 @@ pub fn percent(percent: Percent) -> Rgb {
     }
 }
 
-/// The six asset classes, in [`crate::db::fund_mix::AssetClass::ALL`]'s
-/// order -- the index every reader looks one up by.
+/// The four classes, in [`crate::allocation::Class::ALL`]'s order -- the index
+/// every reader looks one up by.
 ///
 /// Here rather than beside the report that spells them, for the reason the
 /// funding ramp is here: the portfolio's composition is drawn on the Funds
@@ -99,24 +99,59 @@ pub fn percent(percent: Percent) -> Rgb {
 ///
 /// **An index is safe here where it is not for an account**, which holds a
 /// name in the database precisely so a reordered array cannot repaint it:
-/// nothing stores an asset class as a number, so the position is derived from
-/// the enum on every read and a reorder moves both halves at once.
+/// nothing stores a class as a number, so the position is derived from the
+/// enum on every read and a reorder moves both halves at once.
 ///
-/// Stocks are the blues and bonds the greens, each pair one step apart in
-/// lightness, so a bar reads as its two halves before it reads as its four
-/// segments -- which is the order the summary beside it asks the question in,
-/// the age rule having one bond number and no opinion on where the bonds are.
-/// Cash is the neutral, being what the portfolio is *not* invested in, and
-/// `Unclassified` sits off that scale entirely: it reports what a filing
-/// failed to place rather than anything anybody holds.
-pub const ASSET_CLASSES: [Rgb; 6] = [
+/// Bonds are the green, the two equities the blues one step apart in
+/// lightness, and `Other` the neutral -- being what the age rule is not
+/// asking about. A class reads as itself against the row beside it, which is
+/// what the bars are for: four segments answering the four rows, rather than
+/// a split the rows above them cannot make.
+///
+/// **Written in `Class::ALL`'s order**, which is what `Class::index` reads:
+/// the two equities, then bonds, then the neutral. Reordering that enum
+/// without reordering this array repaints every segment, which is the one
+/// thing an index-keyed table can get wrong -- and the reason it is still
+/// safe here is that nothing *stores* a class as a number, so the two move
+/// together in one commit or not at all.
+pub const CLASSES: [Rgb; 4] = [
     (45, 105, 175),
     (110, 170, 220),
     (55, 135, 100),
-    (125, 190, 150),
     (150, 150, 145),
-    (150, 95, 150),
 ];
+
+/// The ink to write on a colored ground.
+///
+/// Near-black on a light ground and near-white on a dark one, by Rec. 601
+/// luma -- the weighting that says green carries most of a color's apparent
+/// brightness and blue almost none, which is what puts [`CLASSES`]' green and
+/// its darker blue on the same side of the line despite reading as very
+/// different colors.
+///
+/// Near-black rather than black is [`crate::tui::style::FAVORITE_FG`]'s
+/// reason, and near-white rather than white is the same one turned over: a
+/// pure extreme against a mid-tone reads as a hole punched in it.
+///
+/// Here rather than beside the one screen that draws on a ground, because
+/// what contrasts with a color is a fact about the color -- the same split
+/// this module already makes for every other decision in it.
+pub fn on(ground: Rgb) -> Rgb {
+    let (r, g, b) = ground;
+    let luma = (299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b)) / 1000;
+    match luma >= MID_LUMA {
+        true => (28, 30, 34),
+        false => (238, 240, 244),
+    }
+}
+
+/// Where a ground stops being dark and starts being light, in Rec. 601 luma.
+///
+/// Half of 255, which is where the two inks are equally far away. Nothing in
+/// [`CLASSES`] sits near it -- the closest is twenty points clear -- so the
+/// exact figure is not load-bearing and a color added later would have to be
+/// chosen deliberately badly to land on it.
+const MID_LUMA: u32 = 128;
 
 /// `#rrggbb`, for a medium that spells its colors.
 pub fn hex(rgb: Rgb) -> String {
@@ -126,6 +161,48 @@ pub fn hex(rgb: Rgb) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every class color is a ground the bars write a share on, so each has
+    /// to take an ink that can be read against it -- and the two inks are the
+    /// only answers, so what this pins is that each class gets the right one
+    /// of the two rather than the nearer one.
+    #[test]
+    fn every_class_color_takes_a_readable_ink() {
+        let luma =
+            |(r, g, b): Rgb| (299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b)) / 1000;
+        for (class, ground) in crate::allocation::Class::ALL.iter().zip(CLASSES) {
+            let ink = on(ground);
+            let gap = luma(ground).abs_diff(luma(ink));
+            assert!(
+                gap > 60,
+                "{class:?}'s ink is {gap} from its ground, which is not a contrast"
+            );
+        }
+    }
+
+    /// The two ends, and the rule between them: a dark ground takes the pale
+    /// ink and a light one takes the dark ink, whatever the hue.
+    #[test]
+    fn a_dark_ground_takes_pale_ink_and_a_light_ground_takes_dark() {
+        assert_eq!(on((0, 0, 0)), (238, 240, 244));
+        assert_eq!(on((255, 255, 255)), (28, 30, 34));
+        // Blue carries almost no apparent brightness and green most of it,
+        // which is why these two land on opposite sides despite the second
+        // being the numerically smaller triple.
+        assert_eq!(on((0, 0, 255)), (238, 240, 244));
+        assert_eq!(on((0, 255, 0)), (28, 30, 34));
+    }
+
+    /// The class colors name the bar's segments *and* tint the class labels
+    /// in the summary beside them, where the Δ column spells a shortfall in
+    /// [`NEGATIVE`]. A class drawn in that red would read as a warning on
+    /// every row it appeared in.
+    #[test]
+    fn no_class_color_is_the_negative_color() {
+        for (class, rgb) in crate::allocation::Class::ALL.iter().zip(CLASSES) {
+            assert_ne!(rgb, NEGATIVE, "{class:?} is the negative color");
+        }
+    }
 
     /// Eight accounts that all looked alike would defeat the point of
     /// coloring them at all.
@@ -139,25 +216,22 @@ mod tests {
         }
     }
 
-    /// Six segments of one bar, four of them adjacent: two classes drawn
-    /// alike would make the bar unreadable exactly where it says the most,
-    /// since the four it splits are what the target rows beside it cannot.
+    /// Four adjacent segments of one bar: two classes drawn alike would make
+    /// it unreadable exactly where it says the most, the bar being the one
+    /// picture of what the rows beside it state as figures.
     ///
     /// The length is checked against the enum for the reason the triples are
     /// checked against each other: the colors are reached by position, so a
-    /// seventh class would take the color of nothing at all.
+    /// fifth class would take the color of nothing at all.
     #[test]
-    fn every_asset_class_color_has_a_distinct_triple() {
+    fn every_band_color_has_a_distinct_triple() {
         assert_eq!(
-            ASSET_CLASSES.len(),
-            crate::db::fund_mix::AssetClass::ALL.len(),
+            CLASSES.len(),
+            crate::allocation::Class::ALL.len(),
             "a class has no color, or a color has no class"
         );
         let mut seen = Vec::new();
-        for (class, rgb) in crate::db::fund_mix::AssetClass::ALL
-            .iter()
-            .zip(ASSET_CLASSES)
-        {
+        for (class, rgb) in crate::allocation::Class::ALL.iter().zip(CLASSES) {
             assert!(!seen.contains(&rgb), "{class:?} repeats a triple");
             seen.push(rgb);
         }

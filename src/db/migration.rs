@@ -331,6 +331,24 @@ pub(super) const MIGRATIONS: &[Migration] = &[
               );",
         data: None,
     },
+    Migration {
+        version: 14,
+        // What the fund calls itself, from the same filing the composition
+        // came out of.
+        //
+        // On `fund_mix` rather than on `holding`, because it is a fact about
+        // the fund and not about who holds it -- the same reason the table it
+        // joins is keyed on the ticker. Repeated across a ticker's slice rows
+        // exactly as `report_date` already is: both arrive together, are
+        // rewritten together by `set_for_ticker`, and a second table for one
+        // string per ticker would be a join to answer a label.
+        //
+        // Nullable, and every existing row starts that way: a name arrives
+        // only with the next `g`, which is the state a holding nobody has
+        // fetched is already in.
+        sql: "ALTER TABLE fund_mix ADD COLUMN name TEXT;",
+        data: None,
+    },
 ];
 
 /// The last thing to tell an owner whose database this build will not open.

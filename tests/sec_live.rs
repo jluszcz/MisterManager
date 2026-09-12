@@ -123,6 +123,25 @@ fn the_three_hops_resolve_and_the_weights_foot() {
         filing.report_date
     );
 
+    // The name is `Option` because a filing carrying none is a complete
+    // answer to what `g` asks, and this is the one test with a real filing
+    // in front of it to say how often that happens: never, so far. It is
+    // asserted structurally like everything else here -- non-empty and not
+    // the registrant, which is the trust holding dozens of unrelated funds
+    // and is the element a misread would land on.
+    let series_name = filing
+        .series_name
+        .as_deref()
+        .expect("the filing carries no genInfo/seriesName");
+    assert!(
+        !series_name.trim().is_empty(),
+        "the series name is blank rather than absent"
+    );
+    assert!(
+        !series_name.to_lowercase().contains("trust"),
+        "{series_name:?} looks like the registrant rather than the fund"
+    );
+
     // Every holding's own `pctVal`, before `classify` touches any of it.
     // `classify` *makes* its output foot, so the assertion below cannot
     // notice a holding whose weight was read off the wrong element -- and
