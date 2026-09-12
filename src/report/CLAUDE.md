@@ -123,10 +123,9 @@ about a figure, one of them is wrong.
   section carries both halves for that reason, and its summary is absent where the account has no
   composition at all — a table of dashes over every class says only that a key has not been pressed
   yet, on a page where pressing it is not even possible.
-- **A fund's own composition is deliberately not on this page.** The screen's `Mix` and `Stock%`
-  columns both read `app::funds::stock_share`, a sum private to the module that feeds the screen,
-  so the tab drops the pair rather than putting a second reading of "what counts as stock" on
-  record. `HOLDINGS_HEADER` is where what that costs a reader is stated.
+- **A fund's own composition is nowhere on this page, though the screen this tab spells does carry
+  it** — `Mix` and `Stock%` are the pair dropped, so a reader who knows the screen will look for
+  them and not find them; `HOLDINGS_HEADER` is where that is argued and what it costs is stated.
 - **A cell says what it may do with its width, and a table never widens past the
   phone.** Three classes carry it: `n` is a figure and `d` a date, and neither
   wraps — a comma and a hyphen are both break opportunities, and a column narrow
