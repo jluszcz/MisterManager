@@ -264,6 +264,15 @@ tab spells in CSS, so the terminal and the phone cannot disagree about what bond
 the four leave over is the unfilled track rather than a fifth segment — `BAR_REST` is that glyph —
 and with `Class::Other` among the four there is normally nothing left for it.
 
+**The bar carries no legend: the class labels in the table above it are tinted instead.** A legend
+is a third copy of the four words — the rows already name them, in the order the segments run — and
+it spent the line beside the bar, which on a narrow terminal is the first thing to truncate. So a
+segment is paired with its row directly, and the name a reader looks up is the one carrying the
+colour. The report's Funds tab keeps its legend and leaves its labels plain, having the width for
+one; either way a class is named in its own colour exactly once. `palette`'s
+`no_class_color_is_the_negative_color` is what keeps a tinted label from reading as the shortfall
+the Δ column beside it spells in red.
+
 **Funds is the one screen whose list pays for a panel above it**, where Savings and Planning spend
 their extra lines on a footer below. What the allocation summary costs the rows is
 `fund::summary_lines`'s to count.
@@ -1546,7 +1555,36 @@ pair in the drawn row.
   `fund_mix` rather than from anything the form asks for.
 - **The list's columns are Account, Ticker, Balance, Stock%, Tax.** `Tax` is the holding account's
   `tax_treatment` in the Accounts screen's own wording, so one account reads the same on both
-  screens. What the list does *not* carry is a mix bar or the filing date: a fourteen-glyph bar
-  restated the `Stock%` in the next column over, and the date a composition was read from is a
-  fact about the fetch rather than about the holding — it stays on the report's own holdings
-  table, for the reader who is away from the app and cannot press `g`.
+  screens. What the list does *not* carry is a mix bar or a filing-date column: a fourteen-glyph
+  bar restated the `Stock%` in the next column over, and the date a composition was read from is
+  one fact about the fetch rather than one per holding — a column of it repeats the same day down
+  the whole list.
+  **The border carries the total of the holdings on screen**, in whole dollars through
+  `tui::whole_money_span`, last in the chain where the ledgers put their `Today` — the figure sits
+  in one place whether or not a search is running, and a title quoting cents over a column of
+  `whole_amount`s would be the one figure on the screen at another precision. It is composed in
+  `fund::title_line` rather than in `Funds::title`, the ledgers' split and for their reason: a
+  `Label` colors account segments and nothing else, and a money figure takes
+  `style::amount_color`.
+  **It is a sum over the rows, where the ledger's total pointedly is not.** A ledger's rows are a
+  window onto a dated account, so its balance is a `SUM(cents) WHERE date <= today` that `App`
+  queries and no window may narrow. A holding carries one typed, undated balance and nothing sums
+  them anywhere else — an investment account is banded off the Overview precisely so no such sum
+  reaches Net — so here the rows *are* the figure, and it narrows with `Tab` and `/` exactly as
+  the allocation panel above it does. `Funds::total` is where that is said.
+  **The date is in the border too, as `Funds · … · as of <date> · $<total>`**, and it is the *oldest*
+  filing behind the rows on screen: every figure the panel above states is as current as its
+  stalest input, so the newest would claim a freshness the portfolio does not have. `Funds::as_of`
+  is where that is derived, over the filtered rows the way the summary is, and a holding with no
+  filing at all makes it no older — what such a holding costs the reading is
+  `Allocation::coverage`, already in the panel's own title. Nothing on screen means no stamp: a
+  border reading `as of —` would draw a question as an answer. It sits *before* the total rather
+  than after it: a date following a balance reads as the day that balance was struck, and nothing
+  in this app makes that claim about a typed holding — the stamp is about the filings the panel
+  above was computed from. The report's holdings table keeps
+  its own per-holding `As of` column, that reader being away from the app and unable to press `g`.
+  **`Stock%` is a whole number**, through `BasisPoints::whole_percent`, where the panel above
+  spends two decimals. A summary share is read *against* the target beside it, where a point is a
+  real gap; this column is read *down*, and the hundredths in it are the filing's own rounding
+  rather than anything the owner acts on. Both spellings are on `BasisPoints` for that type's own
+  reason — one share rendered two ways by two screens would read as two allocations.

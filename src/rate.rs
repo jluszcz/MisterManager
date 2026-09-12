@@ -65,6 +65,26 @@ impl BasisPoints {
     pub const ZERO: BasisPoints = BasisPoints(0);
     /// One whole unit -- the multiplier `1.0` at this scaling.
     pub const ONE: BasisPoints = BasisPoints(10_000);
+
+    /// The same share to the nearest whole percent, rounded half away from
+    /// zero: `BasisPoints(9_056)` is `91`, `BasisPoints(-4_137)` is `-41`.
+    ///
+    /// Here beside [`Display`](fmt::Display) rather than in whichever screen
+    /// wanted it first, for that impl's own reason: a share spelled two ways
+    /// across the app reads as two allocations of the same money, and the
+    /// spelling is a property of the type either way.
+    ///
+    /// What earns a second one is the *question* being asked. Two decimals
+    /// are what a share being measured against another share needs -- the
+    /// allocation summary's columns, where a point is a real gap. A fund's
+    /// own stock share is read down a column, one line per holding, and the
+    /// hundredths there are the filing's rounding rather than anything the
+    /// owner acts on.
+    pub fn whole_percent(self) -> String {
+        let sign = if self.0 < 0 { "-" } else { "" };
+        let abs = self.0.unsigned_abs();
+        format!("{sign}{}", (abs + 50) / 100)
+    }
 }
 
 impl Add for BasisPoints {
@@ -108,6 +128,29 @@ impl fmt::Display for BasisPoints {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Funds list's `Stock%` column, at the three places rounding can go
+    /// wrong: up, down, and the exact half, which goes away from zero rather
+    /// than to the nearer even -- a share is not a measurement being averaged
+    /// over, and a column where `90.50` and `91.50` landed on different sides
+    /// of their own halves would read as arbitrary.
+    #[test]
+    fn whole_percent_rounds_half_away_from_zero() {
+        assert_eq!(BasisPoints(9_056).whole_percent(), "91");
+        assert_eq!(BasisPoints(9_049).whole_percent(), "90");
+        assert_eq!(BasisPoints(9_050).whole_percent(), "91");
+        assert_eq!(BasisPoints(-4_137).whole_percent(), "-41");
+        assert_eq!(BasisPoints(-4_150).whole_percent(), "-42");
+    }
+
+    /// Zero and the whole are the two ends of the `Stock%` column, and a
+    /// fund reported to hold no stock says so with a figure -- the `—` beside
+    /// it means nobody has asked.
+    #[test]
+    fn whole_percent_states_both_ends_of_the_scale() {
+        assert_eq!(BasisPoints::ZERO.whole_percent(), "0");
+        assert_eq!(BasisPoints::ONE.whole_percent(), "100");
+    }
 
     /// The Planning splits against a `Planning!D22`-shaped remainder, one
     /// carrying cents so the truncation is what is being asserted.

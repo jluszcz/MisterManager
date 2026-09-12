@@ -241,6 +241,39 @@ impl Funds {
             .map_or("?", |a| a.name.as_str())
     }
 
+    /// What the holdings on screen come to.
+    ///
+    /// **A sum over the rows, where the ledgers' own total deliberately is
+    /// not.** `Ledger::set_total` takes a figure `App` queried, because a
+    /// ledger's rows are a window onto a dated account and a balance is a
+    /// `SUM(cents) WHERE date <= today` that no window may narrow. A holding
+    /// carries one typed, undated balance and nothing sums them anywhere
+    /// else -- an investment account is banded off the Overview precisely so
+    /// that no such sum reaches Net -- so here the rows *are* the figure, and
+    /// it answers for whatever the account filter and the search have left,
+    /// exactly as the allocation panel above does.
+    pub fn total(&self) -> Cents {
+        self.rows().iter().map(|row| row.balance).sum()
+    }
+
+    /// The oldest filing behind the holdings on screen, or `None` while
+    /// nothing on screen has been fetched.
+    ///
+    /// The *oldest*, because it is the one that bounds the rest: every
+    /// figure the summary above states is as current as its stalest input,
+    /// and a stamp quoting the newest would say the portfolio is fresher
+    /// than it is. A holding with no filing at all is not a date and cannot
+    /// make one older -- what it costs the reading is
+    /// [`Allocation::coverage`], which is already drawn in the panel's own
+    /// title.
+    ///
+    /// Over the rows the filters leave rather than every row fetched, the
+    /// same narrowing [`Funds::recompute_allocation`] answers to: the stamp
+    /// sits in this list's border, so it is a claim about this list.
+    pub fn as_of(&self) -> Option<NaiveDate> {
+        self.rows().iter().filter_map(|row| row.as_of).min()
+    }
+
     /// The account the `Tab` filter names, colored -- the border, and the
     /// title `a`/`e`/`d`'s forms default to.
     ///
@@ -248,6 +281,22 @@ impl Funds {
     /// the precedent this mirrors, and naming an account by its code in the
     /// border while the column beside it spells the same account out in
     /// full would be one account said two ways in one frame.
+    ///
+    /// The filing stamp comes last of the terms here, past the `/` filter,
+    /// because the two are different kinds of thing: everything before it
+    /// says which rows these are, and it says how old they are. It is in the
+    /// border rather than a column for the reason the column was dropped --
+    /// the date is one fact about the fetch, not one per holding, and
+    /// spending a column on it repeated the same day down the whole list.
+    ///
+    /// The total is not here but in [`title_line`], for [`Ledger::title`]'s
+    /// reason: it takes a color no [`Label`] segment can carry. That also
+    /// settles the order -- the stamp reads *into* the figure rather than
+    /// out of it, and a date sitting after a balance would read as the day
+    /// that balance was struck, which is a claim nothing in this app makes
+    /// about a typed holding.
+    ///
+    /// [`Ledger::title`]: super::ledger::Ledger::title
     pub fn title(&self) -> Label {
         let mut title = match self.account {
             None => Label::plain("Funds · All"),
@@ -256,7 +305,10 @@ impl Funds {
         if !self.search().is_empty() {
             title = title.text(format!(" · /{}", self.search()));
         }
-        title
+        match self.as_of() {
+            Some(date) => title.text(format!(" · as of {date}")),
+            None => title,
+        }
     }
 
     /// `Esc`: back out of the account filter to All -- a kept search is
@@ -311,11 +363,20 @@ impl Search for Funds {
 
 impl_scroll!(Funds, visible);
 
-/// The stock share, as the app's own percentage format -- or the `—` every
-/// other absence in the app draws.
+/// The stock share to the nearest whole percent -- or the `—` every other
+/// absence in the app draws.
+///
+/// Whole where the summary above spends two decimals, and the two are
+/// answering different questions. A summary share is read *against* the
+/// target beside it, where a point is a gap worth acting on; this column is
+/// read *down*, one line per holding, and what the reader is doing there is
+/// telling the bond fund from the stock fund. The hundredths are the
+/// filing's own rounding, and a column of them is ten figures of noise over
+/// the one digit that separates 0% from 99%. [`BasisPoints::whole_percent`]
+/// is the spelling, on the type for the reason the other one is.
 fn stock_percent_cell(stock_percent: Option<BasisPoints>) -> Cell<'static> {
     let text = match stock_percent {
-        Some(bp) => format!("{bp}%"),
+        Some(bp) => format!("{}%", bp.whole_percent()),
         None => "—".to_string(),
     };
     Cell::from(TextLine::from(text).right_aligned())
@@ -356,7 +417,7 @@ fn summary_lines(allocation: &Allocation) -> u16 {
     2 + super::HEADER_LINES + Class::ALL.len() as u16 + BAR_LINES
 }
 
-/// The one line [`summary_bar`] and its legend take, under the table.
+/// The one line [`summary_bar`] takes, under the table.
 const BAR_LINES: u16 = 1;
 
 /// How many glyph cells the four-class bar spends.
@@ -374,7 +435,9 @@ const SUMMARY_BAR_WIDTH: usize = 40;
 /// *texture*, and a run of them reads as a gradient -- a thing shading into
 /// another thing -- where the four classes are four separate quantities. The
 /// colors are `palette::CLASSES`, which the report's own bar already spends, so
-/// the terminal and the phone agree about what bonds look like.
+/// the terminal and the phone agree about what bonds look like -- and the
+/// class labels in the table above spend them too, which is what names a
+/// segment here without a legend.
 const BAR_GLYPH: &str = "█";
 
 /// What the four leave over -- nothing, now that [`Class::Other`] is one of
@@ -384,7 +447,8 @@ const BAR_GLYPH: &str = "█";
 const BAR_REST: &str = "░";
 
 /// The whole portfolio as one bar: one segment per [`Class`], in the order the
-/// rows above it are listed, so a segment and its row are the same statement.
+/// rows above it are listed and in the color those rows' labels carry, so a
+/// segment and its row are the same statement.
 ///
 /// Segments are cut at the *cumulative* share and differenced, rather than
 /// each rounded on its own: that is what keeps them summing to the bar's own
@@ -411,7 +475,7 @@ fn summary_bar(slices: &[Slice]) -> Vec<Span<'static>> {
     spans
 }
 
-/// Class, Target, Actual, Δ, with the four-class bar and its legend beneath.
+/// Class, Target, Actual, Δ, with the four-class bar beneath.
 ///
 /// One table rather than a stack of bars: the rows are what the age rule
 /// targets and the bar is what the portfolio holds, and reading the second
@@ -421,6 +485,13 @@ fn summary_bar(slices: &[Slice]) -> Vec<Span<'static>> {
 /// fourteen-glyph cell splits four ways into three glyphs each, which cannot
 /// show a bond split at all, and the bar is *one* statement about the whole
 /// portfolio where a table column is one per row.
+///
+/// **The class names carry the bar's colors, and the bar has no legend.** A
+/// legend is a third copy of the four words -- the rows already name them,
+/// in the order the segments run -- and it cost the line beside the bar,
+/// which on a narrow terminal is the first thing to truncate. Tinting the
+/// label instead pairs a segment with its row directly, so the name a reader
+/// looks up is the one carrying the color.
 ///
 /// **Every class keeps its row, whatever it holds.** The four are the
 /// vocabulary the age rule is stated in, so a zero is an answer rather than
@@ -461,7 +532,8 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
         .filter_map(|class| funds.summary_row(*class))
         .map(|row| {
             let mut cells = vec![
-                Cell::from(row.class.label()),
+                Cell::from(row.class.label())
+                    .style(Style::default().fg(super::style::class(row.class))),
                 percent(row.target),
                 percent(Some(row.actual)),
                 delta(row.delta),
@@ -524,18 +596,10 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
         table_area,
     );
 
-    // The legend's key is the bar's own glyph in the bar's own color, so the
-    // two are read together rather than by matching a texture to a word.
-    let mut line = summary_bar(&allocation.slices);
-    for class in Class::ALL {
-        line.push(Span::raw("  "));
-        line.push(Span::styled(
-            BAR_GLYPH,
-            Style::default().fg(super::style::class(class)),
-        ));
-        line.push(Span::raw(format!(" {}", class.label())));
-    }
-    frame.render_widget(Paragraph::new(TextLine::from(line)), bar_area);
+    frame.render_widget(
+        Paragraph::new(TextLine::from(summary_bar(&allocation.slices))),
+        bar_area,
+    );
 }
 
 /// The fewest lines the list is left before the summary gives up the screen
@@ -556,6 +620,25 @@ const LIST_FLOOR: u16 = 2 + super::HEADER_LINES + 1;
 /// `tui::GUTTER` included; the other five are `Constraint::Length` sized to
 /// their true content, the mix bar's own width chief among them -- it is
 /// fixed and glyph-based, so it truncates from the right exactly like text.
+/// [`Funds::title`]'s spans, and then the balance those filters leave.
+///
+/// The ledgers' own title does the same and for the same reason: a figure
+/// carries [`super::style::amount_color`], which a bare [`Label`] cannot --
+/// only an account segment takes a color there. It goes last, so it sits in
+/// the same place whether or not a search is running and whether or not
+/// anything has a filing behind it.
+///
+/// Whole dollars, through [`super::whole_money_span`], because every balance
+/// in the column below is a [`super::whole_amount`]: a title carrying cents
+/// would be the one figure on the screen at another precision, and it would
+/// not foot against the rows a reader adds up by eye.
+fn title_line(funds: &Funds) -> TextLine<'static> {
+    let mut spans = super::label_line(&funds.title()).spans;
+    spans.push(Span::raw(" · "));
+    spans.push(super::whole_money_span(funds.total()));
+    TextLine::from(spans)
+}
+
 pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
     let area = match summary_lines(funds.allocation()) {
         lines if lines > 0 && area.height >= lines + LIST_FLOOR => {
@@ -601,7 +684,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
         frame,
         area,
         funds,
-        Chrome::titled(super::label_line(&funds.title())).header(header),
+        Chrome::titled(title_line(funds)).header(header),
         &widths,
         rows,
         visible.len(),
@@ -904,7 +987,7 @@ mod tests {
             .find(|l| l.contains("USB"))
             .expect("the zero-stock row is drawn");
         assert!(
-            zero_stock.contains("0.00%"),
+            zero_stock.contains("0%"),
             "a fund reported to hold no stock should say so, not dash: {zero_stock:?}"
         );
         assert!(
@@ -1016,7 +1099,7 @@ mod tests {
             .find(|l| l.contains("Target"))
             .expect("the summary header is drawn");
         let header_ends = super::super::ends_in_order(header, &["Target", "Actual", "Δ"]);
-        let row_ends = super::super::ends_in_order(bonds, &["18.00%", "59.37%", "-41.37%"]);
+        let row_ends = super::super::ends_in_order(bonds, &["18.00%", "59.37%", "41.37%"]);
         assert_eq!(
             header_ends, row_ends,
             "the summary's columns over {bonds:?}"
@@ -1102,29 +1185,156 @@ mod tests {
         }
     }
 
-    /// A segment and the row above it are the same statement now, so what the
-    /// legend has to do is name all four classes -- the bar being the only
-    /// place the colors are explained.
+    /// A segment and the row above it are the same statement, so the row's
+    /// own label is what names the color -- there is no legend, and the line
+    /// the bar sits on is the bar and nothing else.
     #[test]
-    fn every_band_is_named_in_the_legend_beside_the_bar() {
+    fn each_class_label_carries_its_own_segments_color_and_the_bar_has_no_legend() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
         let funds = funds_fully_priced();
-        let lines = drawn(&funds, 24);
-        let bar = lines
-            .iter()
-            .find(|l| l.contains(BAR_GLYPH))
-            .expect("the bar is drawn");
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &funds);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let line = |y: u16| {
+            (0..MIN_WIDTH)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
 
         for class in Class::ALL {
-            assert!(
-                bar.contains(&format!("{BAR_GLYPH} {}", class.label())),
-                "{class:?} is drawn with no legend: {bar:?}"
+            let y = (0..24)
+                .find(|y| line(*y).contains(class.label()))
+                .unwrap_or_else(|| panic!("{class:?} has no row"));
+            let x = (0..MIN_WIDTH)
+                .find(|x| buffer[(*x, y)].symbol() == &class.label()[..1])
+                .expect("the label starts somewhere");
+            assert_eq!(
+                buffer[(x, y)].style().fg,
+                Some(super::super::style::class(class)),
+                "{class:?}'s label is not drawn in its segment's color"
             );
         }
+
+        let bar = (0..24)
+            .map(line)
+            .find(|l| l.contains(BAR_GLYPH))
+            .expect("the bar is drawn");
+        for class in Class::ALL {
+            assert!(
+                !bar.contains(class.label()),
+                "{class:?} is named again beside the bar: {bar:?}"
+            );
+        }
+
         let bonds = funds.summary_row(Class::Bonds).expect("a Bonds row").actual;
         assert_eq!(
             bonds,
             BasisPoints(1_945 + 694),
             "the row and the segment are one statement"
+        );
+    }
+
+    /// The summary is only as current as its stalest input, so the stamp is
+    /// the *oldest* filing behind the rows on screen -- and the holding with
+    /// no filing at all makes it no older, that being what the panel's own
+    /// coverage line already reports.
+    #[test]
+    fn the_border_stamps_the_oldest_filing_behind_the_rows_on_screen() {
+        let all = accounts();
+        let mut funds = funds_with_mixes();
+        funds.set_rows(vec![
+            fixture_row(1, AccountId(1), &all, "USM", 10_000),
+            Row {
+                stock_percent: Some(BasisPoints::ZERO),
+                as_of: Some(day(2026, 3, 31)),
+                ..fixture_row(2, AccountId(1), &all, "USB", 5_000)
+            },
+            Row {
+                stock_percent: Some(BasisPoints(9_500)),
+                as_of: Some(day(2026, 6, 30)),
+                ..fixture_row(3, AccountId(2), &all, "ISM", 3_000)
+            },
+        ]);
+
+        assert_eq!(funds.title().plain_text(), "Funds · All · as of 2026-03-31");
+
+        // Narrowed to the account holding only the newer filing, the stamp
+        // follows the rows the way the summary above them does.
+        walk_until!(
+            funds.filter_account() == Some(AccountId(2)),
+            funds.next_account()
+        );
+        assert!(
+            funds.title().plain_text().ends_with("as of 2026-06-30"),
+            "{}",
+            funds.title().plain_text()
+        );
+    }
+
+    /// A database nobody has run the fetcher against has no filing to quote,
+    /// and a border reading `as of —` would be a question drawn as an answer.
+    #[test]
+    fn a_portfolio_with_no_filing_on_record_stamps_no_date_at_all() {
+        assert_eq!(funds().title().plain_text(), "Funds · All");
+    }
+
+    /// The border totals whatever the filters leave, not every holding
+    /// fetched -- the panel above it answers for the same rows, and a
+    /// header that kept quoting the whole portfolio while the list showed
+    /// one account would be the only thing on screen not narrowing with
+    /// `Tab`.
+    #[test]
+    fn the_border_totals_the_holdings_the_filters_leave() {
+        let mut funds = funds();
+        assert_eq!(funds.total(), Cents::from_dollars(18_000));
+
+        funds.next_account();
+        assert_eq!(
+            funds.total(),
+            Cents::from_dollars(15_000),
+            "the total did not follow the account filter"
+        );
+
+        funds.clear_filters();
+        funds.begin_search();
+        for c in "ISM".chars() {
+            funds.push_search(c);
+        }
+        assert_eq!(
+            funds.total(),
+            Cents::from_dollars(3_000),
+            "the total did not follow the search"
+        );
+    }
+
+    /// And it is drawn, in whole dollars, past every filter term the title
+    /// carries -- so it sits in one place whether or not a search is running
+    /// and whether or not anything has a filing behind it.
+    #[test]
+    fn the_total_is_drawn_last_in_the_border_in_whole_dollars() {
+        let funds = funds_with_mixes();
+        let border = drawn(&funds, 24)
+            .into_iter()
+            .find(|l| l.contains("Funds ·"))
+            .expect("the list's border is drawn");
+
+        let stamp = border.find("as of").expect("the filing stamp");
+        let total = border
+            .find("$18,000")
+            .unwrap_or_else(|| panic!("the total is not drawn in whole dollars: {border:?}"));
+        assert!(
+            stamp < total,
+            "the stamp reads out of the figure: {border:?}"
+        );
+        assert!(
+            !border.contains("$18,000.00"),
+            "the border quotes cents its own column does not: {border:?}"
         );
     }
 
@@ -1157,6 +1367,12 @@ mod tests {
 
     /// The Δ is the one cell on the panel a reader has to act on, so being
     /// short of the target reads as a color rather than only as a sign.
+    ///
+    /// Which way the sign runs is half the claim: `actual - target`, so the
+    /// fixture's over-weight bond row is a *positive* number in no color and
+    /// the U.S. stock row it starves is the negative one. Subtracted the
+    /// other way both halves of this test invert, which is exactly the
+    /// reading the column is not allowed to have.
     #[test]
     fn a_shortfall_in_the_delta_column_is_drawn_in_the_negative_color() {
         use ratatui::Terminal;
@@ -1171,8 +1387,9 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
 
-        // The Bonds row runs over target, so its Δ is negative; U.S. Stock is
-        // short of one, so its Δ is not.
+        // The Bonds row runs over target, so its Δ is positive; U.S. Stock
+        // holds nothing against a target of nearly half the portfolio, so
+        // its Δ is the shortfall.
         let row_of = |label: &str| {
             (0..24)
                 .find(|y| {
@@ -1191,12 +1408,12 @@ mod tests {
         };
 
         assert!(
-            colors(row_of("Bonds")).contains(&Some(super::super::style::negative())),
-            "an over-weight class draws no warning"
+            colors(row_of("U.S. Stock")).contains(&Some(super::super::style::negative())),
+            "a class short of its target draws no warning"
         );
         assert!(
-            !colors(row_of("U.S. Stock")).contains(&Some(super::super::style::negative())),
-            "a class inside its target was drawn as a shortfall"
+            !colors(row_of("Bonds")).contains(&Some(super::super::style::negative())),
+            "a class held past its target was drawn as a shortfall"
         );
     }
 
@@ -1280,7 +1497,7 @@ mod tests {
         let row = &lines[2];
 
         let header_ends = super::super::ends_in_order(header, &["Balance", "Stock%"]);
-        let row_ends = super::super::ends_in_order(row, &["100", "62.34%"]);
+        let row_ends = super::super::ends_in_order(row, &["100", "62%"]);
         assert_eq!(header_ends[0], row_ends[0], "Balance over {row:?}");
         assert_eq!(header_ends[1], row_ends[1], "Stock% over {row:?}");
     }

@@ -171,7 +171,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/account_label.rs` | `Account` and `Label` — an account on its way to a display, in any medium. `render_with` is the only reader of its text, and hands the resolved color alongside. |
 | `src/money.rs` | `Cents(i64)` — the only money type. No floats anywhere in the crate. |
 | `src/palette.rs` | What a color *is*, in numbers: the eight account colors, the negative color, and the funding ramp — how funded a goal is, red through yellow to green — as `(u8, u8, u8)`. `tui::style` wraps them for a terminal; `report` spells them as `#rrggbb`. |
-| `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. `BasisPoints` prints itself as a percentage with two decimals, on the type rather than beside a screen, so the Funds screen and the report cannot render one share two ways. |
+| `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. `BasisPoints` prints itself as a percentage with two decimals, on the type rather than beside a screen, so the Funds screen and the report cannot render one share two ways; `whole_percent` is the second spelling, on the type for the same reason, for a share read down a column rather than against the target beside it. |
 | `src/gate.rs` | `Gate` — the Planning gates, each owning its setting key and goal-name substring. |
 | `src/reading.rs` | `Reading` — whether a reader refuses a row it cannot resolve or draws past it. One parameter rather than a strict function and a tolerant twin, so the two readings differ in nothing but the thing they name. Taken by `goal::all_with_balances` and by the `transfer` readers built on it. |
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the setting key naming its container account. |
@@ -414,6 +414,13 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   segment and the row above it are one statement; before it they were two lists, and the bar
   split a bond number the row beside it could not. `AssetClass` keeps all six variants, `fund_mix`
   still stores the bond split and `mix::classify` still finds it — what collapses is the drawing.
+- **The Δ is `actual - target`, so its sign is a direction on the portfolio rather than a
+  correction to it.** A class held past what the age rule asks is a positive number; one held
+  under it is negative, which is the shortfall both sinks spell in `palette::NEGATIVE`.
+  Subtracted the other way the figure reads as what would have to be moved, and it paints red
+  exactly the classes a reader is already over on. `allocation::SummaryRow::delta` is the one
+  place it is computed; the Funds screen and the report's Funds tab both draw that field and
+  neither re-derives it.
 - **The summary is one grid, rounded once, read two ways.** `apportion` apportions over class ×
   tax treatment in a single largest-remainder pass, so a class's three tax columns foot to its
   `Actual` and a treatment's four classes foot to what that treatment holds. Rounding the two

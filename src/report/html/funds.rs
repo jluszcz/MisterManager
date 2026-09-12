@@ -123,9 +123,12 @@ fn header(columns: &[(&str, &str)]) -> String {
 /// [`allocation::apportion`]'s doing rather than this table's -- a defect
 /// report reading "none" every time is one nobody finishes reading.
 ///
-/// The class labels take no color, where the bar below them does: a row and a
-/// segment are the same statement, and tinting both would spend two marks on
-/// one fact.
+/// The class labels take no color, where the bar below them does -- and
+/// where the Funds screen's do. This page has the room for a legend under
+/// its bar and spends it; a terminal does not, so the screen puts the color
+/// on the label instead. Either way a class is named in its own color
+/// exactly once, and tinting the label *and* keeping the legend would spend
+/// two marks on one fact.
 ///
 /// The three tax columns are a second question about the same portfolio --
 /// not what it holds but where it is held -- and each is a share of the same

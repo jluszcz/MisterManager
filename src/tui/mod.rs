@@ -229,7 +229,27 @@ fn money_span(cents: Cents) -> Span<'static> {
 /// with `Cents`'s own formatting, and there is one place that decides where the
 /// digits and their separators go.
 fn money_text(cents: Cents) -> String {
-    let figure = crate::demo::figure(cents);
+    dollar(crate::demo::figure(cents))
+}
+
+/// [`money_span`] with the cents dropped, for a title over a table whose own
+/// figures drop them -- the Funds screen's, where every balance in the list
+/// below is a [`whole_amount`]. A title quoting cents over a column that does
+/// not would be the one figure on the screen at another precision, and it
+/// would not foot against the rows a reader adds up by eye.
+///
+/// The color comes off the truncated figure and the text off
+/// [`crate::demo::truncated_figure`], for [`whole_amount`]'s reasons.
+fn whole_money_span(cents: Cents) -> Span<'static> {
+    let span = Span::raw(dollar(crate::demo::truncated_figure(cents)));
+    match style::amount_color(cents.trunc_to_dollar()) {
+        Some(color) => span.style(Style::default().fg(color)),
+        None => span,
+    }
+}
+
+/// A figure with the `$` inside whatever sign it already carries.
+fn dollar(figure: String) -> String {
     match figure.strip_prefix('-') {
         Some(magnitude) => format!("-${magnitude}"),
         None => format!("${figure}"),

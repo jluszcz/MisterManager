@@ -351,10 +351,18 @@ pub struct SummaryRow {
     /// `—` every other absence in the app draws.
     pub target: Option<BasisPoints>,
     pub actual: BasisPoints,
-    /// `target - actual`, **signed**: over-weight in bonds is as much a thing
+    /// `actual - target`, **signed**: over-weight in bonds is as much a thing
     /// to see as under-weight, and a column that could only report one
     /// direction would read as though the other never happened. `None`
     /// wherever `target` is, since there is nothing to be short of.
+    ///
+    /// **Actual first, so the sign reads as a direction on the portfolio.**
+    /// The two columns beside it are the rule's ask and what is held, and a
+    /// reader arriving at the third has just read them left to right: a
+    /// class held past its target is *more*, a positive number, and one held
+    /// under it is the shortfall the negative colour marks. Subtracted the
+    /// other way the figure is a correction -- what would have to be moved --
+    /// and it paints red exactly the rows a reader is already over on.
     pub delta: Option<BasisPoints>,
 }
 
@@ -366,7 +374,7 @@ impl SummaryRow {
             class,
             target,
             actual,
-            delta: target.map(|t| t - actual),
+            delta: target.map(|t| actual - t),
         }
     }
 }
@@ -712,8 +720,8 @@ mod tests {
         assert_eq!(row.target, Some(BasisPoints(1_800)));
         assert_eq!(
             row.delta,
-            Some(BasisPoints(1_800 - 5_937)),
-            "an over-weight class must report which way it is out"
+            Some(BasisPoints(5_937 - 1_800)),
+            "an over-weight class must report which way it is out, and it is over"
         );
     }
 

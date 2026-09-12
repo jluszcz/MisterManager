@@ -123,6 +123,17 @@ pub fn hex(rgb: Rgb) -> String {
 mod tests {
     use super::*;
 
+    /// The class colors name the bar's segments *and* tint the class labels
+    /// in the summary beside them, where the Δ column spells a shortfall in
+    /// [`NEGATIVE`]. A class drawn in that red would read as a warning on
+    /// every row it appeared in.
+    #[test]
+    fn no_class_color_is_the_negative_color() {
+        for (class, rgb) in crate::allocation::Class::ALL.iter().zip(CLASSES) {
+            assert_ne!(rgb, NEGATIVE, "{class:?} is the negative color");
+        }
+    }
+
     /// Eight accounts that all looked alike would defeat the point of
     /// coloring them at all.
     #[test]

@@ -115,8 +115,11 @@ about a figure, one of them is wrong.
   is `palette::CLASSES` indexed by its own position in `Class::ALL` — nothing stores that position,
   so the two move together, and `palette`'s own test is what holds the lengths level. The Δ is the
   one cell here that takes a color of its own, `palette::NEGATIVE` where the portfolio is short of
-  what the rule asks: it is the only figure on the table a reader acts on, and it is the same
-  decision `html::money` makes from a `Cents`.
+  what the rule asks — `allocation::SummaryRow::delta` being `actual - target`, so short is the
+  negative one: it is the only figure on the table a reader acts on, and it is the same decision
+  `html::money` makes from a `Cents`. **The class labels stay plain and the legend stays**, where
+  the screen tints its labels and drops its legend: this page has the width for a legend under the
+  bar and a terminal does not. Either way a class is named in its own color exactly once.
 - **The page has no `Tab`, so the accounts are stacked sections instead.** The screen narrows its
   summary and its holdings together with one key; a page has no key, and a reader scrolls. Each
   section carries both halves for that reason, and its summary is absent where the account has no
