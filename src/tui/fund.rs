@@ -528,6 +528,18 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
     );
 }
 
+/// The fewest lines the list is left before the summary gives up the screen
+/// to it: the list's own chrome -- two border lines and a header -- and the
+/// one row a cursor has to be able to sit on.
+///
+/// The panel is a fixed height and the list takes what is left, so on a
+/// short enough terminal the list is left nothing, and there is no key that
+/// hides the panel to get it back. A summary of rows the reader cannot reach
+/// is the wrong half to keep: the rows are what every other key on this
+/// screen acts on, and the summary is a reading of them. Nothing here is
+/// state, so the panel returns the moment the window does.
+const LIST_FLOOR: u16 = 2 + super::HEADER_LINES + 1;
+
 /// Account, Ticker, Balance, Mix, Stock%, As of, under the allocation summary.
 ///
 /// `Account` takes the single `Constraint::Min` and absorbs the slack,
@@ -536,13 +548,13 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
 /// fixed and glyph-based, so it truncates from the right exactly like text.
 pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
     let area = match summary_lines(funds.allocation()) {
-        0 => area,
-        lines => {
+        lines if lines > 0 && area.height >= lines + LIST_FLOOR => {
             let [summary, list] =
                 Layout::vertical([Constraint::Length(lines), Constraint::Min(1)]).areas(area);
             render_summary(frame, summary, funds);
             list
         }
+        _ => area,
     };
     let visible = funds.rows();
     let rows: Vec<TableRow> = visible
@@ -946,6 +958,29 @@ mod tests {
         (0..height)
             .map(|y| (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect())
             .collect()
+    }
+
+    /// The summary is a fixed height above a list that takes what is left,
+    /// so on a short terminal it can leave the list nothing -- and no key on
+    /// this screen hides it. The rows are what the other keys act on, so they
+    /// are the half that keeps the screen.
+    #[test]
+    fn a_terminal_too_short_for_both_keeps_the_list_and_drops_the_summary() {
+        let funds = funds_with_mixes();
+        let lines = drawn(&funds, summary_lines(funds.allocation()) + LIST_FLOOR - 1);
+
+        assert!(
+            !lines.iter().any(|l| l.contains("Target")),
+            "the summary yields: {lines:#?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("Ticker")),
+            "the list keeps its header: {lines:#?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("USM")),
+            "and a holding to sit on: {lines:#?}"
+        );
     }
 
     /// The summary sits above the list, so it spends the list's height as
