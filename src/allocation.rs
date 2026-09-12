@@ -46,10 +46,22 @@ pub enum Class {
 }
 
 impl Class {
-    /// Every class, in the order the summary lists them -- bonds first, being
-    /// the share the age rule actually moves, and `Other` last, being what
-    /// the rule says nothing about.
-    pub const ALL: [Class; 4] = [Class::Bonds, Class::UsStock, Class::IntlStock, Class::Other];
+    /// Every class, in the order the summary lists them and the bars run --
+    /// the two equities first and adjacent, then bonds, then `Other` last,
+    /// being what the rule says nothing about.
+    ///
+    /// Equities lead because they are the bulk of a portfolio the age rule
+    /// leaves in them, and the two sit together because the only question
+    /// anyone asks of the pair is how they divide. A bar reading
+    /// stock-stock-bonds-rest is read left to right as risk shading into
+    /// safety; bonds first put the smallest slice at the end a reader starts
+    /// from.
+    ///
+    /// **`palette::CLASSES` is written in this order and moves with it.** The
+    /// colors are reached by `Class::index`, so the two lists are one
+    /// statement -- reorder here and the array there follows, or every
+    /// segment repaints.
+    pub const ALL: [Class; 4] = [Class::UsStock, Class::IntlStock, Class::Bonds, Class::Other];
 
     /// What the summary calls this class.
     ///

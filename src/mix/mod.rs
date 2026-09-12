@@ -32,10 +32,24 @@ use chrono::NaiveDate;
 use std::collections::HashMap;
 
 /// One ticker's fetch-and-classify result, past the network -- a fund's
-/// as-of date and its slices, or why fetching it failed. Named so
-/// [`fetch_and_write`] does not have to spell the nested `Result` clippy
-/// flags as too complex to read inline.
-type Fetched = Result<(NaiveDate, Vec<Slice>)>;
+/// as-of date, its own name, and its slices, or why fetching it failed.
+/// Named so [`fetch_and_write`] does not have to spell the nested `Result`
+/// clippy flags as too complex to read inline.
+type Fetched = Result<Composition>;
+
+/// What one filing yields: everything [`db::fund_mix::set_for_ticker`] writes
+/// but the ticker, which the caller already holds.
+///
+/// A struct rather than a third element in a tuple: three of them is where a
+/// caller starts having to count positions to know which date is which.
+#[derive(Debug)]
+struct Composition {
+    report_date: NaiveDate,
+    /// The fund's own name, absent where a filing carried none -- see
+    /// [`sec::Filing::series_name`] for why that is not a refusal.
+    name: Option<String>,
+    slices: Vec<Slice>,
+}
 
 /// What one call to [`refresh`] accomplished: the tickers whose composition
 /// was written, and the tickers that were not, paired with why.
@@ -84,7 +98,11 @@ fn fetch_ticker(contact: &str, series: &HashMap<String, String>, ticker: &str) -
         )
     })?;
     let filing = sec::latest_filing(contact, series_id)?;
-    Ok((filing.report_date, classify(&filing.holdings)))
+    Ok(Composition {
+        report_date: filing.report_date,
+        name: filing.series_name,
+        slices: classify(&filing.holdings),
+    })
 }
 
 /// Fetches every ticker, then writes every result -- in that order, with no
@@ -154,8 +172,14 @@ enum Outcome {
 /// stands exactly as [`db::fund_mix::set_for_ticker`] last left it.
 fn write_outcome(db: &Db, ticker: &str, fetched: Fetched) -> Result<Outcome> {
     match fetched {
-        Ok((report_date, slices)) => {
-            db::fund_mix::set_for_ticker(db, ticker, report_date, &slices)?;
+        Ok(composition) => {
+            db::fund_mix::set_for_ticker(
+                db,
+                ticker,
+                composition.report_date,
+                composition.name.as_deref(),
+                &composition.slices,
+            )?;
             Ok(Outcome::Updated)
         }
         Err(error) => Ok(Outcome::Failed(error.to_string())),
@@ -169,6 +193,17 @@ mod tests {
     use crate::rate::BasisPoints;
     use crate::test_support::day;
     use anyhow::anyhow;
+
+    /// One fund's whole composition, named out of the fixture vocabulary --
+    /// what a stubbed `fetch` hands back where the real one hands back a
+    /// filing.
+    fn composition(ticker: &str, slice: Slice) -> Composition {
+        Composition {
+            report_date: day(2026, 6, 30),
+            name: Some(crate::test_support::fund_name(ticker).to_string()),
+            slices: vec![slice],
+        }
+    }
 
     /// `resolve_series` is the first hop and downloads 1.2 MB whatever it is
     /// handed, so a refresh with nothing to refresh has to answer before it.
@@ -207,6 +242,7 @@ mod tests {
             &db,
             "USM",
             day(2026, 3, 31),
+            Some(crate::test_support::fund_name("USM")),
             &[Slice {
                 class: AssetClass::UsStock,
                 weight: BasisPoints(10_000),
@@ -238,20 +274,20 @@ mod tests {
             .collect();
 
         let refreshed = fetch_and_write(&db, &tickers, |ticker| match ticker {
-            "USM" => Ok((
-                day(2026, 6, 30),
-                vec![Slice {
+            "USM" => Ok(composition(
+                "USM",
+                Slice {
                     class: AssetClass::UsStock,
                     weight: BasisPoints(10_000),
-                }],
+                },
             )),
             "ISM" => Err(anyhow!("throttled")),
-            "USB" => Ok((
-                day(2026, 6, 30),
-                vec![Slice {
+            "USB" => Ok(composition(
+                "USB",
+                Slice {
                     class: AssetClass::UsBond,
                     weight: BasisPoints(10_000),
-                }],
+                },
             )),
             other => panic!("unexpected ticker {other}"),
         })
@@ -296,6 +332,7 @@ mod tests {
             &db,
             "USM",
             day(2026, 3, 31),
+            Some(crate::test_support::fund_name("USM")),
             &[Slice {
                 class: AssetClass::UsStock,
                 weight: BasisPoints(10_000),
@@ -306,16 +343,17 @@ mod tests {
         let tickers: Vec<String> = ["USM", "ISM"].iter().map(|s| s.to_string()).collect();
 
         let result = fetch_and_write(&db, &tickers, |ticker| match ticker {
-            "USM" => Ok((
-                day(2026, 6, 30),
-                vec![Slice {
+            "USM" => Ok(composition(
+                "USM",
+                Slice {
                     class: AssetClass::UsBond,
                     weight: BasisPoints(10_000),
-                }],
+                },
             )),
-            "ISM" => Ok((
-                day(2026, 6, 30),
-                vec![
+            // Two slices of one class: the duplicate `PRIMARY KEY` the write
+            // is expected to refuse.
+            "ISM" => Ok(Composition {
+                slices: vec![
                     Slice {
                         class: AssetClass::UsStock,
                         weight: BasisPoints(5_000),
@@ -325,7 +363,14 @@ mod tests {
                         weight: BasisPoints(5_000),
                     },
                 ],
-            )),
+                ..composition(
+                    "ISM",
+                    Slice {
+                        class: AssetClass::UsStock,
+                        weight: BasisPoints(10_000),
+                    },
+                )
+            }),
             other => panic!("unexpected ticker {other}"),
         });
 

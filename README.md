@@ -101,31 +101,41 @@ checking balance at Paycheck-Eve, so a scrubbed plan names its date beside `Exce
 
 ### `6` Funds
 
-One row per fund you hold: the investment account it sits in, the ticker, the balance you typed for
-it, and what the fund is made of. `a`, `e` and `d` add, edit and delete a holding, `Tab` and
-`BackTab` cycle the account filter, and `/` narrows by ticker or account. A ticker is stored in
-capitals however it is typed, since it is the key a fund's composition is looked up under and one
-fund under two spellings is two funds. Nothing here moves money, so a delete moves no balance
-either — and none of these balances reaches the Overview or Net, which stay the spendable net
-worth the dated ledgers add up to.
+One row per fund you hold: the investment account it sits in, the ticker, the fund's own name, the
+balance you typed for it, how much of it is stock, and how the account it sits in is taxed. `a`,
+`e` and `d` add, edit and delete a holding, `Tab` and `BackTab` cycle the account filter, and `/`
+narrows by ticker, fund name or account. A ticker is stored in capitals however it is typed, since
+it is the key a fund's composition is looked up under and one fund under two spellings is two
+funds. Nothing here moves money, so a delete moves no balance either — and none of these balances
+reaches the Overview or Net, which stay the spendable net worth the dated ledgers add up to. The
+border carries what the rows on screen come to, and the date of the oldest filing behind them: the
+stalest input is what bounds everything above it.
+
+The `Fund` name is fetched rather than typed — it is what the fund calls itself in the filing its
+composition came out of, so two share classes of one fund read alike and the ticker is what tells
+them apart.
 
 `g` refreshes the selected row's fund from its latest SEC filing and `G` refreshes every fund you
-hold — every one, not only what the account filter and the search are showing. Both need a contact
-in the config file; see [Fund compositions](#fund-compositions), which is also where `mm mixes`
-does the same thing without tying up the screen. Until a fund has been looked up its `Mix`,
-`Stock%` and `As of` columns read `—`: a fund nobody has fetched and a fund that genuinely holds no
-stock are different states, so the columns say nothing rather than drawing a zero.
+hold — every one, not only what the account filter and the search are showing. The status line
+says which fund, or how many, before the fetch starts, since the fetch freezes the screen until it
+returns. Both need a contact in the config file; see [Fund compositions](#fund-compositions), which
+is also where `mm mixes` does the same thing without tying up the screen. Until a fund has been
+looked up its `Fund` and `Stock%` columns read `—`: a fund nobody has fetched and a fund that
+genuinely holds no stock are different states, so the columns say nothing rather than drawing a
+zero.
 
 Above the list sits what the whole portfolio is made of, once anything on screen has a composition
-behind it: a row per asset class with what the age rule asks for beside what you hold and the gap
-between them, and a bar splitting the four classes — U.S. and international stock, U.S. and
-international bond — where the target rows have one number for bonds. What the four leave over,
-cash and anything a filing did not place, is the unfilled tail of the bar. The summary narrows with
-the filters, so `Tab` asks the same question of one account that the unfiltered screen asks of the
-portfolio, and it covers only the funds it has a composition for — when some holding is missing
-one, the title says how many of them it is speaking for. The bond target comes from the birth date
-the workbook import reads; with none on record, the bond row's target reads `—` rather than
-claiming a share of nothing.
+behind it: a row per class with what the age rule asks for beside what you hold and the gap between
+them, then what each of the three tax treatments holds of that class. The four classes are U.S.
+stock, international stock, bonds, and everything the rule says nothing about — cash, and whatever
+a filing left unplaced. Under the rows a bar per treatment, and a `Total` over all of them, splits
+those same four in the same colors their labels carry, each segment writing its own share inside
+itself. A treatment holding nothing gets no bar. The summary narrows with the filters, so `Tab`
+asks the same question of one account that the unfiltered screen asks of the portfolio, and it
+covers only the funds it has a composition for — when some holding is missing one, the title says
+how many of them it is speaking for. The bond target comes from the birth date the workbook import
+reads; with none on record, the bond row's target reads `—` rather than claiming a share of
+nothing.
 
 ### `7` Recurring Goals
 
@@ -261,7 +271,10 @@ to re-enter.
 
 What a fund is made of is published rather than typed: `mm` reads it out of the fund's latest
 N-PORT filing on SEC's EDGAR, classifies each of its holdings, and stores the result against the
-ticker — so one lookup prices every account holding that fund.
+ticker — so one lookup prices every account holding that fund. The same filing says what the fund
+calls itself, which is where the Funds screen's `Fund` column comes from; it names a series rather
+than a share class, and the registrant beside it in the filing is the trust that holds dozens of
+unrelated funds, so it is the series name that is kept.
 
 ```bash
 mm mixes                # every ticker any holding names
@@ -316,8 +329,8 @@ behind it.
 
 Draws the application exactly as an ordinary run does, with every absolute
 dollar figure's digits replaced by another figure's digits, and every account
-name and code, goal name, recurring-goal name, bill label, fund ticker and
-transaction description replaced by a same-length pronounceable pseudoword — both keyed on a salt drawn once
+name and code, goal name, recurring-goal name, bill label, fund ticker, fund
+name and transaction description replaced by a same-length pronounceable pseudoword — both keyed on a salt drawn once
 per run, so one amount draws the same everywhere it appears, one word reads
 the same wherever it appears, and whole dollars agree with the figure they
 came from.

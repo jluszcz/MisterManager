@@ -598,6 +598,7 @@ mod tests {
             &db,
             "USM",
             chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            Some(crate::test_support::fund_name("USM")),
             &[fund_mix::Slice {
                 class: fund_mix::AssetClass::UsStock,
                 weight: crate::rate::BasisPoints(10_000),

@@ -640,8 +640,11 @@ mod tests {
                 weight: crate::rate::BasisPoints::ONE,
             }]
         };
-        fund_mix::set_for_ticker(&db, "USM", filed, &whole(AssetClass::UsStock)).unwrap();
-        fund_mix::set_for_ticker(&db, "USB", filed, &whole(AssetClass::UsBond)).unwrap();
+        let named = |t| Some(crate::test_support::fund_name(t));
+        fund_mix::set_for_ticker(&db, "USM", filed, named("USM"), &whole(AssetClass::UsStock))
+            .unwrap();
+        fund_mix::set_for_ticker(&db, "USB", filed, named("USB"), &whole(AssetClass::UsBond))
+            .unwrap();
         db
     }
 

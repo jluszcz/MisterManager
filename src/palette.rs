@@ -105,14 +105,53 @@ pub fn percent(percent: Percent) -> Rgb {
 /// Bonds are the green, the two equities the blues one step apart in
 /// lightness, and `Other` the neutral -- being what the age rule is not
 /// asking about. A class reads as itself against the row beside it, which is
-/// what the bar is for: four segments answering the four rows, rather than a
-/// split the rows above it cannot make.
+/// what the bars are for: four segments answering the four rows, rather than
+/// a split the rows above them cannot make.
+///
+/// **Written in `Class::ALL`'s order**, which is what `Class::index` reads:
+/// the two equities, then bonds, then the neutral. Reordering that enum
+/// without reordering this array repaints every segment, which is the one
+/// thing an index-keyed table can get wrong -- and the reason it is still
+/// safe here is that nothing *stores* a class as a number, so the two move
+/// together in one commit or not at all.
 pub const CLASSES: [Rgb; 4] = [
-    (55, 135, 100),
     (45, 105, 175),
     (110, 170, 220),
+    (55, 135, 100),
     (150, 150, 145),
 ];
+
+/// The ink to write on a colored ground.
+///
+/// Near-black on a light ground and near-white on a dark one, by Rec. 601
+/// luma -- the weighting that says green carries most of a color's apparent
+/// brightness and blue almost none, which is what puts [`CLASSES`]' green and
+/// its darker blue on the same side of the line despite reading as very
+/// different colors.
+///
+/// Near-black rather than black is [`crate::tui::style::FAVORITE_FG`]'s
+/// reason, and near-white rather than white is the same one turned over: a
+/// pure extreme against a mid-tone reads as a hole punched in it.
+///
+/// Here rather than beside the one screen that draws on a ground, because
+/// what contrasts with a color is a fact about the color -- the same split
+/// this module already makes for every other decision in it.
+pub fn on(ground: Rgb) -> Rgb {
+    let (r, g, b) = ground;
+    let luma = (299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b)) / 1000;
+    match luma >= MID_LUMA {
+        true => (28, 30, 34),
+        false => (238, 240, 244),
+    }
+}
+
+/// Where a ground stops being dark and starts being light, in Rec. 601 luma.
+///
+/// Half of 255, which is where the two inks are equally far away. Nothing in
+/// [`CLASSES`] sits near it -- the closest is twenty points clear -- so the
+/// exact figure is not load-bearing and a color added later would have to be
+/// chosen deliberately badly to land on it.
+const MID_LUMA: u32 = 128;
 
 /// `#rrggbb`, for a medium that spells its colors.
 pub fn hex(rgb: Rgb) -> String {
@@ -122,6 +161,37 @@ pub fn hex(rgb: Rgb) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every class color is a ground the bars write a share on, so each has
+    /// to take an ink that can be read against it -- and the two inks are the
+    /// only answers, so what this pins is that each class gets the right one
+    /// of the two rather than the nearer one.
+    #[test]
+    fn every_class_color_takes_a_readable_ink() {
+        let luma =
+            |(r, g, b): Rgb| (299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b)) / 1000;
+        for (class, ground) in crate::allocation::Class::ALL.iter().zip(CLASSES) {
+            let ink = on(ground);
+            let gap = luma(ground).abs_diff(luma(ink));
+            assert!(
+                gap > 60,
+                "{class:?}'s ink is {gap} from its ground, which is not a contrast"
+            );
+        }
+    }
+
+    /// The two ends, and the rule between them: a dark ground takes the pale
+    /// ink and a light one takes the dark ink, whatever the hue.
+    #[test]
+    fn a_dark_ground_takes_pale_ink_and_a_light_ground_takes_dark() {
+        assert_eq!(on((0, 0, 0)), (238, 240, 244));
+        assert_eq!(on((255, 255, 255)), (28, 30, 34));
+        // Blue carries almost no apparent brightness and green most of it,
+        // which is why these two land on opposite sides despite the second
+        // being the numerically smaller triple.
+        assert_eq!(on((0, 0, 255)), (238, 240, 244));
+        assert_eq!(on((0, 255, 0)), (28, 30, 34));
+    }
 
     /// The class colors name the bar's segments *and* tint the class labels
     /// in the summary beside them, where the Δ column spells a shortfall in

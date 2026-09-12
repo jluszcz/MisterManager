@@ -178,6 +178,17 @@ pub fn class(class: crate::allocation::Class) -> Color {
     Color::Rgb(r, g, b)
 }
 
+/// The ink a figure drawn *on* one class's color takes.
+///
+/// [`crate::palette::on`] wrapped for a terminal, the way [`class`] wraps the
+/// ground it answers to. The allocation bars write a share inside a segment,
+/// which is the only place in the app where text sits on a filled block that
+/// is not the cursor row's own reversal.
+pub fn on_class(class: crate::allocation::Class) -> Color {
+    let (r, g, b) = crate::palette::on(crate::palette::CLASSES[class.index()]);
+    Color::Rgb(r, g, b)
+}
+
 /// The color a shortfall is spelled in, wherever one is drawn as a figure
 /// rather than as an amount.
 ///

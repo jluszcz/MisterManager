@@ -621,9 +621,13 @@ fn is_press(key: &KeyEvent) -> bool {
 ///
 /// The draw is owed rather than unconditional: at four frames a second an
 /// idle app rebuilds every visible row's strings for a buffer ratatui is
-/// about to find unchanged. What owes one is a key press, a resize, and a
-/// status message reaching its expiry -- which is why the tick goes on firing
-/// whether or not anything is drawn.
+/// about to find unchanged. What owes one is a key press, a resize, a status
+/// message reaching its expiry, and work a key deferred -- which is why the
+/// tick goes on firing whether or not anything is drawn.
+///
+/// Deferred work runs between the two: a key that starts a blocking fetch
+/// sets a status saying so and hands the fetch here, so the sentence is drawn
+/// before the loop stops answering. See [`app::App::run_deferred`].
 fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     // The first frame is owed to nothing in particular: there is no screen yet.
     let mut dirty = true;
@@ -636,6 +640,15 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
         if dirty {
             terminal.draw(|frame| app.render(frame))?;
             dirty = false;
+        }
+        // After the draw, which is the whole point: the work here blocks this
+        // loop, so the status line announcing it has to reach the screen
+        // first. `App::Deferred` is where that is argued. The `continue` is
+        // what puts the result on screen without waiting out a `poll`.
+        if app.has_deferred() {
+            app.run_deferred();
+            dirty = true;
+            continue;
         }
         if !event::poll(TICK)? {
             continue;

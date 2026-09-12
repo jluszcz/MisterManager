@@ -24,7 +24,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::NaiveDate;
 use jluszcz_rust_utils::query;
 use quick_xml::Reader;
-use quick_xml::escape::unescape;
+use quick_xml::escape::{resolve_predefined_entity, unescape};
 use quick_xml::events::Event;
 use reqwest::Client;
 use serde::Deserialize;
@@ -35,10 +35,28 @@ use std::time::Duration;
 /// -- SEC republishes it in place rather than dating each edition.
 const TICKER_URL: &str = "https://www.sec.gov/files/company_tickers_mf.json";
 
-/// One filing: the date it reports as of, and every holding it lists.
+/// One filing: the date it reports as of, what the fund calls itself, and
+/// every holding it lists.
 #[derive(Debug)]
 pub struct Filing {
     pub report_date: NaiveDate,
+    /// `genInfo/seriesName` -- the fund's own name, as it files it.
+    ///
+    /// The *series* name and not the registrant's: `regName` beside it is the
+    /// trust, which holds dozens of unrelated funds ("Fidelity Concord Street
+    /// Trust", "SCHWAB CAPITAL TRUST"), and is shouted in some filings and
+    /// title-cased in others.
+    ///
+    /// A series, not a share class. Two classes of one fund share a
+    /// `seriesId` and therefore this name, so it says which fund a ticker is
+    /// and never which class -- the ticker beside it is what says that.
+    ///
+    /// `Option` because it is not what the filing is fetched *for*: a
+    /// composition with no name on it is a complete answer to the question
+    /// `g` asks, and refusing the whole refresh over a missing courtesy label
+    /// would make a filing SEC accepted unreadable here. Every filing
+    /// measured carries one.
+    pub series_name: Option<String>,
     pub holdings: Vec<RawHolding>,
 }
 
@@ -230,6 +248,7 @@ async fn fetch_bytes(contact: &str, url: &str) -> Result<Vec<u8>> {
 /// past the `End` that closes it.
 enum Field {
     ReportDate,
+    SeriesName,
     Name,
     Title,
     Cusip,
@@ -314,10 +333,18 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
     let mut reader = Reader::from_reader(xml);
 
     let mut report_date: Option<String> = None;
+    let mut series_name: Option<String> = None;
     let mut in_gen_info = false;
     let mut current: Option<PendingHolding> = None;
     let mut holdings: Vec<RawHolding> = Vec::new();
     let mut pending: Option<Field> = None;
+    // What the field being read has said so far. A leaf's content arrives in
+    // as many events as it has entity references in it -- quick-xml reports
+    // `&amp;` as a `GeneralRef` of its own, between the two `Text` events
+    // either side of it -- so a field taken from the first of them would read
+    // `S&P 500 Index Fund` as `S`. Accumulated here and applied whole at the
+    // closing tag instead.
+    let mut buffer = String::new();
     // How many elements are open, and which of those depths the holding
     // being read was opened at -- so `depth == holding_depth + 1` is "a
     // direct child of this `<invstOrSec>`" and nothing deeper qualifies.
@@ -333,6 +360,7 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
                 match e.local_name().as_ref() {
                     b"genInfo" => in_gen_info = true,
                     b"repPdDate" if in_gen_info => pending = Some(Field::ReportDate),
+                    b"seriesName" if in_gen_info => pending = Some(Field::SeriesName),
                     b"invstOrSec" => {
                         current = Some(PendingHolding::new());
                         holding_depth = Some(depth);
@@ -344,6 +372,12 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
                     b"assetCat" if child_of_holding => pending = Some(Field::AssetCat),
                     b"invCountry" if child_of_holding => pending = Some(Field::InvCountry),
                     _ => {}
+                }
+                // Whatever the last field left behind, so a leaf starts empty.
+                // A field is opened and closed before any other element is,
+                // every one of them being a leaf.
+                if pending.is_some() {
+                    buffer.clear();
                 }
             }
             // A self-closing element carries no text, so it is opened and
@@ -361,37 +395,68 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
                 }
             }
             Event::Text(e) => {
-                if let Some(field) = pending.take() {
-                    let text = unescape(&e.decode()?)?.into_owned();
-                    // Trimmed once, here, for every field alike: a filer
-                    // whose generator pretty-prints leaf content --
-                    // `<invCountry>\n  US\n</invCountry>` -- must not send a
-                    // holding to the wrong class (or the wrong number
-                    // format) with no error anywhere.
-                    let text = text.trim();
-                    // `current` is set on every `Start` that also sets
-                    // `pending` to a holding field, so it is always present
-                    // here; `ReportDate` is the one variant that does not
-                    // touch it.
-                    match field {
-                        Field::ReportDate => report_date = Some(text.to_string()),
-                        Field::Name => current.as_mut().unwrap().name = text.to_string(),
-                        Field::Title => current.as_mut().unwrap().title = text.to_string(),
-                        Field::Cusip => current.as_mut().unwrap().cusip = text.to_string(),
-                        Field::PctVal => {
-                            current.as_mut().unwrap().pct_val = Some(
-                                text.parse()
-                                    .with_context(|| format!("pctVal {text:?} is not a number"))?,
-                            );
-                        }
-                        Field::AssetCat => current.as_mut().unwrap().asset_cat = text.to_string(),
-                        Field::InvCountry => {
-                            current.as_mut().unwrap().inv_country = text.to_string();
-                        }
+                if pending.is_some() {
+                    buffer.push_str(&unescape(&e.decode()?)?);
+                }
+            }
+            // One entity reference, reported on its own between the text
+            // either side of it. Resolved here rather than left to
+            // `unescape`, which never sees it: by the time a reference
+            // reaches this loop quick-xml has already cut it out of the text.
+            // A reference nothing here can resolve is carried through as it
+            // was written -- a name drawn with `&nbsp;` in it says more than
+            // a name with a hole where a character was.
+            Event::GeneralRef(e) => {
+                if pending.is_some() {
+                    let name = e.decode()?;
+                    match e.resolve_char_ref()? {
+                        Some(resolved) => buffer.push(resolved),
+                        None => match resolve_predefined_entity(&name) {
+                            Some(resolved) => buffer.push_str(resolved),
+                            None => buffer.push_str(&format!("&{name};")),
+                        },
                     }
                 }
             }
             Event::End(e) => {
+                // The whole of what the leaf said, at the tag that closes it.
+                //
+                // Trimmed once, here, for every field alike: a filer whose
+                // generator pretty-prints leaf content --
+                // `<invCountry>\n  US\n</invCountry>` -- must not send a
+                // holding to the wrong class (or the wrong number format)
+                // with no error anywhere. An empty leaf writes nothing at
+                // all, so `<pctVal></pctVal>` is the missing figure
+                // `PendingHolding::finish` names rather than a number that
+                // would not parse.
+                if let Some(field) = pending.take() {
+                    let text = buffer.trim();
+                    // `current` is set on every `Start` that also sets
+                    // `pending` to a holding field, so it is always present
+                    // here; `ReportDate` and `SeriesName` are the two
+                    // variants that do not touch it.
+                    if !text.is_empty() {
+                        match field {
+                            Field::ReportDate => report_date = Some(text.to_string()),
+                            Field::SeriesName => series_name = Some(text.to_string()),
+                            Field::Name => current.as_mut().unwrap().name = text.to_string(),
+                            Field::Title => current.as_mut().unwrap().title = text.to_string(),
+                            Field::Cusip => current.as_mut().unwrap().cusip = text.to_string(),
+                            Field::PctVal => {
+                                current.as_mut().unwrap().pct_val =
+                                    Some(text.parse().with_context(|| {
+                                        format!("pctVal {text:?} is not a number")
+                                    })?);
+                            }
+                            Field::AssetCat => {
+                                current.as_mut().unwrap().asset_cat = text.to_string();
+                            }
+                            Field::InvCountry => {
+                                current.as_mut().unwrap().inv_country = text.to_string();
+                            }
+                        }
+                    }
+                }
                 match e.local_name().as_ref() {
                     b"genInfo" => in_gen_info = false,
                     b"invstOrSec" => {
@@ -402,11 +467,9 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
                     }
                     _ => {}
                 }
-                // A leaf's own closing tag is the next event after its
-                // `Text` (if it had any), so this is always safe: an empty
-                // leaf's `pending` is cleared here instead of surviving to
-                // catch the whitespace before its next sibling.
-                pending = None;
+                // The field was taken above, whether or not the leaf said
+                // anything, so nothing survives this tag to catch the
+                // whitespace before the next sibling.
                 depth = depth.saturating_sub(1);
             }
             _ => {}
@@ -418,8 +481,14 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
     let report_date = NaiveDate::parse_from_str(&report_date, "%Y-%m-%d")
         .with_context(|| format!("repPdDate {report_date:?} is not a date"))?;
 
+    // An empty `<seriesName/>` is no name rather than a name of nothing --
+    // the same reading `RawHolding` gives an empty `<title>`, one absence
+    // spelled one way.
+    let series_name = series_name.filter(|name| !name.trim().is_empty());
+
     Ok(Filing {
         report_date,
+        series_name,
         holdings,
     })
 }
@@ -428,6 +497,79 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
 mod tests {
     use super::*;
     use crate::test_support::day;
+
+    #[test]
+    fn a_filings_series_name_is_read_and_the_registrants_is_not() {
+        let filing = parse_filing(
+            br#"<edgarSubmission>
+                  <formData><genInfo>
+                    <regName>SOME CAPITAL TRUST</regName>
+                    <seriesName>Total Market Index Fund</seriesName>
+                    <repPdDate>2026-06-30</repPdDate>
+                  </genInfo></formData>
+                </edgarSubmission>"#,
+        )
+        .unwrap();
+        assert_eq!(
+            filing.series_name.as_deref(),
+            Some("Total Market Index Fund")
+        );
+    }
+
+    /// A leaf's content arrives in as many events as it has entity
+    /// references in it, so a field read off the first of them stops at the
+    /// first `&` -- which is the character an index fund's name is most
+    /// likely to carry. The holding fields are read the same way and are
+    /// what `classify` matches on, so the same cut would send `AT&T Inc` to
+    /// a class chosen on the strength of `AT`.
+    #[test]
+    fn an_entity_reference_inside_a_field_is_read_as_part_of_it() {
+        let filing = parse_filing(
+            br#"<edgarSubmission>
+                  <formData><genInfo>
+                    <seriesName>Acme S&amp;P 500 Index Fund</seriesName>
+                    <repPdDate>2026-06-30</repPdDate>
+                  </genInfo>
+                  <invstOrSecs><invstOrSec>
+                    <name>AT&#38;T Inc</name>
+                    <title>AT&amp;T Inc</title>
+                    <cusip>000000000</cusip>
+                    <pctVal>100.0</pctVal>
+                    <assetCat>EC</assetCat>
+                    <invCountry>US</invCountry>
+                  </invstOrSec></invstOrSecs></formData>
+                </edgarSubmission>"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            filing.series_name.as_deref(),
+            Some("Acme S&P 500 Index Fund")
+        );
+        assert_eq!(filing.holdings[0].name, "AT&T Inc");
+        assert_eq!(filing.holdings[0].title, "AT&T Inc");
+    }
+
+    /// A filing that carries no name is still a filing: the composition is
+    /// what `g` asked for, and refusing the whole refresh over a missing
+    /// label would make a document SEC accepted unreadable here. An empty
+    /// element reads the same way a missing one does -- one absence, one
+    /// spelling.
+    #[test]
+    fn a_filing_with_no_series_name_still_parses_and_an_empty_one_is_no_name() {
+        for gen_info in [
+            "<repPdDate>2026-06-30</repPdDate>",
+            "<seriesName></seriesName><repPdDate>2026-06-30</repPdDate>",
+            "<seriesName>   </seriesName><repPdDate>2026-06-30</repPdDate>",
+        ] {
+            let xml = format!(
+                "<edgarSubmission><formData><genInfo>{gen_info}</genInfo></formData></edgarSubmission>"
+            );
+            let filing = parse_filing(xml.as_bytes()).unwrap();
+            assert_eq!(filing.series_name, None, "{gen_info}");
+            assert_eq!(filing.report_date, day(2026, 6, 30));
+        }
+    }
 
     #[test]
     fn a_filings_report_date_is_read_from_its_general_information() {

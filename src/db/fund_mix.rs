@@ -114,6 +114,14 @@ pub struct Slice {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mix {
     pub ticker: String,
+    /// What the fund calls itself in the filing this mix came out of, or
+    /// `None` for a mix written before there was a column to hold one.
+    ///
+    /// A property of the fund and not of the holding, which is why it is
+    /// here: one fetch names `USM` for every account holding it. It names a
+    /// *series* rather than a share class, so two classes of one fund carry
+    /// the same name and the ticker beside it is what tells them apart.
+    pub name: Option<String>,
     pub report_date: NaiveDate,
     pub slices: Vec<Slice>,
 }
@@ -121,12 +129,14 @@ pub struct Mix {
 // Column order is fixed by `select_fund_mix!` below -- keep the two in sync.
 // `ticker` is not read back: every caller already names the ticker it asked
 // for, since every query here is scoped to one.
-fn from_row(row: &Row<'_>) -> rusqlite::Result<(NaiveDate, Slice)> {
+fn from_row(row: &Row<'_>) -> rusqlite::Result<(NaiveDate, Option<String>, Slice)> {
     let class: String = row.get(0)?;
     let weight: i64 = row.get(1)?;
     let report_date: String = row.get(2)?;
+    let name: Option<String> = row.get(3)?;
     Ok((
         date::parse(&report_date, 2)?,
+        name,
         Slice {
             class: class
                 .parse()
@@ -141,13 +151,18 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<(NaiveDate, Slice)> {
 macro_rules! select_fund_mix {
     ($tail:literal) => {
         concat!(
-            "SELECT asset_class, weight_bp, report_date FROM fund_mix ",
+            "SELECT asset_class, weight_bp, report_date, name FROM fund_mix ",
             $tail
         )
     };
 }
 
-/// Replace `ticker`'s composition with `slices`, dated `report_date`.
+/// Replace `ticker`'s composition with `slices`, dated `report_date` and
+/// named `name`.
+///
+/// `name` is repeated onto every slice row, exactly as `report_date` is:
+/// the two arrive from one filing and are rewritten together here, so a row
+/// carrying one and not the other is unreachable.
 ///
 /// Deletes the ticker's existing rows and inserts the new ones. **Not**
 /// wrapped in its own [`Db::transaction`] -- the same contract
@@ -159,19 +174,21 @@ pub fn set_for_ticker(
     db: &Db,
     ticker: &str,
     report_date: NaiveDate,
+    name: Option<&str>,
     slices: &[Slice],
 ) -> Result<()> {
     db.conn
         .execute("DELETE FROM fund_mix WHERE ticker = ?1", params![ticker])?;
     for slice in slices {
         db.conn.execute(
-            "INSERT INTO fund_mix (ticker, asset_class, weight_bp, report_date) \
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO fund_mix (ticker, asset_class, weight_bp, report_date, name) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 ticker,
                 slice.class.as_str(),
                 slice.weight.0,
-                iso(report_date)
+                iso(report_date),
+                name
             ],
         )?;
     }
@@ -188,14 +205,17 @@ pub fn for_ticker(db: &Db, ticker: &str) -> Result<Option<Mix>> {
         .conn
         .prepare(select_fund_mix!("WHERE ticker = ?1 ORDER BY rowid"))?;
     let rows = stmt.query_map(params![ticker], from_row)?;
-    let pairs: Vec<(NaiveDate, Slice)> = super::collect_rows(rows)?;
-    let Some((report_date, _)) = pairs.first().copied() else {
+    let read: Vec<(NaiveDate, Option<String>, Slice)> = super::collect_rows(rows)?;
+    // Every row of one ticker carries the same date and name -- `set_for_ticker`
+    // writes them together -- so the first row is where both are taken from.
+    let Some((report_date, name)) = read.first().map(|(d, n, _)| (*d, n.clone())) else {
         return Ok(None);
     };
     Ok(Some(Mix {
         ticker: ticker.to_string(),
+        name,
         report_date,
-        slices: pairs.into_iter().map(|(_, slice)| slice).collect(),
+        slices: read.into_iter().map(|(_, _, slice)| slice).collect(),
     }))
 }
 
@@ -217,7 +237,7 @@ mod tests {
                 weight: BasisPoints(4_000),
             },
         ];
-        set_for_ticker(&db, "USM", day(2026, 6, 30), &slices).unwrap();
+        set_for_ticker(&db, "USM", day(2026, 6, 30), None, &slices).unwrap();
 
         let mix = for_ticker(&db, "USM").unwrap().expect("a mix was written");
         assert_eq!(mix.report_date, day(2026, 6, 30));
@@ -231,6 +251,7 @@ mod tests {
             &db,
             "USM",
             day(2026, 3, 31),
+            None,
             &[Slice {
                 class: AssetClass::UsStock,
                 weight: BasisPoints(10_000),
@@ -241,6 +262,7 @@ mod tests {
             &db,
             "USM",
             day(2026, 6, 30),
+            None,
             &[Slice {
                 class: AssetClass::UsBond,
                 weight: BasisPoints(10_000),
@@ -273,6 +295,7 @@ mod tests {
             &db,
             "USM",
             day(2026, 6, 30),
+            None,
             &[Slice {
                 class: AssetClass::UsStock,
                 weight: BasisPoints(10_000),
@@ -283,6 +306,7 @@ mod tests {
             &db,
             "USB",
             day(2026, 6, 30),
+            None,
             &[Slice {
                 class: AssetClass::UsBond,
                 weight: BasisPoints(10_000),
@@ -349,6 +373,7 @@ mod tests {
                 &db,
                 "USM",
                 day(2026, 6, 30),
+                None,
                 &[Slice {
                     class,
                     weight: BasisPoints(10_000),

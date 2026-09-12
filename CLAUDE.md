@@ -187,13 +187,14 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/db/date.rs` | The stored date format, in one place: `iso` writes it, `parse`/`parse_opt` read it back for a `from_row`. |
 | `src/db/bill.rs` | The monthly bill block, labelled — the `Planning!C6:E12` rows, and the owner's mark saying which of them the Biweekly Expenses figure counts. |
 | `src/db/holding.rs` | The `holding` table — a fund held in an investment account, and the balance the owner typed. |
-| `src/db/fund_mix.rs` | The `fund_mix` table — one fund's composition by asset class, as of the filing it was read from. |
+| `src/db/fund_mix.rs` | The `fund_mix` table — one fund's composition by asset class, plus the name the fund files under, as of the filing both were read from. |
 | `src/db/recurring_txn.rs` | The `recurring_txn` table — rows whose amount and date are known in advance. CRUD plus the queries regeneration needs. |
 | `src/import/` | Reads `Money.xlsx` via `calamine`. Behind the non-default `import` Cargo feature — it is the only module naming `calamine`, which is what lets that dependency be `optional`, so a default build compiles no spreadsheet parser and offers no `mm import`. |
 | `src/mix/` | A fund's composition, read out of SEC's N-PORT filings and written to `db::fund_mix`. `sec` is the network client — the only place `reqwest` and `jluszcz_rust_utils` are named, and one of two places `tokio` is, `src/backup/s3.rs` being the other; `classify` is pure, with neither a network nor a database in it; `mod.rs` is the policy over the two. `mm mixes` and the Funds screen's `g`/`G` are the only things that run it. |
 | `src/overview.rs` | Reads balances at the three projection dates out of `db` and bands them into the Overview's sections and Net. Read by the Overview screen and by `report`. |
 | `src/savings.rs` | A goal's derived columns — `%`, `$/Pay`, expired — and what a container has left unallocated. Read by the Savings screen and by `report`. |
 | `src/plan.rs` | Reads settings and balances out of `db`, feeds `calc::planning::compute`. |
+| `src/fund_label.rs` | What a fund's filed name reads as, in any medium — `seriesName` with its trailing `Fund` dropped and its shouting undone, and the initialisms inside it left alone. A peer of `description.rs`, and for its reason: the Funds screen draws these and the report's holdings table is the obvious second reader. |
 | `src/fund.rs` | Reads the birth date and the international-equity split out of `db`, feeds `calc::fund::targets`. |
 | `src/allocation.rs` | The look-through: each holding's balance apportioned by its fund's composition and summed by asset class, against what the age rule asks for. A peer of `overview`, `savings` and `plan_rows`, in neither medium — the Funds screen and the report's Funds tab both read it, so the apportioning, the row order, the four-class bar's classes and the combining of the two bond classes are stated once here. It is a share of what it *covers*: a holding whose fund has no composition on record is outside the denominator, and `Allocation::coverage` is what says so. |
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
@@ -408,12 +409,17 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   Planning transfer footers are; it is not, now that `Other` draws it beside the cash and the row
   exists whatever it holds.
 - **The look-through is drawn as four classes, not six, and the two mediums read one list.**
-  `allocation::Class` is that list — `Bonds`, the two equities, and `Other` — and it owns each
+  `allocation::Class` is that list — the two equities, `Bonds`, and `Other` — and it owns each
   one's label, the `AssetClass`es behind it, its place in `palette::CLASSES`, and whether the age
-  rule targets it. The summary's rows and the bar's segments are both spellings of it, so a
-  segment and the row above it are one statement; before it they were two lists, and the bar
-  split a bond number the row beside it could not. `AssetClass` keeps all six variants, `fund_mix`
-  still stores the bond split and `mix::classify` still finds it — what collapses is the drawing.
+  rule targets it. The summary's rows and every bar's segments are spellings of it, so a segment
+  and the row above it are one statement; before it they were two lists, and the bar split a bond
+  number the row beside it could not. `AssetClass` keeps all six variants, `fund_mix` still stores
+  the bond split and `mix::classify` still finds it — what collapses is the drawing.
+  **`Class::ALL`'s order and `palette::CLASSES`' order are one statement too**, the colors being
+  reached by `Class::index`. Reordering the enum without reordering the array repaints every
+  segment rather than moving it, which is the one thing an index-keyed table can get wrong — and
+  what keeps it safe is that nothing *stores* a class as a number, so the two move together in one
+  commit or not at all.
 - **The Δ is `actual - target`, so its sign is a direction on the portfolio rather than a
   correction to it.** A class held past what the age rule asks is a positive number; one held
   under it is negative, which is the shortfall both sinks spell in `palette::NEGATIVE`.
@@ -429,6 +435,19 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   afford. A holding whose account states no treatment is in the classes and in no column, so the
   columns visibly sum short rather than landing somewhere the database never said; the schema's
   paired `CHECK` is what makes that unreachable through the app.
+- **A fund's name is fetched, not typed, and is the fund's own rather than its trust's.** It is
+  `genInfo/seriesName` out of the same filing the composition comes from, stored on `fund_mix`
+  beside `report_date` and drawn as the Funds screen's `Fund` column. `Option` throughout: a
+  filing carrying none still yields a usable composition, and a mix written before the column
+  existed reads the same way until the next `g`. It names a *series*, so two share classes of one
+  fund carry one name and the ticker is what tells them apart — which is why the ticker stays the
+  row's identity and the column that is never truncated. `src/mix/CLAUDE.md` is where the choice
+  of element is argued, and `fund_label::short` is how it is drawn — a trailing `Fund` is dropped,
+  being the word the column is already headed with; a filer who shouts is title-cased and a filer
+  who cased their own name is left alone; and what is stored is untouched by either rule. **No rule drops the issuer from the front of it**, which is what would let that
+  column be narrow: the words that do the dropping are the fund families the owner holds, which
+  are brokerages, and no institution they hold may be named here. The screen is sized for the
+  whole name instead.
 - **A fund with no `fund_mix` row has never been fetched, which is not the same as holding
   nothing.** `tui::fund::Row::stock_percent` and `Row::as_of` are `Option` for that reason, and
   both sinks draw their own "nothing here" rather than a zero — a fund genuinely reported to hold
@@ -643,7 +662,7 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
 - **`mm --demo` replaces absolute figures and owner-entered text, and nothing else.** Every
   absolute dollar figure draws with another figure's digits, keyed on a per-run salt so one amount
   reads the same everywhere; every account name and code, goal name, goal note, recurring-goal name,
-  bill label, fund ticker and transaction description draws as a same-length pronounceable pseudoword,
+  bill label, fund ticker, fund name and transaction description draws as a same-length pronounceable pseudoword,
   keyed the same way so one word reads the same all run. Percentages, dates, counts, the app's own vocabulary, and every match key are
   untouched: a percentage is a shape rather than a sum, a scrambled date is not a date, and a count
   over a list of rows the reader can see would read as a fault. It is display-only and installed

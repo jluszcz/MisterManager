@@ -111,3 +111,17 @@ a parse error, that is the cause and not `THROTTLE_MARKER`. **And `gzip` is on e
 shared client sets it and reqwest asks for and decodes it, so the "3.2–20.6 MB filing"
 `parse_filing` is sized against is roughly a 2 MB transfer — which is why that client's 30-second
 whole-request timeout is far less tight than the filing figure makes it read.
+
+- **A filing carries the fund's own name, and it is `genInfo/seriesName` rather than `regName`
+  beside it.** The registrant is the trust — `Fidelity Concord Street Trust`, `SCHWAB CAPITAL
+  TRUST` — which holds dozens of unrelated funds and is shouted in some filings and title-cased in
+  others; the series is the fund. It names a *series* and never a share class, two classes of one
+  fund sharing a `seriesId`, so the ticker beside it is what tells them apart.
+  It is `Option` because it is not what the filing is fetched for: a composition with no name on
+  it is a complete answer to what `g` asks, and refusing a refresh over a missing courtesy label
+  would make a document SEC accepted unreadable here. An empty element reads as absent, one
+  spelling for one absence. `tests/sec_live.rs` is the one place a real filing says how often that
+  happens, and asserts structurally there like everything else: non-empty, and not the registrant.
+  It is stored on `fund_mix` rather than on `holding`, repeated across a ticker's slice rows
+  exactly as `report_date` is — both arrive from one filing and `set_for_ticker` rewrites them
+  together, so a row carrying one and not the other is unreachable.

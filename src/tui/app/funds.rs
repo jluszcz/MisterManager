@@ -5,7 +5,7 @@
 //! No `Enter` here -- nothing yet draws a holding's long form, and a key
 //! that does nothing is worse than a key that is absent.
 
-use super::{Account, App, NOTHING_SELECTED};
+use super::{Account, App, Deferred, NOTHING_SELECTED};
 use crate::config::ADD_SEC_CONTACT;
 use crate::db::account::{self, Kind};
 use crate::db::fund_mix::{self, AssetClass};
@@ -16,7 +16,7 @@ use crate::tui::cursor;
 use crate::tui::fund::{HoldingForm, Row};
 use crate::tui::modal::{Confirm, Modal};
 use crate::tui::search::{self, Search};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use std::collections::HashMap;
 
@@ -49,7 +49,7 @@ impl App {
         let Some(row) = self.funds.selected().cloned() else {
             return self.nothing_selected();
         };
-        self.refresh_mixes(&[row.ticker])
+        self.announce_refresh(vec![row.ticker])
     }
 
     /// Refreshes every ticker any holding names, not only the ones the
@@ -58,22 +58,51 @@ impl App {
     /// screen.
     fn refresh_every_mix(&mut self) -> Result<()> {
         let tickers = holding::tickers(&self.db)?;
-        self.refresh_mixes(&tickers)
+        self.announce_refresh(tickers)
     }
 
-    /// Blocks the event loop for as long as the fetch takes: nothing in this
-    /// crate is async and `mix::sec`'s calls are blocking. `mm mixes` is the
-    /// route that does not tie up the screen; this is accepted here rather
-    /// than solved.
-    fn refresh_mixes(&mut self, tickers: &[String]) -> Result<()> {
-        let Some(contact) = self.sec_contact.clone() else {
+    /// Says what is about to happen, and leaves the fetch itself to the
+    /// event loop.
+    ///
+    /// [`Deferred`] carries why: the fetch blocks the loop, so a sentence set
+    /// beside it would not be drawn until the fetch it describes was over.
+    /// The two answers that involve no fetch are given here instead and are
+    /// drawn on the next frame like any other status -- there is nothing to
+    /// announce and nothing to wait for.
+    fn announce_refresh(&mut self, tickers: Vec<String>) -> Result<()> {
+        if self.sec_contact.is_none() {
             // `tui` cannot name the config file's path the way `mm mixes`
             // does: `sec_contact` reaches it as a bare `Option<String>` so
             // that this module need not name `config`.
             self.status =
                 format!("no SEC contact configured -- {ADD_SEC_CONTACT} to the config file");
             return Ok(());
-        };
+        }
+        if tickers.is_empty() {
+            // The sentence `mix::refresh` would reach anyway, taken from the
+            // function that owns it rather than written a second time here.
+            self.status = refresh_status(&Refreshed::default());
+            return Ok(());
+        }
+        self.status = refreshing_status(&tickers);
+        self.defer(Deferred::RefreshMixes(tickers));
+        Ok(())
+    }
+
+    /// Blocks the event loop for as long as the fetches take: nothing in this
+    /// crate is async and `mix::sec`'s calls are blocking. `mm mixes` is the
+    /// route that does not tie up the screen; that is accepted here rather
+    /// than solved, and what [`App::run_deferred`] adds is only that the
+    /// screen says so while it happens.
+    ///
+    /// Reached only through [`Deferred::RefreshMixes`], which is why neither
+    /// the contact nor the empty list is re-checked: [`App::announce_refresh`]
+    /// answers both before anything is deferred at all.
+    pub(super) fn refresh_mixes(&mut self, tickers: &[String]) -> Result<()> {
+        let contact = self
+            .sec_contact
+            .clone()
+            .context("a refresh was deferred with no SEC contact configured")?;
         let refreshed = mix::refresh(&self.db, &contact, tickers)?;
         self.status = refresh_status(&refreshed);
         self.reload()
@@ -171,6 +200,12 @@ impl App {
                     account_id: h.account_id,
                     account: Account::named(&accounts, h.account_id),
                     ticker: h.ticker,
+                    // Cased here rather than in the cell: what the screen
+                    // filters and draws is one string, so a needle matches
+                    // the words a reader can see.
+                    name: mix
+                        .and_then(|m| m.name.as_deref())
+                        .map(crate::fund_label::short),
                     balance: h.balance,
                     stock_percent: mix.map(stock_share),
                     as_of: mix.map(|m| m.report_date),
@@ -196,6 +231,24 @@ fn stock_share(mix: &fund_mix::Mix) -> BasisPoints {
         .map(|s| s.weight.0)
         .sum();
     BasisPoints(bp)
+}
+
+/// What the status line says while a refresh has the screen frozen.
+///
+/// One ticker is named, several are counted. `g` acts on the row under the
+/// cursor and naming it is what confirms which row that was; `G` over a
+/// dozen funds would spend the line on a list nobody reads while they wait,
+/// and the count is the part that says how long this is going to take.
+///
+/// Masked through `crate::demo::text` for [`refresh_status`]'s reason, and
+/// it ends in an ellipsis for a reason of its own: it is the one message in
+/// the app that describes something still happening rather than something
+/// that has happened.
+fn refreshing_status(tickers: &[String]) -> String {
+    match tickers {
+        [ticker] => format!("refreshing {}...", crate::demo::text(ticker)),
+        many => format!("refreshing {} funds...", many.len()),
+    }
 }
 
 /// What `g`/`G` leave on the status line: honest about a run that updated
@@ -230,7 +283,7 @@ fn refresh_status(refreshed: &Refreshed) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Refreshed, refresh_status, stock_share};
+    use super::{Refreshed, refresh_status, refreshing_status, stock_share};
     use crate::allocation::{self, Class};
     use crate::db::fund_mix::{self, AssetClass, Slice};
     use crate::db::setting::{self, key};
@@ -587,6 +640,7 @@ mod tests {
     fn the_stock_share_is_the_us_and_international_slices_and_nothing_else() {
         let mix = fund_mix::Mix {
             ticker: "TDF45".to_string(),
+            name: Some(crate::test_support::fund_name("TDF45").to_string()),
             report_date: day(2026, 6, 30),
             slices: vec![
                 Slice {
@@ -628,6 +682,58 @@ mod tests {
         );
     }
 
+    /// The announcement is on screen *before* the fetch blocks the loop,
+    /// which is the whole of what the deferral buys: `G` leaves a sentence
+    /// and a piece of work, and the loop draws the first before running the
+    /// second.
+    ///
+    /// Asserted without a contact configured, so nothing here reaches the
+    /// network -- `app_with_holdings` carries none, and what is being pinned
+    /// is the order, not the fetch.
+    #[test]
+    fn a_refresh_announces_itself_and_leaves_the_fetch_for_the_loop() {
+        let mut app = test_support::app_with_holdings();
+        app.sec_contact = Some("someone@example.com".to_string());
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        test_support::press(&mut app, KeyCode::Char('G'));
+
+        assert!(
+            app.status.starts_with("refreshing"),
+            "the freeze is not announced: {}",
+            app.status
+        );
+        assert!(
+            app.has_deferred(),
+            "the fetch ran inside the key handler, with no frame drawn first"
+        );
+    }
+
+    /// `g` names the one row it acts on, where `G` counts them: the count is
+    /// what says how long the screen is about to be frozen for, and a list of
+    /// a dozen tickers is not read by somebody waiting.
+    #[test]
+    fn one_ticker_is_named_in_the_announcement_and_several_are_counted() {
+        assert_eq!(refreshing_status(&["USM".to_string()]), "refreshing USM...");
+        assert_eq!(
+            refreshing_status(&["USM".to_string(), "USB".to_string()]),
+            "refreshing 2 funds..."
+        );
+    }
+
+    /// Neither answer involves a fetch, so neither is deferred: a refusal
+    /// that waited a frame to be drawn beside work that was never going to
+    /// run would be the announcement mechanism used to say nothing.
+    #[test]
+    fn a_refresh_with_nothing_to_fetch_defers_no_work() {
+        let mut app = test_support::app_with_holdings();
+        test_support::press(&mut app, KeyCode::Char('6'));
+
+        test_support::press(&mut app, KeyCode::Char('G'));
+        assert!(app.status.contains("contact"), "{}", app.status);
+        assert!(!app.has_deferred(), "a refusal was deferred");
+    }
+
     /// The other key of the pair: `g` refuses the same way over the
     /// selected row alone, rather than silently doing nothing because
     /// nothing is selected.
@@ -657,6 +763,7 @@ mod tests {
             &app.db,
             "USM",
             report_date,
+            Some(crate::test_support::fund_name("USM")),
             &[Slice {
                 class: AssetClass::UsStock,
                 weight: BasisPoints(10_000),

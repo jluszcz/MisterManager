@@ -54,6 +54,11 @@ pub struct Row {
     pub account_id: AccountId,
     pub account: Account,
     pub ticker: String,
+    /// What the fund calls itself in its own filing, or `None` for a ticker
+    /// nobody has fetched -- the same `None` as `stock_percent` and `as_of`
+    /// beside it, and for the same reason. A mix written before there was a
+    /// column to hold a name reads the same way, and the next `g` fills it.
+    pub name: Option<String>,
     pub balance: Cents,
     pub stock_percent: Option<BasisPoints>,
     pub as_of: Option<NaiveDate>,
@@ -337,11 +342,18 @@ impl Search for Funds {
         &mut self.search
     }
 
-    /// A row answers to its ticker and to the account it sits in, matched
-    /// against the account's raw stored name rather than what the screen
-    /// draws -- the same split `search::searchable_amount` makes for a
-    /// figure, so a needle still finds a real ticker and a real account
-    /// while `mm --demo` is drawing pseudonyms over them.
+    /// A row answers to its ticker, to the fund that ticker names, and to the
+    /// account it sits in -- matched against the account's raw stored name
+    /// rather than what the screen draws, the same split
+    /// `search::searchable_amount` makes for a figure, so a needle still
+    /// finds a real ticker and a real account while `mm --demo` is drawing
+    /// pseudonyms over them.
+    ///
+    /// The fund name is in the needle's reach because it is on screen:
+    /// a column a reader can see and cannot search is a column that reads as
+    /// broken, and `bond` finding every bond fund is the search this one
+    /// makes possible. A row with no name yet answers to the other two, as
+    /// it did before there was a name to answer to.
     fn refilter(&mut self) {
         let matcher = self.matcher();
         let account = self.account;
@@ -351,7 +363,20 @@ impl Search for Funds {
             .enumerate()
             .filter(|(_, row)| account.is_none_or(|id| row.account_id == id))
             .filter(|(_, row)| {
-                let text = format!("{} {}", row.ticker, self.account_name(row.account_id));
+                // Joined rather than interpolated, so a row with no name yet
+                // reads as the two words it has: the needle is matched as a
+                // substring, and a doubled space between the ticker and the
+                // account is a needle spanning the two that no longer finds
+                // a row it used to.
+                let text = [
+                    Some(row.ticker.as_str()),
+                    row.name.as_deref(),
+                    Some(self.account_name(row.account_id)),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<&str>>()
+                .join(" ");
                 matcher.matches(&text, &[])
             })
             .map(|(i, _)| i)
@@ -362,6 +387,45 @@ impl Search for Funds {
 }
 
 impl_scroll!(Funds, visible);
+
+/// How wide the `Fund` column is.
+///
+/// The one column on any screen whose content comes off a filing rather than
+/// out of a closed set, so it cannot be measured the way `accounts::widths`
+/// measures its five. What it is instead is **everything the row can spare**:
+/// at [`super::MIN_WIDTH`] the five fixed columns and the chrome leave
+/// sixty-eight for this and `Account` together, and `Account`'s own
+/// `Constraint::Min` claims twenty of them.
+///
+/// Wide rather than narrow because of *where* a fund name carries its
+/// meaning. `... Target Retirement 2045 Fund` differs from the row above it
+/// in the year, four characters from the end -- so a column cut anywhere
+/// short of the whole draws a column of rows that all read alike, which is
+/// the one thing this column exists not to do. Every issuer's own name leads
+/// every one of those rows and is the least informative word in it, which is
+/// what makes them so long; dropping it would let this be narrow, and the
+/// words that do the dropping are institutions this repository may not name.
+/// So the screen pays for it in width instead, and `src/fund_label.rs` says
+/// the same thing from the other end.
+///
+/// It can still truncate, on a name longer than this or a terminal narrower
+/// than `MIN_WIDTH`, and this is the column where that is affordable: it is
+/// left-aligned prose, so a cut takes the tail rather than the leading digits
+/// a right-aligned figure would lose. `Ticker` beside it is the row's actual
+/// identity and is never cut.
+const FUND_NAME_WIDTH: u16 = 48;
+
+/// What a fund calls itself, or the `—` every other absence in the app draws.
+///
+/// Masked through `crate::demo::text` beside the ticker it names: a fund's
+/// name identifies a real holding at least as plainly as its symbol does, so
+/// a demo drawing one and hiding the other would hide neither.
+fn fund_name_cell(name: Option<&str>) -> Cell<'static> {
+    Cell::from(match name {
+        Some(name) => crate::demo::text(name).into_owned(),
+        None => "—".to_string(),
+    })
+}
 
 /// The stock share to the nearest whole percent -- or the `—` every other
 /// absence in the app draws.
@@ -397,8 +461,13 @@ fn tax_treatment_cell(treatment: Option<TaxTreatment>) -> Cell<'static> {
 }
 
 /// How many of the screen's lines the summary panel costs the list: its
-/// border, its header, a row per [`Class`], and the bar -- or none at all when
-/// it has nothing to say.
+/// border, its header, a row per [`Class`], the gap, and a line per bar [`bars`]
+/// has to draw -- or none at all when it has nothing to say.
+///
+/// The bar count is read from the same function that draws them, rather than
+/// being a constant either could be wrong about: how many there are depends
+/// on how many treatments hold anything, so a filter narrowing to one
+/// account shrinks the panel and hands the list the lines back.
 ///
 /// The first two terms are [`super::Chrome::lines`]'s arithmetic, said here
 /// rather than borrowed: the panel is not a list, so it has no cursor to
@@ -414,11 +483,17 @@ fn summary_lines(allocation: &Allocation) -> u16 {
     if allocation.slices.is_empty() {
         return 0;
     }
-    2 + super::HEADER_LINES + Class::ALL.len() as u16 + BAR_LINES
+    2 + super::HEADER_LINES + Class::ALL.len() as u16 + BAR_GAP + bars(allocation).len() as u16
 }
 
-/// The one line [`summary_bar`] takes, under the table.
-const BAR_LINES: u16 = 1;
+/// The blank line between the last class row and the first bar.
+///
+/// The table is figures and the bars are pictures of those figures, and with
+/// nothing between them `Other` and `Total` read as two more rows of one
+/// list -- the left-hand column of labels running straight on. One line is
+/// what separates two blocks inside a panel that has only one border to
+/// spend.
+const BAR_GAP: u16 = 1;
 
 /// How many glyph cells the four-class bar spends.
 ///
@@ -429,62 +504,197 @@ const BAR_LINES: u16 = 1;
 /// exists to show.
 const SUMMARY_BAR_WIDTH: usize = 40;
 
-/// The glyph every segment of the summary bar is drawn with.
+/// What every bar is named on its left, and how wide that column is.
 ///
-/// One mark in four colors rather than four marks in one: `█▓▒▚` differ in
-/// *texture*, and a run of them reads as a gradient -- a thing shading into
-/// another thing -- where the four classes are four separate quantities. The
-/// colors are `palette::CLASSES`, which the report's own bar already spends, so
-/// the terminal and the phone agree about what bonds look like -- and the
-/// class labels in the table above spend them too, which is what names a
-/// segment here without a legend.
-const BAR_GLYPH: &str = "█";
+/// The widest of the four labels, so the bars start at one column and can be
+/// read down as well as across -- four bars whose left edges disagreed would
+/// be four scales rather than one.
+const BAR_LABEL_WIDTH: usize = 12;
 
-/// What the four leave over -- nothing, now that [`Class::Other`] is one of
-/// them. It is the track the segments are laid on, so a bar that cannot fill
-/// its width (a portfolio whose mixes over-foot, leaving the classes past 100%
-/// between them, or one clamped short) still draws to the same length.
-const BAR_REST: &str = "░";
+/// What the four leave over -- nothing, on the `Total` bar, now that
+/// [`Class::Other`] is one of them. It is the track the segments are laid on,
+/// so a bar that cannot fill its width still draws to the same length: a
+/// treatment holding nothing is a row of this, which is the honest drawing of
+/// a pot with nothing in it.
+const BAR_REST: &str = "\u{2591}";
 
-/// The whole portfolio as one bar: one segment per [`Class`], in the order the
-/// rows above it are listed and in the color those rows' labels carry, so a
-/// segment and its row are the same statement.
+/// One bar's segments, as cell counts that sum to [`SUMMARY_BAR_WIDTH`] or
+/// less.
 ///
-/// Segments are cut at the *cumulative* share and differenced, rather than
-/// each rounded on its own: that is what keeps them summing to the bar's own
-/// width, so the tail is exactly what the classes leave rather than a glyph of
-/// accumulated rounding.
-fn summary_bar(slices: &[Slice]) -> Vec<Span<'static>> {
+/// Cut at the *cumulative* share and differenced, rather than each rounded on
+/// its own: that is what keeps them summing to the bar's own width, so the
+/// tail is exactly what the classes leave rather than a glyph of accumulated
+/// rounding.
+///
+/// `denominator` is what the shares are *of*, and it is what makes one
+/// function draw both kinds of bar. The `Total` bar passes
+/// [`BasisPoints::ONE`], its slices already being shares of the whole; a
+/// treatment passes what that treatment holds, so its own four classes fill
+/// the width and can be read against the bar above it. A denominator of
+/// nothing is a treatment holding nothing, and draws no segments at all.
+fn segment_widths(shares: [BasisPoints; Class::ALL.len()], denominator: BasisPoints) -> Vec<usize> {
     let width = SUMMARY_BAR_WIDTH as i64;
-    let mut spans = Vec::new();
-    let mut cumulative = 0i64;
-    let mut drawn = 0i64;
-    for class in Class::ALL {
-        cumulative += class.actual(slices).0;
+    if denominator.0 <= 0 {
+        return vec![0; Class::ALL.len()];
+    }
+    let mut widths = Vec::with_capacity(Class::ALL.len());
+    let (mut cumulative, mut drawn) = (0i64, 0i64);
+    for share in shares {
+        cumulative += share.0;
         // Monotonic whatever the weights are: a mix that over-foots puts the
-        // classes past 100% between them, and a bar that ran backwards would
-        // draw a segment over the one before it.
-        let end = (cumulative.clamp(0, BasisPoints::ONE.0) * width / BasisPoints::ONE.0).max(drawn);
-        spans.push(Span::styled(
-            BAR_GLYPH.repeat((end - drawn) as usize),
-            Style::default().fg(super::style::class(class)),
-        ));
+        // classes past the denominator between them, and a bar that ran
+        // backwards would draw a segment over the one before it.
+        let end = (cumulative.clamp(0, denominator.0) * width / denominator.0).max(drawn);
+        widths.push((end - drawn) as usize);
         drawn = end;
     }
-    spans.push(Span::raw(BAR_REST.repeat((width - drawn) as usize)));
+    widths
+}
+
+/// What one segment reads inside itself: its own share as a whole percent, or
+/// nothing at all.
+///
+/// **Nothing rather than something abbreviated.** A share is only written
+/// where the segment can hold it with a column of space on either side, which
+/// is what stops a figure touching the segment next to it and reading as part
+/// of it. Below that the segment says what it has always said -- its length,
+/// against the three beside it -- and the row above the bars states every
+/// figure exactly.
+///
+/// Centred in what is left, with the odd column going to the right, so a
+/// figure sits where the eye expects rather than against one edge.
+fn segment_text(width: usize, share: Option<String>) -> String {
+    let Some(share) = share.filter(|s| s.chars().count() + 2 * BAR_TEXT_PADDING <= width) else {
+        return " ".repeat(width);
+    };
+    let spare = width - share.chars().count();
+    format!(
+        "{}{share}{}",
+        " ".repeat(spare / 2),
+        " ".repeat(spare - spare / 2)
+    )
+}
+
+/// Columns of clear space a share needs on each side of it to be written
+/// inside its own segment.
+///
+/// One. It is not whitespace for its own sake: two segments are told apart by
+/// their colors, and a figure flush against the join reads as belonging to
+/// whichever of the two the eye lands on first.
+const BAR_TEXT_PADDING: usize = 1;
+
+/// One bar: one segment per [`Class`], in the order the rows above are
+/// listed and in the color those rows' labels carry, so a segment and its row
+/// are the same statement.
+///
+/// **Drawn as background rather than as a glyph run.** A `\u{2588}` cannot have a
+/// figure written inside it, and the figures are the whole reason a reader
+/// can take a share off the bar instead of tracking a segment up to the
+/// table. What is lost is nothing: a filled background and a run of full
+/// blocks are the same rectangle, and the track beside them keeps its own
+/// glyph, being the one part of the bar that is not a quantity.
+fn summary_bar(
+    shares: [BasisPoints; Class::ALL.len()],
+    denominator: BasisPoints,
+) -> Vec<Span<'static>> {
+    let widths = segment_widths(shares, denominator);
+    let mut spans = Vec::new();
+    for ((class, share), width) in Class::ALL.iter().zip(shares).zip(&widths) {
+        if *width == 0 {
+            continue;
+        }
+        let percent = (denominator.0 > 0)
+            .then(|| BasisPoints(share.0 * BasisPoints::ONE.0 / denominator.0))
+            .map(|share| format!("{}%", share.whole_percent()));
+        spans.push(Span::styled(
+            segment_text(*width, percent),
+            Style::default()
+                .bg(super::style::class(*class))
+                .fg(super::style::on_class(*class)),
+        ));
+    }
+    let drawn: usize = widths.iter().sum();
+    spans.push(Span::raw(BAR_REST.repeat(SUMMARY_BAR_WIDTH - drawn)));
     spans
 }
 
-/// Class, Target, Actual, Δ, with the four-class bar beneath.
+/// A bar with its name in front of it, as one line.
+fn labelled_bar(bar: &Bar) -> TextLine<'static> {
+    let label = bar.label;
+    let mut spans = vec![Span::raw(format!("{label:<BAR_LABEL_WIDTH$} "))];
+    spans.extend(summary_bar(bar.shares, bar.denominator));
+    TextLine::from(spans)
+}
+
+/// One bar: what it is called, the four shares it draws, and what they are
+/// shares *of*.
+struct Bar {
+    label: &'static str,
+    shares: [BasisPoints; Class::ALL.len()],
+    denominator: BasisPoints,
+}
+
+/// Every bar the panel draws, in order.
+///
+/// **A treatment holding nothing gets no bar.** An empty row of track states
+/// a fact the tax column above it already states, and it costs a line of a
+/// panel the list is paying for -- and it is the ordinary case the moment
+/// `Tab` narrows to one account, an account having exactly one treatment.
+/// Three rows of track under the one bar that says anything is the screen
+/// answering a question about pots that are not on it.
+///
+/// **`Total` is drawn only when more than one treatment is left.** With one,
+/// it is that treatment's bar with a different word in front of it: the same
+/// four shares over the same denominator, since the whole of what is on
+/// screen is what that pot holds. Two identical bars is the reader being
+/// asked to compare something with itself.
+///
+/// Nothing qualifying at all leaves `Total` alone. That is a portfolio whose
+/// holdings sit in accounts stating no treatment, which `apportion` puts in
+/// the classes and in no column and the schema's paired `CHECK` makes
+/// unreachable through the app -- so it is the drawing of a database that
+/// should not exist, and it draws what it can rather than nothing.
+fn bars(allocation: &Allocation) -> Vec<Bar> {
+    let total = Bar {
+        label: "Total",
+        shares: Class::ALL.map(|class| class.actual(&allocation.slices)),
+        denominator: BasisPoints::ONE,
+    };
+    let held: Vec<Bar> = TaxTreatment::ALL
+        .iter()
+        .map(|treatment| Bar {
+            label: treatment.label(),
+            shares: Class::ALL.map(|class| allocation.class_in(class, *treatment)),
+            denominator: allocation.treatment_total(*treatment),
+        })
+        .filter(|bar| bar.denominator > BasisPoints::ZERO)
+        .collect();
+
+    match held.len() {
+        0 => vec![total],
+        1 => held,
+        _ => std::iter::once(total).chain(held).collect(),
+    }
+}
+
+/// Class, Target, Actual, Δ, with the four bars beneath.
 ///
 /// One table rather than a stack of bars: the rows are what the age rule
 /// targets and the bar is what the portfolio holds, and reading the second
 /// against the first is the only reason to draw either.
 ///
-/// **The bar takes a line of its own rather than a column of the table.** A
+/// **The bars take lines of their own rather than a column of the table.** A
 /// fourteen-glyph cell splits four ways into three glyphs each, which cannot
-/// show a bond split at all, and the bar is *one* statement about the whole
+/// show a bond split at all, and each bar is *one* statement about a whole
 /// portfolio where a table column is one per row.
+///
+/// **There are four of them, and the three under `Total` are the tax columns
+/// asked the other way round.** A column states each treatment's classes
+/// against the whole portfolio, which is what makes the grid foot in both
+/// directions; it is also what stops a reader comparing one treatment's shape
+/// to another's without doing the division themselves. Each bar does that
+/// division -- normalised to what its own pot holds -- so "is the Roth
+/// stock-heavier than the 401k" is a question answered by looking.
 ///
 /// **The class names carry the bar's colors, and the bar has no legend.** A
 /// legend is a third copy of the four words -- the rows already name them,
@@ -597,15 +807,22 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let [table_area, bar_area] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(BAR_LINES)]).areas(inner);
+    // Each normalised to what its own pot holds: the table above compares
+    // them against one denominator and these compare them against
+    // themselves, which is the reading a column of figures cannot give.
+    let drawn = bars(allocation);
+    let [table_area, _gap, bar_area] = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(BAR_GAP),
+        Constraint::Length(drawn.len() as u16),
+    ])
+    .areas(inner);
     frame.render_widget(
         Table::new(rows, widths).header(header.height(super::HEADER_LINES)),
         table_area,
     );
-
     frame.render_widget(
-        Paragraph::new(TextLine::from(summary_bar(&allocation.slices))),
+        Paragraph::new(drawn.iter().map(labelled_bar).collect::<Vec<TextLine>>()),
         bar_area,
     );
 }
@@ -622,7 +839,7 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
 /// state, so the panel returns the moment the window does.
 const LIST_FLOOR: u16 = 2 + super::HEADER_LINES + 1;
 
-/// Account, Ticker, Balance, Stock%, Tax, under the allocation summary.
+/// Account, Ticker, Fund, Balance, Stock%, Tax, under the allocation summary.
 ///
 /// `Account` takes the single `Constraint::Min` and absorbs the slack,
 /// `tui::GUTTER` included; the other five are `Constraint::Length` sized to
@@ -664,6 +881,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
             TableRow::new(vec![
                 account_cell(&row.account),
                 Cell::from(crate::demo::text(&row.ticker).into_owned()),
+                fund_name_cell(row.name.as_deref()),
                 whole_amount(row.balance),
                 stock_percent_cell(row.stock_percent),
                 tax_treatment_cell(row.tax_treatment),
@@ -674,6 +892,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
     let header = TableRow::new(vec![
         Cell::from("Account"),
         Cell::from("Ticker"),
+        Cell::from("Fund"),
         right_header("Balance"),
         right_header("Stock%"),
         Cell::from("Tax"),
@@ -683,6 +902,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
     let widths = [
         Constraint::Min(20),
         Constraint::Length(8),
+        Constraint::Length(FUND_NAME_WIDTH),
         Constraint::Length(14),
         Constraint::Length(7),
         Constraint::Length(13),
@@ -863,6 +1083,7 @@ mod tests {
             account_id,
             account: Account::named(accounts, account_id),
             ticker: ticker.to_string(),
+            name: Some(crate::test_support::fund_name(ticker).to_string()),
             balance: Cents::from_dollars(dollars),
             stock_percent: None,
             as_of: None,
@@ -1164,11 +1385,11 @@ mod tests {
     /// 95/5 international fund, over $18,000: 55.56 U.S. stock, 15.83
     /// international, 19.45 + 6.94 bonds and 2.22 cash.
     ///
-    /// In class order that is 26.39 / 55.56 / 15.83 / 2.22, and the bar cuts
+    /// In class order that is 55.56 / 15.83 / 26.39 / 2.22, and the bar cuts
     /// at the cumulative share -- so its segments are that split scaled to
-    /// forty glyphs, 10 / 22 / 7 / 1, with nothing left for the track.
+    /// forty cells, 22 / 6 / 11 / 1, with nothing left for the track.
     #[test]
-    fn the_mix_bar_is_one_run_of_four_segments_in_the_portfolios_own_proportions() {
+    fn the_total_bar_is_one_run_of_four_segments_in_the_portfolios_own_proportions() {
         let funds = funds_fully_priced();
         let summary = funds.summary();
         assert_eq!(
@@ -1176,9 +1397,12 @@ mod tests {
             BasisPoints(5_556)
         );
 
-        let bar = summary_bar(&summary);
+        let bar = summary_bar(
+            Class::ALL.map(|class| class.actual(&summary)),
+            BasisPoints::ONE,
+        );
         let widths: Vec<usize> = bar.iter().map(|s| s.content.chars().count()).collect();
-        assert_eq!(widths, vec![10, 22, 7, 1, 0]);
+        assert_eq!(widths, vec![22, 6, 11, 1, 0]);
         assert_eq!(
             widths.iter().sum::<usize>(),
             SUMMARY_BAR_WIDTH,
@@ -1186,18 +1410,218 @@ mod tests {
         );
         for (span, class) in bar.iter().zip(Class::ALL) {
             assert_eq!(
-                span.style.fg,
+                span.style.bg,
                 Some(super::super::style::class(class)),
-                "{class:?} is drawn in another class's color"
+                "{class:?} is drawn on another class's color"
             );
         }
     }
 
-    /// A segment and the row above it are the same statement, so the row's
-    /// own label is what names the color -- there is no legend, and the line
-    /// the bar sits on is the bar and nothing else.
+    /// The equities lead and sit together, then bonds, then what the rule
+    /// says nothing about -- and the colors are written in the same order, so
+    /// a reorder of one without the other repaints every segment rather than
+    /// moving it.
     #[test]
-    fn each_class_label_carries_its_own_segments_color_and_the_bar_has_no_legend() {
+    fn the_bar_runs_equities_then_bonds_then_the_rest() {
+        assert_eq!(
+            Class::ALL,
+            [Class::UsStock, Class::IntlStock, Class::Bonds, Class::Other]
+        );
+        assert_eq!(
+            crate::palette::CLASSES.len(),
+            Class::ALL.len(),
+            "the color table and the class list came apart"
+        );
+    }
+
+    /// A share is written inside its own segment only where a column of space
+    /// fits on either side of it: flush against the join, a figure reads as
+    /// belonging to whichever neighbour the eye lands on first.
+    #[test]
+    fn a_segment_writes_its_share_only_where_a_column_of_space_fits_either_side() {
+        assert_eq!(segment_text(5, Some("56%".to_string())), " 56% ");
+        assert_eq!(
+            segment_text(4, Some("56%".to_string())),
+            "    ",
+            "three characters in four columns leaves no padding at all"
+        );
+        assert_eq!(segment_text(1, Some("2%".to_string())), " ");
+        assert_eq!(segment_text(3, None), "   ");
+    }
+
+    /// Centred in what is left, the odd column going to the right.
+    #[test]
+    fn a_share_sits_in_the_middle_of_the_segment_it_names() {
+        assert_eq!(segment_text(8, Some("56%".to_string())), "  56%   ");
+        assert_eq!(segment_text(7, Some("56%".to_string())), "  56%  ");
+    }
+
+    /// Each treatment's bar is normalised to what *that* treatment holds, so
+    /// its four classes fill the width and can be read against the bar above
+    /// it. The tax columns in the table state the same figures against one
+    /// denominator, which is what makes the grid foot and what stops two
+    /// treatments being compared without arithmetic.
+    #[test]
+    fn a_treatments_bar_is_normalised_to_what_that_treatment_holds() {
+        // A pot holding a quarter of the portfolio, all of it in one class,
+        // fills its own bar rather than a quarter of it.
+        let quarter_in_stock = [
+            BasisPoints(2_500),
+            BasisPoints::ZERO,
+            BasisPoints::ZERO,
+            BasisPoints::ZERO,
+        ];
+        let widths: Vec<usize> = summary_bar(quarter_in_stock, BasisPoints(2_500))
+            .iter()
+            .map(|s| s.content.chars().count())
+            .collect();
+        assert_eq!(widths, vec![SUMMARY_BAR_WIDTH, 0]);
+
+        // And against the whole portfolio it is the quarter it is.
+        let widths: Vec<usize> = summary_bar(quarter_in_stock, BasisPoints::ONE)
+            .iter()
+            .map(|s| s.content.chars().count())
+            .collect();
+        assert_eq!(
+            widths,
+            vec![SUMMARY_BAR_WIDTH / 4, SUMMARY_BAR_WIDTH * 3 / 4]
+        );
+    }
+
+    /// A treatment with nothing in it is a row of track: no segment claims a
+    /// cell, and nothing is divided by nothing on the way there.
+    #[test]
+    fn a_treatment_holding_nothing_draws_an_empty_bar_rather_than_dividing_by_zero() {
+        let bar = summary_bar([BasisPoints::ZERO; 4], BasisPoints::ZERO);
+        assert_eq!(bar.len(), 1, "a segment was drawn for an empty pot");
+        assert_eq!(bar[0].content.chars().count(), SUMMARY_BAR_WIDTH);
+    }
+
+    /// The bar rows of the panel, in order, so a test can name them without
+    /// matching on a word a fund name might also carry.
+    fn panel_lines(funds: &Funds) -> Vec<String> {
+        let lines = drawn(funds, 24);
+        let panel = usize::from(summary_lines(funds.allocation()));
+        let count = bars(funds.allocation()).len();
+        lines[panel - 1 - count..panel - 1].to_vec()
+    }
+
+    /// The same portfolio held across two treatments, one per account, so
+    /// more than one bar has anything to draw and `Tab` narrows to exactly
+    /// one of them.
+    ///
+    /// `funds_fully_priced` deliberately holds everything in one treatment,
+    /// which is both what a filter leaves and what most of the tests above
+    /// are about.
+    fn funds_across_two_treatments() -> Funds {
+        let mut funds = funds_fully_priced();
+        let rows: Vec<Row> = funds
+            .rows
+            .iter()
+            .cloned()
+            .map(|row| match row.account_id == AccountId(2) {
+                true => Row {
+                    tax_treatment: Some(TaxTreatment::TaxFree),
+                    ..row
+                },
+                false => row,
+            })
+            .collect();
+        funds.set_rows(rows);
+        funds
+    }
+
+    /// Named, `Total` first and then one per treatment in the order the
+    /// table's columns run -- so a column and the bar under it are the same
+    /// pot.
+    #[test]
+    fn every_bar_is_named_and_the_treatments_follow_the_tables_own_column_order() {
+        let funds = funds_across_two_treatments();
+        let bars = panel_lines(&funds);
+
+        assert_eq!(
+            bars.len(),
+            3,
+            "two treatments hold something, so they and Total are the bars"
+        );
+        for (line, label) in bars.iter().zip(["Total", "Taxable", "Tax-free"]) {
+            assert!(
+                line.contains(label),
+                "a bar is not named {label:?}: {line:?}"
+            );
+        }
+    }
+
+    /// A treatment holding nothing states a fact its own tax column already
+    /// states, and costs a line of a panel the list is paying for. Narrowing
+    /// to one account is where that stops being an edge case: an account has
+    /// exactly one treatment, so three of the four bars would be track.
+    #[test]
+    fn a_treatment_holding_nothing_gets_no_bar_at_all() {
+        let funds = funds_across_two_treatments();
+        let labels: Vec<&str> = TaxTreatment::ALL
+            .iter()
+            .map(|t| t.label())
+            .filter(|label| panel_lines(&funds).iter().any(|l| l.contains(label)))
+            .collect();
+        assert_eq!(labels, vec!["Taxable", "Tax-free"]);
+    }
+
+    /// With one treatment left, `Total` *is* that treatment's bar -- the same
+    /// four shares over the same denominator, since the whole of what is on
+    /// screen is what that pot holds. Two identical bars is a reader being
+    /// asked to compare something with itself, so the pot keeps its name and
+    /// `Total` goes.
+    #[test]
+    fn one_treatment_left_is_drawn_once_under_its_own_name() {
+        let mut funds = funds_across_two_treatments();
+        walk_until!(
+            funds.filter_account() == Some(AccountId(2)),
+            funds.next_account()
+        );
+
+        let bars = panel_lines(&funds);
+        assert_eq!(bars.len(), 1, "{bars:#?}");
+        assert!(bars[0].contains("Tax-free"), "{bars:#?}");
+        assert!(
+            !bars[0].contains("Total"),
+            "the filtered pot is drawn twice: {bars:#?}"
+        );
+    }
+
+    /// The table is figures and the bars are pictures of them; with nothing
+    /// between, `Other` and the first bar read as two rows of one list, the
+    /// left-hand labels running straight on.
+    #[test]
+    fn a_blank_line_separates_the_last_class_row_from_the_first_bar() {
+        let funds = funds_across_two_treatments();
+        let lines = drawn(&funds, 24);
+        let last_class = lines
+            .iter()
+            .position(|l| l.contains(Class::Other.label()))
+            .expect("the Other row is drawn");
+        let first_bar = lines
+            .iter()
+            .position(|l| l.contains("Total"))
+            .expect("the Total bar is drawn");
+
+        assert_eq!(
+            first_bar - last_class,
+            1 + usize::from(BAR_GAP),
+            "the gap between the table and the bars is wrong"
+        );
+        let gap = &lines[last_class + 1];
+        assert!(
+            gap.trim_matches(|c| c == '│' || c == ' ').is_empty(),
+            "the separating line is not blank: {gap:?}"
+        );
+    }
+
+    /// A segment and the row above it are the same statement, so the row's
+    /// own label is what names the color -- there is no legend, and the lines
+    /// the bars sit on are the bars and their names.
+    #[test]
+    fn each_class_label_carries_its_own_segments_color_and_the_bars_have_no_legend() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
@@ -1229,15 +1653,13 @@ mod tests {
             );
         }
 
-        let bar = (0..24)
-            .map(line)
-            .find(|l| l.contains(BAR_GLYPH))
-            .expect("the bar is drawn");
-        for class in Class::ALL {
-            assert!(
-                !bar.contains(class.label()),
-                "{class:?} is named again beside the bar: {bar:?}"
-            );
+        for bar in panel_lines(&funds) {
+            for class in Class::ALL {
+                assert!(
+                    !bar.contains(class.label()),
+                    "{class:?} is named again beside a bar: {bar:?}"
+                );
+            }
         }
 
         let bonds = funds.summary_row(Class::Bonds).expect("a Bonds row").actual;
@@ -1344,6 +1766,122 @@ mod tests {
             !border.contains("$18,000.00"),
             "the border quotes cents its own column does not: {border:?}"
         );
+    }
+
+    /// A fund names itself in its own filing, so the column arrives with the
+    /// composition and is `—` until a `g` has fetched one -- the same absence
+    /// `Stock%` beside it draws, rather than a second way of saying nothing.
+    #[test]
+    fn a_fund_with_no_filing_fetched_draws_no_name_and_one_with_a_filing_draws_it() {
+        let all = accounts();
+        let mut funds = Funds::new();
+        funds.set_accounts(all.clone());
+        funds.set_rows(vec![
+            Row {
+                name: None,
+                ..fixture_row(1, AccountId(1), &all, "USM", 10_000)
+            },
+            fixture_row(2, AccountId(1), &all, "USB", 5_000),
+        ]);
+
+        let lines = drawn(&funds, 8);
+        let header = lines
+            .iter()
+            .find(|l| l.contains("Ticker"))
+            .expect("the list header is drawn");
+        assert!(header.contains("Fund"), "{header:?}");
+
+        let named = lines
+            .iter()
+            .find(|l| l.contains("USB"))
+            .expect("the named row is drawn");
+        assert!(
+            named.contains(crate::test_support::fund_name("USB")),
+            "a fetched fund does not say what it is: {named:?}"
+        );
+
+        let unnamed = lines
+            .iter()
+            .find(|l| l.contains("USM"))
+            .expect("the unnamed row is drawn");
+        assert!(
+            unnamed.contains('—'),
+            "an unfetched fund drew something other than the absence mark: {unnamed:?}"
+        );
+    }
+
+    /// The width claim, made against a drawn row rather than arithmetic: a
+    /// name as long as the longest a real filing carries has to reach the
+    /// screen whole at `MIN_WIDTH`, with `Account` beside it still holding
+    /// its own `Constraint::Min`.
+    ///
+    /// The name is invented and its length is the point -- forty-four
+    /// characters, which is what a target-date fund's issuer, its words and
+    /// its year come to. A column cut short of that draws every target-date
+    /// row alike, the year being the last four characters of the name.
+    #[test]
+    fn the_longest_fund_name_a_filing_carries_is_drawn_whole_at_the_minimum_width() {
+        let long = "Acme Institutional Target Retirement 2045 Fund";
+        assert!(
+            long.chars().count() <= usize::from(FUND_NAME_WIDTH),
+            "the fixture outgrew the column it is measuring: {}",
+            long.chars().count()
+        );
+
+        let all = accounts();
+        let mut funds = Funds::new();
+        funds.set_accounts(all.clone());
+        funds.set_rows(vec![Row {
+            name: Some(long.to_string()),
+            ..fixture_row(1, AccountId(1), &all, "USM", 10_000)
+        }]);
+
+        let lines = drawn(&funds, 6);
+        let row = lines
+            .iter()
+            .find(|l| l.contains("USM"))
+            .expect("the row is drawn");
+        assert!(row.contains(long), "the name is cut: {row:?}");
+        assert!(
+            row.contains(&Account::named(&all, AccountId(1)).text()),
+            "the account beside it lost its own column: {row:?}"
+        );
+    }
+
+    /// A column a reader can see and cannot search reads as broken, and the
+    /// name is what makes "every bond fund" a needle at all -- neither the
+    /// ticker nor the account says so.
+    #[test]
+    fn the_search_matches_the_fund_a_ticker_names() {
+        let mut funds = funds();
+        funds.begin_search();
+        for c in "Bond".chars() {
+            funds.push_search(c);
+        }
+        let tickers: Vec<&str> = funds.rows().iter().map(|r| r.ticker.as_str()).collect();
+        assert_eq!(tickers, vec!["USB"], "`Bond` is in no ticker or account");
+    }
+
+    /// A needle is matched as a substring of the row's three words, so a row
+    /// that has no name yet answers to the two it has -- a name's empty
+    /// place left in the haystack would put two spaces where a reader typed
+    /// one.
+    #[test]
+    fn a_row_with_no_name_yet_still_answers_to_its_ticker_and_its_account() {
+        let all = accounts();
+        let mut funds = Funds::new();
+        funds.set_accounts(all.clone());
+        funds.set_rows(vec![Row {
+            name: None,
+            ..fixture_row(1, AccountId(1), &all, "USM", 10_000)
+        }]);
+
+        funds.begin_search();
+        let account = funds.account_name(AccountId(1)).to_string();
+        for c in format!("USM {account}").chars() {
+            funds.push_search(c);
+        }
+        assert_eq!(funds.rows().len(), 1, "{:?}", funds.rows());
     }
 
     /// The list answers "what do I hold and how is it taxed", and the two

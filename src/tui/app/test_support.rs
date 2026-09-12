@@ -376,6 +376,7 @@ pub(super) fn app_with_mixes() -> App {
         &app.db,
         "USB",
         filed,
+        Some(crate::test_support::fund_name("USB")),
         &[
             slice(AssetClass::UsBond, 7_000),
             slice(AssetClass::IntlBond, 2_500),
@@ -387,6 +388,7 @@ pub(super) fn app_with_mixes() -> App {
         &app.db,
         "ISM",
         filed,
+        Some(crate::test_support::fund_name("ISM")),
         &[
             slice(AssetClass::IntlStock, 9_500),
             slice(AssetClass::Cash, 500),
