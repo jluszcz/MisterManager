@@ -184,7 +184,9 @@ the one plan and wiring the other four test against, for the reason `app/test_su
 fixture rather than nine. `destination` is the list `e` opens on one of its destination rows. `fund`
 is the sixth screen and its form: one row per holding, filtered by investment account and by a
 search over ticker and account, with `a`/`e`/`d` adding, editing and deleting one and `g`/`G`
-refreshing what a fund is made of. Above that list it draws the allocation summary — the portfolio
+refreshing what a fund is made of. **No move key**, deliberately: a fund's place in the list is the
+order it was entered in rather than an arrangement worth making, which is why `db::holding` has no
+`reorder` where `db::account` and `db::goal` do. Above that list it draws the allocation summary — the portfolio
 by asset class against what the age rule asks for, over whatever the filters have left — whose rows
 and apportioning are `crate::allocation`'s rather than this module's, the report's Funds tab
 spelling the same ones. `recurring_goal` is the seventh screen and `recurring_txn` the

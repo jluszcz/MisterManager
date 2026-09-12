@@ -2,10 +2,9 @@ use super::date::{self, iso};
 use super::{AccountId, AllocationId, BatchId, Db, GoalId, RecurringGoalId};
 use crate::db::txn;
 use crate::money::Cents;
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
 use rusqlite::{OptionalExtension, Row, params};
-use std::str::FromStr;
 
 /// What produced a group of allocations.
 ///
@@ -23,24 +22,19 @@ pub enum BatchKind {
     Import,
 }
 
-impl BatchKind {
+text_enum!(
+    BatchKind,
+    "batch kind",
     /// Every kind, for callers that must cover them all.
-    pub const ALL: [BatchKind; 4] = [
-        BatchKind::Paycheck,
-        BatchKind::Interest,
-        BatchKind::Adhoc,
-        BatchKind::Import,
-    ];
+    [
+        Paycheck => "paycheck",
+        Interest => "interest",
+        Adhoc => "adhoc",
+        Import => "import",
+    ]
+);
 
-    pub fn as_str(self) -> &'static str {
-        match self {
-            BatchKind::Paycheck => "paycheck",
-            BatchKind::Interest => "interest",
-            BatchKind::Adhoc => "adhoc",
-            BatchKind::Import => "import",
-        }
-    }
-
+impl BatchKind {
     /// What a batch of this kind says for its rows when the writer has nothing
     /// more specific to say.
     ///
@@ -63,19 +57,6 @@ impl BatchKind {
             BatchKind::Interest => "interest",
             BatchKind::Adhoc => "one-off allocation",
             BatchKind::Import => "imported balance",
-        }
-    }
-}
-
-impl FromStr for BatchKind {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "paycheck" => Ok(BatchKind::Paycheck),
-            "interest" => Ok(BatchKind::Interest),
-            "adhoc" => Ok(BatchKind::Adhoc),
-            "import" => Ok(BatchKind::Import),
-            other => bail!("unknown batch kind {other:?}"),
         }
     }
 }
@@ -213,11 +194,6 @@ pub fn next_sort(db: &Db, container: AccountId) -> Result<i64> {
 /// Moves an undated goal to `position` among its container's undated goals,
 /// and renumbers `sort` over all of them so the column stays `0..n-1`.
 ///
-/// A position rather than a raw `sort`, for the reason `account::reorder`
-/// takes one: `sort` is read through an `ORDER BY` that breaks ties by id, so
-/// "put it third" has a result the caller can predict and "set sort to 2" has
-/// one that depends on rows the caller never saw.
-///
 /// Only the undated block, because only the undated block is ordered by hand.
 /// A dated goal takes its place from its date and keeps whatever `sort` it
 /// was carrying, which is what it falls back on if the date is ever cleared.
@@ -225,8 +201,8 @@ pub fn next_sort(db: &Db, container: AccountId) -> Result<i64> {
 /// misread what the manual order is for should hear so, not watch a move
 /// quietly not happen.
 ///
-/// A position past the end lands last rather than erroring, as a drag past
-/// the bottom of a list does.
+/// [`super::renumber_sort`] is the move itself, and says why it takes a
+/// position rather than a raw `sort`.
 pub fn reorder(db: &Db, id: GoalId, position: usize) -> Result<()> {
     db.transaction(|db| {
         let goal = get(db, id)?.with_context(|| format!("no goal with id {id}"))?;
@@ -238,23 +214,12 @@ pub fn reorder(db: &Db, id: GoalId, position: usize) -> Result<()> {
             // for the reason `move_value`'s three refusals are.
             crate::demo::text(&goal.name)
         );
-        let mut undated: Vec<Goal> = list(db, goal.container_account_id)?
+        let undated: Vec<GoalId> = list(db, goal.container_account_id)?
             .into_iter()
             .filter(|g| g.goal_date.is_none())
+            .map(|g| g.id)
             .collect();
-        let from = undated
-            .iter()
-            .position(|g| g.id == id)
-            .context("the goal was just read as open and undated, so its container lists it")?;
-        let moved = undated.remove(from);
-        undated.insert(position.min(undated.len()), moved);
-        for (sort, goal) in undated.iter().enumerate() {
-            db.conn.execute(
-                "UPDATE goal SET sort = ?2 WHERE id = ?1",
-                params![goal.id, sort as i64],
-            )?;
-        }
-        Ok(())
+        super::renumber_sort(db, "goal", &undated, id, position)
     })
 }
 

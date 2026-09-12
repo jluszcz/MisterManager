@@ -10,10 +10,9 @@
 use super::Db;
 use super::date::{self, iso};
 use crate::rate::BasisPoints;
-use anyhow::{Result, bail};
+use anyhow::Result;
 use chrono::NaiveDate;
 use rusqlite::{Row, params};
-use std::str::FromStr;
 
 /// What a slice of a fund's composition is invested in.
 ///
@@ -33,47 +32,30 @@ pub enum AssetClass {
     Unclassified,
 }
 
-impl AssetClass {
+text_enum!(
+    AssetClass,
+    "asset class",
     /// Every class, in the order the Funds screen lists a mix's slices.
     ///
     /// Beside the enum rather than on the screen, for the reason
     /// `account::InterestPolicy::ALL` is: a screen offering a subset would
     /// leave a variant unreachable with nothing to say so.
-    pub const ALL: [AssetClass; 6] = [
-        AssetClass::UsStock,
-        AssetClass::IntlStock,
-        AssetClass::UsBond,
-        AssetClass::IntlBond,
-        AssetClass::Cash,
-        AssetClass::Unclassified,
-    ];
-
-    /// This class's own place in [`AssetClass::ALL`].
     ///
-    /// Both places that accumulate a figure per class key an array by it --
-    /// `mix::classify` summing a filing's holdings, `allocation::apportion`
-    /// summing a portfolio's balances -- and a second implementation of this
-    /// mapping is a reordering of `ALL` away from mislabelling every slice
-    /// one of them produces. Derived from `ALL` rather than matched out by
-    /// hand so the two cannot come apart: there is one order, and this is it.
-    pub fn index(self) -> usize {
-        AssetClass::ALL
-            .iter()
-            .position(|class| *class == self)
-            .expect("AssetClass::ALL names every variant")
-    }
+    /// Both places that accumulate a figure per class key an array by
+    /// `index` into this order -- `mix::classify` summing a filing's
+    /// holdings, `allocation::apportion` summing a portfolio's balances --
+    /// so reordering it mislabels every slice they produce.
+    [
+        UsStock => "us_stock",
+        IntlStock => "intl_stock",
+        UsBond => "us_bond",
+        IntlBond => "intl_bond",
+        Cash => "cash",
+        Unclassified => "unclassified",
+    ]
+);
 
-    pub fn as_str(self) -> &'static str {
-        match self {
-            AssetClass::UsStock => "us_stock",
-            AssetClass::IntlStock => "intl_stock",
-            AssetClass::UsBond => "us_bond",
-            AssetClass::IntlBond => "intl_bond",
-            AssetClass::Cash => "cash",
-            AssetClass::Unclassified => "unclassified",
-        }
-    }
-
+impl AssetClass {
     /// What the Funds screen calls this class. Prose rather than the string
     /// it is stored as, the way `account::TaxTreatment::label` is.
     pub fn label(self) -> &'static str {
@@ -84,21 +66,6 @@ impl AssetClass {
             AssetClass::IntlBond => "International Bond",
             AssetClass::Cash => "Cash",
             AssetClass::Unclassified => "Unclassified",
-        }
-    }
-}
-
-impl FromStr for AssetClass {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "us_stock" => Ok(AssetClass::UsStock),
-            "intl_stock" => Ok(AssetClass::IntlStock),
-            "us_bond" => Ok(AssetClass::UsBond),
-            "intl_bond" => Ok(AssetClass::IntlBond),
-            "cash" => Ok(AssetClass::Cash),
-            "unclassified" => Ok(AssetClass::Unclassified),
-            other => bail!("unknown asset class {other:?}"),
         }
     }
 }

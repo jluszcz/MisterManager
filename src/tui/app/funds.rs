@@ -6,9 +6,10 @@
 //! that does nothing is worse than a key that is absent.
 
 use super::{Account, App, Deferred, NOTHING_SELECTED};
+use crate::allocation::Class;
 use crate::config::ADD_SEC_CONTACT;
 use crate::db::account::{self, Kind};
-use crate::db::fund_mix::{self, AssetClass};
+use crate::db::fund_mix;
 use crate::db::holding;
 use crate::mix::{self, Refreshed};
 use crate::rate::BasisPoints;
@@ -223,14 +224,14 @@ impl App {
 
 /// The stock share of a fund's composition -- U.S. plus international --
 /// out of its published slices.
+///
+/// Through [`Class`] rather than by naming the two `AssetClass` variants
+/// here. Which asset classes count as stock is that enum's to say, and the
+/// summary and the bar one panel up already ask it: a second answer at this
+/// column is one the `Stock%` beside a row could give while the panel above
+/// gave the other.
 fn stock_share(mix: &fund_mix::Mix) -> BasisPoints {
-    let bp: i64 = mix
-        .slices
-        .iter()
-        .filter(|s| matches!(s.class, AssetClass::UsStock | AssetClass::IntlStock))
-        .map(|s| s.weight.0)
-        .sum();
-    BasisPoints(bp)
+    Class::UsStock.actual(&mix.slices) + Class::IntlStock.actual(&mix.slices)
 }
 
 /// What the status line says while a refresh has the screen frozen.

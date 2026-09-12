@@ -13,6 +13,75 @@
 //! list of its own, so what a reader checks `from_row`'s indices against is
 //! in one place per table.
 
+/// The three things a column stored as `TEXT` and constrained by a `CHECK`
+/// needs of the Rust enum standing behind it: the list of variants, the token
+/// each is written as, and the reading back.
+///
+/// One list per enum rather than three, which is the point. Written out, an
+/// enum states its variants in `ALL`, again in `as_str`, and a third time in
+/// `FromStr` -- and only the last two are tied to each other by anything, by
+/// a reader's eye. A variant added to two of the three is a value that stores
+/// and never reads back, or reads back and is offered by no screen, and
+/// neither fails to compile. Here `as_str` is the one mapping, `ALL` is the
+/// one order, and `from_str` is a search of `ALL` through `as_str`, so a
+/// round trip cannot be broken by adding a variant to the wrong place: there
+/// is only one place.
+///
+/// `$what` is the noun the refusal names -- "account kind", "bill category" --
+/// so an unreadable column says which column it was.
+///
+/// What it deliberately does *not* generate is `label`: that is prose a screen
+/// shows, free to change without a migration, where `as_str` is pinned by the
+/// schema. The two coincide often enough to be worth keeping apart. It also
+/// says nothing about the `CHECK` list itself, which no Rust construction can
+/// reach -- the variants here and the tokens in `schema.sql` are still two
+/// lists that a test, and nothing else, holds together.
+macro_rules! text_enum {
+    (
+        $name:ident, $what:literal,
+        $(#[$all:meta])*
+        [$($variant:ident => $token:literal),+ $(,)?]
+    ) => {
+        impl $name {
+            $(#[$all])*
+            pub const ALL: [$name; [$($name::$variant),+].len()] = [$($name::$variant),+];
+
+            /// The token this variant is stored as, and the one the schema's
+            /// `CHECK` names. Changing one is a migration.
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $($name::$variant => $token,)+
+                }
+            }
+
+            /// This variant's own place in [`Self::ALL`].
+            ///
+            /// Derived rather than matched out by hand, so a caller keying an
+            /// array by it cannot come apart from the order above: there is
+            /// one order, and this reads it.
+            pub fn index(self) -> usize {
+                $name::ALL
+                    .iter()
+                    .position(|variant| *variant == self)
+                    .expect(concat!(stringify!($name), "::ALL names every variant"))
+            }
+        }
+
+        impl ::std::str::FromStr for $name {
+            type Err = ::anyhow::Error;
+
+            fn from_str(s: &str) -> ::anyhow::Result<Self> {
+                $name::ALL
+                    .into_iter()
+                    .find(|variant| variant.as_str() == s)
+                    .ok_or_else(|| {
+                        ::anyhow::anyhow!(concat!("unknown ", $what, " {:?}"), s)
+                    })
+            }
+        }
+    };
+}
+
 pub mod account;
 pub mod bill;
 pub mod date;
@@ -198,6 +267,43 @@ pub fn clear_imported_data(db: &Db) -> Result<()> {
 /// iterator at all.
 fn collect_rows<T>(rows: impl Iterator<Item = rusqlite::Result<T>>) -> Result<Vec<T>> {
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Moves one row to `position` within a hand-arranged block and renumbers the
+/// block's `sort` column to `0..n-1`.
+///
+/// `ordered` is the block as it stands, in its current order. Which rows form
+/// a block, and what a move among them refuses, is each table's own to say --
+/// an account's block is its kind, a goal's is the undated half of its
+/// container, and a dated goal is refused outright. What they share is the
+/// arithmetic here, which was written out at each of them until the two spellings
+/// could disagree about what a position past the end means.
+///
+/// A *position* rather than a raw `sort`: the column is only ever read through
+/// an `ORDER BY` that breaks its own ties -- by code for an account, by id for
+/// a goal -- so "put it third" has a result that does not depend on rows the
+/// caller never saw, where "set sort to 2" has one that does. A position past
+/// the end lands last, the same answer a drag past the bottom of a list gives.
+///
+/// **Must be called from inside a [`Db::transaction`]**, which every caller
+/// already opens: the renumbering is one `UPDATE` per row in the block, and a
+/// half-applied one leaves the column neither the old order nor the new.
+fn renumber_sort<Id>(db: &Db, table: &str, ordered: &[Id], id: Id, position: usize) -> Result<()>
+where
+    Id: Copy + PartialEq + rusqlite::ToSql,
+{
+    let mut ordered = ordered.to_vec();
+    let from = ordered
+        .iter()
+        .position(|other| *other == id)
+        .context("the row was just read as one of the block's own, so the block lists it")?;
+    let moved = ordered.remove(from);
+    ordered.insert(position.min(ordered.len()), moved);
+    let sql = format!("UPDATE {table} SET sort = ?2 WHERE id = ?1");
+    for (sort, id) in ordered.iter().enumerate() {
+        db.conn.execute(&sql, rusqlite::params![id, sort as i64])?;
+    }
+    Ok(())
 }
 
 fn prepare(conn: &Connection) -> Result<()> {
