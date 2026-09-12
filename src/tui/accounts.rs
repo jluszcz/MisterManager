@@ -710,9 +710,11 @@ pub fn render_form(frame: &mut Frame, form: &mut AccountForm) {
 /// The table's seven columns.
 ///
 /// Named rather than inline so a test can read them: the claim each one
-/// makes is about a set of labels it has never been handed, and checking it
-/// through the drawn table cannot distinguish a `Kind` column cut to
-/// `Investme` from the `Band` column beside it spelling the same word whole.
+/// makes is about a set of labels it has never been handed, and a drawn
+/// table cannot make that claim -- a `contains` check passes on a cut cell
+/// wherever another column spells the same word whole, which is how
+/// `Investment` stood as `Investme` in the `Kind` column this screen used to
+/// carry, with `Band` beside it spelling the word out.
 ///
 /// `Account` is the single `Constraint::Min` and absorbs the slack, so a
 /// column widened here is paid for out of the name beside it rather than out

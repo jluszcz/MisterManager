@@ -394,8 +394,9 @@ impl_scroll!(Funds, visible);
 /// out of a closed set, so it cannot be measured the way `accounts::widths`
 /// measures its five. What it is instead is **everything the row can spare**:
 /// at [`super::MIN_WIDTH`] the five fixed columns and the chrome leave
-/// sixty-eight for this and `Account` together, and `Account`'s own
-/// `Constraint::Min` claims twenty of them.
+/// sixty-nine for this and `Account` together, and `Account`'s own
+/// `Constraint::Min` claims twenty-one of them -- twenty being the floor it
+/// asks for, and the odd column falling to it as the table's one `Min`.
 ///
 /// Wide rather than narrow because of *where* a fund name carries its
 /// meaning. `... Target Retirement 2045 Fund` differs from the row above it
