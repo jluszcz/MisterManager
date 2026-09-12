@@ -12,7 +12,10 @@
 //! folding it in would leave every class short by the same unnamed fraction,
 //! which reads as an allocation rather than as a gap. What such a holding
 //! costs the summary is said where the reader can act on it: the `—` on its
-//! own row, and [`Allocation::coverage`] in the panel's title.
+//! own row, and [`Allocation::coverage`] in the panel's title. A holding whose
+//! mix exists but does not *foot* is a different case and stays inside: what
+//! that filing failed to place lands in `Unclassified`, which is
+//! [`apportion`]'s to argue.
 
 use crate::calc::fund::Targets;
 use crate::db::fund_mix::{AssetClass, Slice};
@@ -27,6 +30,23 @@ use crate::rate::BasisPoints;
 /// question about one portfolio.
 pub const UNTARGETED: [AssetClass; 2] = [AssetClass::Cash, AssetClass::Unclassified];
 
+/// The four classes the summary's mix bar splits the portfolio into, in the
+/// order it draws them: the equities, then the bonds the target rows combine.
+///
+/// **The bar is the one thing in the summary that splits the bonds**, which
+/// is what it is for -- the age rule produces one bond number, so the row
+/// beside it cannot say whether the share is domestic or foreign. What the
+/// four leave over is cash, whatever the classifier could not place, and
+/// whatever no filing placed at all; each sink draws that remainder as its
+/// own medium's "nothing here", since a bar reading as though these four were
+/// the whole portfolio would be the one way it could lie.
+pub const BAR_CLASSES: [AssetClass; 4] = [
+    AssetClass::UsStock,
+    AssetClass::IntlStock,
+    AssetClass::UsBond,
+    AssetClass::IntlBond,
+];
+
 /// The portfolio's composition, and how much of it the composition is of.
 ///
 /// `slices` foots to [`BasisPoints::ONE`] whenever there is anything to
@@ -40,8 +60,9 @@ pub struct Allocation {
     ///
     /// The other five keep their zeroes: they are the vocabulary the targets
     /// and the bar are stated in, so a zero there is an answer. `Unclassified`
-    /// is the classifier's own residual and nothing else -- a row reporting
-    /// that nothing went unplaced is a row nobody reads.
+    /// is the residual -- what the classifier could not place, plus what a
+    /// filing did not place at all -- and a row reporting that nothing went
+    /// unplaced is a row nobody reads.
     pub slices: Vec<Slice>,
     /// Holdings whose ticker has a mix on record: the summary's denominator.
     pub covered: usize,
@@ -77,17 +98,21 @@ pub fn weight(slices: &[Slice], class: AssetClass) -> BasisPoints {
 }
 
 /// Each holding's balance apportioned by its fund's composition, summed by
-/// class, as basis points of everything apportioned.
+/// class, as basis points of the covered balance.
 ///
 /// `None` for a holding's mix is a fund nobody has fetched: it counts toward
 /// [`Allocation::holdings`] and toward nothing else.
 ///
-/// **The denominator is what the mixes actually place, not the covered
-/// balance**, and the two differ only when a filing's own slices do not foot
-/// to [`BasisPoints::ONE`]. Dividing by the balance there would leave the
-/// summary a few basis points short of a hundred through no fault of the
-/// portfolio, and a total that fails to foot is the one thing this table
-/// cannot be read past.
+/// **What a filing does not place lands in `Unclassified`.** Nothing guards a
+/// `fund_mix` row's own footing, so a composition coming to 99% is reachable
+/// rather than theoretical -- and the two other answers both lose the fact.
+/// Dividing by what was placed instead of by the balance renormalises the gap
+/// away across the classes that *were* placed, which says nothing; leaving it
+/// out would foot to 99% in a table whose one unreadable state is a total
+/// that does not foot. `Unclassified` is the class that exists for exactly
+/// this, drawn only when non-zero, so routing the gap there foots *and*
+/// surfaces it as the labelled row a miss is supposed to show up as. A filing
+/// that over-foots surfaces the same way, as a negative one.
 ///
 /// Truncating each share and dividing the leftover by largest remainder is
 /// [`crate::calc::interest::pro_rata`]'s method and is here for its reason:
@@ -96,16 +121,24 @@ pub fn weight(slices: &[Slice], class: AssetClass) -> BasisPoints {
 /// break on `AssetClass::ALL` order, so one portfolio has one summary.
 pub fn apportion(holdings: &[(Cents, Option<&[Slice]>)]) -> Allocation {
     let covered = holdings.iter().filter(|(_, mix)| mix.is_some()).count();
+    let whole = i128::from(BasisPoints::ONE.0);
     let mut cents = [0i128; AssetClass::ALL.len()];
+    let mut basis = 0i128;
     for (balance, mix) in holdings {
         let Some(mix) = mix else { continue };
+        basis += i128::from(balance.0);
         for slice in *mix {
             cents[index_of(slice.class)] +=
-                i128::from(balance.0) * i128::from(slice.weight.0) / i128::from(BasisPoints::ONE.0);
+                i128::from(balance.0) * i128::from(slice.weight.0) / whole;
         }
+        // The gap in basis points rather than in cents, so the per-slice
+        // truncation above -- a few cents at most, and genuinely nobody's
+        // miss -- stays dust for the largest remainder to absorb instead of
+        // drawing an `Unclassified` row reading 0.01%.
+        let unplaced = whole - mix.iter().map(|s| i128::from(s.weight.0)).sum::<i128>();
+        cents[index_of(AssetClass::Unclassified)] += i128::from(balance.0) * unplaced / whole;
     }
 
-    let basis: i128 = cents.iter().sum();
     let mut allocation = Allocation {
         slices: Vec::new(),
         covered,
@@ -115,7 +148,6 @@ pub fn apportion(holdings: &[(Cents, Option<&[Slice]>)]) -> Allocation {
         return allocation;
     }
 
-    let whole = i128::from(BasisPoints::ONE.0);
     let mut weights = [0i64; AssetClass::ALL.len()];
     // (class index, what the floor left owing) -- who is most owed the next
     // basis point.
@@ -334,17 +366,53 @@ mod tests {
         assert_eq!(apportion(&with_a_stranger).holdings, 2);
     }
 
-    /// A filing whose own slices come to 99% is the portfolio's problem to
-    /// report, not the summary's to absorb into a total that will not foot.
+    /// A filing whose own slices come to 99% is a miss, and a miss has to
+    /// surface as the labelled row it is rather than being renormalised away
+    /// across the classes that were placed.
     #[test]
-    fn a_mix_that_does_not_foot_still_leaves_the_summary_footing() {
+    fn what_a_mix_does_not_place_lands_in_unclassified_rather_than_renormalising() {
         let short = slices(&[(AssetClass::UsStock, 9_900)]);
         let held = [(Cents::from_dollars(1_000), Some(short.as_slice()))];
         let allocation = apportion(&held);
+
         assert_eq!(
             weight(&allocation.slices, AssetClass::UsStock),
-            BasisPoints::ONE
+            BasisPoints(9_900),
+            "the placed share was inflated to cover the gap"
         );
+        assert_eq!(
+            weight(&allocation.slices, AssetClass::Unclassified),
+            BasisPoints(100),
+            "the gap went unreported"
+        );
+        let total: i64 = allocation.slices.iter().map(|s| s.weight.0).sum();
+        assert_eq!(total, BasisPoints::ONE.0);
+    }
+
+    /// Each slice's share of a balance is truncated to the cent, so a mix
+    /// that foots perfectly can still leave a few cents over. That is dust
+    /// rather than a miss, and an `Unclassified` row reading `0.01%` would
+    /// report the classifier for the arithmetic's rounding.
+    #[test]
+    fn the_cents_a_perfect_mix_rounds_away_are_not_reported_as_unclassified() {
+        let thirds = slices(&[
+            (AssetClass::UsStock, 3_333),
+            (AssetClass::IntlStock, 3_333),
+            (AssetClass::UsBond, 3_334),
+        ]);
+        let held = [(Cents(10_001), Some(thirds.as_slice()))];
+        let allocation = apportion(&held);
+
+        assert!(
+            !allocation
+                .slices
+                .iter()
+                .any(|s| s.class == AssetClass::Unclassified),
+            "rounding dust was drawn as a classifier miss: {:?}",
+            allocation.slices
+        );
+        let total: i64 = allocation.slices.iter().map(|s| s.weight.0).sum();
+        assert_eq!(total, BasisPoints::ONE.0);
     }
 
     #[test]

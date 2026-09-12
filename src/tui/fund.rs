@@ -38,7 +38,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line as TextLine;
-use ratatui::widgets::{Block, Cell, Padding, Row as TableRow, Table};
+use ratatui::widgets::{Block, Cell, Padding, Paragraph, Row as TableRow, Table};
 use std::collections::HashMap;
 
 /// One holding, as the Funds screen lists it.
@@ -358,22 +358,81 @@ fn summary_lines(allocation: &Allocation) -> u16 {
         .iter()
         .filter(|s| UNTARGETED.contains(&s.class))
         .count();
-    2 + super::HEADER_LINES + (TargetClass::ALL.len() + untargeted) as u16
+    2 + super::HEADER_LINES + (TargetClass::ALL.len() + untargeted) as u16 + BAR_LINES
 }
 
-/// Class, Mix, Target, Actual, Δ -- the three classes the age rule targets,
-/// then the ones it does not.
+/// The one line [`summary_bar`] and its legend take, under the table.
+const BAR_LINES: u16 = 1;
+
+/// How many glyph cells the four-class bar spends.
 ///
-/// One table rather than a stack of bars: the rows are what the rule targets
-/// and the bar beside them is what the portfolio actually holds, and reading
-/// the second against the first is the only reason to draw either. The bar is
-/// [`mix_bar`], the same fourteen glyphs the list below spends on one fund,
-/// so a class's share and a holding's share are read off the same scale.
+/// Fixed rather than the panel's width, for the reason [`MIX_BAR_WIDTH`] is:
+/// a glyph run truncates from the right like text, where a cell sized off the
+/// terminal would reflow every segment as the window moved. Forty is what
+/// makes the smallest segment worth drawing -- one glyph is 2.5%, and an
+/// international-bond sliver below that is the thing the bar exists to show.
+const SUMMARY_BAR_WIDTH: usize = 40;
+
+/// One glyph per [`allocation::BAR_CLASSES`] entry, in that order.
+///
+/// Four marks rather than four colours: what a colour *is* is `tui::style`'s
+/// to say and no class has one yet, and a bar that only reads in colour reads
+/// as nothing in the report beside it. The legend is drawn with them, since
+/// four shades in a fixed order is a key a reader would otherwise have to
+/// hold.
+const BAR_GLYPHS: [&str; 4] = ["█", "▓", "▒", "▚"];
+
+/// What the four leave over: cash, the classifier's residual, and whatever no
+/// filing placed. The same glyph the per-row bar below spends on the share a
+/// fund does *not* hold, so "nothing of mine is here" is one mark on this
+/// screen rather than two.
+const BAR_REST: &str = "░";
+
+/// The whole portfolio as one bar: the two equity classes, then the two bond
+/// classes the target rows combine.
+///
+/// **This is the one thing in the summary that splits the bonds.** The age
+/// rule produces a single bond number, so the row beside it cannot say whether
+/// the share is domestic or foreign, and a bar per row would have said nothing
+/// the `Actual` cell one column to its right did not already.
+///
+/// Segments are cut at the *cumulative* share and differenced, rather than
+/// each rounded on its own: that is what keeps them summing to the bar's own
+/// width, so the tail is exactly what the four classes leave rather than a
+/// glyph of accumulated rounding.
+fn summary_bar(slices: &[Slice]) -> String {
+    let width = SUMMARY_BAR_WIDTH as i64;
+    let mut bar = String::new();
+    let mut cumulative = 0i64;
+    let mut drawn = 0i64;
+    for (glyph, class) in BAR_GLYPHS.iter().zip(allocation::BAR_CLASSES) {
+        cumulative += allocation::weight(slices, class).0;
+        // Monotonic whatever the weights are: a negative `Unclassified` --
+        // a filing that over-foots -- puts the four classes past 100%
+        // between them, and a bar that ran backwards would draw a segment
+        // over the one before it.
+        let end = (cumulative.clamp(0, BasisPoints::ONE.0) * width / BasisPoints::ONE.0).max(drawn);
+        bar.push_str(&glyph.repeat((end - drawn) as usize));
+        drawn = end;
+    }
+    bar + &BAR_REST.repeat((width - drawn) as usize)
+}
+
+/// Class, Target, Actual, Δ, with the four-class bar and its legend beneath.
+///
+/// One table rather than a stack of bars: the rows are what the age rule
+/// targets and the bar is what the portfolio holds, and reading the second
+/// against the first is the only reason to draw either.
+///
+/// **The bar takes a line of its own rather than a column of the table.** A
+/// fourteen-glyph cell splits four ways into three glyphs each, which cannot
+/// show a bond split at all, and the bar is *one* statement about the whole
+/// portfolio where a table column is one per row.
 ///
 /// `Cash` keeps its row at zero and `Unclassified` does not have one: cash is
-/// part of what the bar accounts for, while the classifier's residual is a
-/// defect report, and a defect report reading "none" every time is one
-/// nobody finishes reading.
+/// part of what the bar accounts for, while the residual is a defect report,
+/// and a defect report reading "none" every time is one nobody finishes
+/// reading.
 fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
     let allocation = funds.allocation();
     let percent = |bp: Option<BasisPoints>| {
@@ -392,7 +451,6 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
         .map(|row| {
             TableRow::new(vec![
                 Cell::from(row.class.label()),
-                Cell::from(mix_bar(Some(row.actual))),
                 percent(row.target),
                 percent(Some(row.actual)),
                 percent(row.delta),
@@ -407,7 +465,6 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
             .map(|slice| {
                 TableRow::new(vec![
                     Cell::from(slice.class.label()),
-                    Cell::from(mix_bar(Some(slice.weight))),
                     // No target and so no gap: the age rule says nothing
                     // about cash, and a target for money the classifier
                     // could not place would be a claim about nothing.
@@ -420,7 +477,6 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
 
     let header = TableRow::new(vec![
         Cell::from("Class"),
-        Cell::from("Mix"),
         right_header("Target"),
         right_header("Actual"),
         right_header("Δ"),
@@ -432,7 +488,6 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
     // other way carries.
     let widths = [
         Constraint::Min(20),
-        Constraint::Length(MIX_BAR_WIDTH as u16),
         Constraint::Length(7),
         Constraint::Length(7),
         Constraint::Length(8),
@@ -442,15 +497,34 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
         None => "Allocation".to_string(),
         Some(coverage) => format!("Allocation · {coverage}"),
     };
+    // The block is drawn first and the two halves into what it leaves, rather
+    // than handed to the table: the bar is not a row, and a table owning the
+    // border would have no line below itself to put one on.
+    let block = Block::bordered()
+        .title(title)
+        .padding(Padding::right(GUTTER));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [table_area, bar_area] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(BAR_LINES)]).areas(inner);
     frame.render_widget(
-        Table::new(rows, widths)
-            .header(header.height(super::HEADER_LINES))
-            .block(
-                Block::bordered()
-                    .title(title)
-                    .padding(Padding::right(GUTTER)),
-            ),
-        area,
+        Table::new(rows, widths).header(header.height(super::HEADER_LINES)),
+        table_area,
+    );
+
+    let legend = BAR_GLYPHS
+        .iter()
+        .zip(allocation::BAR_CLASSES)
+        .map(|(glyph, class)| format!("{glyph} {}", class.label()))
+        .collect::<Vec<_>>()
+        .join("  ");
+    frame.render_widget(
+        Paragraph::new(TextLine::from(format!(
+            "{}  {legend}",
+            summary_bar(&allocation.slices)
+        ))),
+        bar_area,
     );
 }
 
@@ -931,6 +1005,99 @@ mod tests {
                 "the summary crowded {ticker} off the list: {lines:#?}"
             );
         }
+    }
+
+    /// Every class represented, so the bar has four segments to draw rather
+    /// than three and a gap. `funds_with_mixes` deliberately does not: it
+    /// mirrors the app fixture, whose unfetched `USM` is what leaves the U.S.
+    /// stock row at nothing.
+    fn funds_fully_priced() -> Funds {
+        let mut funds = funds_with_mixes();
+        let mut mixes = HashMap::from([(
+            "USM".to_string(),
+            vec![Slice {
+                class: AssetClass::UsStock,
+                weight: BasisPoints::ONE,
+            }],
+        )]);
+        for (ticker, slices) in funds.mixes.clone() {
+            mixes.insert(ticker, slices);
+        }
+        funds.set_mixes(mixes);
+        funds
+    }
+
+    /// $10,000 all U.S. stock, $5,000 of a 70/25/5 bond fund and $3,000 of a
+    /// 95/5 international fund, over $18,000: 55.56 / 15.83 / 19.45 / 6.94,
+    /// with cash taking the 2.22 the four leave.
+    ///
+    /// The bar cuts at the cumulative share, so its segments are that split
+    /// scaled to forty glyphs -- 22, 6, 8, 3 -- and the tail is the one glyph
+    /// the four do not account for.
+    #[test]
+    fn the_mix_bar_is_one_run_of_four_segments_in_the_portfolios_own_proportions() {
+        let funds = funds_fully_priced();
+        let summary = funds.summary();
+        assert_eq!(
+            allocation::weight(&summary, AssetClass::UsStock),
+            BasisPoints(5_556)
+        );
+
+        let bar = summary_bar(&summary);
+        assert_eq!(
+            bar,
+            "█".repeat(22) + &"▓".repeat(6) + &"▒".repeat(8) + &"▚".repeat(3) + "░"
+        );
+        assert_eq!(bar.chars().count(), SUMMARY_BAR_WIDTH);
+    }
+
+    /// The bond classes are two segments where the rows above are one, which
+    /// is the whole of what the bar adds: the age rule produces a single bond
+    /// number, so nothing else on the panel can say which half is which.
+    #[test]
+    fn the_bar_splits_the_bonds_the_target_rows_combine() {
+        let funds = funds_fully_priced();
+        let lines = drawn(&funds, 24);
+        let bar = lines
+            .iter()
+            .find(|l| l.contains("▚"))
+            .expect("the bar is drawn");
+
+        for (glyph, class) in BAR_GLYPHS.iter().zip(allocation::BAR_CLASSES) {
+            assert!(
+                bar.contains(&format!("{glyph} {}", class.label())),
+                "{class:?} is drawn with no legend: {bar:?}"
+            );
+        }
+        let bonds = funds
+            .summary_row(TargetClass::Bonds)
+            .expect("a Bonds row")
+            .actual;
+        assert_eq!(
+            bonds,
+            BasisPoints(1_945 + 694),
+            "the row combines what the bar splits"
+        );
+    }
+
+    /// A `None` target has to reach the cells, not only the model: a bond
+    /// share nobody has a birth date for is a question, and `0.00%` in either
+    /// column would read as advice.
+    #[test]
+    fn a_bond_target_with_no_birth_date_draws_an_em_dash_in_both_of_its_cells() {
+        let mut funds = funds_with_mixes();
+        funds.set_targets(crate::calc::fund::targets(None, BasisPoints(4_000)));
+
+        let lines = drawn(&funds, 24);
+        let bonds = lines
+            .iter()
+            .find(|l| l.contains("Bonds"))
+            .expect("the Bonds row is drawn");
+        super::super::ends_in_order(bonds, &["—", "59.37%", "—"]);
+        assert!(
+            !bonds.contains("0.00%"),
+            "a missing target drew a zero: {bonds:?}"
+        );
     }
 
     /// The panel is a claim about the whole list, so it says when it is not
