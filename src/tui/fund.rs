@@ -1800,11 +1800,12 @@ mod tests {
     /// set: the widest treatment, drawn whole.
     ///
     /// It passes at any width the labels happen to fit in, which is the
-    /// point -- the column was a hardcoded `13` that fit `Tax-deferred` by
-    /// two characters of luck, and the only test over it named `Taxable`,
-    /// seven characters, so a variant renamed longer would have truncated
-    /// here with nothing going red. The Accounts screen paid for exactly
-    /// that on its `Kind` column.
+    /// point -- the column was a hardcoded `13` with `Tax-deferred`, twelve
+    /// characters, the longest thing it could hold, and the only test over
+    /// it named `Taxable`, seven. One character of slack, and nothing
+    /// measuring it: a variant renamed longer would have truncated here with
+    /// nothing going red. The Accounts screen paid for exactly that on its
+    /// `Kind` column.
     #[test]
     fn the_widest_tax_treatment_is_drawn_whole_at_the_minimum_width() {
         let all = accounts();

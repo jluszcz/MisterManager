@@ -342,8 +342,8 @@ every label it can hold.
 `label_width` sits in `tui/mod.rs` rather than on the screen that first needed it, for
 `right_header`'s reason and one better: **the Accounts and Funds screens both draw a column off
 `TaxTreatment::ALL`**, and a number on one of them is a width the other's list can outgrow in
-silence. That is not hypothetical — the Funds column was a hardcoded `13` that cleared
-`Tax-deferred` by two characters, with the only test over it naming `Taxable`, seven.
+silence. That is not hypothetical — the Funds column was a hardcoded `13` against a longest label
+of twelve, with the only test over it naming `Taxable`, seven: one character of slack, unmeasured.
 `fund::the_widest_tax_treatment_is_drawn_whole_at_the_minimum_width` is what asks after the widest
 of the set now, on the screen that had no such question.
 

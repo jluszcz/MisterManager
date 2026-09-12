@@ -1286,13 +1286,15 @@ mod tests {
     ///
     /// **Every label in each closed set, not every label the fixture
     /// happens to hold.** The five label columns take their widths from
-    /// `Kind::ALL`, `Group::ALL`, `InterestPolicy::ALL`, `SavingsBlock::ALL`
-    /// and `Source::ALL`, so those are the lists a width has to be checked
-    /// against -- a fixture with no investment account in it never drew
-    /// `Investment`, which is the one `Kind` label that was wider than the
-    /// column it had, and the truncation it reported as `Investme` went
-    /// unseen for exactly that reason. A variant added to any of the five
-    /// now fails here rather than in a screenshot.
+    /// `Group::ALL`, `InterestPolicy::ALL`, `SavingsBlock::ALL`,
+    /// `TaxTreatment::ALL` and `Source::ALL`, so those are the lists a width
+    /// has to be checked against -- a fixture with no investment account in
+    /// it draws neither `Investment`, the widest label `Band` can hold, nor
+    /// `Tax-deferred`, the widest `Tax` ever holds. That is how `Investment`
+    /// went on reporting itself as `Investme` from the `Kind` column this
+    /// screen no longer has: the widest content the column could take was
+    /// never drawn. A variant added to any of the five now fails here rather
+    /// than in a screenshot.
     #[test]
     fn every_column_fits_the_minimum_width() {
         let mut accounts = screen();
