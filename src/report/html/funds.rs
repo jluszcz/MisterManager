@@ -63,9 +63,22 @@ const SUMMARY_HEADER: [(&str, &str); 4] = [
     ("\u{394}", "n"),
 ];
 
-/// The holdings' header, in the screen's wording less the two columns this
-/// medium answers differently: the account is the heading above the table,
-/// and the per-fund mix bar is the section's own bar one block up.
+/// The holdings' header: the screen's own wording, three of its six columns
+/// short.
+///
+/// `Account` is the heading above the table, so no column is spent on it.
+/// `Mix` and `Stock%` are one quantity drawn twice -- a bar and the figure
+/// beside it, both of them *one fund's* stock share -- and neither is here:
+/// that share is `tui::app::funds::stock_share`'s two-class sum, private to
+/// the module that feeds the screen, and spelling it again on this page would
+/// be a second reading of what counts as stock.
+///
+/// **So a fund's own composition is not on this page anywhere.** The bar one
+/// block up is a different quantity at a different granularity -- the whole
+/// account apportioned across four classes -- and it cannot say which of the
+/// rows below it is the bond fund. That is what the tab costs a reader on a
+/// phone, and it is the price of not having two answers on record to one
+/// question about one fund.
 const HOLDINGS_HEADER: [(&str, &str); 3] = [("Ticker", ""), ("Balance", "n"), ("As of", "d")];
 
 /// A header row, each cell aligned the way the column under it is -- a
@@ -212,6 +225,21 @@ fn section(account_allocation: &AccountAllocation) -> String {
     html
 }
 
+/// Nothing entered: no investment account holds a holding.
+///
+/// Named rather than written into [`sections`], and named apart from
+/// [`NO_COMPOSITION`], because telling the two nothings apart is the whole
+/// of what the sentences do -- a test standing in one branch says which by
+/// the constant it reads rather than by restating prose it would then drift
+/// from.
+const NO_HOLDINGS: &str =
+    "<p>No holdings are on record, so there is nothing to look through yet.</p>";
+
+/// Holdings, but no filing behind a single one of them: the state every
+/// database is in until something populates `fund_mix`.
+const NO_COMPOSITION: &str =
+    "<p>No fund composition has been fetched, so there is nothing to look through yet.</p>";
+
 /// The portfolio, then one stacked section per investment account.
 ///
 /// Each empty state says which one it is in a sentence. An empty
@@ -221,16 +249,11 @@ fn section(account_allocation: &AccountAllocation) -> String {
 /// the row's cells empty.
 pub(super) fn sections(allocation: &Allocation) -> String {
     if allocation.accounts.is_empty() {
-        return "<p>No holdings are on record, so there is nothing to look \
-                through yet.</p>"
-            .to_string();
+        return NO_HOLDINGS.to_string();
     }
     let mut html = String::new();
     if allocation.summary.is_empty() {
-        html.push_str(
-            "<p>No fund composition has been fetched, so there is nothing to \
-             look through yet.</p>",
-        );
+        html.push_str(NO_COMPOSITION);
     } else {
         html.push_str("<h3>Allocation</h3>");
         html.push_str(&coverage(&allocation.lookthrough));
@@ -457,7 +480,9 @@ mod tests {
     }
 
     /// A database nobody has entered a holding into is not a tab that failed
-    /// to build, and an empty panel cannot say which it is.
+    /// to build -- and it is not a database whose funds nobody has fetched a
+    /// filing for either. Both draw one sentence and no table, so the
+    /// sentence itself is the only thing that tells them apart.
     #[test]
     fn a_database_with_no_holdings_says_so_in_a_sentence() {
         let mut snapshot = snapshot(vec![], 1_000);
@@ -467,11 +492,7 @@ mod tests {
             accounts: Vec::new(),
         };
         let panel = funds_panel(&snapshot);
-        assert!(panel.contains("<p>"), "the tab renders nothing at all");
-        assert!(
-            !panel.contains("<table"),
-            "an empty table was drawn: {panel}"
-        );
+        assert_eq!(panel, super::NO_HOLDINGS, "the wrong nothing, or a table");
     }
 
     /// Holdings with no filing behind any of them still list: the screen
@@ -504,6 +525,13 @@ mod tests {
         assert!(
             !panel.contains("<th class=\"n\">Target</th>"),
             "a summary was drawn against no composition: {panel}"
+        );
+        // The other nothing: these holdings exist, and a sentence saying
+        // none do would send the owner looking for rows on the screen in
+        // front of them.
+        assert!(
+            panel.contains(super::NO_COMPOSITION),
+            "the wrong nothing: {panel}"
         );
     }
 }
