@@ -721,10 +721,10 @@ fn widths() -> [Constraint; 7] {
     [
         Constraint::Length(CODE_WIDTH),
         Constraint::Min(16),
-        label_width("Tax", TaxTreatment::ALL.iter().map(|t| t.label())),
         label_width("Band", Group::ALL.iter().map(|g| g.label())),
         label_width("Interest", InterestPolicy::ALL.iter().map(|p| p.label())),
         label_width("Savings", SavingsBlock::ALL.iter().map(|b| b.label())),
+        label_width("Tax", TaxTreatment::ALL.iter().map(|t| t.label())),
         label_width("Default", [defaults_label(&Source::ALL)]),
     ]
 }
@@ -739,7 +739,6 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
             TableRow::new(vec![
                 Cell::from(crate::demo::text(&r.code).into_owned()),
                 account_cell(&r.account),
-                tax_treatment_cell(r.tax),
                 Cell::from(r.group.label()),
                 // Only a cash account holds goals, so only a cash account has
                 // an interest posting to divide.
@@ -751,6 +750,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
                     Some(block) => block.label(),
                     None => "—",
                 }),
+                tax_treatment_cell(r.tax),
                 Cell::from(defaults_label(&r.defaults)),
             ])
         })
@@ -767,10 +767,10 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
     let header = TableRow::new(vec![
         Cell::from("Code"),
         Cell::from("Account"),
-        Cell::from("Tax"),
         Cell::from("Band"),
         Cell::from("Interest"),
         Cell::from("Savings"),
+        Cell::from("Tax"),
         Cell::from("Default"),
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
@@ -1256,6 +1256,31 @@ mod tests {
             .collect()
     }
 
+    /// The seven columns are drawn in one order, and it is this one.
+    ///
+    /// `ends_in_order` refuses a label it cannot find *past* the one before
+    /// it, so this fails on a permutation where a `contains` per header
+    /// would pass on all seven. Worth pinning because the order is stated in
+    /// three places that have to agree -- `widths`, the header row and the
+    /// cells -- and a reordering that moves two of the three draws every
+    /// cell of one column under another column's heading, which is a wrong
+    /// answer rather than a missing one.
+    #[test]
+    fn the_columns_are_drawn_in_one_order() {
+        let accounts = screen();
+        let table = drawn(&accounts);
+        let header = table
+            .iter()
+            .find(|line| line.contains("Code"))
+            .expect("the header was not drawn");
+        crate::tui::ends_in_order(
+            header,
+            &[
+                "Code", "Account", "Band", "Interest", "Savings", "Tax", "Default",
+            ],
+        );
+    }
+
     /// Every column's widest plausible content, whole. A truncated cell here
     /// would report an account as being in a band it is not in.
     ///
@@ -1288,11 +1313,11 @@ mod tests {
         for expected in [
             "Code",
             "Account",
-            "Tax",
-            "Tax-deferred",
             "Band",
             "Interest",
             "Savings",
+            "Tax",
+            "Tax-deferred",
             "Default",
             "CHK",
             "Everyday Card",
@@ -1336,21 +1361,21 @@ mod tests {
         let labels = |iter: &mut dyn Iterator<Item = &'static str>| {
             iter.map(str::to_string).collect::<Vec<String>>()
         };
+        check(2, "Band", labels(&mut Group::ALL.iter().map(|g| g.label())));
         check(
-            2,
-            "Tax",
-            labels(&mut TaxTreatment::ALL.iter().map(|t| t.label())),
-        );
-        check(3, "Band", labels(&mut Group::ALL.iter().map(|g| g.label())));
-        check(
-            4,
+            3,
             "Interest",
             labels(&mut InterestPolicy::ALL.iter().map(|p| p.label())),
         );
         check(
-            5,
+            4,
             "Savings",
             labels(&mut SavingsBlock::ALL.iter().map(|b| b.label())),
+        );
+        check(
+            5,
+            "Tax",
+            labels(&mut TaxTreatment::ALL.iter().map(|t| t.label())),
         );
         check(6, "Default", vec![defaults_label(&Source::ALL)]);
     }

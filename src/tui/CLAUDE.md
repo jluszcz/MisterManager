@@ -1028,10 +1028,17 @@ deferred to nothing.
     sets it and the screen that groups holdings by it. The dash is the idiom `Interest` already
     gives a card and `Savings` an account that is no container: the field is unrepresentable on
     that row rather than unanswered, which is the `Option` on `accounts::Row::tax` reading the
-    schema's paired `CHECK` back. It leads the `Band` column, which is the nearest thing to the
-    kind the table still draws. The cell itself is `tui::tax_treatment_cell`, shared with the
-    Funds screen's column of the same name, so the screen that *sets* a treatment and the screen
-    that groups holdings by one cannot come to spell it two ways.
+    schema's paired `CHECK` back. It sits after `Savings`, at the end of the run of columns that
+    mean something for one kind and draw a dash for the rest, rather than beside the `Band` that
+    decides which kind it is — the three read down as a group that way, and `Default` stays last
+    where its own long cell has always been. The cell itself is `tui::tax_treatment_cell`, shared
+    with the Funds screen's column of the same name, so the screen that *sets* a treatment and the
+    screen that groups holdings by one cannot come to spell it two ways.
+    **What the column order is, is `the_columns_are_drawn_in_one_order`'s to hold**, over
+    `ends_in_order` rather than a `contains` per header: the order is stated in three places that
+    have to agree — `widths`, the header row and the cells — and a reordering that moves two of
+    the three draws every cell of one column under another column's heading, which is a wrong
+    answer rather than a missing one.
   - **The `Savings` field is the one thing on this screen an import *reads*.** Every other field is
     a placement the import leaves alone; this one gates it, because the sheet names its two blocks
     by position and carries no account code, so until both are pointed at a container `mm import`
