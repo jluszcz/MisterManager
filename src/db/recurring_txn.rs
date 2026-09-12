@@ -12,11 +12,10 @@
 use super::date::{self, iso};
 use super::{AccountId, Db, RecurringTxnId};
 use crate::money::Cents;
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
 use rusqlite::{OptionalExtension, Row, params};
 use std::collections::HashMap;
-use std::str::FromStr;
 
 /// How often a recurring transaction comes round.
 ///
@@ -30,27 +29,16 @@ pub enum Cadence {
     Monthly,
 }
 
-impl Cadence {
-    pub const ALL: [Cadence; 2] = [Cadence::Biweekly, Cadence::Monthly];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Cadence::Biweekly => "biweekly",
-            Cadence::Monthly => "monthly",
-        }
-    }
-}
-
-impl FromStr for Cadence {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "biweekly" => Ok(Cadence::Biweekly),
-            "monthly" => Ok(Cadence::Monthly),
-            other => bail!("unknown recurring transaction cadence {other:?}"),
-        }
-    }
-}
+text_enum!(
+    Cadence,
+    "recurring transaction cadence",
+    /// Both cadences, in the order the recurring-transaction form's selector
+    /// cycles them.
+    [
+        Biweekly => "biweekly",
+        Monthly => "monthly",
+    ]
+);
 
 /// A recurring transaction to be recorded, before it has an id.
 ///

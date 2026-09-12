@@ -7,9 +7,8 @@
 
 use super::{BillId, Db};
 use crate::money::Cents;
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use rusqlite::{OptionalExtension, Row, params};
-use std::str::FromStr;
 
 /// Which subtotal a bill belongs to.
 ///
@@ -22,28 +21,15 @@ pub enum Category {
     Other,
 }
 
-impl Category {
+text_enum!(
+    Category,
+    "bill category",
     /// Both categories, for callers that must cover each.
-    pub const ALL: [Category; 2] = [Category::Housing, Category::Other];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Category::Housing => "housing",
-            Category::Other => "other",
-        }
-    }
-}
-
-impl FromStr for Category {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "housing" => Ok(Category::Housing),
-            "other" => Ok(Category::Other),
-            other => bail!("unknown bill category {other:?}"),
-        }
-    }
-}
+    [
+        Housing => "housing",
+        Other => "other",
+    ]
+);
 
 /// A bill to be recorded, before it has an id.
 #[derive(Clone, Debug)]

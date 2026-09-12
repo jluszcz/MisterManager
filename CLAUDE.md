@@ -248,9 +248,16 @@ Anything the schema constrains has a Rust type that says the same thing, so the
 `CHECK` is a backstop rather than the only guard: `account::Kind`, `account::Group`,
 `account::TaxTreatment`, `recurring_goal::Cadence`, `goal::BatchKind`, and one id type per table
 (`db::AccountId`, `db::GoalId`, …, `db::HoldingId`, in `src/db/id.rs`, which carry their own
-`ToSql`/`FromSql`). When you add a table or a constrained column, add the type
-too — and when you add an enum variant, check the schema's `CHECK` list still
-matches, since nothing but a test ties them together.
+`ToSql`/`FromSql`). When you add a table or a constrained column, add the type too.
+
+**Each of those enums is declared by `text_enum!`, one variant-to-token list per enum**, which
+generates `ALL`, `as_str`, `index` and `FromStr` from it. Written out they are three lists — the
+order, the writing, the reading back — and a variant added to two of the three stores and never
+reads back, or reads back and is offered by no screen, with nothing failing to compile. What the
+macro cannot reach is the schema's own `CHECK` list, which is not Rust: adding a variant still
+means checking that list, since nothing but a test ties the two together. A `label` stays
+hand-written beside the macro — it is prose a screen shows, free to change without a migration,
+where `as_str` is pinned by the schema.
 
 ## Invariants worth knowing before editing
 
@@ -284,8 +291,9 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   rather than duplicated, since `import::constants` skips a code the kind already holds.
   The code match **folds case**, in `account::by_code` and in the index under it, or a code typed
   `chk` against a sheet that later spells it `CHK` would split one real account across two rows.
-  What `insert`, `by_code` and `reorder` each refuse — and why `reorder` takes a *position* rather
-  than a raw `sort` — they say at their own definitions in `db::account`.
+  What `insert`, `by_code` and `reorder` each refuse they say at their own definitions in
+  `db::account`; why a reorder takes a *position* rather than a raw `sort` is
+  `db::renumber_sort`'s, which is the move itself.
 - **An account's color is a name, and having none is a supported state rather than a gap.**
   `account.color` holds an `account::AccountColor` as `TEXT` with the schema's `CHECK` behind it —
   the construction `kind`, `grp` and `interest_policy` already use — because an index into a
@@ -374,6 +382,16 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   column's.
 - **`holding` and `fund_mix` are in `PRESERVED_TABLES`**, and the reason is uniform: the workbook
   carries neither, so a `--replace` has nothing to say about them.
+- **`holding.sort` is the order the holdings were entered in, and the Funds screen binds no key
+  that changes it.** A fund's place in a list is not an arrangement worth making — what a reader
+  wants from that screen is the summary above it and the search across it — so unlike `account`
+  and `goal` there is no `reorder` here and nothing ever renumbers the column. That makes the two
+  writers the whole of its story, and both owe an append: `holding::insert` places a new row past
+  what its account already holds, and `holding::update` does the same for one moved *into* an
+  account, since a `sort` carried across from the account it left names a place among rows it has
+  never been beside and leaves the destination holding that value twice. A holding staying put
+  keeps its place. Adding a move key means adding the renumbering with it — `db::renumber_sort` is
+  what `account` and `goal` reach for — and not before.
 - **A ticker is uppercased once, where it is typed.** It is a key in three places and not one of
   them folds case: `holding`'s `UNIQUE (account_id, ticker)`, `db::holding`'s `insert` and `update`
   duplicate guards, and `fund_mix`'s `PRIMARY KEY (ticker, asset_class)`, which is looked up by the
@@ -728,10 +746,10 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   Among dated goals `sort` survives only as a tiebreak between two falling on the same day, which is
   what stops an arrangement made in the undated block from reordering a deadline; a dated goal keeps
   whatever `sort` it carries, and that is what it falls back on if the date is ever cleared.
-  `goal::reorder` is the block's one writer and takes a *position* rather than a raw `sort`, for the
-  reason `account::reorder` does — it renumbers the whole undated block, so "put it third" has a
-  result that does not depend on rows the caller never saw. It refuses a dated goal rather than
-  renumbering around it.
+  `goal::reorder` is the block's one writer, and refuses a dated goal rather than renumbering
+  around it. What it shares with `account::reorder` is `db::renumber_sort`: each decides which rows
+  form its block and what it refuses, and the move itself — a position rather than a raw `sort`,
+  clamped past the end — is stated once there.
 - **`goal.favorite`, `goal.floating` and `goal.note` are the owner's, and a `--replace` takes all
   three away.** None is a fact the sheet carries and none is written by any import. `f` on Savings
   toggles the first, and `goal::set_favorite` is that column's one writer — not a field on

@@ -1,9 +1,8 @@
 use super::{Db, RecurringGoalId};
 use crate::money::Cents;
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use rusqlite::{OptionalExtension, Row, params};
 use std::collections::HashMap;
-use std::str::FromStr;
 
 /// How often a recurring goal entry comes round.
 ///
@@ -16,8 +15,6 @@ pub enum Cadence {
 }
 
 impl Cadence {
-    pub const ALL: [Cadence; 2] = [Cadence::Annual, Cadence::Biennial];
-
     /// How many years one round covers -- the divisor beside
     /// `key::PAY_PERIODS_PER_YEAR` when a round's cost is spread over the
     /// paychecks before it comes round again. On the cadence rather than
@@ -29,25 +26,18 @@ impl Cadence {
             Cadence::Biennial => 2,
         }
     }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Cadence::Annual => "annual",
-            Cadence::Biennial => "biennial",
-        }
-    }
 }
 
-impl FromStr for Cadence {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "annual" => Ok(Cadence::Annual),
-            "biennial" => Ok(Cadence::Biennial),
-            other => bail!("unknown recurring goal cadence {other:?}"),
-        }
-    }
-}
+text_enum!(
+    Cadence,
+    "recurring goal cadence",
+    /// Both cadences, in the order the recurring-goal form's selector cycles
+    /// them.
+    [
+        Annual => "annual",
+        Biennial => "biennial",
+    ]
+);
 
 /// A recurring goal to be created, before it has an id.
 #[derive(Clone, Debug)]

@@ -2,7 +2,6 @@ use super::{AccountId, Db};
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::{OptionalExtension, Result as SqlResult, Row, ToSql, params};
-use std::str::FromStr;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -14,21 +13,21 @@ pub enum Kind {
     Investment,
 }
 
-impl Kind {
+text_enum!(
+    Kind,
+    "account kind",
     /// Every kind, in the order the Accounts screen's `a` selector cycles
     /// them. Beside the enum rather than on the screen, for
     /// [`InterestPolicy::ALL`]'s reason: a screen offering a subset would
     /// leave a variant unreachable with nothing to say so.
-    pub const ALL: [Kind; 3] = [Kind::Cash, Kind::Credit, Kind::Investment];
+    [
+        Cash => "cash",
+        Credit => "credit",
+        Investment => "investment",
+    ]
+);
 
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Kind::Cash => "cash",
-            Kind::Credit => "credit",
-            Kind::Investment => "investment",
-        }
-    }
-
+impl Kind {
     /// What the Overview labels this kind's total row, and what the Accounts
     /// screen's `Kind` column and its `a` selector call it.
     pub fn label(self) -> &'static str {
@@ -36,18 +35,6 @@ impl Kind {
             Kind::Cash => "Cash",
             Kind::Credit => "Credit",
             Kind::Investment => "Investment",
-        }
-    }
-}
-
-impl FromStr for Kind {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "cash" => Ok(Kind::Cash),
-            "credit" => Ok(Kind::Credit),
-            "investment" => Ok(Kind::Investment),
-            other => bail!("unknown account kind {other:?}"),
         }
     }
 }
@@ -72,27 +59,6 @@ pub enum Group {
 }
 
 impl Group {
-    /// Every band, in the order the Overview stacks them.
-    ///
-    /// Fixed here rather than taken from the order accounts happen to come
-    /// back in: an account the layout table does not place sorts last, and
-    /// taking the scan order would let it split its own band in two.
-    pub const ALL: [Group; 4] = [
-        Group::Checking,
-        Group::Savings,
-        Group::Credit,
-        Group::Investment,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Group::Checking => "checking",
-            Group::Savings => "savings",
-            Group::Credit => "credit",
-            Group::Investment => "investment",
-        }
-    }
-
     /// What the Overview labels this band's subtotal row.
     pub fn label(self) -> &'static str {
         match self {
@@ -129,18 +95,21 @@ impl Group {
     }
 }
 
-impl FromStr for Group {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "checking" => Ok(Group::Checking),
-            "savings" => Ok(Group::Savings),
-            "credit" => Ok(Group::Credit),
-            "investment" => Ok(Group::Investment),
-            other => bail!("unknown account group {other:?}"),
-        }
-    }
-}
+text_enum!(
+    Group,
+    "account group",
+    /// Every band, in the order the Overview stacks them.
+    ///
+    /// Fixed here rather than taken from the order accounts happen to come
+    /// back in: an account the layout table does not place sorts last, and
+    /// taking the scan order would let it split its own band in two.
+    [
+        Checking => "checking",
+        Savings => "savings",
+        Credit => "credit",
+        Investment => "investment",
+    ]
+);
 
 /// The band a freshly imported account starts in, and the only placement
 /// rule there is: the workbook carries codes and nothing else, so where an
@@ -170,19 +139,6 @@ pub enum InterestPolicy {
 }
 
 impl InterestPolicy {
-    /// Every policy, in the order the Accounts screen's selector cycles them.
-    ///
-    /// Beside the enum rather than on the screen: a screen offering a subset
-    /// would leave a variant unreachable with nothing to say so.
-    pub const ALL: [InterestPolicy; 2] = [InterestPolicy::ProRata, InterestPolicy::Manual];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            InterestPolicy::ProRata => "pro_rata",
-            InterestPolicy::Manual => "manual",
-        }
-    }
-
     /// What the Accounts screen calls this policy — what it *does*, not the
     /// string it is stored as.
     pub fn label(self) -> &'static str {
@@ -193,16 +149,18 @@ impl InterestPolicy {
     }
 }
 
-impl FromStr for InterestPolicy {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "pro_rata" => Ok(InterestPolicy::ProRata),
-            "manual" => Ok(InterestPolicy::Manual),
-            other => bail!("unknown interest policy {other:?}"),
-        }
-    }
-}
+text_enum!(
+    InterestPolicy,
+    "interest policy",
+    /// Every policy, in the order the Accounts screen's selector cycles them.
+    ///
+    /// Beside the enum rather than on the screen: a screen offering a subset
+    /// would leave a variant unreachable with nothing to say so.
+    [
+        ProRata => "pro_rata",
+        Manual => "manual",
+    ]
+);
 
 /// How the money in an investment account is taxed.
 ///
@@ -223,24 +181,6 @@ pub enum TaxTreatment {
 }
 
 impl TaxTreatment {
-    /// Every treatment, in the order the Accounts screen's selector cycles
-    /// them. Beside the enum rather than on the screen, for
-    /// [`InterestPolicy::ALL`]'s reason: a screen offering a subset would
-    /// leave a variant unreachable with nothing to say so.
-    pub const ALL: [TaxTreatment; 3] = [
-        TaxTreatment::Taxable,
-        TaxTreatment::TaxDeferred,
-        TaxTreatment::TaxFree,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            TaxTreatment::Taxable => "taxable",
-            TaxTreatment::TaxDeferred => "tax_deferred",
-            TaxTreatment::TaxFree => "tax_free",
-        }
-    }
-
     /// What the Accounts screen calls this treatment. Hyphenated prose
     /// rather than the string it is stored as, the way [`AccountColor`] is
     /// capitalized.
@@ -251,31 +191,24 @@ impl TaxTreatment {
             TaxTreatment::TaxFree => "Tax-free",
         }
     }
+}
 
-    /// This treatment's own place in [`TaxTreatment::ALL`].
+text_enum!(
+    TaxTreatment,
+    "tax treatment",
+    /// Every treatment, in the order the Accounts screen's selector cycles
+    /// them. Beside the enum rather than on the screen, for
+    /// [`InterestPolicy::ALL`]'s reason: a screen offering a subset would
+    /// leave a variant unreachable with nothing to say so.
     ///
-    /// `allocation::apportion` keys a column of its grid by it, for the
-    /// reason `AssetClass::index` exists: a second copy of this mapping is
-    /// a reordering of `ALL` away from labelling every column wrongly.
-    pub fn index(self) -> usize {
-        TaxTreatment::ALL
-            .iter()
-            .position(|treatment| *treatment == self)
-            .expect("TaxTreatment::ALL names every variant")
-    }
-}
-
-impl FromStr for TaxTreatment {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "taxable" => Ok(TaxTreatment::Taxable),
-            "tax_deferred" => Ok(TaxTreatment::TaxDeferred),
-            "tax_free" => Ok(TaxTreatment::TaxFree),
-            other => bail!("unknown tax treatment {other:?}"),
-        }
-    }
-}
+    /// `allocation::apportion` keys a column of its grid by `index` into this
+    /// order, so reordering it relabels every column of that grid.
+    [
+        Taxable => "taxable",
+        TaxDeferred => "tax_deferred",
+        TaxFree => "tax_free",
+    ]
+);
 
 /// The color an account's name draws in, on every screen that names it.
 ///
@@ -303,22 +236,6 @@ pub enum AccountColor {
 }
 
 impl AccountColor {
-    /// Every color, in the order the Accounts screen's selector cycles them.
-    ///
-    /// Beside the enum rather than on the screen, for [`InterestPolicy::ALL`]'s
-    /// reason: a screen offering a subset would leave a variant unreachable
-    /// with nothing to say so.
-    pub const ALL: [AccountColor; 8] = [
-        AccountColor::Blue,
-        AccountColor::Copper,
-        AccountColor::Violet,
-        AccountColor::Teal,
-        AccountColor::Rose,
-        AccountColor::Olive,
-        AccountColor::Indigo,
-        AccountColor::Tan,
-    ];
-
     /// The color an account nobody has picked one for is drawn in.
     ///
     /// Keyed on the id and not on the account's position in whatever list a
@@ -341,19 +258,6 @@ impl AccountColor {
         AccountColor::ALL[id.0.rem_euclid(AccountColor::ALL.len() as i64) as usize]
     }
 
-    pub fn as_str(self) -> &'static str {
-        match self {
-            AccountColor::Blue => "blue",
-            AccountColor::Copper => "copper",
-            AccountColor::Violet => "violet",
-            AccountColor::Teal => "teal",
-            AccountColor::Rose => "rose",
-            AccountColor::Olive => "olive",
-            AccountColor::Indigo => "indigo",
-            AccountColor::Tan => "tan",
-        }
-    }
-
     /// What the Accounts screen calls this color. Capitalized because it is
     /// a name on a form rather than the string it is stored as.
     pub fn label(self) -> &'static str {
@@ -370,15 +274,26 @@ impl AccountColor {
     }
 }
 
-impl FromStr for AccountColor {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        AccountColor::ALL
-            .into_iter()
-            .find(|c| c.as_str() == s)
-            .with_context(|| format!("unknown account color {s:?}"))
-    }
-}
+text_enum!(
+    AccountColor,
+    "account color",
+    /// Every color, in the order the Accounts screen's selector cycles them
+    /// and the order [`AccountColor::derived`] walks when nothing is set.
+    ///
+    /// Beside the enum rather than on the screen, for [`InterestPolicy::ALL`]'s
+    /// reason: a screen offering a subset would leave a variant unreachable
+    /// with nothing to say so.
+    [
+        Blue => "blue",
+        Copper => "copper",
+        Violet => "violet",
+        Teal => "teal",
+        Rose => "rose",
+        Olive => "olive",
+        Indigo => "indigo",
+        Tan => "tan",
+    ]
+);
 
 /// The two pieces of text an account is named by, each its own type.
 ///
@@ -733,32 +648,18 @@ pub fn set_name(db: &Db, id: AccountId, name: &str) -> Result<()> {
 /// Moves an account to `position` among the accounts of its kind, and
 /// renumbers `sort` over all of them so the column stays `0..n-1`.
 ///
-/// A position rather than a raw `sort`, because `sort` is only ever read
-/// through an `ORDER BY` that breaks ties by code: "set sort to 2" is an
-/// instruction whose result depends on rows the caller never saw, where
-/// "put it third" is not. Renumbering the whole kind is what makes the order
-/// the screen shows the order that is stored.
-///
-/// A position past the end lands last rather than erroring: the screen's
-/// selector cannot produce one, and clamping is the same answer a drag past
-/// the bottom of a list gives.
+/// The block is the kind: renumbering the whole of it is what makes the order
+/// the screen shows the order that is stored. [`super::renumber_sort`] is the
+/// move itself, and says why it takes a position rather than a raw `sort` and
+/// where a position past the end lands.
 pub fn reorder(db: &Db, id: AccountId, position: usize) -> Result<()> {
     db.transaction(|db| {
         let account = get(db, id)?;
-        let mut ordered = list_by_kind(db, account.kind)?;
-        let from = ordered
-            .iter()
-            .position(|a| a.id == id)
-            .expect("the account was just read by id, so its kind lists it");
-        let moved = ordered.remove(from);
-        ordered.insert(position.min(ordered.len()), moved);
-        for (sort, account) in ordered.iter().enumerate() {
-            db.conn.execute(
-                "UPDATE account SET sort = ?2 WHERE id = ?1",
-                params![account.id, sort as i64],
-            )?;
-        }
-        Ok(())
+        let ordered: Vec<AccountId> = list_by_kind(db, account.kind)?
+            .into_iter()
+            .map(|a| a.id)
+            .collect();
+        super::renumber_sort(db, "account", &ordered, id, position)
     })
 }
 

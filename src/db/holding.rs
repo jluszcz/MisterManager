@@ -52,6 +52,18 @@ macro_rules! select_holding {
     };
 }
 
+/// The `sort` a row appended to `held` takes: one past the highest already
+/// there, `held` arriving in that column's order.
+///
+/// Past the *highest* rather than at `held.len()`, which is only the same
+/// number while the column is `0..n-1`. Nothing renumbers it -- there is no
+/// `reorder` here -- so a delete leaves a gap, and after two of them a
+/// count lands on a `sort` a surviving row already carries, tied for a
+/// place in the middle of the list the append was meant to end.
+fn next_sort(held: &[Holding]) -> i64 {
+    held.last().map_or(0, |last| last.sort + 1)
+}
+
 /// Records a balance in `ticker`, held in `account_id`.
 ///
 /// Refuses an account that is not [`Kind::Investment`], naming it in the
@@ -67,8 +79,11 @@ macro_rules! select_holding {
 ///
 /// `sort` appends: the new holding takes the position past whatever its
 /// account already holds, the same placement [`super::account::insert`]'s
-/// caller computes, so [`reorder`]'s `0..n-1` renumbering cannot leave a
-/// later insert sorting into the middle of the list.
+/// caller computes. Nothing rearranges the column afterwards -- the Funds
+/// screen binds no move key, deliberately, a holding's place being the order
+/// it was entered in rather than an arrangement worth making -- so append is
+/// the whole of the column's story, [`next_sort`] is the append, and
+/// [`update`] owes it the same when it moves a holding between accounts.
 pub fn insert(db: &Db, account_id: AccountId, ticker: &str, balance: Cents) -> Result<HoldingId> {
     let owner = account::get(db, account_id)?;
     ensure!(
@@ -88,7 +103,7 @@ pub fn insert(db: &Db, account_id: AccountId, ticker: &str, balance: Cents) -> R
     }
     db.conn.execute(
         "INSERT INTO holding (account_id, ticker, balance_cents, sort) VALUES (?1, ?2, ?3, ?4)",
-        params![account_id, ticker, balance.0, held.len() as i64],
+        params![account_id, ticker, balance.0, next_sort(&held)],
     )?;
     Ok(HoldingId(db.conn.last_insert_rowid()))
 }
@@ -132,8 +147,7 @@ pub fn tickers(db: &Db) -> Result<Vec<String>> {
 }
 
 /// Rewrites a holding's account, ticker and balance -- the three fields the
-/// Funds screen's editor has a box for. Where it sorts among its account's
-/// holdings is not the edit's to change.
+/// Funds screen's editor has a box for.
 ///
 /// Refuses the same two ways [`insert`] does, for the same reasons: an
 /// account that is not [`Kind::Investment`], and a ticker the destination
@@ -142,6 +156,17 @@ pub fn tickers(db: &Db) -> Result<Vec<String>> {
 /// already there -- and it is `h.id != id` that keeps a holding from
 /// clashing with itself, which is the whole of what this guard adds to
 /// `insert`'s.
+///
+/// **A holding that changes account is appended to the destination**, the
+/// placement [`insert`] gives a new one. Carrying its old `sort` across would
+/// land it wherever that number happens to fall among rows it has never been
+/// beside -- at the top of the list on a `sort` of zero -- and leave the
+/// destination holding that value twice, which the next `insert` then
+/// computes its append from. Nothing renumbers the column afterwards: the
+/// Funds screen binds no move key, so an insert and a move in are the only
+/// two ways a row reaches a list and both have to land past its last, which
+/// [`next_sort`] is. A holding staying put keeps the place it had, an edit to
+/// its ticker or its balance being no reason to move it.
 pub fn update(
     db: &Db,
     id: HoldingId,
@@ -157,19 +182,25 @@ pub fn update(
         // reaches the mask here rather than through `account_label::Account`.
         crate::demo::text(owner.name.as_str())
     );
-    if list_for_account(db, account_id)?
-        .iter()
-        .any(|h| h.ticker == ticker && h.id != id)
-    {
+    let held = list_for_account(db, account_id)?;
+    if held.iter().any(|h| h.ticker == ticker && h.id != id) {
         bail!(
             "{} already holds {}",
             crate::demo::text(owner.name.as_str()),
             crate::demo::text(ticker)
         );
     }
+    // The destination's own list is what says which of the two this is: a
+    // holding already in it is somewhere in `held` and keeps its place, and
+    // one arriving is not, so it appends the way a new one does.
+    let sort = held
+        .iter()
+        .find(|h| h.id == id)
+        .map_or_else(|| next_sort(&held), |h| h.sort);
     let changed = db.conn.execute(
-        "UPDATE holding SET account_id = ?2, ticker = ?3, balance_cents = ?4 WHERE id = ?1",
-        params![id, account_id, ticker, balance.0],
+        "UPDATE holding SET account_id = ?2, ticker = ?3, balance_cents = ?4, sort = ?5 \
+         WHERE id = ?1",
+        params![id, account_id, ticker, balance.0, sort],
     )?;
     ensure!(changed == 1, "no holding with id {id}");
     Ok(())
@@ -181,35 +212,6 @@ pub fn delete(db: &Db, id: HoldingId) -> Result<()> {
         .execute("DELETE FROM holding WHERE id = ?1", params![id])?;
     ensure!(removed == 1, "no holding with id {id}");
     Ok(())
-}
-
-/// Moves a holding to `position` among its account's holdings, and renumbers
-/// `sort` over all of them so the column stays `0..n-1`.
-///
-/// The same construction as [`super::account::reorder`], scoped to the
-/// holding's account rather than to a kind: a position rather than a raw
-/// `sort`, because `sort` is only ever read through an `ORDER BY` that breaks
-/// ties by id, so "put it third" has a result that does not depend on rows
-/// the caller never saw. A position past the end lands last, the same answer
-/// a drag past the bottom of a list gives.
-pub fn reorder(db: &Db, id: HoldingId, position: usize) -> Result<()> {
-    db.transaction(|db| {
-        let holding = get(db, id)?;
-        let mut ordered = list_for_account(db, holding.account_id)?;
-        let from = ordered
-            .iter()
-            .position(|h| h.id == id)
-            .expect("the holding was just read by id, so its account lists it");
-        let moved = ordered.remove(from);
-        ordered.insert(position.min(ordered.len()), moved);
-        for (sort, holding) in ordered.iter().enumerate() {
-            db.conn.execute(
-                "UPDATE holding SET sort = ?2 WHERE id = ?1",
-                params![holding.id, sort as i64],
-            )?;
-        }
-        Ok(())
-    })
 }
 
 #[cfg(test)]
@@ -282,10 +284,10 @@ mod tests {
         assert!(!err.contains("UNIQUE constraint"), "{err}");
     }
 
-    /// `reorder` renumbers a whole account's holdings to `0..n-1`, so an
-    /// insert that took the column's default would land at zero and sort
-    /// second rather than last -- the placement `account::insert`'s caller
-    /// computes for the same reason.
+    /// Nothing rearranges `sort` after an insert, so the column is the order
+    /// the holdings were entered in and every insert has to land past the
+    /// last of them. One taking the column's default would sit at zero
+    /// alongside the first.
     #[test]
     fn a_new_holding_sorts_past_the_ones_its_account_already_holds() {
         let db = crate::db::open_in_memory().unwrap();
@@ -293,15 +295,82 @@ mod tests {
 
         let first = insert(&db, id, "USM", Cents(100_000)).unwrap();
         let second = insert(&db, id, "USB", Cents(50_000)).unwrap();
-        reorder(&db, second, 0).unwrap();
         let third = insert(&db, id, "ISM", Cents(30_000)).unwrap();
 
-        let order: Vec<HoldingId> = list_for_account(&db, id)
-            .unwrap()
-            .into_iter()
-            .map(|h| h.id)
-            .collect();
-        assert_eq!(order, vec![second, first, third]);
+        let ordered = list_for_account(&db, id).unwrap();
+        assert_eq!(
+            ordered.iter().map(|h| h.id).collect::<Vec<_>>(),
+            vec![first, second, third]
+        );
+        assert_eq!(
+            ordered.iter().map(|h| h.sort).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+    }
+
+    /// Nothing renumbers `sort`, so a delete leaves a gap in it and the
+    /// append has to be past the *highest* value rather than at the count.
+    /// Two deletes off the front make the two differ: a count lands on a
+    /// `sort` a surviving row still carries, tying the new holding for a
+    /// place in the middle of the list it was meant to end.
+    #[test]
+    fn a_new_holding_still_sorts_last_once_deletes_have_left_gaps() {
+        let db = crate::db::open_in_memory().unwrap();
+        let id = account(&db);
+
+        let first = insert(&db, id, "USM", Cents(100_000)).unwrap();
+        let second = insert(&db, id, "USB", Cents(50_000)).unwrap();
+        let third = insert(&db, id, "ISM", Cents(30_000)).unwrap();
+        let fourth = insert(&db, id, "ISB", Cents(10_000)).unwrap();
+        delete(&db, first).unwrap();
+        delete(&db, second).unwrap();
+
+        let added = insert(&db, id, "UNC", Cents(5_000)).unwrap();
+
+        assert_eq!(
+            list_for_account(&db, id)
+                .unwrap()
+                .iter()
+                .map(|h| h.id)
+                .collect::<Vec<_>>(),
+            vec![third, fourth, added]
+        );
+    }
+
+    /// The same gap, on the move-in half of the rule: a holding arriving in
+    /// an account whose column has holes lands past its last row, not among
+    /// them.
+    #[test]
+    fn a_holding_moved_into_an_account_with_gaps_still_sorts_last() {
+        let db = crate::db::open_in_memory().unwrap();
+        let from = account(&db);
+        let to = account::insert(
+            &db,
+            "BRK",
+            "Holdings",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::Taxable),
+        )
+        .unwrap();
+        let moved = insert(&db, from, "UNC", Cents(1_000)).unwrap();
+        let a = insert(&db, to, "USM", Cents(100_000)).unwrap();
+        let b = insert(&db, to, "USB", Cents(50_000)).unwrap();
+        let c = insert(&db, to, "ISM", Cents(30_000)).unwrap();
+        let d = insert(&db, to, "ISB", Cents(10_000)).unwrap();
+        delete(&db, a).unwrap();
+        delete(&db, b).unwrap();
+
+        update(&db, moved, to, "UNC", Cents(1_000)).unwrap();
+
+        assert_eq!(
+            list_for_account(&db, to)
+                .unwrap()
+                .iter()
+                .map(|h| h.id)
+                .collect::<Vec<_>>(),
+            vec![c, d, moved]
+        );
     }
 
     #[test]
@@ -498,36 +567,16 @@ mod tests {
         assert!(get(&db, keep).is_ok());
     }
 
-    /// `reorder` takes a position and renumbers the whole account, so what
-    /// the screen shows is what is stored -- no ties for the id to break.
+    /// Nothing renumbers `sort` after the fact, so a holding moved between
+    /// accounts has to land past the destination's last row the way an insert
+    /// does. Carrying its old place across would sit it at the top of a list
+    /// it has never been in and leave that value held twice, which the next
+    /// insert computes its own append from.
     #[test]
-    fn reorder_moves_a_holding_and_renumbers_its_account() {
+    fn a_holding_moved_to_another_account_sorts_past_what_that_account_holds() {
         let db = crate::db::open_in_memory().unwrap();
-        let id = account(&db);
-        let usm = insert(&db, id, "USM", Cents(100_000)).unwrap();
-        let usb = insert(&db, id, "USB", Cents(50_000)).unwrap();
-        let ism = insert(&db, id, "ISM", Cents(25_000)).unwrap();
-
-        reorder(&db, ism, 0).unwrap();
-
-        let ordered = list_for_account(&db, id).unwrap();
-        assert_eq!(
-            ordered.iter().map(|h| h.id).collect::<Vec<_>>(),
-            vec![ism, usm, usb]
-        );
-        assert_eq!(
-            ordered.iter().map(|h| h.sort).collect::<Vec<_>>(),
-            vec![0, 1, 2]
-        );
-    }
-
-    /// One account's order is not another's: renumbering the first account's
-    /// holdings must leave the second account's exactly where they were.
-    #[test]
-    fn reorder_leaves_other_accounts_holdings_alone() {
-        let db = crate::db::open_in_memory().unwrap();
-        let first = account(&db);
-        let second = account::insert(
+        let from = account(&db);
+        let to = account::insert(
             &db,
             "BRK",
             "Holdings",
@@ -536,47 +585,62 @@ mod tests {
             Some(TaxTreatment::Taxable),
         )
         .unwrap();
-        insert(&db, first, "USM", Cents(100_000)).unwrap();
-        insert(&db, first, "USB", Cents(50_000)).unwrap();
-        let a = insert(&db, second, "ISM", Cents(25_000)).unwrap();
-        let b = insert(&db, second, "ISB", Cents(10_000)).unwrap();
+        let moved = insert(&db, from, "USM", Cents(100_000)).unwrap();
+        let first = insert(&db, to, "ISM", Cents(25_000)).unwrap();
+        let second = insert(&db, to, "ISB", Cents(10_000)).unwrap();
 
-        let usm = list_for_account(&db, first).unwrap()[0].id;
-        reorder(&db, usm, 1).unwrap();
+        update(&db, moved, to, "USM", Cents(100_000)).unwrap();
 
-        let second_ids: Vec<_> = list_for_account(&db, second)
-            .unwrap()
-            .into_iter()
-            .map(|h| h.id)
-            .collect();
-        assert_eq!(second_ids, vec![a, b]);
+        let ordered = list_for_account(&db, to).unwrap();
+        assert_eq!(
+            ordered.iter().map(|h| h.id).collect::<Vec<_>>(),
+            vec![first, second, moved]
+        );
+        assert_eq!(
+            ordered.iter().map(|h| h.sort).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+
+        // And the next insert still appends rather than colliding with it.
+        let after = insert(&db, to, "USB", Cents(5_000)).unwrap();
+        assert_eq!(
+            list_for_account(&db, to)
+                .unwrap()
+                .iter()
+                .map(|h| (h.id, h.sort))
+                .collect::<Vec<_>>(),
+            vec![(first, 0), (second, 1), (moved, 2), (after, 3)]
+        );
     }
 
+    /// An edit that does not change the account is no reason to move the
+    /// holding within it.
     #[test]
-    fn a_position_past_the_end_lands_last() {
+    fn editing_a_holding_in_place_leaves_it_where_it_sat() {
         let db = crate::db::open_in_memory().unwrap();
         let id = account(&db);
-        let usm = insert(&db, id, "USM", Cents(100_000)).unwrap();
-        let usb = insert(&db, id, "USB", Cents(50_000)).unwrap();
+        let first = insert(&db, id, "USM", Cents(100_000)).unwrap();
+        let second = insert(&db, id, "USB", Cents(50_000)).unwrap();
 
-        reorder(&db, usm, 99).unwrap();
+        update(&db, first, id, "ISM", Cents(1_000)).unwrap();
 
-        let ids: Vec<_> = list_for_account(&db, id)
-            .unwrap()
-            .into_iter()
-            .map(|h| h.id)
-            .collect();
-        assert_eq!(ids, vec![usb, usm]);
+        assert_eq!(
+            list_for_account(&db, id)
+                .unwrap()
+                .iter()
+                .map(|h| (h.id, h.sort))
+                .collect::<Vec<_>>(),
+            vec![(first, 0), (second, 1)]
+        );
     }
 
     #[test]
-    fn getting_updating_deleting_or_reordering_a_missing_holding_is_an_error() {
+    fn getting_updating_or_deleting_a_missing_holding_is_an_error() {
         let db = crate::db::open_in_memory().unwrap();
         let id = account(&db);
         assert!(get(&db, HoldingId(999)).is_err());
         assert!(update(&db, HoldingId(999), id, "USM", Cents::ZERO).is_err());
         assert!(delete(&db, HoldingId(999)).is_err());
-        assert!(reorder(&db, HoldingId(999), 0).is_err());
     }
 
     #[test]
