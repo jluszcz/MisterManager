@@ -60,10 +60,20 @@ pub fn refresh(db: &Db, contact: &str, tickers: &[String]) -> Result<Refreshed> 
 /// ticker is not a database problem -- so it is reported through the same
 /// `Result` rather than a separate variant [`write_outcome`] would have to
 /// handle twice.
+///
+/// It is also the one failure here that names a ticker, and the Funds screen
+/// puts the whole sentence on its status line beside the ticker it belongs
+/// to -- so it reaches the mask where it is built, the way `db::holding`'s
+/// own refusals do. Masked at the screen instead, the label would be a
+/// pseudonym beside the real ticker in the same line, which says more than
+/// either half alone.
 fn fetch_ticker(contact: &str, series: &HashMap<String, String>, ticker: &str) -> Fetched {
-    let series_id = series
-        .get(ticker)
-        .ok_or_else(|| anyhow!("SEC lists no series for ticker {ticker:?}"))?;
+    let series_id = series.get(ticker).ok_or_else(|| {
+        anyhow!(
+            "SEC lists no series for ticker {:?}",
+            crate::demo::text(ticker)
+        )
+    })?;
     let filing = sec::latest_filing(contact, series_id)?;
     Ok((filing.report_date, classify(&filing.holdings)))
 }
@@ -150,6 +160,23 @@ mod tests {
     use crate::rate::BasisPoints;
     use crate::test_support::day;
     use anyhow::anyhow;
+
+    /// The Funds screen prints this sentence on its status line next to the
+    /// ticker it belongs to, and that label is masked -- so an unmasked
+    /// ticker in the sentence would sit beside its own pseudonym.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_masks_the_ticker_the_unresolved_series_failure_names() {
+        crate::demo::install_with_salt(7);
+        let error = fetch_ticker("nobody@example.com", &HashMap::new(), "USM").unwrap_err();
+        let message = error.to_string();
+
+        assert!(!message.contains("USM"), "the ticker survived: {message}");
+        assert!(
+            message.contains(&crate::demo::text("USM").to_string()),
+            "no masked ticker found: {message}"
+        );
+    }
 
     #[test]
     fn a_ticker_that_fails_leaves_its_previous_mix_standing() {

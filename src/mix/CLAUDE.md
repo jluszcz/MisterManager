@@ -50,6 +50,12 @@ is the only test in the crate that can notice the hops coming apart.
   tickers out of `holding`, where the form has already uppercased them — `mm mixes --ticker` is the
   one route that does not, and it fails at the first hop rather than writing a row nothing reads,
   since `parse_ticker_file` matches SEC's own symbols exactly.
+- **A failure reason is prose a screen prints verbatim, so the one that names a ticker masks it
+  where it is built.** `fetch_ticker`'s "SEC lists no series for" is that one; every other reason
+  here names a URL, a series id or an element, none of them the owner's. The Funds screen draws
+  `Refreshed::failed` as the masked ticker and the reason side by side, and a reason carrying the
+  real ticker would put a pseudonym beside the thing it stands for. The rule is `db::holding`'s own
+  refusals', and `src/demo/mod.rs` is where it is argued.
 - **Which classification path a filing takes is decided by its holdings count, not by anything it
   says about itself.** A filing never states an asset class: `assetCat` is a regulatory category,
   and a fund-of-funds' holdings are other funds whose own category says nothing about what *they*
