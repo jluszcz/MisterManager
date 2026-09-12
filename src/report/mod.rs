@@ -9,7 +9,7 @@
 pub mod html;
 
 use crate::account_label::Account;
-use crate::allocation::{SummaryRow, TargetClass};
+use crate::allocation::{Class, Held, SummaryRow};
 use crate::calc;
 use crate::calc::planning::PlanSettings;
 use crate::db::account::Kind;
@@ -125,7 +125,7 @@ pub struct LedgerRow {
 /// The Planning screen's figures, or the reason there are none.
 ///
 /// A plan that cannot resolve is an ordinary state -- a database with no
-/// account in the `Checking` band has one -- and the screen renders the
+/// account in the `Checking` class has one -- and the screen renders the
 /// message in place of the waterfall. The page does the same rather than
 /// failing the whole report over one tab.
 pub enum Planning {
@@ -225,7 +225,7 @@ fn summary(
     if lookthrough.slices.is_empty() {
         return Vec::new();
     }
-    TargetClass::ALL
+    Class::ALL
         .iter()
         .map(|class| SummaryRow::new(*class, &lookthrough.slices, targets))
         .collect()
@@ -252,15 +252,19 @@ fn allocation_view(db: &Db, today: NaiveDate, accounts: &[account::Account]) -> 
     }
 
     let mut sections = Vec::new();
-    let mut portfolio: Vec<(Cents, Option<&[fund_mix::Slice]>)> = Vec::new();
+    let mut portfolio: Vec<Held<'_>> = Vec::new();
     for account in account::list_by_kind(db, Kind::Investment)? {
         let holdings = holding::list_for_account(db, account.id)?;
         if holdings.is_empty() {
             continue;
         }
-        let held: Vec<(Cents, Option<&[fund_mix::Slice]>)> = holdings
+        let held: Vec<Held<'_>> = holdings
             .iter()
-            .map(|h| (h.balance, mixes.get(&h.ticker).map(|m| m.slices.as_slice())))
+            .map(|h| Held {
+                balance: h.balance,
+                treatment: account.tax_treatment,
+                mix: mixes.get(&h.ticker).map(|m| m.slices.as_slice()),
+            })
             .collect();
         portfolio.extend(held.iter().copied());
         let lookthrough = crate::allocation::apportion(&held);
@@ -459,7 +463,7 @@ pub enum Outcome {
 ///
 /// The two halves are the two things a page depends on that this crate can
 /// see. `wrote_rows` is the database, through [`crate::db::Db::wrote_rows`]
-/// -- and only as far back as this run, which is what leaves an out-of-band
+/// -- and only as far back as this run, which is what leaves an out-of-class
 /// change able to strand a page until the next run writes a row. The day is
 /// the rest: every figure on the page is quoted at a date derived from
 /// `today`, and the footer's stamp is the freshness a reader checks on the
@@ -1112,7 +1116,7 @@ mod tests {
         assert!(is_the_page(&page), "the doctype did not survive");
         // Both halves of a control are matched by something only the element
         // carries, because the CSS names each of them too: `Cash` and
-        // `Credit` are Overview band labels as well as tab labels, and
+        // `Credit` are Overview class labels as well as tab labels, and
         // `{id}-panel` is a substring of the very selector below. So the
         // label is matched paired with its `for`, and the panel by its
         // `id=`, which no selector spells. Quotes come off ahead of the

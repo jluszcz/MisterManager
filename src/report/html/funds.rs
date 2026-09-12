@@ -16,23 +16,20 @@
 //! beside it so the bar is a picture of something the reader can also read.
 
 use super::{account, escape, whole_money};
-use crate::allocation::{self, UNTARGETED};
-use crate::db::fund_mix::{AssetClass, Slice};
+use crate::allocation::{self, Class};
+use crate::db::account::TaxTreatment;
+use crate::db::fund_mix::Slice;
 use crate::palette;
 use crate::rate::BasisPoints;
 use crate::report::{AccountAllocation, Allocation, Holding};
 
 /// One class's color, as `#rrggbb`.
 ///
-/// By its place in `AssetClass::ALL`, which is the order
-/// [`palette::ASSET_CLASSES`] is written in -- nothing stores that position,
-/// so the two move together.
-fn color(class: AssetClass) -> String {
-    let index = AssetClass::ALL
-        .iter()
-        .position(|c| *c == class)
-        .expect("AssetClass::ALL names every variant");
-    palette::hex(palette::ASSET_CLASSES[index])
+/// By its place in `Class::ALL`, which is the order [`palette::CLASSES`] is
+/// written in -- nothing stores that position, so the two move together, and
+/// the Funds screen tints its own bar off the same table.
+fn color(class: Class) -> String {
+    palette::hex(palette::CLASSES[class.index()])
 }
 
 /// A share, or the `--` this page draws an absence with.
@@ -56,13 +53,32 @@ fn percent(share: Option<BasisPoints>) -> String {
     }
 }
 
+/// The same cell, red where the portfolio is short of what the rule asks.
+///
+/// A gap is the only thing in this table a reader has to act on, and
+/// `palette::NEGATIVE` is what the page already spells every other shortfall
+/// with -- the decision [`super::money`] makes from a `Cents`, made here from
+/// a share, which is all this column has.
+fn delta(share: Option<BasisPoints>) -> String {
+    match share {
+        Some(share) if share.0 < 0 => format!(
+            "<td class=\"n\" style=\"color:{}\">{share}%</td>",
+            palette::hex(palette::NEGATIVE),
+        ),
+        other => percent(other),
+    }
+}
+
 /// The summary's own header, in the Funds screen's column order and wording,
 /// each column carrying the class its cells below carry.
-const SUMMARY_HEADER: [(&str, &str); 4] = [
+const SUMMARY_HEADER: [(&str, &str); 7] = [
     ("Class", ""),
     ("Target", "n"),
     ("Actual", "n"),
     ("\u{394}", "n"),
+    ("Taxable", "n"),
+    ("Tax-deferred", "n"),
+    ("Tax-free", "n"),
 ];
 
 /// The holdings' header: the screen's own wording, three of its six columns
@@ -107,30 +123,30 @@ fn header(columns: &[(&str, &str)]) -> String {
 /// [`allocation::apportion`]'s doing rather than this table's -- a defect
 /// report reading "none" every time is one nobody finishes reading.
 ///
-/// The class labels take no color, where the bar below them does: `Bonds` is
-/// two classes at once, and a row tinted as one of them would be a claim the
-/// age rule cannot make.
-fn summary(targeted: &[allocation::SummaryRow], slices: &[Slice]) -> String {
-    let mut rows = header(&SUMMARY_HEADER);
-    for row in targeted {
-        rows.push_str(&format!(
-            "<tr><td>{}</td>{}{}{}</tr>",
+/// The class labels take no color, where the bar below them does: a row and a
+/// segment are the same statement, and tinting both would spend two marks on
+/// one fact.
+///
+/// The three tax columns are a second question about the same portfolio --
+/// not what it holds but where it is held -- and each is a share of the same
+/// denominator as `Actual`, so a row reads across to its own total and a
+/// column reads down to what that treatment holds.
+fn summary(rows: &[allocation::SummaryRow], lookthrough: &crate::allocation::Allocation) -> String {
+    let mut out = header(&SUMMARY_HEADER);
+    for row in rows {
+        let treatments: String = TaxTreatment::ALL
+            .iter()
+            .map(|treatment| percent(Some(lookthrough.class_in(row.class, *treatment))))
+            .collect();
+        out.push_str(&format!(
+            "<tr><td>{}</td>{}{}{}{treatments}</tr>",
             row.class.label(),
             percent(row.target),
             percent(Some(row.actual)),
-            percent(row.delta),
+            delta(row.delta),
         ));
     }
-    for slice in slices.iter().filter(|s| UNTARGETED.contains(&s.class)) {
-        rows.push_str(&format!(
-            "<tr><td>{}</td>{}{}{}</tr>",
-            slice.class.label(),
-            percent(None),
-            percent(Some(slice.weight)),
-            percent(None),
-        ));
-    }
-    format!("<table>{rows}</table>")
+    format!("<table>{out}</table>")
 }
 
 /// The whole of a look-through as one bar, and the legend that names it.
@@ -153,8 +169,8 @@ fn bar(slices: &[Slice]) -> String {
     let mut segments = String::new();
     let mut legend = String::new();
     let (mut cumulative, mut drawn) = (0i64, 0i64);
-    for class in allocation::BAR_CLASSES {
-        let (share, color) = (allocation::weight(slices, class), color(class));
+    for class in Class::ALL {
+        let (share, color) = (class.actual(slices), color(class));
         cumulative += share.0;
         let end = cumulative.clamp(0, BasisPoints::ONE.0).max(drawn);
         segments.push_str(&format!(
@@ -219,7 +235,7 @@ fn section(account_allocation: &AccountAllocation) -> String {
         html.push_str(&coverage(&account_allocation.lookthrough));
         html.push_str(&summary(
             &account_allocation.summary,
-            &account_allocation.lookthrough.slices,
+            &account_allocation.lookthrough,
         ));
         html.push_str(&bar(&account_allocation.lookthrough.slices));
     }
@@ -259,10 +275,7 @@ pub(super) fn sections(allocation: &Allocation) -> String {
     } else {
         html.push_str("<h3>Allocation</h3>");
         html.push_str(&coverage(&allocation.lookthrough));
-        html.push_str(&summary(
-            &allocation.summary,
-            &allocation.lookthrough.slices,
-        ));
+        html.push_str(&summary(&allocation.summary, &allocation.lookthrough));
         html.push_str(&bar(&allocation.lookthrough.slices));
     }
     html.extend(allocation.accounts.iter().map(section));
@@ -273,7 +286,8 @@ pub(super) fn sections(allocation: &Allocation) -> String {
 mod tests {
     use super::super::fixture::{self, panel, snapshot};
     use super::super::page;
-    use crate::allocation::{self, SummaryRow, TargetClass};
+    use crate::allocation::{self, Class, Held, SummaryRow};
+    use crate::db::account::TaxTreatment;
     use crate::db::fund_mix::{AssetClass, Slice};
     use crate::money::Cents;
     use crate::palette;
@@ -296,29 +310,20 @@ mod tests {
         assert!(!html.contains("http"), "the tab reaches out of itself");
     }
 
-    /// Color alone is a key a reader has to hold, and the report is read
-    /// beside a screen that spends glyphs rather than colors -- so every
-    /// class the bar draws is named in words and priced in figures beside
-    /// it.
+    /// Color alone is a key a reader has to hold, so every class the bar
+    /// draws is named in words and priced in figures beside it.
     #[test]
-    fn every_asset_class_bar_has_a_width_and_a_percentage_beside_it() {
+    fn every_band_bar_has_a_width_and_a_percentage_beside_it() {
         let snapshot = snapshot(vec![], 1_000);
         let panel = funds_panel(&snapshot);
         let slices = &snapshot.allocation.lookthrough.slices;
-        for class in AssetClass::ALL {
-            // Nothing in the fixture's filings went unplaced, and a residual
-            // reading zero is a defect report nobody finishes reading.
-            if class == AssetClass::Unclassified {
-                continue;
-            }
+        for class in Class::ALL {
+            let share = class.actual(slices);
             assert!(
                 panel.contains(class.label()),
                 "{} is not labelled",
                 class.label()
             );
-        }
-        for class in allocation::BAR_CLASSES {
-            let share = allocation::weight(slices, class);
             assert!(
                 panel.contains(&format!(
                     "width:{share}%;background:{}",
@@ -335,7 +340,7 @@ mod tests {
         }
     }
 
-    /// The tab is a spelling of the screen: the same three rows, off the
+    /// The tab is a spelling of the screen: the same four rows, off the
     /// same `crate::fund::targets_from_db`, and a page quoting a target the
     /// terminal did not would be two answers to one question about one age.
     #[test]
@@ -358,6 +363,61 @@ mod tests {
         }
     }
 
+    /// The page and the screen are two spellings of one table, so the tax
+    /// columns have to reach the page as figures that foot the same way --
+    /// across to a class's own share, and down to what a treatment holds.
+    #[test]
+    fn the_tax_columns_reach_the_page_and_foot_across_each_class() {
+        let snapshot = snapshot(vec![], 1_000);
+        let panel = funds_panel(&snapshot);
+        let lookthrough = &snapshot.allocation.lookthrough;
+
+        for treatment in TaxTreatment::ALL {
+            assert!(
+                panel.contains(treatment.label()),
+                "{} has no column: {panel}",
+                treatment.label()
+            );
+        }
+        // The fixture holds one account taxable and the other tax-deferred,
+        // so a column drawn over the wrong class would not foot.
+        for class in Class::ALL {
+            let across: i64 = TaxTreatment::ALL
+                .iter()
+                .map(|t| lookthrough.class_in(class, *t).0)
+                .sum();
+            assert_eq!(
+                across,
+                class.actual(&lookthrough.slices).0,
+                "{class:?} does not foot across its treatments"
+            );
+            for treatment in TaxTreatment::ALL {
+                let share = lookthrough.class_in(class, treatment);
+                assert!(
+                    panel.contains(&format!("{share}%")),
+                    "{class:?} in {treatment:?} has no cell: {panel}"
+                );
+            }
+        }
+    }
+
+    /// A shortfall is the one figure on this table a reader has to act on,
+    /// and the page spells it the color every other shortfall on it is.
+    #[test]
+    fn a_negative_delta_is_drawn_in_the_pages_negative_color() {
+        let snapshot = snapshot(vec![], 1_000);
+        let panel = funds_panel(&snapshot);
+        let red = palette::hex(palette::NEGATIVE);
+        assert!(
+            panel.contains(&format!("style=\"color:{red}\"")),
+            "no shortfall is colored: {panel}"
+        );
+        assert!(
+            !panel.contains(&format!("style=\"color:{red}\">18.00%")),
+            "a class inside its target was colored as a shortfall: {panel}"
+        );
+    }
+
     /// No birth date on record is a question rather than a zero, so neither
     /// the target nor the gap from it states a figure -- the screen's own
     /// answer, spelled in this page's own mark.
@@ -365,7 +425,7 @@ mod tests {
     fn a_bond_target_with_no_birth_date_states_no_figure_in_either_of_its_cells() {
         let mut snapshot = snapshot(vec![], 1_000);
         snapshot.allocation = fixture::funds(crate::calc::fund::targets(None, BasisPoints(4_000)));
-        let actual = TargetClass::Bonds.actual(&snapshot.allocation.lookthrough.slices);
+        let actual = Class::Bonds.actual(&snapshot.allocation.lookthrough.slices);
         assert!(
             funds_panel(&snapshot).contains(&format!(
                 "<td>Bonds</td><td class=\"n\">--</td><td class=\"n\">{actual}%</td>\
@@ -395,11 +455,11 @@ mod tests {
         );
     }
 
-    /// A filing that does not foot is a miss, and a miss shows up as the
-    /// labelled row it is. A portfolio nothing went unplaced in draws no
-    /// such row at all -- the rule the two Planning transfer footers follow.
+    /// A filing that does not foot is a miss, and the miss has to reach a
+    /// figure rather than being renormalised away across the classes that
+    /// were placed. `Other` is where it lands, beside the cash.
     #[test]
-    fn an_unclassified_row_is_drawn_only_when_a_filing_left_something_unplaced() {
+    fn what_a_filing_left_unplaced_reaches_the_other_row_rather_than_vanishing() {
         let whole = snapshot(vec![], 1_000);
         assert!(
             !funds_panel(&whole).contains(AssetClass::Unclassified.label()),
@@ -411,9 +471,12 @@ mod tests {
             class: AssetClass::UsStock,
             weight: BasisPoints(9_900),
         }];
-        short.allocation.lookthrough =
-            allocation::apportion(&[(Cents::from_dollars(1_000), Some(placed.as_slice()))]);
-        short.allocation.summary = TargetClass::ALL
+        short.allocation.lookthrough = allocation::apportion(&[Held {
+            balance: Cents::from_dollars(1_000),
+            treatment: Some(TaxTreatment::Taxable),
+            mix: Some(placed.as_slice()),
+        }]);
+        short.allocation.summary = Class::ALL
             .iter()
             .map(|class| {
                 SummaryRow::new(
@@ -425,15 +488,15 @@ mod tests {
             .collect();
         let panel = funds_panel(&short);
         assert!(
-            panel.contains(AssetClass::Unclassified.label()),
-            "the gap went unreported: {panel}"
+            panel.contains(Class::Other.label()),
+            "the gap has no row to land in: {panel}"
         );
         assert!(panel.contains("1.00%"), "the gap has no figure: {panel}");
     }
 
     /// The same rule with the sign flipped: a mix claiming more than the
-    /// whole of itself leaves a negative residual and puts the four bar
-    /// classes past 100% between them. The row states the negative share --
+    /// whole of itself leaves a negative residual and puts the four classes
+    /// past 100% between them. The row states the negative share --
     /// that is what says the composition over-foots -- while the bar's own
     /// segments are cut at the cumulative share and clamped, so none of them
     /// runs backwards over the one before it.
@@ -444,9 +507,12 @@ mod tests {
             class: AssetClass::UsStock,
             weight: BasisPoints(10_100),
         }];
-        over.allocation.lookthrough =
-            allocation::apportion(&[(Cents::from_dollars(1_000), Some(claimed.as_slice()))]);
-        over.allocation.summary = TargetClass::ALL
+        over.allocation.lookthrough = allocation::apportion(&[Held {
+            balance: Cents::from_dollars(1_000),
+            treatment: Some(TaxTreatment::Taxable),
+            mix: Some(claimed.as_slice()),
+        }]);
+        over.allocation.summary = Class::ALL
             .iter()
             .map(|class| {
                 SummaryRow::new(
@@ -459,8 +525,8 @@ mod tests {
 
         let panel = funds_panel(&over);
         assert!(
-            panel.contains(AssetClass::Unclassified.label()),
-            "the excess went unreported: {panel}"
+            panel.contains(Class::Other.label()),
+            "the excess has no row to land in: {panel}"
         );
         assert!(
             panel.contains("-1.00%"),
@@ -549,7 +615,11 @@ mod tests {
                 &account
                     .holdings
                     .iter()
-                    .map(|h| (h.balance, None))
+                    .map(|h| Held {
+                        balance: h.balance,
+                        treatment: Some(TaxTreatment::Taxable),
+                        mix: None,
+                    })
                     .collect::<Vec<_>>(),
             );
             account.summary = Vec::new();
