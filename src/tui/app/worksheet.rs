@@ -511,7 +511,7 @@ mod tests {
     /// Returned in screen order: down payment, emergency, mom and dad.
     fn pro_rata_container() -> (App, GoalId, GoalId, GoalId) {
         let db = db::open_in_memory().unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 0).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 0, None).unwrap();
         account::set_interest_policy(&db, brokerage, account::InterestPolicy::ProRata).unwrap();
         let add_goal = |name: &str, target: i64, eligible: bool, balance: i64| {
             let id = goal::insert(
@@ -538,7 +538,7 @@ mod tests {
         let mom_and_dad = add_goal("Mom & Dad", 2_500_000, true, 2_500_000);
         write(&db, brokerage, day(2026, 7, 31), 63_300_195, "Balance");
         (
-            App::new(db, today()).unwrap(),
+            App::new(db, today(), None).unwrap(),
             down_payment,
             emergency,
             mom_and_dad,
@@ -737,7 +737,7 @@ mod tests {
     #[test]
     fn capital_u_never_offers_the_import_batch() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let id = goal::insert(
             &db,
             &goal::NewGoal {
@@ -762,7 +762,7 @@ mod tests {
             Some("imported balance"),
         )
         .unwrap();
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
 
         press(&mut app, KeyCode::Char('4'));
         press(&mut app, KeyCode::Char('U'));

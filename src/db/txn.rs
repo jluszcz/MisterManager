@@ -424,9 +424,9 @@ mod tests {
 
     fn fixture() -> (Db, AccountId, AccountId, AccountId) {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
-        let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
+        let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
         (db, checking, savings, card_one)
     }
 
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn a_transfer_between_two_cards_moves_debt_instead_of_erasing_it() {
         let (db, _, _, card_one) = fixture();
-        let card_two = account::insert(&db, "CC2", "Card Two", Kind::Credit, 1).unwrap();
+        let card_two = account::insert(&db, "CC2", "Card Two", Kind::Credit, 1, None).unwrap();
         insert_transfer(
             &db,
             card_one,
@@ -605,8 +605,8 @@ mod tests {
             (Kind::Credit, Kind::Credit),
         ] {
             let db = db::open_in_memory().unwrap();
-            let from = account::insert(&db, "FROM", "Source", from_kind, 0).unwrap();
-            let to = account::insert(&db, "TO", "Destination", to_kind, 1).unwrap();
+            let from = account::insert(&db, "FROM", "Source", from_kind, 0, None).unwrap();
+            let to = account::insert(&db, "TO", "Destination", to_kind, 1, None).unwrap();
             add(&db, from, day(2026, 1, 1), 500_000, "opening");
             add(&db, to, day(2026, 1, 1), 200_000, "opening");
             let before = net(&db);

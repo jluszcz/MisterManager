@@ -396,7 +396,7 @@ mod tests {
     use crate::test_support::day;
 
     fn checking(db: &Db) -> AccountId {
-        account::insert(db, "CHK", "Everyday", Kind::Cash, 0).unwrap()
+        account::insert(db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap()
     }
 
     fn paycheck_recurring_txn(account_id: AccountId) -> NewRecurringTxn {
@@ -486,7 +486,7 @@ mod tests {
     fn update_rewrites_every_editable_field_and_leaves_the_paycheck_flag_alone() {
         let db = db::open_in_memory().unwrap();
         let account_id = checking(&db);
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
         let id = insert(&db, &paycheck_recurring_txn(account_id)).unwrap();
         set_paycheck(&db, id).unwrap();
 
@@ -762,7 +762,7 @@ mod tests {
     fn adopt_ignores_rows_that_are_not_this_occurrences() {
         let db = db::open_in_memory().unwrap();
         let account_id = checking(&db);
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
         let id = insert(&db, &paycheck_recurring_txn(account_id)).unwrap();
         let other = insert(&db, &paycheck_recurring_txn(account_id)).unwrap();
         write(&db, savings, day(2026, 8, 28), 500_000, "Salary");

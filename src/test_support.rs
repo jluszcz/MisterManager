@@ -15,7 +15,7 @@
 //! `CLAUDE.md`.
 
 use crate::db::AccountId;
-use crate::db::account::{Account, Group, Kind};
+use crate::db::account::{Account, Group, Kind, TaxTreatment};
 use chrono::NaiveDate;
 
 /// A date, without the `unwrap` at every call site.
@@ -47,6 +47,13 @@ fn name_of(kind: Kind, code: &str) -> &'static str {
             "CHK" => Some("Everyday Card"),
             _ => None,
         },
+        Kind::Investment => match code {
+            "BRK" => Some("Holdings"),
+            "RET" => Some("Long Haul"),
+            "ROTH" => Some("Untaxed Pot"),
+            "HSA" => Some("Health Pot"),
+            _ => None,
+        },
     };
     named.unwrap_or_else(|| {
         panic!(
@@ -74,6 +81,13 @@ fn account(id: i64, code: &str, kind: Kind) -> Account {
         sort: id - 1,
         group: crate::db::account::default_group(kind),
         color: None,
+        // `None` for a cash or credit account, which the schema refuses to
+        // pair with a treatment. Every investment account must carry one, and
+        // `Taxable` is this fixture's answer -- the ordinary brokerage
+        // account rather than a special case, and a fixture wanting a
+        // different treatment overrides it with struct-update syntax, the
+        // way it already overrides the color and the group.
+        tax_treatment: (kind == Kind::Investment).then_some(TaxTreatment::Taxable),
     }
 }
 
@@ -87,6 +101,39 @@ pub fn cash(id: i64, code: &str) -> Account {
 /// naming two accounts, which is what `UNIQUE (code, kind)` exists for.
 pub fn credit(id: i64, code: &str) -> Account {
     account(id, code, Kind::Credit)
+}
+
+/// An investment account: `BRK`, `RET`, `ROTH` or `HSA`, taxable unless a
+/// fixture overrides it.
+///
+/// Named from the same table `cash` and `credit` read, so a fixture takes a
+/// code and gets a name rather than restating the pairing. No name here is
+/// `Taxable`, `Investment` or any other word `TaxTreatment::label` or
+/// `Group::label` already prints.
+pub fn investment(id: i64, code: &str) -> Account {
+    account(id, code, Kind::Investment)
+}
+
+/// The fund name `CLAUDE.md`'s fund vocabulary pairs with a ticker.
+///
+/// A second table beside [`name_of`]'s: a fund fixture takes a ticker rather
+/// than an account code, and the two vocabularies never share a codespace.
+/// Naming no real fund family, so a test that needs a fund's name in the
+/// database passes this rather than a literal of its own, which is why the
+/// pairing is pinned here rather than invented per call site. An unknown
+/// ticker panics, for [`name_of`]'s reason: a fixture reaching for one has
+/// left the vocabulary.
+pub fn fund_name(ticker: &str) -> &'static str {
+    match ticker {
+        "TDF45" => "Target 2045 Fund",
+        "TDF35" => "Target 2035 Fund",
+        "USM" => "Total Market Index Fund",
+        "ISM" => "International Stock Index Fund",
+        "USB" => "Total Bond Index Fund",
+        "ISB" => "International Bond Index Fund",
+        "UNC" => "Overseas Growth Fund",
+        _ => panic!("{ticker} is not a fund ticker in CLAUDE.md's fixture table"),
+    }
 }
 
 /// How many steps [`walk_until`] takes before it calls a state unreachable.
@@ -143,6 +190,29 @@ mod tests {
     fn an_account_defaults_to_its_kinds_band() {
         assert_eq!(cash(1, "SAV").group, Group::Savings);
         assert_eq!(credit(1, "CC1").group, Group::Credit);
+    }
+
+    /// The one kind whose fixture must carry a treatment, so `investment`
+    /// cannot mirror `cash` and `credit`'s bare `None` -- the schema's paired
+    /// `CHECK` would refuse the row.
+    #[test]
+    fn an_investment_fixture_is_taxable_by_default() {
+        let a = investment(1, "RET");
+        assert_eq!(a.name.as_str(), "Long Haul");
+        assert_eq!(a.group, Group::Investment);
+        assert_eq!(a.tax_treatment, Some(TaxTreatment::Taxable));
+    }
+
+    #[test]
+    fn fund_name_reads_the_vocabulary_table() {
+        assert_eq!(fund_name("USM"), "Total Market Index Fund");
+        assert_eq!(fund_name("UNC"), "Overseas Growth Fund");
+    }
+
+    #[test]
+    #[should_panic(expected = "XYZ is not a fund ticker")]
+    fn a_ticker_outside_the_vocabulary_panics() {
+        fund_name("XYZ");
     }
 
     #[test]

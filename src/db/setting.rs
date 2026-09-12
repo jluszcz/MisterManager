@@ -282,6 +282,13 @@ pub mod key {
     /// `Constants!K2`.
     pub const BIRTH_DATE: Key<NaiveDate> = Key::new("dates.birth_date");
 
+    /// The international share *of the equity remainder*, in basis points.
+    ///
+    /// One key rather than one per side: two keys for one fact can disagree,
+    /// which is the reason only `Constants!G2` is imported for the pay
+    /// cadence. Domestic is what is left.
+    pub const INTL_EQUITY_SHARE: Key<BasisPoints> = Key::new("allocation.intl_equity_share");
+
     /// `Planning!D1`.
     pub const PLANNING_TARGET: Key<Cents> = Key::new("planning.target");
     /// `Planning!J11`.
@@ -546,6 +553,7 @@ mod tests {
             key::PAY_PERIODS_PER_YEAR.name(),
             key::WORKBOOK_TODAY.name(),
             key::BIRTH_DATE.name(),
+            key::INTL_EQUITY_SHARE.name(),
             key::PLANNING_TARGET.name(),
             key::PLANNING_BUFFER.name(),
             key::PINNED_EXCESS.name(),

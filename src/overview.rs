@@ -111,7 +111,25 @@ impl Overview {
         let adhoc = column(dates.adhoc)?;
         let month_end = column(dates.month_end)?;
 
-        let accounts = account::list(db)?;
+        // Investment accounts are not banded and do not reach Net. What one
+        // holds is its `holding` rows, a balance each and none of them dated,
+        // so any figure derived from them would read the same in all three
+        // columns of a screen whose whole shape is one widening horizon.
+        //
+        // Filtered here rather than given a band of its own, which would draw
+        // a row of zeroes. It is a guard rather than the only one: `section`
+        // below takes the bands whose `Group::kind` is the one it was asked
+        // for, and it is only ever asked for cash and credit, so an
+        // `Investment` band would be dropped there too. What this says that
+        // the other cannot is *why* -- the accounts are left out where they
+        // are read, rather than a band being built and quietly not claimed --
+        // and it is the half that still holds for a row whose `grp` and
+        // `kind` have come apart, which the schema constrains separately and
+        // only `account::set_group` refuses.
+        let accounts: Vec<_> = account::list(db)?
+            .into_iter()
+            .filter(|a| a.kind != Kind::Investment)
+            .collect();
         let mut bands: Vec<Band> = Vec::new();
         for group in Group::ALL {
             let lines: Vec<Line> = accounts
@@ -132,10 +150,12 @@ impl Overview {
                         // Credit is stored as debt, and this screen is the
                         // only one that negates it -- which is what makes Net
                         // a single addition rather than a subtraction with a
-                        // sign to get wrong.
+                        // sign to get wrong. Every other kind is signed
+                        // naturally; no investment account reaches here, the
+                        // filter above having taken them all.
                         balances: match account.kind {
-                            Kind::Cash => balances,
                             Kind::Credit => -balances,
+                            Kind::Cash | Kind::Investment => balances,
                         },
                     }
                 })
@@ -204,7 +224,7 @@ mod tests {
     /// its kind's default band, appended to whatever that kind holds.
     fn imported(db: &Db, code: &str, kind: Kind) -> AccountId {
         let sort = account::list_by_kind(db, kind).unwrap().len() as i64;
-        account::insert(db, code, code, kind, sort).unwrap()
+        account::insert(db, code, code, kind, sort, None).unwrap()
     }
 
     /// The same, then named and banded the way the owner would on the
@@ -249,6 +269,54 @@ mod tests {
             .iter()
             .find(|b| b.group == group)
             .unwrap_or_else(|| panic!("no {group:?} band"))
+    }
+
+    /// An investment account's money does not reach the Overview -- not as a
+    /// line, not in a band subtotal, not in a section total, and not in Net.
+    ///
+    /// The balance is dated inside the window and far larger than the cash
+    /// beside it, so a figure that leaked anywhere would be impossible to
+    /// miss: asserting against an account with no rows would be zero plus
+    /// zero, which holds whatever the code does.
+    #[test]
+    fn an_investment_accounts_balance_does_not_reach_the_overview() {
+        let db = db::open_in_memory().unwrap();
+        let everyday = placed(&db, "CHK", "Everyday", Kind::Cash, Group::Checking);
+        add(&db, everyday, day(2026, 8, 1), 10_000);
+        let retirement = account::insert(
+            &db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            0,
+            Some(account::TaxTreatment::TaxDeferred),
+        )
+        .unwrap();
+        add(&db, retirement, day(2026, 8, 1), 500_000);
+
+        let overview = Overview::load(&db, dates()).unwrap();
+
+        assert_eq!(
+            overview.net.to_date,
+            Cents(10_000),
+            "an investment balance reached Net"
+        );
+        assert_eq!(overview.cash.total.to_date, Cents(10_000));
+        assert_eq!(overview.credit.total.to_date, Cents::ZERO);
+        for section in [&overview.cash, &overview.credit] {
+            assert!(
+                section.bands.iter().all(|b| b.group != Group::Investment),
+                "an investment account was banded on the Overview"
+            );
+            assert!(
+                section
+                    .bands
+                    .iter()
+                    .flat_map(|b| &b.lines)
+                    .all(|l| l.account.as_ref().is_none_or(|a| a.text() != "Long Haul")),
+                "an investment account was drawn as a line"
+            );
+        }
     }
 
     /// Cash splits into the two bands, and the section total is their sum

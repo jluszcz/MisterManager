@@ -5,25 +5,43 @@
 //! of them. Every figure here is invented; see the no-real-data rule in
 //! `CLAUDE.md`.
 
+use crate::calc::fund::Targets;
 use crate::calc::planning::{PlanInputs, PlanSettings};
 use crate::db::account::{Account, AccountColor, Group, Kind};
-use crate::db::{AccountId, FundId, GoalId};
-use crate::fund::{Allocation, FundRow};
+use crate::db::fund_mix::{AssetClass, Slice};
+use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
 use crate::overview::{Balances, Band, Line, Overview, Section};
 use crate::plan_rows::{Bill, Transfer};
 use crate::projection::Dates;
 use crate::rate::{BasisPoints, Percent};
-use crate::report::{Container, Ledger, LedgerMonth, LedgerRow, PlanView, Planning, Snapshot};
+use crate::report::{
+    AccountAllocation, Allocation, Container, Holding, Ledger, LedgerMonth, LedgerRow, PlanView,
+    Planning, Snapshot,
+};
 use crate::test_support::day;
 use chrono::{Local, NaiveDate, TimeZone};
 
 pub(super) fn accounts() -> Vec<Account> {
-    vec![Account {
-        group: Group::Checking,
-        color: Some(AccountColor::Teal),
-        ..crate::test_support::cash(1, "SAV")
-    }]
+    vec![
+        Account {
+            group: Group::Checking,
+            color: Some(AccountColor::Teal),
+            ..crate::test_support::cash(1, "SAV")
+        },
+        // The two accounts the Funds tab sections its holdings under, in two
+        // colors: a section heading names its account the way a container's
+        // does, and one color across both would let a section drawn under
+        // the wrong name still pass for the right one.
+        Account {
+            color: Some(AccountColor::Copper),
+            ..crate::test_support::investment(2, "BRK")
+        },
+        Account {
+            color: Some(AccountColor::Violet),
+            ..crate::test_support::investment(3, "RET")
+        },
+    ]
 }
 
 fn labelled() -> crate::account_label::Account {
@@ -159,24 +177,101 @@ pub(super) fn plan_view() -> PlanView {
     }
 }
 
-pub(super) fn funds() -> Allocation {
-    let fund = |id, name: &str, actual: i64, target, share| FundRow {
-        id: FundId(id),
-        name: name.into(),
-        actual: Cents::from_dollars(actual),
-        target,
-        actual_share: BasisPoints(share),
-        delta: target.map(|t: BasisPoints| BasisPoints((t.0 - share).max(0))),
+/// The age rule as the fixture's portfolio is read against it: 18% bonds,
+/// and 40% of what that leaves international -- 32.80% and 49.20%.
+///
+/// An age rather than a birth date, and an invented one: no birth year
+/// appears anywhere in the crate.
+pub(super) fn targets() -> Targets {
+    crate::calc::fund::targets(Some(48), BasisPoints(4_000))
+}
+
+fn slices(pairs: &[(AssetClass, i64)]) -> Vec<Slice> {
+    pairs
+        .iter()
+        .map(|(class, weight)| Slice {
+            class: *class,
+            weight: BasisPoints(*weight),
+        })
+        .collect()
+}
+
+/// One holding as the fixture writes it, before anything is apportioned over
+/// it: which account it sits in, what the owner typed, and the filing behind
+/// it where there is one.
+struct Held<'a> {
+    account: AccountId,
+    ticker: &'a str,
+    dollars: i64,
+    filed: Option<(&'a [Slice], NaiveDate)>,
+}
+
+/// The portfolio the Funds tab draws: two accounts, four holdings, and a
+/// filing for three of them.
+///
+/// $6,000 of a domestic index fund and $2,000 of an international one in the
+/// first account, $2,000 of a bond index fund in the second, and $1,000 of a
+/// fund nobody has fetched a filing for -- which is what leaves the coverage
+/// line something to say and the holdings table a row to say it on. Over the
+/// $10,000 the three priced holdings come to: 60% U.S. stock, 19%
+/// international stock, 20% U.S. bond and 1% cash.
+///
+/// Apportioned rather than written down, here as in the waterfall above: the
+/// shares a hand-built look-through carried would be a set of numbers nothing
+/// had to agree with.
+pub(super) fn funds(targets: Targets) -> Allocation {
+    let (us, intl, bond) = (
+        slices(&[(AssetClass::UsStock, 10_000)]),
+        slices(&[(AssetClass::IntlStock, 9_500), (AssetClass::Cash, 500)]),
+        slices(&[(AssetClass::UsBond, 10_000)]),
+    );
+    let holding = |account: i64, ticker, dollars, filed| Held {
+        account: AccountId(account),
+        ticker,
+        dollars,
+        filed,
     };
+    let held = [
+        holding(2, "USM", 6_000, Some((us.as_slice(), day(2026, 6, 30)))),
+        holding(2, "ISM", 2_000, Some((intl.as_slice(), day(2026, 6, 30)))),
+        holding(2, "UNC", 1_000, None),
+        holding(3, "USB", 2_000, Some((bond.as_slice(), day(2026, 3, 31)))),
+    ];
+    let apportion = |rows: &[&Held]| {
+        let mix: Vec<(Cents, Option<&[Slice]>)> = rows
+            .iter()
+            .map(|h| (Cents::from_dollars(h.dollars), h.filed.map(|(mix, _)| mix)))
+            .collect();
+        crate::allocation::apportion(&mix)
+    };
+
+    let accounts = accounts();
+    let section = |id: AccountId| {
+        let mine: Vec<&Held> = held.iter().filter(|h| h.account == id).collect();
+        let lookthrough = apportion(&mine);
+        AccountAllocation {
+            account: crate::account_label::Account::named(&accounts, id),
+            // The loader's own rule, rather than a second copy of "empty
+            // when there is nothing to look through".
+            summary: crate::report::summary(&lookthrough, targets),
+            lookthrough,
+            holdings: mine
+                .iter()
+                .map(|h| Holding {
+                    ticker: h.ticker.to_string(),
+                    balance: Cents::from_dollars(h.dollars),
+                    as_of: h.filed.map(|(_, date)| date),
+                })
+                .collect(),
+        }
+    };
+
+    let whole: Vec<&Held> = held.iter().collect();
+    let lookthrough = apportion(&whole);
     Allocation {
-        rows: vec![
-            fund(1, "Stocks", 6_000, Some(BasisPoints(7_000)), 6_000),
-            fund(2, "Bonds", 4_000, Some(BasisPoints(3_000)), 4_000),
-        ],
-        total: Cents::from_dollars(10_000),
-        target_total: BasisPoints(10_000),
-        furthest_down: Some(0),
-        age: Some(36),
+        summary: crate::report::summary(&lookthrough, targets),
+        lookthrough,
+        accounts: vec![section(AccountId(2)), section(AccountId(3))],
     }
 }
 
@@ -216,7 +311,7 @@ pub(super) fn snapshot(rows: Vec<crate::savings::Row>, net: i64) -> Snapshot {
             excess: Cents(23),
         }],
         planning: Planning::Resolved(Box::new(plan_view())),
-        funds: funds(),
+        allocation: funds(targets()),
     }
 }
 

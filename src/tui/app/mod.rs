@@ -253,6 +253,12 @@ pub struct App {
     recurring_txn: RecurringTxns,
     recurring_goal: RecurringGoals,
     accounts: Accounts,
+    /// The `[sec] contact` line from the config file, or `None` when the
+    /// section is absent. Carried rather than read per press because it is a
+    /// fact about the run, the same standing as `today` -- and because
+    /// `config` is not a module `tui` otherwise names, so a second read site
+    /// would have to name it too.
+    sec_contact: Option<String>,
     /// The suggestion list under whichever form is open. Lives on `App`
     /// rather than on the forms because `App` owns the `Db` the query needs.
     popup: Autocomplete,
@@ -329,7 +335,7 @@ impl App {
         setting::get_or(&self.db, key::PAY_PERIODS_PER_YEAR, 26)
     }
 
-    pub fn new(db: Db, today: NaiveDate) -> Result<App> {
+    pub fn new(db: Db, today: NaiveDate, sec_contact: Option<String>) -> Result<App> {
         let dates = projection::dates(&db, today)?;
         let range = txn::date_range(&db)?;
         let mut app = App {
@@ -352,6 +358,7 @@ impl App {
             recurring_txn: RecurringTxns::new(account::list(&db)?),
             recurring_goal: RecurringGoals::new(i64::from(today.month())),
             accounts: Accounts::new(),
+            sec_contact,
             db,
             today,
             dates,
@@ -488,17 +495,15 @@ impl App {
                 search::search_key(&mut self.recurring_goal, key);
                 return Ok(());
             }
+            Screen::Funds if self.funds.is_searching() => {
+                search::search_key(&mut self.funds, key);
+                return Ok(());
+            }
             _ => {}
         }
         match key.code {
             KeyCode::Char('q') => {
                 self.quit = true;
-                return Ok(());
-            }
-            // The one screen key that does more than switch: entering Funds
-            // is what raises the birth-date prompt.
-            KeyCode::Char('6') => {
-                self.open_funds();
                 return Ok(());
             }
             KeyCode::Char(c) => {
@@ -696,13 +701,8 @@ impl App {
                 true => Topic::Planning.footer(),
                 false => Topic::Planning.footer_without(&["P"]),
             }),
-            // The other dynamic footer, but a prefix rather than a replaced
-            // word: a screen showing a row with no target must say why rather
-            // than leave a dash unexplained.
-            Screen::Funds => TextLine::from(match self.funds.needs_birth_date() {
-                true => format!("birth date unset · {}", Topic::Funds.footer()),
-                false => Topic::Funds.footer(),
-            }),
+            Screen::Funds if self.funds.is_searching() => search_footer(&self.funds),
+            Screen::Funds => TextLine::from(Topic::Funds.footer()),
             Screen::RecurringTxns => TextLine::from(Topic::RecurringTxns.footer()),
             Screen::RecurringGoals if self.recurring_goal.is_searching() => {
                 search_footer(&self.recurring_goal)
@@ -760,6 +760,7 @@ impl App {
             Screen::Savings if self.savings.is_searching() => Topic::SavingsSearch,
             Screen::Savings => Topic::Savings,
             Screen::Planning => Topic::Planning,
+            Screen::Funds if self.funds.is_searching() => Topic::FundsSearch,
             Screen::Funds => Topic::Funds,
             Screen::RecurringTxns => Topic::RecurringTxns,
             Screen::RecurringGoals if self.recurring_goal.is_searching() => {
@@ -838,7 +839,7 @@ impl App {
                 }
                 Ok(())
             }
-            // One modal over four screens, so which handler answers it is a
+            // One modal over two screens, so which handler answers it is a
             // question about what is being edited rather than about the
             // modal, and the arm asks `ValueTarget` instead of `Modal`.
             Some(Modal::Value(target, _)) => self.form_key(
@@ -846,14 +847,13 @@ impl App {
                 match target {
                     ValueTarget::Planning(_) => App::commit_value,
                     ValueTarget::Reconcile(_) => App::commit_reconcile,
-                    ValueTarget::Fund(_) => App::commit_fund_value,
-                    ValueTarget::BirthDate => App::commit_birth_date,
                 },
             ),
             Some(Modal::Bill(_)) => self.form_key(key, App::commit_bill),
             Some(Modal::RecurringTxn(_)) => self.form_key(key, App::commit_recurring_txn),
             Some(Modal::RecurringGoalEntry(_)) => self.form_key(key, App::commit_recurring_goal),
             Some(Modal::Account(_)) => self.form_key(key, App::commit_account),
+            Some(Modal::Holding(_)) => self.form_key(key, App::commit_holding_form),
             // Three modes over one modal, so the dispatch is one arm with two
             // guards rather than three variants: `Esc` then peels one layer at
             // a time with no flag on `App` saying what to return to.
@@ -902,7 +902,6 @@ impl App {
                 }
                 Ok(())
             }
-            Some(Modal::Fund(_)) => self.form_key(key, App::commit_fund),
         }
     }
 
@@ -1086,8 +1085,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::setting::{self, key};
-    use crate::db::{account, fund, recurring_goal, recurring_txn};
+    use crate::db::{account, holding, recurring_goal, recurring_txn};
     use crate::money::Cents;
     use crate::test_support::day;
     use crate::tui::app::test_support::*;
@@ -1099,7 +1097,6 @@ mod tests {
     use crate::tui::modal::{Confirm, Modal};
     use crate::tui::search::Search;
     use crate::tui::{MIN_WIDTH, worksheet as worksheet_screen};
-    use chrono::Datelike;
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::time::Instant;
 
@@ -1372,16 +1369,16 @@ mod tests {
     /// asking `tui::demo`, fails here rather than on a shared terminal.
     ///
     /// The fixture is the one with rows on every list, because an absence
-    /// check over an empty table passes for free: `app()` has no funds, no
-    /// recurring goals and no recurring transactions, which left three of the
-    /// nine screens drawing nothing to catch. What holds that shut is the
-    /// guard beside it, and it is asked of the **real** draw: a screen must be
+    /// check over an empty table passes for free: `app()` has no recurring
+    /// goals and no recurring transactions, which left two of the nine
+    /// screens drawing nothing to catch. What holds that shut is the guard
+    /// beside it, and it is asked of the **real** draw: a screen must be
     /// shown to have drawn one of these figures before being asked not to draw
     /// it scrambled. Asking it of the scrambled draw instead -- that the two
     /// differ -- says nothing, because every screen also masks the names on
     /// it, so the two would differ on a screen whose figures had stopped being
     /// masked entirely. Accounts is the one screen exempt: it draws a name, a
-    /// band and a position, and no figure at all.
+    /// band and a position and no figure at all.
     #[cfg(feature = "demo")]
     #[test]
     fn a_demo_leaves_no_figure_on_any_screen() {
@@ -1421,8 +1418,8 @@ mod tests {
     /// the screens would print it unscrambled. One list rather than one per
     /// sweep, so a row added to that fixture is covered by both.
     #[cfg(feature = "demo")]
-    const DEMO_FIXTURE_FIGURES: [&str; 10] = [
-        "1,000", "1,200", "14.99", "25.99", "15,000", "10,000", "100.00", "128", "30,000", "90,000",
+    const DEMO_FIXTURE_FIGURES: [&str; 9] = [
+        "1,000", "1,200", "14.99", "25.99", "15,000", "10,000", "100.00", "128", "9,000",
     ];
 
     /// Every name and description `app_with_two_rows_on_every_list` puts in the
@@ -1449,8 +1446,8 @@ mod tests {
         "Couch",
         "Utilities",
         "Gym",
-        "Bonds",
-        "Domestic",
+        "Holdings",
+        "USM",
     ];
 
     /// The net for names, and the Accounts screen is in it: it draws no figure
@@ -1649,18 +1646,19 @@ mod tests {
             ('5', KeyCode::Char('a')),
             ('5', KeyCode::Char('t')),
             ('6', KeyCode::Char('e')),
-            ('6', KeyCode::Char('E')),
+            ('6', KeyCode::Char('d')),
             ('7', KeyCode::Char('a')),
             ('7', KeyCode::Char('s')),
             ('8', KeyCode::Char('a')),
             ('9', KeyCode::Char('e')),
         ] {
-            // Screen 6 draws off the `fund` table and `s` on screen 7 off
-            // `recurring_goal`; `planning_app` fills neither. Every other
-            // screen here has its rows on the fixture that carries the bills
-            // screen 5 needs.
+            // `s` on screen 7 draws off `recurring_goal`, which `planning_app`
+            // fills neither of; screen 6 needs a holding under the cursor,
+            // which `planning_app` carries no investment account to hold.
+            // Every other screen here has its rows on the fixture that
+            // carries the bills screen 5 needs.
             let mut app = match (screen, key) {
-                ('6', _) | ('7', KeyCode::Char('s')) => app_with_two_rows_on_every_list(),
+                ('7', KeyCode::Char('s')) | ('6', _) => app_with_two_rows_on_every_list(),
                 _ => planning_app(),
             };
             press(&mut app, KeyCode::Char(screen));
@@ -1696,7 +1694,7 @@ mod tests {
             );
             let drawn = drawn(&mut app);
             let figures: &[&str] = match (screen, key) {
-                ('6', _) | ('7', KeyCode::Char('s')) => &DEMO_FIXTURE_FIGURES,
+                ('7', KeyCode::Char('s')) | ('6', _) => &DEMO_FIXTURE_FIGURES,
                 _ => &["1,200", "300.00", "1,000", "50,000", "5,000"],
             };
             for figure in figures {
@@ -1779,16 +1777,17 @@ mod tests {
             ('5', KeyCode::Char('a')),
             ('5', KeyCode::Char('t')),
             ('6', KeyCode::Char('e')),
-            ('6', KeyCode::Char('E')),
+            ('6', KeyCode::Char('d')),
             ('7', KeyCode::Char('a')),
             ('7', KeyCode::Char('s')),
             ('8', KeyCode::Char('a')),
             ('9', KeyCode::Char('e')),
         ] {
-            // Screen 6 draws off the `fund` table and `s` on screen 7 off
-            // `recurring_goal`; `planning_app` fills neither.
+            // `s` on screen 7 draws off `recurring_goal`, which `planning_app`
+            // fills neither of; screen 6 needs a holding under the cursor,
+            // which `planning_app` carries no investment account to hold.
             let mut app = match (screen, key) {
-                ('6', _) | ('7', KeyCode::Char('s')) => app_with_two_rows_on_every_list(),
+                ('7', KeyCode::Char('s')) | ('6', _) => app_with_two_rows_on_every_list(),
                 _ => planning_app(),
             };
             press(&mut app, KeyCode::Char(screen));
@@ -1818,7 +1817,8 @@ mod tests {
                 app.status
             );
             let drawn = drawn(&mut app);
-            // `planning_app`'s own names, and the fixture names for screen 6.
+            // `planning_app`'s own names, and the fixture names for screen 7's
+            // `s`.
             //
             // `Housing` and `Mom & Dad` are goals in the fixture too, and are
             // deliberately absent for the same reason `Mortgage`/`HOA` are:
@@ -1832,7 +1832,7 @@ mod tests {
             // (`src/gate.rs`), which does not contain the goal's full name,
             // so it is checked here rather than excluded.
             let names: &[&str] = match (screen, key) {
-                ('6', _) | ('7', KeyCode::Char('s')) => &DEMO_FIXTURE_NAMES,
+                ('7', KeyCode::Char('s')) | ('6', _) => &DEMO_FIXTURE_NAMES,
                 _ => &[
                     "Everyday",
                     "Rainy Day",
@@ -2125,7 +2125,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '6'),
-            "a add · e value · E edit · d delete"
+            "Tab acct · Esc clear · / search · a/e/d holding · g refresh · G all"
         );
         assert_eq!(
             footer_of(&mut app, '7'),
@@ -2573,7 +2573,10 @@ mod tests {
                 Topic::Planning,
                 &["e", "a", "E", "d", "t", "f", "Enter", "p", "P"],
             ),
-            (Topic::Funds, &["a", "e", "E", "d"]),
+            (
+                Topic::Funds,
+                &["Tab", "BackTab", "Esc", "/", "a", "e", "d", "g", "G"],
+            ),
             (Topic::RecurringTxns, &["a", "e", "d", "g", "G", "x", "P"]),
             (
                 Topic::RecurringGoals,
@@ -2817,13 +2820,28 @@ mod tests {
     }
 
     /// Two rows on all seven lists, which is what makes the test above mean
-    /// anything: over an empty list every scroll key leaves the cursor at zero,
-    /// so a screen that never calls `cursor::scroll_key` would pass just as
-    /// well as one that does. `app()` already fills the two ledgers, Savings
-    /// and Planning; the Funds and the two recurring screens start empty and
-    /// are filled here.
+    /// anything: over a list of one row `End` lands where `Home` did, so a
+    /// screen that never calls `cursor::scroll_key` would pass just as well as
+    /// one that does. `app()` already fills the two ledgers, Savings and
+    /// Planning; the two recurring screens and Funds start empty and are
+    /// filled here -- `app()` itself holds no investment account, which is
+    /// what leaves Funds empty in every other fixture in this file.
+    ///
+    /// Filling Funds is also what gives the demo sweeps below a figure and a
+    /// name on screen 6 to check for.
     fn app_with_two_rows_on_every_list() -> App {
         let mut app = app();
+        let broker = account::insert(
+            &app.db,
+            "BRK",
+            "Holdings",
+            account::Kind::Investment,
+            0,
+            Some(account::TaxTreatment::Taxable),
+        )
+        .unwrap();
+        holding::insert(&app.db, broker, "USM", Cents::from_dollars(9_000)).unwrap();
+        holding::insert(&app.db, broker, "USB", Cents::from_dollars(4_000)).unwrap();
         let checking = account::list(&app.db).unwrap()[0].id;
         for (name, day_of_month) in [("Utilities", 1), ("Gym", 15)] {
             recurring_txn::insert(
@@ -2850,36 +2868,6 @@ mod tests {
             )
             .unwrap();
         }
-        for (name, target, dollars) in [
-            ("Bonds", fund::Target::AgeOver30, 30_000),
-            (
-                "Domestic",
-                fund::Target::RemainderShare(crate::rate::BasisPoints(6_000)),
-                90_000,
-            ),
-        ] {
-            let ord = fund::next_ord(&app.db).unwrap();
-            fund::insert(
-                &app.db,
-                &fund::NewFund {
-                    name: name.to_string(),
-                    ord,
-                    target,
-                    actual: Cents::from_dollars(dollars),
-                },
-            )
-            .unwrap();
-        }
-        // A literal birth date is refused everywhere in this crate; derive one
-        // that is always forty-four years before whatever `today` is, so the
-        // age row has a target and screen 6 does not swallow the scroll keys
-        // behind a birth-date prompt.
-        setting::set(
-            &app.db,
-            key::BIRTH_DATE,
-            app.today.with_year(app.today.year() - 44).unwrap(),
-        )
-        .unwrap();
         app.reload().unwrap();
         app
     }

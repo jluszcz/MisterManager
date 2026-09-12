@@ -374,9 +374,9 @@ impl Chrome {
 /// look the same for it to read as one cursor -- the reversed highlight, the
 /// `> ` marker, and the [`Chrome`] the rows are fitted inside.
 ///
-/// `drawn` is how many rows that cursor may travel over, which is deliberately
-/// not `rows.len()`: Funds counts the bold `Total` it appends, and Accounts
-/// does not count the placeholder it draws in place of an empty list.
+/// `drawn` is how many rows that cursor may travel over, which is not always
+/// `rows.len()`: Accounts does not count the placeholder it draws in place of
+/// an empty list.
 ///
 /// What stays at the call sites is what each screen decides for itself: its
 /// `widths`, which this directory's `CLAUDE.md` budgets per screen, and the
@@ -550,9 +550,13 @@ fn column_of(line: &str, needle: &str) -> u16 {
 /// see [`crate::demo`]. Installed here, before the first frame, because it is a
 /// constant of the run rather than state a screen can reach: nothing after
 /// this point can turn it on or off.
-pub fn run(db: Db, today: NaiveDate, demo: bool) -> Result<Db> {
+///
+/// `sec_contact` is `cfg.sec`'s contact line, read by `main` and handed down
+/// rather than read here: `tui` does not otherwise name `config`, and a
+/// second read site is a second place for the two to drift.
+pub fn run(db: Db, today: NaiveDate, demo: bool, sec_contact: Option<String>) -> Result<Db> {
     crate::demo::install(demo);
-    let mut app = App::new(db, today)?;
+    let mut app = App::new(db, today, sec_contact)?;
     // `try_init` enables raw mode, enters the alternate screen, and installs
     // a panic hook that restores the terminal before unwinding -- so a bug
     // leaves a working shell rather than a dead one.

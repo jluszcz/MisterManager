@@ -1,5 +1,5 @@
-//! The upload, and the only place `aws_config`, `aws_sdk_s3` and `tokio` are
-//! named.
+//! The upload, and the only place `aws_config` and `aws_sdk_s3` are named --
+//! one of two places `tokio` is, `src/mix/sec.rs` being the other.
 //!
 //! The runtime is built for the duration of one upload and dropped. Nothing
 //! else in the crate is async, and this boundary is not a staging post for

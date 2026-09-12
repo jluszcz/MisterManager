@@ -36,7 +36,7 @@ pub fn import(db: &Db, sheets: &mut Sheets) -> Result<()> {
             if account::by_code(db, &code, kind)?.is_some() {
                 continue;
             }
-            account::insert(db, &code, &code, kind, sort)?;
+            account::insert(db, &code, &code, kind, sort, None)?;
             sort += 1;
         }
     }

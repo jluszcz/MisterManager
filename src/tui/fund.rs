@@ -1,103 +1,258 @@
-//! The Funds screen: the target/actual split of `Planning!I1:M5`, and the
-//! form that edits it.
+//! Screen 6: the funds held across the owner's investment accounts.
 //!
-//! View state only -- no ratatui above the render functions at the bottom,
-//! and no `Db` on the type. `App` runs the queries and hands the results in.
+//! One row per holding -- the account it sits in, the ticker, the balance
+//! the owner typed -- filtered by account and by a search over ticker and
+//! account, and its form. What a fund is *made of* is read out of
+//! `fund_mix`, keyed on the ticker rather than carried by the holding, so
+//! one fetch prices every account that holds it; nothing here ever fetches
+//! it. A holding with no mix on record and a fund holding no stock are two
+//! different states, and neither is drawn as the other: `Row::stock_percent`
+//! and `Row::as_of` are `None` exactly when no `fund_mix` row exists for the
+//! ticker, and both columns draw the same `—` every other absence in the
+//! app draws rather than a bar or a figure that would read as zero.
+//!
+//! Above that list sits the allocation summary: what the whole portfolio
+//! holds by asset class, against what the age rule says it should. The rows
+//! and the apportioning behind them are `crate::allocation`'s, not this
+//! module's -- the report's Funds tab spells the same ones -- and what is
+//! decided here is only what a terminal has to decide: the bar's glyphs, the
+//! column widths, and how many lines the panel may take off the list.
 
-use super::Label;
 use super::cursor::{Cursor, Viewport, impl_scroll};
-use super::form::{self, Field, Focused, FormFields, Step, next_in, step_index};
-use crate::db::FundId;
-use crate::db::fund::{Fund, FundEdit, Target};
-use crate::fund::Allocation;
+use super::form::{AccountChoice, Field, Focused, FormFields, Step, next_in, parse_whole_amount};
+use super::search::{Search, SearchBox};
+use super::widget::{field_stack, render_fields};
+use super::{
+    Account, Chrome, GUTTER, Label, account_cell, render_table, right_header, whole_amount,
+};
+use crate::allocation::{self, Allocation, SummaryRow, TargetClass, UNTARGETED};
+use crate::calc::fund::Targets;
+use crate::db::account;
+use crate::db::fund_mix::Slice;
+use crate::db::{AccountId, HoldingId};
 use crate::money::Cents;
 use crate::rate::BasisPoints;
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
+use chrono::NaiveDate;
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::Line as TextLine;
+use ratatui::widgets::{Block, Cell, Padding, Paragraph, Row as TableRow, Table};
+use std::collections::HashMap;
 
-/// One fund as the screen shows it.
+/// One holding, as the Funds screen lists it.
+///
+/// `stock_percent` and `as_of` are `None` exactly when no `fund_mix` row
+/// exists for `ticker` -- a fund nobody has asked SEC about yet. A fund
+/// reported to hold no stock at all is `Some(BasisPoints::ZERO)`, never
+/// `None`: zero and unknown are different states.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
-    pub fund_id: FundId,
-    pub name: String,
-    /// `None` for an age row with no birth date on record, which draws as
-    /// `—`: a blank cell would read as zero.
-    pub target: Option<BasisPoints>,
-    pub actual_share: BasisPoints,
-    pub delta: Option<BasisPoints>,
-    pub actual: Cents,
+    pub id: HoldingId,
+    pub account_id: AccountId,
+    pub account: Account,
+    pub ticker: String,
+    pub balance: Cents,
+    pub stock_percent: Option<BasisPoints>,
+    pub as_of: Option<NaiveDate>,
 }
 
+/// The Funds screen's view state: every holding, which account the `Tab`
+/// filter has narrowed to, and where the cursor sits.
+///
+/// Holds no `Db`, the way `Ledger` and `Savings` do not: `App` runs the
+/// queries -- the holdings, and the `fund_mix` row behind each ticker -- and
+/// hands the built rows in through [`Funds::set_rows`].
 pub struct Funds {
+    accounts: Vec<account::Account>,
+    /// Every composition on record, by ticker -- keyed the way `fund_mix`
+    /// itself is, rather than copied onto each [`Row`], so two accounts
+    /// holding one fund read one answer.
+    mixes: HashMap<String, Vec<Slice>>,
+    /// What the age rule asks for. Handed in beside the rows rather than
+    /// derived here, `Funds` holding no `Db` -- and cached rather than taken
+    /// per draw, since `Tab` recomputes the summary without a reload.
+    targets: Targets,
+    /// The look-through over whatever the filters leave, recomputed wherever
+    /// [`Funds::refilter`] is: the summary answers for the rows under it, so
+    /// a narrowing that moved one and not the other would put a portfolio's
+    /// composition over one account's holdings.
+    allocation: Allocation,
+    /// `None` is the All filter, an id rather than an index into `accounts`
+    /// for the reason `Savings::container` is one: nothing here has to be
+    /// carried across a reload the way a ledger's position would be.
+    account: Option<AccountId>,
     rows: Vec<Row>,
-    total: Cents,
-    target_total: BasisPoints,
-    furthest_down: Option<usize>,
+    /// Indices into `rows` that survive the account filter and the search.
+    visible: Vec<usize>,
+    search: SearchBox,
     cursor: Cursor,
 }
 
 impl Funds {
     pub fn new() -> Funds {
         Funds {
+            accounts: Vec::new(),
+            mixes: HashMap::new(),
+            // An unconfigured database is a real state: no birth date on
+            // record, and the split `crate::fund` opens on until an import
+            // writes the sheet's own.
+            targets: crate::calc::fund::targets(None, crate::fund::DEFAULT_INTL_EQUITY_SHARE),
+            allocation: Allocation::default(),
+            account: None,
             rows: Vec::new(),
-            total: Cents::ZERO,
-            target_total: BasisPoints::ZERO,
-            furthest_down: None,
+            visible: Vec::new(),
+            search: SearchBox::new(),
             cursor: Cursor::new(),
         }
     }
 
-    pub fn set_allocation(&mut self, allocation: Allocation) {
-        self.rows = allocation
-            .rows
-            .into_iter()
-            .map(|row| Row {
-                fund_id: row.id,
-                name: row.name,
-                target: row.target,
-                actual_share: row.actual_share,
-                delta: row.delta,
-                actual: row.actual,
-            })
-            .collect();
-        self.total = allocation.total;
-        self.target_total = allocation.target_total;
-        self.furthest_down = allocation.furthest_down;
-        self.cursor.clamp(self.rows.len());
+    /// Take a refreshed list of investment accounts, for the `Tab` filter and
+    /// the account column.
+    ///
+    /// The filter is an id, so nothing has to be carried across the way a
+    /// position would be -- an account the reload dropped simply narrows to
+    /// nothing until `Tab` or `Esc`-equivalent cycling moves off it.
+    pub fn set_accounts(&mut self, accounts: Vec<account::Account>) {
+        self.accounts = accounts;
     }
 
-    pub fn rows(&self) -> &[Row] {
-        &self.rows
+    /// Take every holding across every investment account, already priced
+    /// against whatever `fund_mix` rows are on record.
+    pub fn set_rows(&mut self, rows: Vec<Row>) {
+        self.rows = rows;
+        self.refilter();
+    }
+
+    /// Take every composition on record, by ticker.
+    pub fn set_mixes(&mut self, mixes: HashMap<String, Vec<Slice>>) {
+        self.mixes = mixes;
+        self.recompute_allocation();
+    }
+
+    /// Take the age rule's three shares, as of the day the app was opened on.
+    pub fn set_targets(&mut self, targets: Targets) {
+        self.targets = targets;
+    }
+
+    /// The portfolio look-through over the rows on screen, footing to
+    /// [`BasisPoints::ONE`] -- or empty when nothing on screen has a mix on
+    /// record, which is the state every database starts in.
+    pub fn summary(&self) -> Vec<Slice> {
+        self.allocation.slices.clone()
+    }
+
+    /// One targeted class as the summary draws it, or `None` when there is no
+    /// composition to draw it against.
+    ///
+    /// Absent rather than zeroed, for the reason [`Row::stock_percent`] is:
+    /// a portfolio nobody has fetched a mix for holds an unknown share of
+    /// bonds, not none.
+    pub fn summary_row(&self, class: TargetClass) -> Option<SummaryRow> {
+        (!self.allocation.slices.is_empty())
+            .then(|| SummaryRow::new(class, &self.allocation.slices, self.targets))
+    }
+
+    pub(super) fn allocation(&self) -> &Allocation {
+        &self.allocation
+    }
+
+    fn recompute_allocation(&mut self) {
+        let allocation = {
+            let held: Vec<(Cents, Option<&[Slice]>)> = self
+                .visible
+                .iter()
+                .map(|i| &self.rows[*i])
+                .map(|row| (row.balance, self.mixes.get(&row.ticker).map(Vec::as_slice)))
+                .collect();
+            allocation::apportion(&held)
+        };
+        self.allocation = allocation;
+    }
+
+    /// The rows the account filter and the search leave, not every row
+    /// fetched.
+    pub fn rows(&self) -> Vec<&Row> {
+        self.visible.iter().map(|i| &self.rows[*i]).collect()
     }
 
     pub fn selected(&self) -> Option<&Row> {
-        self.rows.get(self.cursor.index())
+        self.visible
+            .get(self.cursor.index())
+            .map(|i| &self.rows[*i])
     }
 
-    pub fn total(&self) -> Cents {
-        self.total
+    /// `Tab`: All -> each investment account, in `accounts` order -> All.
+    pub fn next_account(&mut self) {
+        self.account = match self.account {
+            None => self.accounts.first().map(|a| a.id),
+            Some(current) => match self.accounts.iter().position(|a| a.id == current) {
+                Some(i) if i + 1 < self.accounts.len() => Some(self.accounts[i + 1].id),
+                _ => None,
+            },
+        };
+        self.refilter();
     }
 
-    pub fn target_total(&self) -> BasisPoints {
-        self.target_total
+    /// `BackTab`: the same cycle the other way -- All -> the last investment
+    /// account -> its predecessor -> All.
+    pub fn previous_account(&mut self) {
+        self.account = match self.account {
+            None => self.accounts.last().map(|a| a.id),
+            Some(current) => match self.accounts.iter().position(|a| a.id == current) {
+                Some(i) if i > 0 => Some(self.accounts[i - 1].id),
+                _ => None,
+            },
+        };
+        self.refilter();
     }
 
-    /// The row the next contribution should go to, if any row is short.
-    pub fn furthest_down(&self) -> Option<usize> {
-        self.furthest_down
-    }
-
-    /// Whether the screen should ask for a birth date.
+    /// The account the `Tab` filter is narrowed to, or `None` for All.
     ///
-    /// Derived rather than stored: a row with no target is exactly an age row
-    /// whose age is unknown, so the question stands while -- and only while
-    /// -- there is a row that cannot answer it. A table of share rows needs
-    /// no birth date and is never asked for one.
-    pub fn needs_birth_date(&self) -> bool {
-        self.rows.iter().any(|row| row.target.is_none())
+    /// `a` opens its form on this account: adding a holding while looking at
+    /// one account and having the form default to a different one is a
+    /// misfiled row with no ledger to catch it later.
+    pub fn filter_account(&self) -> Option<AccountId> {
+        self.account
     }
 
-    pub fn title(&self) -> String {
-        format!("Funds · {}", self.rows.len())
+    /// An account's raw stored name, for the `/` filter to match against and
+    /// for the delete confirmation's label -- never drawn to a screen, so it
+    /// reaches neither a cell nor a demo's mask. The residual the crate's
+    /// account-color guarantee names for exactly this reason: neither use is
+    /// a display.
+    pub(super) fn account_name(&self, id: AccountId) -> &str {
+        self.accounts
+            .iter()
+            .find(|a| a.id == id)
+            .map_or("?", |a| a.name.as_str())
+    }
+
+    /// The account the `Tab` filter names, colored -- the border, and the
+    /// title `a`/`e`/`d`'s forms default to.
+    ///
+    /// `Account::named`, matching the Account column: `Savings::title` is
+    /// the precedent this mirrors, and naming an account by its code in the
+    /// border while the column beside it spells the same account out in
+    /// full would be one account said two ways in one frame.
+    pub fn title(&self) -> Label {
+        let mut title = match self.account {
+            None => Label::plain("Funds · All"),
+            Some(id) => Label::plain("Funds · ").account(Account::named(&self.accounts, id)),
+        };
+        if !self.search().is_empty() {
+            title = title.text(format!(" · /{}", self.search()));
+        }
+        title
+    }
+
+    /// `Esc`: back out of the account filter to All -- a kept search is
+    /// cleared first, through `search::escape_kept_filter`, the same order
+    /// Ledger and Savings answer `Esc` in.
+    pub fn clear_filters(&mut self) {
+        self.account = None;
+        self.refilter();
     }
 }
 
@@ -107,689 +262,1013 @@ impl Default for Funds {
     }
 }
 
-impl_scroll!(Funds, rows);
+/// The account filter and the search, in one pass -- so the two cannot
+/// narrow to different lists.
+impl Search for Funds {
+    fn search_box(&self) -> &SearchBox {
+        &self.search
+    }
 
-/// A share typed as a percentage, into basis points: `40` and `40.00` are
-/// both `BasisPoints(4_000)`.
+    fn search_box_mut(&mut self) -> &mut SearchBox {
+        &mut self.search
+    }
+
+    /// A row answers to its ticker and to the account it sits in, matched
+    /// against the account's raw stored name rather than what the screen
+    /// draws -- the same split `search::searchable_amount` makes for a
+    /// figure, so a needle still finds a real ticker and a real account
+    /// while `mm --demo` is drawing pseudonyms over them.
+    fn refilter(&mut self) {
+        let matcher = self.matcher();
+        let account = self.account;
+        self.visible = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| account.is_none_or(|id| row.account_id == id))
+            .filter(|(_, row)| {
+                let text = format!("{} {}", row.ticker, self.account_name(row.account_id));
+                matcher.matches(&text, &[])
+            })
+            .map(|(i, _)| i)
+            .collect();
+        self.cursor.clamp(self.visible.len());
+        self.recompute_allocation();
+    }
+}
+
+impl_scroll!(Funds, visible);
+
+/// How many glyph cells [`mix_bar`] fills for a whole fund's worth of stock
+/// -- also its own column's width, so a bar never grows past it.
+const MIX_BAR_WIDTH: usize = 14;
+
+/// A 14-glyph bar, filled left to right by the stock share of a fund's
+/// composition -- or the same `—` every other absence in the app draws, when
+/// no mix is on record. A fund reported to hold no stock at all still draws
+/// a full bar of the empty glyph, which is a different mark than the single
+/// dash a fund nobody has asked SEC about draws -- the one thing this column
+/// must never spell alike.
+fn mix_bar(stock_percent: Option<BasisPoints>) -> String {
+    let Some(percent) = stock_percent else {
+        return "—".to_string();
+    };
+    let clamped = percent.0.clamp(0, BasisPoints::ONE.0) as u64;
+    let filled = (clamped * MIX_BAR_WIDTH as u64 / BasisPoints::ONE.0 as u64) as usize;
+    "█".repeat(filled) + &"░".repeat(MIX_BAR_WIDTH - filled)
+}
+
+/// The stock share, as the app's own percentage format -- or the `—` every
+/// other absence in the app draws.
+fn stock_percent_cell(stock_percent: Option<BasisPoints>) -> Cell<'static> {
+    let text = match stock_percent {
+        Some(bp) => format!("{bp}%"),
+        None => "—".to_string(),
+    };
+    Cell::from(TextLine::from(text).right_aligned())
+}
+
+fn as_of_cell(as_of: Option<NaiveDate>) -> Cell<'static> {
+    match as_of {
+        Some(date) => Cell::from(date.to_string()),
+        None => Cell::from("—"),
+    }
+}
+
+/// How many of the screen's lines the summary panel costs the list: its
+/// border, its header, and a row per class it has something to say about --
+/// or none at all when it has nothing.
 ///
-/// Parsed by `form::parse_amount` because a percentage with two decimals and
-/// an amount with two decimals are the same grammar, thousands separators
-/// included; the `Cents` it returns is the scaled integer here and never
-/// money.
+/// The first two terms are [`super::Chrome::lines`]'s arithmetic, said here
+/// rather than borrowed: the panel is not a list, so it has no cursor to
+/// hand `render_table` and no `Chrome` to ask. Whatever moves there has to
+/// move here.
 ///
-/// Bounded to `0..=100`, which `Percent` deliberately is not: this one is a
-/// share of a remainder being divided up, so outside the range it would hand
-/// a fund more than there is to give.
-pub fn parse_share(raw: &str) -> Result<BasisPoints> {
-    let scaled = form::parse_amount(raw)?;
-    ensure!(
-        (0..=BasisPoints::ONE.0).contains(&scaled.0),
-        "share must be between 0 and 100: {:?}",
-        raw.trim()
-    );
-    Ok(BasisPoints(scaled.0))
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum FundField {
-    Name,
-    Kind,
-    Share,
-    Actual,
-}
-
-impl FundField {
-    pub fn label(self) -> &'static str {
-        match self {
-            FundField::Name => "Name",
-            FundField::Kind => "Target",
-            FundField::Share => "Share",
-            FundField::Actual => "Value",
-        }
+/// The panel is absent rather than empty when no holding on screen carries a
+/// mix, which is what a database nobody has run the fetcher against looks
+/// like. A bordered box of em dashes over every class would be the whole
+/// screen's top third saying only that a key has not been pressed yet, and
+/// the row that says it already sits under the cursor.
+fn summary_lines(allocation: &Allocation) -> u16 {
+    if allocation.slices.is_empty() {
+        return 0;
     }
-}
-
-/// Adding or editing one fund. Backs `a` and `E`.
-///
-/// The kind is a selector rather than a text field, so a kind the schema's
-/// `CHECK` would refuse is not representable. `Share` is only a field for a
-/// share row: an age row's target is a rule, not a number to type, so the
-/// form does not offer a box for it.
-#[derive(Debug)]
-pub struct FundForm {
-    pub editing: Option<FundId>,
-    pub focus: FundField,
-    name: Field,
-    share: Field,
-    actual: Field,
-    kind: usize,
-}
-
-impl FundForm {
-    pub fn add() -> FundForm {
-        FundForm {
-            editing: None,
-            focus: FundField::Name,
-            name: Field::default(),
-            share: Field::default(),
-            actual: Field::default(),
-            kind: 0,
-        }
-    }
-
-    pub fn edit(fund: &Fund) -> FundForm {
-        FundForm {
-            editing: Some(fund.id),
-            focus: FundField::Name,
-            name: Field::given(fund.name.clone()),
-            share: Field::given(match fund.target {
-                Target::AgeOver30 => String::new(),
-                Target::RemainderShare(share) => share.to_string(),
-            }),
-            actual: Field::given(fund.actual.to_string()),
-            kind: Target::KINDS
-                .iter()
-                .position(|k| k.kind_str() == fund.target.kind_str())
-                .unwrap_or(0),
-        }
-    }
-
-    /// Which variant the selector is on. The share it carries is the
-    /// placeholder from `Target::KINDS`; the real one comes from the field.
-    pub fn target_kind(&self) -> Target {
-        Target::KINDS[self.kind]
-    }
-
-    /// The fields this form shows, which is also its tab order.
-    pub fn fields(&self) -> Vec<FundField> {
-        match self.target_kind() {
-            Target::AgeOver30 => vec![FundField::Name, FundField::Kind, FundField::Actual],
-            Target::RemainderShare(_) => vec![
-                FundField::Name,
-                FundField::Kind,
-                FundField::Share,
-                FundField::Actual,
-            ],
-        }
-    }
-
-    pub fn title(&self) -> &'static str {
-        match self.editing {
-            Some(_) => "Edit fund — Tab field · ←/→ target · Enter save · Esc cancel",
-            None => "Add fund — Tab field · ←/→ target · Enter save · Esc cancel",
-        }
-    }
-
-    pub fn display(&self, field: FundField) -> Label {
-        Label::plain(match field {
-            FundField::Name => crate::demo::text(self.name.value()).into_owned(),
-            FundField::Share => self.share.value().to_string(),
-            FundField::Actual => crate::demo::typed(self.actual.value()),
-            FundField::Kind => match self.target_kind() {
-                Target::AgeOver30 => "tracks age".to_string(),
-                Target::RemainderShare(_) => "share of the rest".to_string(),
-            },
-        })
-    }
-
-    /// Cycle one particular field's selector, whatever the focus is. The
-    /// tests use it to reach the share row without pressing Tab first.
-    pub fn next_choice_on(&mut self, field: FundField) {
-        if field == FundField::Kind {
-            self.kind = step_index(self.kind, Target::KINDS.len(), 1);
-        }
-    }
-
-    pub fn commit(&self) -> Result<FundEdit> {
-        let name = self.name.value().trim().to_string();
-        ensure!(!name.is_empty(), "name must not be empty");
-        let target = match self.target_kind() {
-            Target::AgeOver30 => Target::AgeOver30,
-            Target::RemainderShare(_) => Target::RemainderShare(parse_share(self.share.value())?),
-        };
-        Ok(FundEdit {
-            name,
-            target,
-            // Whole dollars, refusing cents -- matching Savings and Planning.
-            actual: form::parse_whole_amount(self.actual.value())?,
-        })
-    }
-}
-
-impl FormFields for FundForm {
-    fn move_focus(&mut self, step: isize) {
-        self.focus = next_in(&self.fields(), self.focus, step);
-    }
-
-    fn cycle(&mut self, step: Step) {
-        self.kind = step_index(self.kind, Target::KINDS.len(), step.direction());
-    }
-
-    fn focused(&mut self) -> Focused<'_> {
-        match self.focus {
-            FundField::Name => Focused::Text(&mut self.name),
-            FundField::Share => Focused::Text(&mut self.share),
-            FundField::Actual => Focused::Text(&mut self.actual),
-            FundField::Kind => Focused::Selector,
-        }
-    }
-}
-
-use super::widget::{field_stack, render_fields};
-use super::{Chrome, render_table, right_header, style, whole_amount};
-use ratatui::Frame;
-use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::Line as TextLine;
-use ratatui::widgets::{Cell, Row as TableRow};
-
-/// A right-aligned percentage cell, or `—` where there is no figure.
-fn percent(bp: Option<BasisPoints>) -> Cell<'static> {
-    tinted_percent(bp, None)
-}
-
-/// The same cell in a color, for the one row that takes one.
-///
-/// Through `tui::tinted` rather than `Cell::style`, which would cover the
-/// cell's padding as well as its figure -- and `row_highlight_style` is
-/// patched over the row after its cells draw, so on the cursor row that
-/// padding becomes a block of background the full width of the column. See
-/// the tint invariant in `src/tui/CLAUDE.md`.
-fn tinted_percent(bp: Option<BasisPoints>, color: Option<style::Color>) -> Cell<'static> {
-    let text = bp.map_or_else(|| "—".to_string(), |bp| bp.to_string());
-    super::tinted(TextLine::from(text).right_aligned(), color)
-}
-
-pub fn render_form(frame: &mut Frame, form: &mut FundForm) {
-    let caret = form.caret();
-    let lines = field_stack(
-        &form.fields(),
-        form.focus,
-        caret,
-        FundField::label,
-        |f| form.display(f),
-        &[],
-    );
-    render_fields(frame, form.title(), lines);
-}
-
-/// One row per fund, a bold `Total` under them. Returns the [`Viewport`] it
-/// drew: the height `PageUp`/`PageDown` move by, and the row the next draw
-/// starts from.
-pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
-    let mut rows: Vec<TableRow> = funds
-        .rows()
+    let untargeted = allocation
+        .slices
         .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            let lowest = funds.furthest_down() == Some(i);
-            let delta = match lowest {
-                true => tinted_percent(r.delta, Some(style::NEGATIVE)),
-                false => percent(r.delta),
-            };
-            let row = TableRow::new(vec![
-                Cell::from(crate::demo::text(&r.name).into_owned()),
-                percent(r.target),
-                percent(Some(r.actual_share)),
-                delta,
-                whole_amount(r.actual),
-            ]);
-            match lowest {
-                true => row.style(Style::default().add_modifier(Modifier::BOLD)),
-                false => row,
-            }
+        .filter(|s| UNTARGETED.contains(&s.class))
+        .count();
+    2 + super::HEADER_LINES + (TargetClass::ALL.len() + untargeted) as u16 + BAR_LINES
+}
+
+/// The one line [`summary_bar`] and its legend take, under the table.
+const BAR_LINES: u16 = 1;
+
+/// How many glyph cells the four-class bar spends.
+///
+/// Fixed rather than the panel's width, for the reason [`MIX_BAR_WIDTH`] is:
+/// a glyph run truncates from the right like text, where a cell sized off the
+/// terminal would reflow every segment as the window moved. Forty is what
+/// makes the smallest segment worth drawing -- one glyph is 2.5%, and an
+/// international-bond sliver below that is the thing the bar exists to show.
+const SUMMARY_BAR_WIDTH: usize = 40;
+
+/// One glyph per [`allocation::BAR_CLASSES`] entry, in that order.
+///
+/// Four marks rather than four colours: what a colour *is* is `tui::style`'s
+/// to say and no class has one yet, and a bar that only reads in colour reads
+/// as nothing in the report beside it. The legend is drawn with them, since
+/// four shades in a fixed order is a key a reader would otherwise have to
+/// hold.
+const BAR_GLYPHS: [&str; 4] = ["█", "▓", "▒", "▚"];
+
+/// What the four leave over: cash, the classifier's residual, and whatever no
+/// filing placed. The same glyph the per-row bar below spends on the share a
+/// fund does *not* hold, so "nothing of mine is here" is one mark on this
+/// screen rather than two.
+const BAR_REST: &str = "░";
+
+/// The whole portfolio as one bar: the two equity classes, then the two bond
+/// classes the target rows combine.
+///
+/// **This is the one thing in the summary that splits the bonds.** The age
+/// rule produces a single bond number, so the row beside it cannot say whether
+/// the share is domestic or foreign, and a bar per row would have said nothing
+/// the `Actual` cell one column to its right did not already.
+///
+/// Segments are cut at the *cumulative* share and differenced, rather than
+/// each rounded on its own: that is what keeps them summing to the bar's own
+/// width, so the tail is exactly what the four classes leave rather than a
+/// glyph of accumulated rounding.
+fn summary_bar(slices: &[Slice]) -> String {
+    let width = SUMMARY_BAR_WIDTH as i64;
+    let mut bar = String::new();
+    let mut cumulative = 0i64;
+    let mut drawn = 0i64;
+    for (glyph, class) in BAR_GLYPHS.iter().zip(allocation::BAR_CLASSES) {
+        cumulative += allocation::weight(slices, class).0;
+        // Monotonic whatever the weights are: a negative `Unclassified` --
+        // a filing that over-foots -- puts the four classes past 100%
+        // between them, and a bar that ran backwards would draw a segment
+        // over the one before it.
+        let end = (cumulative.clamp(0, BasisPoints::ONE.0) * width / BasisPoints::ONE.0).max(drawn);
+        bar.push_str(&glyph.repeat((end - drawn) as usize));
+        drawn = end;
+    }
+    bar + &BAR_REST.repeat((width - drawn) as usize)
+}
+
+/// Class, Target, Actual, Δ, with the four-class bar and its legend beneath.
+///
+/// One table rather than a stack of bars: the rows are what the age rule
+/// targets and the bar is what the portfolio holds, and reading the second
+/// against the first is the only reason to draw either.
+///
+/// **The bar takes a line of its own rather than a column of the table.** A
+/// fourteen-glyph cell splits four ways into three glyphs each, which cannot
+/// show a bond split at all, and the bar is *one* statement about the whole
+/// portfolio where a table column is one per row.
+///
+/// `Cash` keeps its row at zero and `Unclassified` does not have one: cash is
+/// part of what the bar accounts for, while the residual is a defect report,
+/// and a defect report reading "none" every time is one nobody finishes
+/// reading.
+fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
+    let allocation = funds.allocation();
+    let percent = |bp: Option<BasisPoints>| {
+        Cell::from(
+            TextLine::from(match bp {
+                Some(bp) => format!("{bp}%"),
+                None => "—".to_string(),
+            })
+            .right_aligned(),
+        )
+    };
+
+    let mut rows: Vec<TableRow> = TargetClass::ALL
+        .iter()
+        .filter_map(|class| funds.summary_row(*class))
+        .map(|row| {
+            TableRow::new(vec![
+                Cell::from(row.class.label()),
+                percent(row.target),
+                percent(Some(row.actual)),
+                percent(row.delta),
+            ])
+        })
+        .collect();
+    rows.extend(
+        allocation
+            .slices
+            .iter()
+            .filter(|slice| UNTARGETED.contains(&slice.class))
+            .map(|slice| {
+                TableRow::new(vec![
+                    Cell::from(slice.class.label()),
+                    // No target and so no gap: the age rule says nothing
+                    // about cash, and a target for money the classifier
+                    // could not place would be a claim about nothing.
+                    percent(None),
+                    percent(Some(slice.weight)),
+                    percent(None),
+                ])
+            }),
+    );
+
+    let header = TableRow::new(vec![
+        Cell::from("Class"),
+        right_header("Target"),
+        right_header("Actual"),
+        right_header("Δ"),
+    ])
+    .style(Style::default().add_modifier(Modifier::BOLD));
+
+    // `Class` takes the single `Constraint::Min`; the three percentage
+    // columns are sized for `100.00%` and, on the last, the sign a gap the
+    // other way carries.
+    let widths = [
+        Constraint::Min(20),
+        Constraint::Length(7),
+        Constraint::Length(7),
+        Constraint::Length(8),
+    ];
+
+    let title = match allocation.coverage() {
+        None => "Allocation".to_string(),
+        Some(coverage) => format!("Allocation · {coverage}"),
+    };
+    // The block is drawn first and the two halves into what it leaves, rather
+    // than handed to the table: the bar is not a row, and a table owning the
+    // border would have no line below itself to put one on.
+    let block = Block::bordered()
+        .title(title)
+        .padding(Padding::right(GUTTER));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [table_area, bar_area] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(BAR_LINES)]).areas(inner);
+    frame.render_widget(
+        Table::new(rows, widths).header(header.height(super::HEADER_LINES)),
+        table_area,
+    );
+
+    let legend = BAR_GLYPHS
+        .iter()
+        .zip(allocation::BAR_CLASSES)
+        .map(|(glyph, class)| format!("{glyph} {}", class.label()))
+        .collect::<Vec<_>>()
+        .join("  ");
+    frame.render_widget(
+        Paragraph::new(TextLine::from(format!(
+            "{}  {legend}",
+            summary_bar(&allocation.slices)
+        ))),
+        bar_area,
+    );
+}
+
+/// The fewest lines the list is left before the summary gives up the screen
+/// to it: the list's own chrome -- two border lines and a header -- and the
+/// one row a cursor has to be able to sit on.
+///
+/// The panel is a fixed height and the list takes what is left, so on a
+/// short enough terminal the list is left nothing, and there is no key that
+/// hides the panel to get it back. A summary of rows the reader cannot reach
+/// is the wrong half to keep: the rows are what every other key on this
+/// screen acts on, and the summary is a reading of them. Nothing here is
+/// state, so the panel returns the moment the window does.
+const LIST_FLOOR: u16 = 2 + super::HEADER_LINES + 1;
+
+/// Account, Ticker, Balance, Mix, Stock%, As of, under the allocation summary.
+///
+/// `Account` takes the single `Constraint::Min` and absorbs the slack,
+/// `tui::GUTTER` included; the other five are `Constraint::Length` sized to
+/// their true content, the mix bar's own width chief among them -- it is
+/// fixed and glyph-based, so it truncates from the right exactly like text.
+pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
+    let area = match summary_lines(funds.allocation()) {
+        lines if lines > 0 && area.height >= lines + LIST_FLOOR => {
+            let [summary, list] =
+                Layout::vertical([Constraint::Length(lines), Constraint::Min(1)]).areas(area);
+            render_summary(frame, summary, funds);
+            list
+        }
+        _ => area,
+    };
+    let visible = funds.rows();
+    let rows: Vec<TableRow> = visible
+        .iter()
+        .map(|row| {
+            TableRow::new(vec![
+                account_cell(&row.account),
+                Cell::from(crate::demo::text(&row.ticker).into_owned()),
+                whole_amount(row.balance),
+                Cell::from(mix_bar(row.stock_percent)),
+                stock_percent_cell(row.stock_percent),
+                as_of_cell(row.as_of),
+            ])
         })
         .collect();
 
-    if rows.is_empty() {
-        rows.push(TableRow::new(vec![Cell::from("press a to add a fund")]));
-    } else {
-        // Target and value only: the actual share of the whole is always
-        // 100%, and a total delta is not a number that means anything.
-        rows.push(
-            TableRow::new(vec![
-                Cell::from("Total"),
-                percent(Some(funds.target_total())),
-                Cell::from(""),
-                Cell::from(""),
-                whole_amount(funds.total()),
-            ])
-            .style(Style::default().add_modifier(Modifier::BOLD)),
-        );
-    }
-
     let header = TableRow::new(vec![
-        Cell::from("Fund"),
-        right_header("Target %"),
-        right_header("Actual %"),
-        right_header("Delta"),
-        right_header("Actual Value"),
+        Cell::from("Account"),
+        Cell::from("Ticker"),
+        right_header("Balance"),
+        Cell::from("Mix"),
+        right_header("Stock%"),
+        Cell::from("As of"),
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
+
     let widths = [
-        Constraint::Min(16),
-        Constraint::Length(9),
-        Constraint::Length(9),
+        Constraint::Min(20),
         Constraint::Length(8),
         Constraint::Length(14),
+        Constraint::Length(14),
+        Constraint::Length(7),
+        Constraint::Length(11),
     ];
 
-    // The drawn count includes the `Total` row, so a long list scrolls to the
-    // end of what is actually on screen. An empty table draws only its
-    // placeholder, and selects nothing.
-    let drawn = match funds.rows().is_empty() {
-        true => 0,
-        false => funds.rows().len() + 1,
-    };
     render_table(
         frame,
         area,
         funds,
-        Chrome::titled(funds.title()).header(header),
+        Chrome::titled(super::label_line(&funds.title())).header(header),
         &widths,
         rows,
-        drawn,
+        visible.len(),
     )
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum HoldingField {
+    Account,
+    Ticker,
+    Balance,
+}
+
+impl HoldingField {
+    /// Tab order, and the order the fields render in.
+    pub const ORDER: [HoldingField; 3] = [
+        HoldingField::Account,
+        HoldingField::Ticker,
+        HoldingField::Balance,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            HoldingField::Account => "Account",
+            HoldingField::Ticker => "Ticker",
+            HoldingField::Balance => "Balance",
+        }
+    }
+}
+
+/// Adding or editing one holding. Backs `a` and `e`.
+///
+/// The account is a selector over the owner's investment accounts rather
+/// than a text field, so a holding cannot be written against an account that
+/// does not hold funds.
+#[derive(Debug)]
+pub struct HoldingForm {
+    /// `Some` when editing an existing row, `None` when adding one.
+    pub editing: Option<HoldingId>,
+    pub focus: HoldingField,
+    account: AccountChoice,
+    ticker: Field,
+    balance: Field,
+}
+
+impl HoldingForm {
+    /// `preselected` is the account the screen is filtered to, if any, so `a`
+    /// opens on the account being looked at rather than always on the first.
+    pub(super) fn add(
+        accounts: Vec<account::Account>,
+        preselected: Option<AccountId>,
+    ) -> Result<HoldingForm> {
+        ensure!(
+            !accounts.is_empty(),
+            "there is no investment account to hold a fund"
+        );
+        Ok(HoldingForm {
+            editing: None,
+            focus: HoldingField::Ticker,
+            account: AccountChoice::preselected(accounts, preselected),
+            ticker: Field::default(),
+            balance: Field::default(),
+        })
+    }
+
+    pub(super) fn edit(accounts: Vec<account::Account>, row: &Row) -> Result<HoldingForm> {
+        ensure!(
+            !accounts.is_empty(),
+            "there is no investment account to hold a fund"
+        );
+        Ok(HoldingForm {
+            editing: Some(row.id),
+            focus: HoldingField::Ticker,
+            account: AccountChoice::given(accounts, row.account_id),
+            ticker: Field::given(row.ticker.clone()),
+            balance: Field::given(row.balance.to_string()),
+        })
+    }
+
+    pub fn display(&self, field: HoldingField) -> Label {
+        match field {
+            HoldingField::Account => self.account.display(),
+            HoldingField::Ticker => {
+                Label::from(crate::demo::text(self.ticker.value()).into_owned())
+            }
+            HoldingField::Balance => Label::from(crate::demo::typed(self.balance.value())),
+        }
+    }
+
+    /// The ticker is **uppercased here**, which is the one place the owner's
+    /// typing becomes one.
+    ///
+    /// A ticker is a key in three places and none of them folds case:
+    /// `holding`'s `UNIQUE (account_id, ticker)`, [`crate::db::holding::update`]'s
+    /// duplicate guard, and `fund_mix`'s `PRIMARY KEY (ticker, asset_class)`,
+    /// which is looked up by the string a holding carries. So `usm` and `USM`
+    /// would be two holdings in one account, two entries in
+    /// [`crate::db::holding::tickers`], and two independent compositions —
+    /// with a mix fetched under one spelling never reaching a holding typed
+    /// in the other. Normalising the typing is what folds the three at once,
+    /// and tickers are written in capitals anyway.
+    pub fn commit(&self) -> Result<(AccountId, String, Cents)> {
+        let account = self.account.selected().context("no account is selected")?;
+        let ticker = self.ticker.value().trim().to_uppercase();
+        ensure!(!ticker.is_empty(), "ticker must not be empty");
+        let balance = parse_whole_amount(self.balance.value())?;
+        Ok((account.id, ticker, balance))
+    }
+}
+
+impl FormFields for HoldingForm {
+    fn move_focus(&mut self, step: isize) {
+        self.focus = next_in(&HoldingField::ORDER, self.focus, step);
+    }
+
+    fn focused(&mut self) -> Focused<'_> {
+        match self.focus {
+            HoldingField::Account => Focused::Selector,
+            HoldingField::Ticker => Focused::Text(&mut self.ticker),
+            HoldingField::Balance => Focused::Text(&mut self.balance),
+        }
+    }
+
+    fn cycle(&mut self, step: Step) {
+        self.account.step(step);
+    }
+}
+
+pub(super) fn render_holding(frame: &mut Frame, form: &mut HoldingForm) {
+    let title = if form.editing.is_some() {
+        "Edit holding — Tab field · Enter save · Esc cancel"
+    } else {
+        "Add holding — Tab field · Enter save · Esc cancel"
+    };
+    let caret = form.caret();
+    let lines = field_stack(
+        &HoldingField::ORDER,
+        form.focus,
+        caret,
+        HoldingField::label,
+        |f| form.display(f),
+        &[],
+    );
+    render_fields(frame, title, lines);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fund::{Allocation, FundRow};
-    use crate::test_support::walk_until;
+    use crate::db::fund_mix::AssetClass;
+    use crate::test_support::{day, investment, walk_until};
     use crate::tui::MIN_WIDTH;
-    use crate::tui::cursor::Scroll;
-    use crate::tui::form::char_key;
+    use crate::tui::form::{backspace_key, char_key};
 
-    fn row(id: i64, name: &str, target: Option<i64>, actual_bp: i64, dollars: i64) -> FundRow {
-        FundRow {
-            id: FundId(id),
-            name: name.to_string(),
-            actual: Cents::from_dollars(dollars),
-            target: target.map(BasisPoints),
-            actual_share: BasisPoints(actual_bp),
-            delta: target.map(|t| BasisPoints((t - actual_bp).max(0))),
+    fn accounts() -> Vec<account::Account> {
+        vec![investment(1, "BRK"), investment(2, "RET")]
+    }
+
+    fn fixture_row(
+        id: i64,
+        account_id: AccountId,
+        accounts: &[account::Account],
+        ticker: &str,
+        dollars: i64,
+    ) -> Row {
+        Row {
+            id: HoldingId(id),
+            account_id,
+            account: Account::named(accounts, account_id),
+            ticker: ticker.to_string(),
+            balance: Cents::from_dollars(dollars),
+            stock_percent: None,
+            as_of: None,
         }
     }
 
-    /// A three-row block, derived.
-    fn allocation() -> Allocation {
-        Allocation {
-            rows: vec![
-                row(1, "Bonds", Some(1_000), 1_666, 30_000),
-                row(2, "International", Some(3_600), 3_333, 60_000),
-                row(3, "Domestic", Some(5_400), 5_000, 90_000),
-            ],
-            total: Cents::from_dollars(180_000),
-            target_total: BasisPoints::ONE,
-            furthest_down: Some(2),
-            age: Some(40),
-        }
-    }
-
-    fn screen() -> Funds {
+    /// Two holdings in the first account, one in the second -- so a test
+    /// narrowing the `Tab` filter to one account sees the list actually
+    /// shrink.
+    fn funds() -> Funds {
+        let all = accounts();
         let mut funds = Funds::new();
-        funds.set_allocation(allocation());
+        funds.set_accounts(all.clone());
+        funds.set_rows(vec![
+            fixture_row(1, AccountId(1), &all, "USM", 10_000),
+            fixture_row(2, AccountId(1), &all, "USB", 5_000),
+            fixture_row(3, AccountId(2), &all, "ISM", 3_000),
+        ]);
         funds
     }
 
     #[test]
-    fn each_row_carries_its_derived_columns() {
-        let funds = screen();
-        assert_eq!(funds.rows()[2].delta, Some(BasisPoints(400)));
-        assert_eq!(funds.rows()[0].target, Some(BasisPoints(1_000)));
-        assert_eq!(funds.furthest_down(), Some(2));
-        assert_eq!(funds.total(), Cents::from_dollars(180_000));
+    fn the_account_filter_cycles_through_each_investment_account_and_back_to_all() {
+        let mut funds = funds();
+        assert_eq!(funds.filter_account(), None);
+        funds.next_account();
+        assert_eq!(funds.filter_account(), Some(AccountId(1)));
+        funds.next_account();
+        assert_eq!(funds.filter_account(), Some(AccountId(2)));
+        funds.next_account();
+        assert_eq!(funds.filter_account(), None, "Tab must return to All");
     }
 
     #[test]
-    fn basis_points_print_as_a_percentage_with_two_decimals() {
-        assert_eq!(BasisPoints(3_456).to_string(), "34.56");
-        assert_eq!(BasisPoints(725).to_string(), "7.25");
-        assert_eq!(BasisPoints::ZERO.to_string(), "0.00");
-        assert_eq!(BasisPoints::ONE.to_string(), "100.00");
-    }
-
-    /// The prompt is a question about a missing setting, so it stands exactly
-    /// while a row has no target to show.
-    #[test]
-    fn the_screen_asks_for_a_birth_date_only_while_an_age_row_has_no_target() {
-        assert!(!screen().needs_birth_date());
-
-        let mut unset = Funds::new();
-        unset.set_allocation(Allocation {
-            rows: vec![row(1, "Bonds", None, 10_000, 30_000)],
-            total: Cents::from_dollars(30_000),
-            target_total: BasisPoints::ZERO,
-            furthest_down: None,
-            age: None,
-        });
-        assert!(unset.needs_birth_date());
-
-        // No age row, no question: a table of share rows needs no birth date.
-        let mut shares = Funds::new();
-        shares.set_allocation(Allocation {
-            rows: vec![row(1, "Domestic", Some(10_000), 10_000, 1)],
-            total: Cents::from_dollars(1),
-            target_total: BasisPoints::ONE,
-            furthest_down: None,
-            age: None,
-        });
-        assert!(!shares.needs_birth_date());
+    fn back_tab_cycles_the_account_filter_the_other_way() {
+        let mut funds = funds();
+        funds.previous_account();
+        assert_eq!(funds.filter_account(), Some(AccountId(2)));
+        funds.previous_account();
+        assert_eq!(funds.filter_account(), Some(AccountId(1)));
+        funds.previous_account();
+        assert_eq!(funds.filter_account(), None, "BackTab must return to All");
     }
 
     #[test]
-    fn the_cursor_stays_inside_the_list() {
-        let mut funds = screen();
-        assert_eq!(funds.selected().unwrap().fund_id, FundId(1));
-        funds.select_previous();
-        assert_eq!(funds.selected().unwrap().fund_id, FundId(1));
+    fn clear_filters_returns_the_account_filter_to_all() {
+        let mut funds = funds();
+        funds.next_account();
+        assert_eq!(funds.filter_account(), Some(AccountId(1)));
 
+        funds.clear_filters();
+        assert_eq!(funds.filter_account(), None);
+        assert_eq!(funds.rows().len(), 3, "the full list did not come back");
+    }
+
+    #[test]
+    fn narrowing_to_one_account_shrinks_the_list_to_just_its_holdings() {
+        let mut funds = funds();
+        funds.next_account();
+        let tickers: Vec<&str> = funds.rows().iter().map(|r| r.ticker.as_str()).collect();
+        assert_eq!(tickers, vec!["USM", "USB"]);
+    }
+
+    #[test]
+    fn the_search_matches_a_holdings_ticker() {
+        let mut funds = funds();
+        funds.begin_search();
+        for c in "USB".chars() {
+            funds.push_search(c);
+        }
+        let tickers: Vec<&str> = funds.rows().iter().map(|r| r.ticker.as_str()).collect();
+        assert_eq!(tickers, vec!["USB"]);
+    }
+
+    /// "Long Haul" is `RET`'s fixture name, so a needle over the account
+    /// reaches a holding the ticker alone would not.
+    #[test]
+    fn the_search_matches_the_account_a_holding_sits_in() {
+        let mut funds = funds();
+        funds.begin_search();
+        for c in "Long".chars() {
+            funds.push_search(c);
+        }
+        let tickers: Vec<&str> = funds.rows().iter().map(|r| r.ticker.as_str()).collect();
+        assert_eq!(tickers, vec!["ISM"]);
+    }
+
+    #[test]
+    fn a_position_past_the_end_of_a_shrinking_filter_moves_into_bounds() {
+        use crate::tui::cursor::Scroll;
+        let mut funds = funds();
         funds.select_last();
-        assert_eq!(funds.selected().unwrap().fund_id, FundId(3));
-        funds.select_next();
-        assert_eq!(funds.selected().unwrap().fund_id, FundId(3));
-    }
+        assert_eq!(funds.selected_index(), 2);
 
-    #[test]
-    fn a_shrinking_list_moves_the_selection_into_bounds() {
-        let mut funds = screen();
-        funds.select_last();
-
-        funds.set_allocation(Allocation {
-            rows: vec![row(1, "Bonds", Some(1_000), 10_000, 30_000)],
-            total: Cents::from_dollars(30_000),
-            target_total: BasisPoints(1_000),
-            furthest_down: None,
-            age: Some(40),
-        });
-
+        funds.begin_search();
+        for c in "USM".chars() {
+            funds.push_search(c);
+        }
         assert_eq!(funds.selected_index(), 0);
-        assert_eq!(funds.selected().unwrap().fund_id, FundId(1));
+        assert_eq!(funds.selected().unwrap().ticker, "USM");
     }
 
+    /// A fund nobody has asked SEC about and a fund confirmed to hold no
+    /// stock at all must never draw alike: the first is a question, the
+    /// second is an answer.
     #[test]
-    fn an_empty_table_has_nothing_selected() {
+    fn a_fund_never_fetched_and_a_fund_confirmed_to_hold_no_stock_draw_differently() {
+        let all = accounts();
         let mut funds = Funds::new();
-        funds.set_allocation(Allocation {
-            rows: Vec::new(),
-            total: Cents::ZERO,
-            target_total: BasisPoints::ZERO,
-            furthest_down: None,
-            age: None,
-        });
-        assert!(funds.selected().is_none());
-    }
+        funds.set_accounts(all.clone());
+        funds.set_rows(vec![
+            fixture_row(1, AccountId(1), &all, "USM", 10_000),
+            Row {
+                stock_percent: Some(BasisPoints::ZERO),
+                as_of: Some(day(2026, 6, 30)),
+                ..fixture_row(2, AccountId(1), &all, "USB", 5_000)
+            },
+        ]);
 
-    /// An age row's target is not a number to type, so the form has no field
-    /// for it -- and a share row's is.
-    #[test]
-    fn the_form_shows_a_share_field_only_for_a_share_row() {
-        let mut form = FundForm::add();
-        assert_eq!(
-            form.fields(),
-            vec![FundField::Name, FundField::Kind, FundField::Actual]
-        );
+        let lines = drawn(&funds, 8);
+        let never_fetched = lines
+            .iter()
+            .find(|l| l.contains("USM"))
+            .expect("the never-fetched row is drawn");
+        assert!(never_fetched.contains('—'), "{never_fetched:?}");
+        assert!(!never_fetched.contains('░'), "{never_fetched:?}");
 
-        walk_until!(
-            matches!(form.target_kind(), Target::RemainderShare(_)),
-            form.next_choice_on(FundField::Kind)
-        );
-        assert_eq!(
-            form.fields(),
-            vec![
-                FundField::Name,
-                FundField::Kind,
-                FundField::Share,
-                FundField::Actual
-            ]
+        let zero_stock = lines
+            .iter()
+            .find(|l| l.contains("USB"))
+            .expect("the zero-stock row is drawn");
+        assert!(
+            zero_stock.contains(&"░".repeat(MIX_BAR_WIDTH)),
+            "a fully unfilled bar should draw, not a dash: {zero_stock:?}"
         );
     }
 
-    #[test]
-    fn a_share_parses_as_a_percentage_into_basis_points() {
-        assert_eq!(parse_share("40").unwrap(), BasisPoints(4_000));
-        assert_eq!(parse_share("40.00").unwrap(), BasisPoints(4_000));
-        assert_eq!(parse_share(" 0.5 ").unwrap(), BasisPoints(50));
-        assert_eq!(parse_share("100").unwrap(), BasisPoints::ONE);
+    /// The portfolio the app fixture builds, at view level: `USM` never
+    /// fetched, the bond fund and the international fund both priced.
+    fn funds_with_mixes() -> Funds {
+        let all = accounts();
+        let slice = |class, weight| Slice {
+            class,
+            weight: BasisPoints(weight),
+        };
+        let bond = vec![
+            slice(AssetClass::UsBond, 7_000),
+            slice(AssetClass::IntlBond, 2_500),
+            slice(AssetClass::Cash, 500),
+        ];
+        let intl = vec![
+            slice(AssetClass::IntlStock, 9_500),
+            slice(AssetClass::Cash, 500),
+        ];
+        let filed = day(2026, 6, 30);
+
+        let mut funds = Funds::new();
+        funds.set_accounts(all.clone());
+        funds.set_targets(crate::calc::fund::targets(Some(48), BasisPoints(4_000)));
+        funds.set_mixes(HashMap::from([
+            ("USB".to_string(), bond),
+            ("ISM".to_string(), intl),
+        ]));
+        funds.set_rows(vec![
+            fixture_row(1, AccountId(1), &all, "USM", 10_000),
+            Row {
+                stock_percent: Some(BasisPoints::ZERO),
+                as_of: Some(filed),
+                ..fixture_row(2, AccountId(1), &all, "USB", 5_000)
+            },
+            Row {
+                stock_percent: Some(BasisPoints(9_500)),
+                as_of: Some(filed),
+                ..fixture_row(3, AccountId(2), &all, "ISM", 3_000)
+            },
+        ]);
+        funds
     }
 
-    /// A share is a share of a remainder being divided up, so outside
-    /// `0..=100` it would hand a fund more than there is to give.
-    #[test]
-    fn a_share_outside_zero_to_a_hundred_is_refused() {
-        assert!(parse_share("-1").is_err());
-        assert!(parse_share("101").is_err());
-        assert!(parse_share("").is_err());
-        assert!(parse_share("half").is_err());
-    }
-
-    #[test]
-    fn the_form_commits_what_was_typed() {
-        let mut form = FundForm::add();
-        for c in "International".chars() {
-            form.edit(char_key(c));
-        }
-        form.next_field();
-        walk_until!(
-            matches!(form.target_kind(), Target::RemainderShare(_)),
-            form.choice(Step::NEXT)
-        );
-        form.next_field();
-        for c in "40".chars() {
-            form.edit(char_key(c));
-        }
-        form.next_field();
-        for c in "60,000".chars() {
-            form.edit(char_key(c));
-        }
-
-        let edit = form.commit().unwrap();
-        assert_eq!(edit.name, "International");
-        assert_eq!(edit.target, Target::RemainderShare(BasisPoints(4_000)));
-        assert_eq!(edit.actual, Cents::from_dollars(60_000));
-    }
-
-    /// Matching Savings and Planning: a value is typed in whole dollars, and
-    /// `1800.5` typed for `1800.50` is a typo rather than a rounding.
-    #[test]
-    fn the_value_field_refuses_cents() {
-        let mut form = FundForm::add();
-        for c in "Bonds".chars() {
-            form.edit(char_key(c));
-        }
-        form.focus = FundField::Actual;
-        for c in "30000.50".chars() {
-            form.edit(char_key(c));
-        }
-        assert!(form.commit().is_err());
-    }
-
-    #[test]
-    fn editing_a_fund_prefills_every_field() {
-        let form = FundForm::edit(&crate::db::fund::Fund {
-            id: FundId(2),
-            name: "International".to_string(),
-            ord: 1,
-            target: Target::RemainderShare(BasisPoints(4_000)),
-            actual: Cents::from_dollars(60_000),
-        });
-        assert_eq!(form.editing, Some(FundId(2)));
-        assert_eq!(form.display(FundField::Name).plain_text(), "International");
-        assert_eq!(form.display(FundField::Share).plain_text(), "40.00");
-        assert_eq!(form.display(FundField::Actual).plain_text(), "60,000.00");
-    }
-
-    /// The value and the name are what a demo has to hide; the share is not,
-    /// since a fund's allocation is the shape of the portfolio rather than a
-    /// sum, and scrambling it would hide the one thing this screen is worth
-    /// demonstrating.
-    #[cfg(feature = "demo")]
-    #[test]
-    fn a_demo_scrambles_a_funds_value_and_keeps_its_share() {
-        crate::demo::install_with_salt(7);
-        let form = FundForm::edit(&crate::db::fund::Fund {
-            id: FundId(2),
-            name: "International".to_string(),
-            ord: 1,
-            target: Target::RemainderShare(BasisPoints(4_000)),
-            actual: Cents::from_dollars(60_000),
-        });
-        let drawn = form.display(FundField::Actual).plain_text();
-        assert_ne!(drawn, "60,000.00");
-        assert_eq!(drawn.len(), "60,000.00".len());
-        assert_eq!(form.display(FundField::Share).plain_text(), "40.00");
-        let drawn_name = form.display(FundField::Name).plain_text();
-        assert_ne!(drawn_name, "International");
-        assert_eq!(drawn_name, crate::demo::text("International"));
-    }
-
-    /// Five columns at `MIN_WIDTH`, all read for one test.
-    fn drawn(funds: &Funds) -> Vec<String> {
+    fn drawn(funds: &Funds, height: u16) -> Vec<String> {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 9)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
         terminal
             .draw(|frame| {
                 render(frame, frame.area(), funds);
             })
             .unwrap();
-        let buffer = terminal.backend().buffer();
-        (0..9)
+        let buffer = terminal.backend().buffer().clone();
+        (0..height)
             .map(|y| (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect())
             .collect()
     }
 
-    /// The one colored cell on this screen, held to the same rule as every
-    /// other: a `Cell`'s own style covers its padding, and
-    /// `row_highlight_style` is patched over the row *after* its cells draw,
-    /// so on the cursor row that padding becomes a block of background the
-    /// full width of the column. The furthest-down row is both the red one
-    /// and, here, the one under the cursor -- which is exactly when it shows.
+    /// The summary is a fixed height above a list that takes what is left,
+    /// so on a short terminal it can leave the list nothing -- and no key on
+    /// this screen hides it. The rows are what the other keys act on, so they
+    /// are the half that keeps the screen.
     #[test]
-    fn the_furthest_down_delta_tints_its_figure_and_not_its_padding() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+    fn a_terminal_too_short_for_both_keeps_the_list_and_drops_the_summary() {
+        let funds = funds_with_mixes();
+        let lines = drawn(&funds, summary_lines(funds.allocation()) + LIST_FLOOR - 1);
 
-        let mut funds = screen();
-        // `furthest_down` is the third row, so park the cursor on it.
-        funds.select_last();
-        assert_eq!(funds.selected_index(), funds.furthest_down().unwrap());
-
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 9)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &funds);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
-
-        let (y, line) = (0..9u16)
-            .map(|y| {
-                (
-                    y,
-                    (0..MIN_WIDTH)
-                        .map(|x| buffer[(x, y)].symbol())
-                        .collect::<String>(),
-                )
-            })
-            .find(|(_, line)| line.contains("Domestic"))
-            .expect("no Domestic row");
-
-        // The delta figure carries the red. Located past the Actual column,
-        // because `4.00` also occurs inside the `54.00` two columns to its
-        // left and a plain search would find that one.
-        let past_actual = line.find("50.00").expect("no Actual column") + "50.00".len();
-        let rel = line[past_actual..].find("4.00").expect("no Delta column");
-        let at = line[..past_actual + rel].chars().count() as u16;
-        assert_eq!(buffer[(at, y)].fg, style::NEGATIVE, "{line:?}");
-        // ...and nothing that is not a character carries anything.
-        for x in 0..MIN_WIDTH {
-            if buffer[(x, y)].symbol() == " " {
-                assert_eq!(
-                    buffer[(x, y)].fg,
-                    style::Color::Reset,
-                    "padding at column {x} is tinted: {line:?}"
-                );
-            }
-        }
-    }
-
-    /// A right-aligned cell that gets truncated loses its *leading*
-    /// characters, so a column one short turns a figure into a smaller
-    /// figure rather than an ellipsis.
-    #[test]
-    fn every_column_fits_the_minimum_width() {
-        let lines = drawn(&screen());
-        let table = lines.join("\n");
-        for expected in [
-            "Bonds",
-            "10.00",
-            "16.66",
-            "0.00",
-            "30,000",
-            "International",
-            "36.00",
-            "33.33",
-            "Domestic",
-            "4.00",
-            "90,000",
-            "Total",
-            "100.00",
-            "180,000",
-        ] {
-            assert!(table.contains(expected), "{expected:?} is cut off: {table}");
-        }
-    }
-
-    /// Four of the five columns are right-aligned, so their headers must end
-    /// where their figures do.
-    #[test]
-    fn the_right_aligned_headers_end_where_their_own_columns_do() {
-        let lines = drawn(&screen());
-        let header = super::super::ends_in_order(
-            &lines[1],
-            &["Fund", "Target %", "Actual %", "Delta", "Actual Value"],
+        assert!(
+            !lines.iter().any(|l| l.contains("Target")),
+            "the summary yields: {lines:#?}"
         );
-        let row =
-            super::super::ends_in_order(&lines[2], &["Bonds", "10.00", "16.66", "0.00", "30,000"]);
-        for column in 1..=4 {
-            assert_eq!(
-                header[column], row[column],
-                "column {column} of {:?}",
-                lines[2]
+        assert!(
+            lines.iter().any(|l| l.contains("Ticker")),
+            "the list keeps its header: {lines:#?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("USM")),
+            "and a holding to sit on: {lines:#?}"
+        );
+    }
+
+    /// The summary sits above the list, so it spends the list's height as
+    /// well as the screen's width. Both are checked at once and against
+    /// `MIN_WIDTH` rather than a number: a right-aligned percentage one
+    /// column short loses its *leading* digits, which reads as a smaller
+    /// share rather than as a truncation.
+    #[test]
+    fn the_summary_and_the_list_both_fit_the_narrowest_terminal() {
+        let funds = funds_with_mixes();
+        let lines = drawn(&funds, 24);
+
+        // $5,000 of a 70/25/5 bond fund and $3,000 of a 95/5 international
+        // fund, over the $8,000 the two of them come to -- `USM` having no
+        // mix on record is outside the denominator entirely.
+        let bonds = lines
+            .iter()
+            .find(|l| l.contains("Bonds"))
+            .expect("the Bonds row is drawn");
+        let header = lines
+            .iter()
+            .find(|l| l.contains("Target"))
+            .expect("the summary header is drawn");
+        let header_ends = super::super::ends_in_order(header, &["Target", "Actual", "Δ"]);
+        let row_ends = super::super::ends_in_order(bonds, &["18.00%", "59.37%", "-41.37%"]);
+        assert_eq!(
+            header_ends, row_ends,
+            "the summary's columns over {bonds:?}"
+        );
+
+        // The class the unfetched fund would have carried, sitting at nothing
+        // against a target of nearly half the portfolio.
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("U.S. Stock") && l.contains("49.20%") && l.contains("0.00%")),
+            "{lines:#?}"
+        );
+        // Cash is accounted for and carries no target; the classifier placed
+        // everything, so there is no Unclassified row at all.
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("Cash") && l.contains("5.00%")),
+            "{lines:#?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.contains("Unclassified")),
+            "{lines:#?}"
+        );
+
+        // And the list still draws under it, header and every holding.
+        assert!(lines.iter().any(|l| l.contains("Account")), "{lines:#?}");
+        for ticker in ["USM", "USB", "ISM"] {
+            assert!(
+                lines.iter().any(|l| l.contains(ticker)),
+                "the summary crowded {ticker} off the list: {lines:#?}"
             );
         }
     }
 
-    /// An age row with no birth date has no target to print, and a blank cell
-    /// would read as zero.
+    /// Every class represented, so the bar has four segments to draw rather
+    /// than three and a gap. `funds_with_mixes` deliberately does not: it
+    /// mirrors the app fixture, whose unfetched `USM` is what leaves the U.S.
+    /// stock row at nothing.
+    fn funds_fully_priced() -> Funds {
+        let mut funds = funds_with_mixes();
+        let mut mixes = HashMap::from([(
+            "USM".to_string(),
+            vec![Slice {
+                class: AssetClass::UsStock,
+                weight: BasisPoints::ONE,
+            }],
+        )]);
+        for (ticker, slices) in funds.mixes.clone() {
+            mixes.insert(ticker, slices);
+        }
+        funds.set_mixes(mixes);
+        funds
+    }
+
+    /// $10,000 all U.S. stock, $5,000 of a 70/25/5 bond fund and $3,000 of a
+    /// 95/5 international fund, over $18,000: 55.56 / 15.83 / 19.45 / 6.94,
+    /// with cash taking the 2.22 the four leave.
+    ///
+    /// The bar cuts at the cumulative share, so its segments are that split
+    /// scaled to forty glyphs -- 22, 6, 8, 3 -- and the tail is the one glyph
+    /// the four do not account for.
     #[test]
-    fn an_age_row_with_no_birth_date_draws_a_dash_for_its_target() {
-        let mut funds = Funds::new();
-        funds.set_allocation(Allocation {
-            rows: vec![row(1, "Bonds", None, 10_000, 30_000)],
-            total: Cents::from_dollars(30_000),
-            target_total: BasisPoints::ZERO,
-            furthest_down: None,
-            age: None,
-        });
-        assert!(drawn(&funds).join("\n").contains("—"));
+    fn the_mix_bar_is_one_run_of_four_segments_in_the_portfolios_own_proportions() {
+        let funds = funds_fully_priced();
+        let summary = funds.summary();
+        assert_eq!(
+            allocation::weight(&summary, AssetClass::UsStock),
+            BasisPoints(5_556)
+        );
+
+        let bar = summary_bar(&summary);
+        assert_eq!(
+            bar,
+            "█".repeat(22) + &"▓".repeat(6) + &"▒".repeat(8) + &"▚".repeat(3) + "░"
+        );
+        assert_eq!(bar.chars().count(), SUMMARY_BAR_WIDTH);
+    }
+
+    /// The bond classes are two segments where the rows above are one, which
+    /// is the whole of what the bar adds: the age rule produces a single bond
+    /// number, so nothing else on the panel can say which half is which.
+    #[test]
+    fn the_bar_splits_the_bonds_the_target_rows_combine() {
+        let funds = funds_fully_priced();
+        let lines = drawn(&funds, 24);
+        let bar = lines
+            .iter()
+            .find(|l| l.contains("▚"))
+            .expect("the bar is drawn");
+
+        for (glyph, class) in BAR_GLYPHS.iter().zip(allocation::BAR_CLASSES) {
+            assert!(
+                bar.contains(&format!("{glyph} {}", class.label())),
+                "{class:?} is drawn with no legend: {bar:?}"
+            );
+        }
+        let bonds = funds
+            .summary_row(TargetClass::Bonds)
+            .expect("a Bonds row")
+            .actual;
+        assert_eq!(
+            bonds,
+            BasisPoints(1_945 + 694),
+            "the row combines what the bar splits"
+        );
+    }
+
+    /// A `None` target has to reach the cells, not only the model: a bond
+    /// share nobody has a birth date for is a question, and `0.00%` in either
+    /// column would read as advice.
+    #[test]
+    fn a_bond_target_with_no_birth_date_draws_an_em_dash_in_both_of_its_cells() {
+        let mut funds = funds_with_mixes();
+        funds.set_targets(crate::calc::fund::targets(None, BasisPoints(4_000)));
+
+        let lines = drawn(&funds, 24);
+        let bonds = lines
+            .iter()
+            .find(|l| l.contains("Bonds"))
+            .expect("the Bonds row is drawn");
+        super::super::ends_in_order(bonds, &["—", "59.37%", "—"]);
+        assert!(
+            !bonds.contains("0.00%"),
+            "a missing target drew a zero: {bonds:?}"
+        );
+    }
+
+    /// The panel is a claim about the whole list, so it says when it is not
+    /// one: `BRK` holds the fund nobody has fetched, `RET` holds only a fund
+    /// that has been.
+    #[test]
+    fn the_summary_title_names_its_coverage_only_while_something_is_missing() {
+        let mut funds = funds_with_mixes();
+        assert!(
+            drawn(&funds, 24)
+                .iter()
+                .any(|l| l.contains("Allocation · 2 of 3 holdings")),
+            "the partial coverage went unsaid"
+        );
+
+        walk_until!(
+            funds.filter_account() == Some(AccountId(2)),
+            funds.next_account()
+        );
+        let lines = drawn(&funds, 24);
+        assert!(lines.iter().any(|l| l.contains("Allocation")), "{lines:#?}");
+        assert!(
+            !lines.iter().any(|l| l.contains("holdings")),
+            "a complete summary counted itself: {lines:#?}"
+        );
+    }
+
+    /// Every database starts with no composition on record, and a bordered
+    /// box of em dashes over the top third of the screen would say only that
+    /// a key has not been pressed yet.
+    #[test]
+    fn a_portfolio_with_no_mix_on_record_draws_no_summary_at_all() {
+        let lines = drawn(&funds(), 24);
+        assert!(
+            !lines.iter().any(|l| l.contains("Allocation")),
+            "{lines:#?}"
+        );
+        assert!(lines[0].contains("Funds"), "the list took the whole area");
     }
 
     #[test]
-    fn an_empty_table_still_draws_its_headers_and_says_how_to_add_a_fund() {
+    fn the_right_aligned_headers_end_where_their_own_columns_do() {
+        let all = vec![investment(1, "BRK")];
         let mut funds = Funds::new();
-        funds.set_allocation(Allocation {
-            rows: Vec::new(),
-            total: Cents::ZERO,
-            target_total: BasisPoints::ZERO,
-            furthest_down: None,
-            age: None,
-        });
-        let table = drawn(&funds).join("\n");
-        assert!(table.contains("Target %"), "{table}");
-        assert!(table.contains("press a to add a fund"), "{table}");
+        funds.set_accounts(all.clone());
+        funds.set_rows(vec![Row {
+            stock_percent: Some(BasisPoints(6_234)),
+            as_of: Some(day(2026, 6, 30)),
+            ..fixture_row(1, AccountId(1), &all, "USM", 100)
+        }]);
+
+        // No mix on record, so no summary panel: the list still opens at the
+        // top of the area, with its header on the line under the border.
+        let lines = drawn(&funds, 6);
+        let header = &lines[1];
+        let row = &lines[2];
+
+        let header_ends = super::super::ends_in_order(header, &["Balance", "Stock%"]);
+        let row_ends = super::super::ends_in_order(row, &["100", "62.34%"]);
+        assert_eq!(header_ends[0], row_ends[0], "Balance over {row:?}");
+        assert_eq!(header_ends[1], row_ends[1], "Stock% over {row:?}");
+    }
+
+    fn focused(form: &mut HoldingForm, field: HoldingField) {
+        walk_until!(form.focus == field, form.next_field());
+    }
+
+    fn typed(form: &mut HoldingForm, field: HoldingField, text: &str) {
+        focused(form, field);
+        for c in text.chars() {
+            form.edit(char_key(c));
+        }
+    }
+
+    #[test]
+    fn a_holding_form_commits_the_account_ticker_and_balance_typed() {
+        let mut form = HoldingForm::add(accounts(), Some(AccountId(2))).unwrap();
+        typed(&mut form, HoldingField::Ticker, "USM");
+        typed(&mut form, HoldingField::Balance, "10000");
+
+        let (account_id, ticker, balance) = form.commit().unwrap();
+        assert_eq!(account_id, AccountId(2));
+        assert_eq!(ticker, "USM");
+        assert_eq!(balance, Cents::from_dollars(10_000));
+    }
+
+    #[test]
+    fn a_holding_form_refuses_an_empty_ticker() {
+        let mut form = HoldingForm::add(accounts(), None).unwrap();
+        typed(&mut form, HoldingField::Balance, "100");
+
+        let err = form.commit().unwrap_err();
+        assert!(err.to_string().contains("ticker"), "{err}");
+    }
+
+    /// Goal and fund figures alike are typed in whole dollars -- a typo
+    /// rather than a deliberate cents figure -- and `parse_whole_amount`
+    /// refuses rather than rounds.
+    #[test]
+    fn a_holding_form_refuses_a_balance_carrying_cents() {
+        let mut form = HoldingForm::add(accounts(), None).unwrap();
+        typed(&mut form, HoldingField::Ticker, "USM");
+        typed(&mut form, HoldingField::Balance, "100.50");
+
+        let err = form.commit().unwrap_err();
+        assert!(err.to_string().contains("100.50"), "{err}");
+    }
+
+    #[test]
+    fn a_holding_form_with_no_investment_account_to_write_to_is_refused() {
+        let err = HoldingForm::add(Vec::new(), None).unwrap_err();
+        assert!(err.to_string().contains("investment account"), "{err}");
+    }
+
+    #[test]
+    fn editing_a_holding_prefills_its_account_ticker_and_balance() {
+        let all = accounts();
+        let row = fixture_row(7, AccountId(2), &all, "ISM", 3_000);
+        let mut form = HoldingForm::edit(all, &row).unwrap();
+
+        assert_eq!(form.editing, Some(HoldingId(7)));
+        assert_eq!(
+            form.display(HoldingField::Account).plain_text(),
+            "RET — Long Haul"
+        );
+        assert_eq!(form.display(HoldingField::Ticker).plain_text(), "ISM");
+        assert_eq!(form.display(HoldingField::Balance).plain_text(), "3,000.00");
+
+        focused(&mut form, HoldingField::Balance);
+        for _ in 0.."3,000.00".len() {
+            form.edit(backspace_key());
+        }
+        for c in "4000".chars() {
+            form.edit(char_key(c));
+        }
+        let (_, _, balance) = form.commit().unwrap();
+        assert_eq!(balance, Cents::from_dollars(4_000));
     }
 }

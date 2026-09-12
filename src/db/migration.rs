@@ -21,7 +21,7 @@
 //! what would turn "frozen" into a trap.
 
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 /// The frozen baseline: the schema as it stood at version 1.
 ///
@@ -225,7 +225,124 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // counted yet.
         data: None,
     },
+    Migration {
+        version: 11,
+        // The asset-allocation block is derived from each fund's published
+        // composition now, not from a target the sheet carried per row, so
+        // the table holds answers to a question nobody puts. Dropped here
+        // rather than cleared by `--replace`, for the reason the retired
+        // `pay.period_days` key was: an owner who never replaces would keep
+        // the rows indefinitely.
+        sql: "DROP TABLE IF EXISTS fund",
+        // Nothing to move. A fresh install replaying the chain has no such
+        // table, which `IF EXISTS` is what makes safe.
+        data: None,
+    },
+    Migration {
+        version: 12,
+        // An investment account joins the two kinds already here, and brings
+        // a band of its own: a group subdivides exactly one kind, and this
+        // kind does not split, so `Group::Investment` is the whole of it the
+        // way `Group::Credit` is. Both columns are `CHECK` lists and SQLite
+        // cannot alter one, so the table is rebuilt rather than altered --
+        // the first rebuild in this chain.
+        //
+        // `tax_treatment` is paired to the kind rather than left free: it is
+        // an answer to a question nobody puts about a cash account and one
+        // every investment account has to answer, so the screen never draws
+        // a hole. A `CHECK` over both columns is what says that in the one
+        // place both are visible at once; neither column alone can.
+        //
+        // The table is spelled as it stands at version 11 -- `color` from
+        // arm 2, `interest_policy` and `UNIQUE (code, kind)` from the
+        // baseline -- and every column is carried across by name. A widened
+        // `CHECK` accepts everything the old one did, so nothing the copy
+        // carries can be refused on the way in.
+        //
+        // Dropping `account` is an implicit delete of rows `goal`, `txn` and
+        // `recurring_txn` all hold `REFERENCES` to, and the copy putting the
+        // same ids back under the same name afterwards does not unsay it --
+        // `defer_foreign_keys` still counts the drop's violations and finds
+        // them outstanding at the commit. So [`apply`] runs the whole chain
+        // with the enforcement off, which is what SQLite's own procedure for
+        // a table rebuild asks for, and checks the database over at the end
+        // of it instead.
+        //
+        // `account_code_kind` is arm 5's index, recreated verbatim after the
+        // rename: an index belongs to the table it was built on and goes
+        // with it, and `account::by_code` folds case on the strength of that
+        // `COLLATE NOCASE`.
+        sql: "CREATE TABLE account_new (
+                id   INTEGER PRIMARY KEY,
+                code TEXT    NOT NULL,
+                name TEXT    NOT NULL,
+                kind TEXT    NOT NULL CHECK (kind IN ('cash', 'credit', 'investment')),
+                grp  TEXT    NOT NULL CHECK (grp IN ('checking', 'savings', 'credit', 'investment')),
+                sort INTEGER NOT NULL DEFAULT 0,
+                interest_policy TEXT CHECK (interest_policy IN ('pro_rata', 'manual')),
+                color TEXT CHECK (color IN ('blue', 'copper', 'violet', 'teal',
+                                            'rose', 'olive', 'indigo', 'tan')),
+                tax_treatment TEXT CHECK (tax_treatment IN ('taxable', 'tax_deferred', 'tax_free')),
+                CHECK ((kind = 'investment') = (tax_treatment IS NOT NULL)),
+                UNIQUE (code, kind)
+              );
+              INSERT INTO account_new
+                (id, code, name, kind, grp, sort, interest_policy, color, tax_treatment)
+                SELECT id, code, name, kind, grp, sort, interest_policy, color, NULL
+                  FROM account;
+              DROP TABLE account;
+              ALTER TABLE account_new RENAME TO account;
+              CREATE UNIQUE INDEX account_code_kind
+                ON account (code COLLATE NOCASE, kind);",
+        // Nothing to move past the copy above, which is the arm's own SQL:
+        // no existing account is an investment account, so every row comes
+        // across holding no treatment, which is exactly what the pairing
+        // asks of the two kinds that were here.
+        data: None,
+    },
+    Migration {
+        version: 13,
+        // The funds held in each investment account, and the composition of
+        // each fund.
+        //
+        // `UNIQUE (account_id, ticker)`: one ticker twice in one account is a
+        // typo, while one ticker held in two accounts is ordinary — the same
+        // shape as `UNIQUE (code, kind)` on `account`.
+        //
+        // `fund_mix` keys on the ticker rather than on a holding, because a
+        // fund's composition is a property of the fund and not of who holds
+        // it; `report_date` is per ticker because fund families file on their
+        // own schedules and a screen has to quote an as-of date per row.
+        sql: "CREATE TABLE holding (
+                id            INTEGER PRIMARY KEY,
+                account_id    INTEGER NOT NULL REFERENCES account(id),
+                ticker        TEXT    NOT NULL,
+                balance_cents INTEGER NOT NULL,
+                sort          INTEGER NOT NULL DEFAULT 0,
+                UNIQUE (account_id, ticker)
+              );
+              CREATE TABLE fund_mix (
+                ticker      TEXT    NOT NULL,
+                asset_class TEXT    NOT NULL CHECK (asset_class IN
+                              ('us_stock','intl_stock','us_bond','intl_bond','cash','unclassified')),
+                weight_bp   INTEGER NOT NULL,
+                report_date TEXT    NOT NULL,
+                PRIMARY KEY (ticker, asset_class)
+              );",
+        data: None,
+    },
 ];
+
+/// The last thing to tell an owner whose database this build will not open.
+///
+/// A rebuild is a way out only where the build has an importer, and both
+/// paths that name it are ones where the owner is already stuck: handing them
+/// `mm import` on a build whose binary has no such subcommand spends the only
+/// instruction they get on a command that cannot run.
+#[cfg(feature = "import")]
+const REBUILD: &str = "delete the file and re-run `mm import <workbook>`";
+#[cfg(not(feature = "import"))]
+const REBUILD: &str = "delete the file and rebuild it with a build carrying the `import` feature";
 
 /// The version this build's chain leaves a database at.
 ///
@@ -268,6 +385,25 @@ pub(super) fn run(conn: &Connection) -> Result<()> {
 /// partway through leaves the database at the version it came in at rather
 /// than half-migrated and stamped as though it had succeeded -- which would be
 /// permanent, since the next run would skip the arms it never finished.
+///
+/// **The chain runs with foreign keys off**, and [`check_references`] is what
+/// stands in for them. An arm that rebuilds a table drops one three others
+/// hold `REFERENCES` to, and no ordering makes that legal while the
+/// enforcement is on: SQLite's own procedure for a rebuild is to turn it off
+/// around the whole thing. `PRAGMA foreign_keys` is a no-op inside a
+/// transaction, so the switch is thrown out here, and thrown back however the
+/// chain ends -- `db::prepare` turned it on, and it is the rest of the run's
+/// guard. SQLite reports no error for ignoring the pragma, so the switch is
+/// read back and a chain that would run with enforcement on is refused
+/// outright rather than left to fail somewhere inside an arm.
+///
+/// **What an arm loses by that is `ON DELETE CASCADE`**, which is inert with
+/// the enforcement off: `allocation`'s is the one the schema declares, and an
+/// arm that deleted goals expecting their allocations to follow would leave
+/// every one of them behind. [`check_references`] then turns that into a
+/// refusal to migrate at all rather than a quiet orphan, which is the right
+/// ending but a loud one. **An arm that means to delete a parent deletes the
+/// children itself**, in its own SQL, above the parent.
 fn apply(conn: &Connection, schema: &str, chain: &[Migration]) -> Result<()> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     let head = head(chain);
@@ -275,21 +411,46 @@ fn apply(conn: &Connection, schema: &str, chain: &[Migration]) -> Result<()> {
         return Ok(());
     }
     if current > head {
-        // The rebuild is a way out only where the build has an importer, and
-        // this is the one path where the owner is already stuck: handing them
-        // `mm import` on a build whose binary has no such subcommand spends
-        // the only instruction they get on a command that cannot run.
-        #[cfg(feature = "import")]
-        const REBUILD: &str = "delete the file and re-run `mm import <workbook>`";
-        #[cfg(not(feature = "import"))]
-        const REBUILD: &str =
-            "delete the file and rebuild it with a build carrying the `import` feature";
         anyhow::bail!(
             "database is at schema version {current}, newer than this build ({head}); \
              open it with the build that wrote it, or {REBUILD}, then re-enter the \
              recurring transactions"
         );
     }
+    let enforcing: bool = conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?;
+    conn.pragma_update(None, "foreign_keys", false)?;
+    // SQLite ignores this pragma inside a transaction and reports no error for
+    // doing so, so the `?` above proves nothing on its own: the switch has to
+    // be read back. With enforcement still on, the first arm that rebuilds a
+    // table would fail on a `REFERENCES` three tables away, and the only
+    // signal would be a constraint error naming neither this function nor the
+    // transaction that caused it.
+    let off: bool = !conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?;
+    anyhow::ensure!(
+        off,
+        "the schema chain cannot run inside a transaction; open the database \
+         through db::open or db::open_in_memory, which migrate before anything \
+         else touches the connection"
+    );
+    let migrated = migrate(conn, schema, chain, current, head);
+    let restored = conn.pragma_update(None, "foreign_keys", enforcing);
+    // The chain's own failure first: it is the one that says what went wrong,
+    // and a switch that would not go back is the lesser news beside it.
+    migrated?;
+    restored?;
+    Ok(())
+}
+
+/// The chain itself, with the enforcement already off around it. Split from
+/// [`apply`] so the pragma is put back on the way out of either ending
+/// rather than only the one that works.
+fn migrate(
+    conn: &Connection,
+    schema: &str,
+    chain: &[Migration],
+    current: i64,
+    head: i64,
+) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     if current == 0 {
         tx.execute_batch(schema)?;
@@ -300,8 +461,45 @@ fn apply(conn: &Connection, schema: &str, chain: &[Migration]) -> Result<()> {
             data(&tx)?;
         }
     }
+    check_references(&tx, head)?;
     tx.pragma_update(None, "user_version", head)?;
     tx.commit()?;
+    Ok(())
+}
+
+/// Refuse a chain that has left a row pointing at one that is not there.
+///
+/// The enforcement the chain runs without refuses the statement that makes an
+/// orphan; this asks the whole database at once, at the end, which is the only
+/// question a rebuild can be asked -- it is orphaned rows the whole way
+/// through the middle of one, by construction. Inside the transaction, so a
+/// chain that fails here is taken back entire rather than leaving a database
+/// stamped at a version it is broken at.
+///
+/// **Whole-database scope cuts both ways, and the blast radius is worth
+/// knowing.** It cannot tell an orphan this chain made from one that was
+/// already there -- written by a build before the check existed, or by hand --
+/// so a database carrying one stops opening at its next upgrade, having opened
+/// fine until then. That is the right answer for a rebuild, which moves the
+/// rows an orphan would be lost among, but it is a hard stop rather than a
+/// warning: the message therefore names the remedy the way the newer-version
+/// bail above does, since the owner meeting it has a database no build of this
+/// app will migrate.
+fn check_references(conn: &Connection, head: i64) -> Result<()> {
+    let orphan: Option<(String, String)> = conn
+        .query_row(
+            "SELECT \"table\", \"parent\" FROM pragma_foreign_key_check",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    if let Some((table, parent)) = orphan {
+        anyhow::bail!(
+            "migrating to schema version {head} would leave a row in {table} naming a \
+             {parent} that is not there; the database is unchanged. Restore the most \
+             recent backup, or {REBUILD}"
+        );
+    }
     Ok(())
 }
 
@@ -425,6 +623,27 @@ mod tests {
         assert!(err.contains("version 3"), "{err}");
         assert!(err.contains("newer than this build"), "{err}");
         assert_eq!(version(&conn), 3, "the database was written to anyway");
+    }
+
+    /// The chain runs with foreign keys off, and SQLite ignores the pragma
+    /// that turns them off inside a transaction without reporting anything.
+    /// So the switch is read back, and a chain that would run with enforcement
+    /// still on is refused here rather than allowed to fail three arms later
+    /// on a `REFERENCES` that names nothing to do with the real cause.
+    ///
+    /// The state is out of reach in the app -- `db::prepare` is the only
+    /// caller and runs before anything opens a transaction -- which is exactly
+    /// why the guard is worth pinning: nothing else would notice a second
+    /// caller putting one there.
+    #[test]
+    fn the_chain_refuses_to_run_with_a_transaction_already_open() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        conn.execute_batch("BEGIN").unwrap();
+
+        let err = apply(&conn, BASELINE, ONE_ARM).unwrap_err().to_string();
+
+        assert!(err.contains("cannot run inside a transaction"), "{err}");
     }
 
     fn double_a_into_b(conn: &Connection) -> Result<()> {
@@ -617,5 +836,255 @@ mod tests {
             [],
         )
         .unwrap();
+    }
+
+    /// The whole chain, then every account column read back through the
+    /// types rather than as raw SQL: `from_row`'s indices, `AccountColor`
+    /// and `InterestPolicy`'s round trips, and the `CHECK` lists behind
+    /// them, against the schema a migrated database actually has.
+    ///
+    /// It does **not** exercise the rebuild's copy, and is not the test that
+    /// would catch a botched one: `open_in_memory` has already run the
+    /// chain, so `apply` returns at the head-version check and no arm
+    /// executes. `the_account_rebuild_carries_an_existing_row_across` below
+    /// is what brings a database to version 11 and makes arm 12 do its work.
+    #[test]
+    fn a_migrated_database_reads_every_account_column_back() {
+        use crate::db::account::{self, AccountColor, InterestPolicy, Kind};
+
+        let db = crate::db::open_in_memory().unwrap();
+        let id = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 3, None).unwrap();
+        account::set_color(&db, id, Some(AccountColor::ALL[2])).unwrap();
+        account::set_interest_policy(&db, id, InterestPolicy::ProRata).unwrap();
+
+        // Replay the whole chain against the database that already holds the
+        // row. `open_in_memory` has already run it, so the rebuild is being
+        // asked to be a no-op here rather than to run twice.
+        crate::db::migration::run(&db.conn).unwrap();
+
+        let account = account::get(&db, id).unwrap();
+        assert_eq!(
+            account.id, id,
+            "the row id moved, and three tables reference it"
+        );
+        assert_eq!(account.code, "SAV");
+        assert_eq!(account.name, "Rainy Day");
+        assert_eq!(account.sort, 3);
+        assert_eq!(account.color, Some(AccountColor::ALL[2]));
+        assert_eq!(account.group, account::Group::Savings);
+        assert_eq!(
+            account::interest_policy(&db, id).unwrap(),
+            InterestPolicy::ProRata
+        );
+    }
+
+    /// The whole point of running the chain with the enforcement off is that
+    /// the rows three tables point at survive a rebuild of the table they
+    /// point at. A child row is what would be lost -- or orphaned -- if the
+    /// copy carried an id the children do not name.
+    #[test]
+    fn a_goal_still_names_its_container_after_the_account_rebuild() {
+        let at = MIGRATIONS
+            .iter()
+            .position(|arm| arm.version == 12)
+            .expect("the arm that rebuilds account");
+
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn, SCHEMA, &MIGRATIONS[..at]).unwrap();
+        conn.execute(
+            "INSERT INTO account (id, code, name, kind, grp)
+             VALUES (4, 'SAV', 'Rainy Day', 'cash', 'savings')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO goal (id, name, container_account_id, base_cents)
+             VALUES (1, 'Couch', 4, 106500)",
+            [],
+        )
+        .unwrap();
+
+        apply(&conn, SCHEMA, MIGRATIONS).unwrap();
+
+        let container: i64 = conn
+            .query_row(
+                "SELECT container_account_id FROM goal WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(container, 4, "the goal lost the container it names");
+        let named: i64 = conn
+            .query_row("SELECT count(*) FROM account WHERE id = 4", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(named, 1, "the container the goal names is gone");
+    }
+
+    /// The enforcement is off for the chain and nothing else: `db::prepare`
+    /// turns it on and every write after this runs under it, so a runner that
+    /// left it off would hand the rest of the session a database with no
+    /// referential integrity at all.
+    #[test]
+    fn the_chain_puts_foreign_key_enforcement_back() {
+        let db = crate::db::open_in_memory().unwrap();
+        let on: bool = db
+            .conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert!(on, "the chain left foreign key enforcement off");
+    }
+
+    /// And back on the way out of a failure too, which is the ending a
+    /// `?` would skip past.
+    #[test]
+    fn a_failing_chain_puts_foreign_key_enforcement_back() {
+        const BROKEN: &[Migration] = &[Migration {
+            version: 2,
+            sql: "ALTER TABLE nonexistent ADD COLUMN c INTEGER",
+            data: None,
+        }];
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(BASELINE).unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+
+        apply(&conn, BASELINE, BROKEN).unwrap_err();
+
+        let on: bool = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert!(on, "a failed chain left foreign key enforcement off");
+    }
+
+    /// What stands in for the enforcement while it is off. An arm that drops
+    /// the row another table names would otherwise commit, and the database
+    /// would be stamped at a version it is broken at -- which is permanent,
+    /// since the next run skips every arm below the stamp.
+    #[test]
+    fn a_chain_that_orphans_a_row_is_refused() {
+        const PARENT_AND_CHILD: &str = "CREATE TABLE t (a INTEGER PRIMARY KEY);
+             CREATE TABLE u (b INTEGER NOT NULL REFERENCES t(a))";
+        const DROPS_THE_PARENT: &[Migration] = &[Migration {
+            version: 2,
+            sql: "DELETE FROM t",
+            data: None,
+        }];
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(PARENT_AND_CHILD).unwrap();
+        conn.execute_batch("INSERT INTO t VALUES (1); INSERT INTO u VALUES (1);")
+            .unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+
+        let err = apply(&conn, PARENT_AND_CHILD, DROPS_THE_PARENT)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("row in u"), "{err}");
+        assert!(err.contains("t"), "{err}");
+        assert_eq!(version(&conn), 1, "the broken chain was stamped anyway");
+        let left: i64 = conn
+            .query_row("SELECT count(*) FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 1, "the refused chain was written anyway");
+    }
+
+    /// The same rebuild against a database that is actually *at* the version
+    /// below it, which is the only shape the copy is ever really exercised
+    /// in: a fresh database takes the arm over an empty table and would pass
+    /// whatever the `SELECT` list said.
+    #[test]
+    fn the_account_rebuild_carries_an_existing_row_across() {
+        const REBUILT_AT: i64 = 12;
+        let at = MIGRATIONS
+            .iter()
+            .position(|arm| arm.version == REBUILT_AT)
+            .expect("the arm that rebuilds account");
+
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn, SCHEMA, &MIGRATIONS[..at]).unwrap();
+        conn.execute(
+            "INSERT INTO account (id, code, name, kind, grp, sort, interest_policy, color)
+             VALUES (7, 'SAV', 'Rainy Day', 'cash', 'savings', 3, 'pro_rata', 'violet')",
+            [],
+        )
+        .unwrap();
+
+        apply(&conn, SCHEMA, MIGRATIONS).unwrap();
+
+        assert_eq!(version(&conn), SCHEMA_VERSION);
+        let row: (
+            i64,
+            String,
+            String,
+            String,
+            String,
+            i64,
+            String,
+            String,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT id, code, name, kind, grp, sort, interest_policy, color, tax_treatment
+                 FROM account WHERE id = 7",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                        r.get(7)?,
+                        r.get(8)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                7,
+                "SAV".to_string(),
+                "Rainy Day".to_string(),
+                "cash".to_string(),
+                "savings".to_string(),
+                3,
+                "pro_rata".to_string(),
+                "violet".to_string(),
+                None
+            )
+        );
+        // The index goes with the table it was built on, so the rebuild has
+        // to put it back -- and it is what `account::by_code`'s case-folding
+        // rests on.
+        let clash = conn.execute(
+            "INSERT INTO account (id, code, name, kind, grp)
+             VALUES (8, 'sav', 'Rainy Day Again', 'cash', 'savings')",
+            [],
+        );
+        assert!(
+            clash.is_err(),
+            "account_code_kind did not survive the rebuild"
+        );
+    }
+
+    #[test]
+    fn the_fund_table_is_gone_after_the_chain() {
+        let db = crate::db::open_in_memory().unwrap();
+        let count: i64 = db
+            .conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'fund'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "the fund table survived the migration chain");
     }
 }

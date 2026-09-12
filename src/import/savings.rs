@@ -181,7 +181,7 @@ struct BucketRow {
 /// row is a bucket with a missing figure rather than a heading or a footer.
 /// Skipping it would drop the bucket's balance from the container's
 /// allocations and leave the unallocated remainder wrong by that much -- the
-/// way half a bill and half a fund are errors rather than skips.
+/// way half a bill is an error rather than a skip.
 fn bucket_rows(range: &SheetRange) -> Result<Vec<BucketRow>> {
     let at = |row: usize, col: usize| cell::at(range, row, col);
     let mut rows = Vec::new();
@@ -423,8 +423,7 @@ mod tests {
     /// already stopped at the first blank name, so it cannot be a heading or
     /// a footer. Dropping it would leave its balance out of the container's
     /// allocations and make the unallocated remainder wrong by that much, so
-    /// half a row is an error rather than a skip -- the way half a bill and
-    /// half a fund are.
+    /// half a row is an error rather than a skip -- the way half a bill is.
     #[test]
     fn a_bucket_row_missing_an_amount_is_an_error() {
         let range: SheetRange = Range::from_sparse(vec![
@@ -506,7 +505,7 @@ mod tests {
     #[test]
     fn one_container_alone_reads_as_unset() {
         let db = crate::db::open_in_memory().unwrap();
-        let id = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0).unwrap();
+        let id = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0, None).unwrap();
         setting::set(&db, Block::Goals.key(), id).unwrap();
         assert!(containers(&db).unwrap().is_none());
     }
@@ -518,7 +517,7 @@ mod tests {
     #[test]
     fn a_container_setting_pointing_at_a_missing_account_is_an_error() {
         let db = crate::db::open_in_memory().unwrap();
-        let id = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0).unwrap();
+        let id = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0, None).unwrap();
         setting::set(&db, Block::Goals.key(), id).unwrap();
         setting::set(&db, Block::Buckets.key(), crate::db::AccountId(999)).unwrap();
 
@@ -534,8 +533,9 @@ mod tests {
     #[test]
     fn configured_containers_resolve_to_the_accounts_their_keys_name() {
         let db = crate::db::open_in_memory().unwrap();
-        let goals = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0).unwrap();
-        let buckets = account::insert(&db, "BKR", "Brokerage", account::Kind::Cash, 1).unwrap();
+        let goals = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0, None).unwrap();
+        let buckets =
+            account::insert(&db, "BKR", "Brokerage", account::Kind::Cash, 1, None).unwrap();
         setting::set(&db, Block::Goals.key(), goals).unwrap();
         setting::set(&db, Block::Buckets.key(), buckets).unwrap();
 
@@ -549,8 +549,9 @@ mod tests {
     #[test]
     fn set_containers_puts_the_mapping_back() {
         let db = crate::db::open_in_memory().unwrap();
-        let goals = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0).unwrap();
-        let buckets = account::insert(&db, "BKR", "Brokerage", account::Kind::Cash, 1).unwrap();
+        let goals = account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 0, None).unwrap();
+        let buckets =
+            account::insert(&db, "BKR", "Brokerage", account::Kind::Cash, 1, None).unwrap();
         setting::set(&db, Block::Goals.key(), goals).unwrap();
         setting::set(&db, Block::Buckets.key(), buckets).unwrap();
         let held = containers(&db).unwrap().unwrap();

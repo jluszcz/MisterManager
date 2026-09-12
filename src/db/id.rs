@@ -15,7 +15,7 @@
 //! ```
 //! use mistermanager::db::{self, account::Kind};
 //! let db = db::open_in_memory().unwrap();
-//! let savings = db::account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+//! let savings = db::account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
 //! db::goal::container_excess(&db, savings).unwrap();
 //! ```
 //!
@@ -68,7 +68,7 @@ row_id!(RecurringGoalId, "recurring_goal");
 row_id!(BatchId, "batch");
 row_id!(AllocationId, "allocation");
 row_id!(BillId, "bill");
-row_id!(FundId, "fund");
+row_id!(HoldingId, "holding");
 
 #[cfg(test)]
 mod tests {
@@ -81,7 +81,8 @@ mod tests {
     #[test]
     fn an_id_round_trips_through_sqlite() {
         let db = db::open_in_memory().unwrap();
-        let id = db::account::insert(&db, "SAV", "Rainy Day", db::account::Kind::Cash, 0).unwrap();
+        let id =
+            db::account::insert(&db, "SAV", "Rainy Day", db::account::Kind::Cash, 0, None).unwrap();
         let found = db::account::by_code(&db, "SAV", db::account::Kind::Cash)
             .unwrap()
             .unwrap();

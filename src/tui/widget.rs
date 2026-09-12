@@ -235,7 +235,7 @@ fn trailer(note: &str) -> String {
 ///
 /// The height is the lines themselves plus the border's two rows, which is
 /// what lets one function serve a fixed field order, a variable one
-/// (`FundForm::fields`), and the forms that add a line of their own past
+/// (`AccountForm::fields`), and the forms that add a line of their own past
 /// the fields.
 pub(super) fn render_fields(
     frame: &mut Frame,

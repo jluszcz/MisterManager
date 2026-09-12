@@ -163,8 +163,9 @@ fn tab_rules() -> String {
 }
 
 /// A system font stack, tabular money, a favorite's band, an expired goal's
-/// marker, the tab switch, the ledgers' month dropdown, and the one media
-/// query that flips background and foreground for a phone in dark mode.
+/// marker, the tab switch, the ledgers' month dropdown, the allocation bar
+/// and its legend, and the one media query that flips background and
+/// foreground for a phone in dark mode.
 /// Target a phone width; there is no `MIN_WIDTH` here.
 ///
 /// The radios are moved off the page rather than `display:none`d, which would
@@ -190,6 +191,14 @@ fn tab_rules() -> String {
 /// rows as `#month:checked~table.ledger`, and a `<div>` between the two would
 /// leave the dropdown showing nothing.
 ///
+/// The allocation bar is the one thing here that is not a table: a flex row
+/// of segments whose widths `funds` writes inline, over a track that is the
+/// bar's own background -- so what the four classes leave over needs no
+/// element of its own, and the bar cannot read as though they were the whole
+/// portfolio. It is the only rule here that needs a dark counterpart beyond
+/// the page's own two colors, that track being the one grey a reader is meant
+/// to see.
+///
 /// The table face is smaller than the page's and the cells are padded by a
 /// quarter of it. That is Savings' bill too: six columns, one of them a date
 /// and three of them money, on the 361px a 393px phone leaves inside the
@@ -213,6 +222,12 @@ const STYLE: &str = "\
     tr.tot td{font-weight:600}\
     tr.future{opacity:0.55}\
     tr.note td{color:#666666}\
+    div.bar{display:flex;height:0.6rem;border-radius:0.3rem;overflow:hidden;\
+    background:#dddddd;margin:0 0 0.4rem}\
+    p.legend{margin:0 0 1rem;font-size:0.72rem;color:#666666}\
+    p.legend span.item{display:inline-block;white-space:nowrap;margin-right:0.7rem}\
+    span.key{display:inline-block;width:0.55rem;height:0.55rem;\
+    border-radius:0.15rem;margin-right:0.25rem}\
     input.tab,input.pick{position:absolute;opacity:0;width:0;height:0}\
     nav{display:flex;flex-wrap:wrap;border-bottom:1px solid #dddddd;margin-bottom:0.8rem}\
     nav label{padding:0.5rem 0.7rem;margin-bottom:-1px;cursor:pointer;font-weight:600;\
@@ -236,6 +251,7 @@ const STYLE: &str = "\
     td,th{border-bottom-color:#333333}\
     nav,footer,details.picker summary,details.picker div.options{border-color:#333333}\
     tr.fav{background:#3a3315}\
+    div.bar{background:#333333}\
     }";
 
 /// How old the page is, in the footer: a reader arrives at the figures, and
@@ -251,7 +267,7 @@ pub fn page(snapshot: &Snapshot) -> String {
         ledger::panel(&snapshot.credit),
         savings::sections(&snapshot.containers),
         planning::block(&snapshot.planning),
-        funds::table(&snapshot.funds),
+        funds::sections(&snapshot.allocation),
     ];
     let body: String = TABS
         .iter()
@@ -461,6 +477,5 @@ mod tests {
             panel(&page, "planning").contains("Remaining Excess"),
             "no planning rows"
         );
-        assert!(panel(&page, "funds").contains("Stocks"), "no fund rows");
     }
 }

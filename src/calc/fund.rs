@@ -1,20 +1,22 @@
-//! The asset-allocation derivation behind the Funds screen —
-//! `Planning!J2:L4` in the workbook.
+//! The portfolio-wide asset-allocation targets behind the Funds screen.
+//!
+//! Three shares, over the whole portfolio rather than a row at a time: bonds
+//! track age at one point a year over thirty, and the equity remainder splits
+//! by one configured international share.
 //!
 //! ```text
-//! J2 = (DATEDIF(Birth Date, Today, "y") - 30) / 100     bonds track age
-//! J3 = (1 - J2) * 0.4                                   the equity rows split
-//! J4 = (1 - J2) * 0.6                                   what bonds leave
-//! K  = M / SUM(M)                                       this row's share of the total
-//! L  = MAX(0, J - K)                                    how far below target, in points
+//! bonds       = (age - 30) / 100, clamped to 0..=1.0     bonds track age
+//! intl_stock  = (1 - bonds) * intl_equity_share            the equity split
+//! us_stock    = (1 - bonds) - intl_stock                   the remainder, not a second multiply
 //! ```
 //!
-//! Pure, and with no database in it: [`Rule`] is this module's own enum, and
-//! `crate::fund` is the one place `db::fund::Target` becomes one — the same
-//! seam `crate::recurring_txn::step` puts between `db`'s `Cadence` and
-//! `schedule::Step`.
+//! Taking `us_stock` as the remainder rather than `(1 - bonds) * (1 - intl_equity_share)` is what
+//! keeps the three shares footing to exactly `BasisPoints::ONE` under truncation: two independent
+//! multiplies can each truncate down and leave the total a basis point or two short.
+//!
+//! Pure, and with no database in it: `crate::fund` is the one place a stored
+//! setting becomes an argument here.
 
-use crate::money::Cents;
 use crate::rate::BasisPoints;
 use chrono::{Datelike, NaiveDate};
 
@@ -24,45 +26,15 @@ use chrono::{Datelike, NaiveDate};
 /// number in the rule; no birth year appears anywhere in the crate.
 pub const BONDS_START_AGE: i64 = 30;
 
-/// What decides a row's target share.
+/// The three target shares, derived on every read.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Rule {
-    AgeOver30,
-    RemainderShare(BasisPoints),
-}
-
-/// One fund, as the derivation needs it.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct Row {
-    pub rule: Rule,
-    pub actual: Cents,
-}
-
-/// One fund's three derived columns.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct ComputedRow {
-    /// `None` only for an age row with no birth date on record — which is a
-    /// question to ask, not a zero to assume.
-    pub target: Option<BasisPoints>,
-    /// This row's share of the total value.
-    pub actual: BasisPoints,
-    /// `max(0, target - actual)`, and `None` wherever the target is.
-    pub delta: Option<BasisPoints>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Computed {
-    pub rows: Vec<ComputedRow>,
-    /// Every row's value, added up — the sheet's `M5`.
-    pub total: Cents,
-    /// Every *known* target, added up. Short of 100% whenever the shares do
-    /// not divide the remainder completely, which the screen shows rather
-    /// than refusing.
-    pub target_total: BasisPoints,
-    /// The row furthest below its target — the row the next contribution
-    /// should go to. The first on a tie, and `None` when every row is at or
-    /// above target.
-    pub furthest_down: Option<usize>,
+pub struct Targets {
+    /// `None` only when no birth date is on record — a question to ask, not a
+    /// zero to assume. The two equity targets then divide the whole 100%
+    /// rather than being told a bond target that is really a question.
+    pub bonds: Option<BasisPoints>,
+    pub us_stock: BasisPoints,
+    pub intl_stock: BasisPoints,
 }
 
 /// Whole years between two dates — `DATEDIF(..., "y")`.
@@ -78,78 +50,40 @@ pub fn whole_years(birth: NaiveDate, today: NaiveDate) -> i64 {
     }
 }
 
-/// The three derived columns, for every row at once.
+/// The three target shares.
 ///
-/// `age` is `None` when no birth date is on record. Every multiply widens to
-/// `i128` before dividing, and every division truncates toward zero: these
-/// are display figures, neither a requirement (which would round up) nor a
-/// transfer instruction (which would round down).
-pub fn compute(rows: &[Row], age: Option<i64>) -> Computed {
-    let age_target = age.map(|age| BasisPoints((age - BONDS_START_AGE).max(0) * 100));
+/// `age` is `None` when no birth date is on record. The bond share is
+/// clamped at both ends: an age at or under [`BONDS_START_AGE`] targets no
+/// bonds rather than a negative share, and an age far enough past it targets
+/// all bonds rather than overflowing the equity remainder into the negative.
+/// The equity remainder always splits by `intl_equity_share` of what the bond
+/// share leaves, so the three always foot to `BasisPoints::ONE`.
+///
+/// **`intl_equity_share` is clamped to `0..=`[`BasisPoints::ONE`] here**, which
+/// is the whole guard over it: it is stored as a ratio of two cells the
+/// importer reads through `cell::as_rate_bp`, which reads whatever the sheet
+/// carries, and a negative cell against a larger positive one stores a
+/// negative share. Unclamped that hands back a negative `intl_stock` and a
+/// `us_stock` over 100%, which is two wrong percentages on the Funds screen.
+/// The clamp belongs with the derivation for the reason `planning::compute`'s
+/// does, and is silent for the same reason: nothing in the app can write the
+/// setting, so there is no screen with anything to report.
+pub fn targets(age: Option<i64>, intl_equity_share: BasisPoints) -> Targets {
+    let bonds =
+        age.map(|age| BasisPoints(((age - BONDS_START_AGE) * 100).clamp(0, BasisPoints::ONE.0)));
+    let equity_remainder = BasisPoints::ONE.0 - bonds.map_or(0, |b| b.0);
 
-    // An age row with no birth date claims nothing, so the share rows divide
-    // the whole 100% -- the honest reading of "we do not know yet".
-    let claimed: i64 = rows
-        .iter()
-        .filter(|row| matches!(row.rule, Rule::AgeOver30))
-        .map(|_| age_target.map_or(0, |target| target.0))
-        .sum();
-    let remainder = (BasisPoints::ONE.0 - claimed).max(0);
-
-    let total = Cents(rows.iter().map(|row| row.actual.0).sum());
-
-    let computed: Vec<ComputedRow> = rows
-        .iter()
-        .map(|row| {
-            let target = match row.rule {
-                Rule::AgeOver30 => age_target,
-                Rule::RemainderShare(share) => Some(BasisPoints(
-                    ((i128::from(remainder) * i128::from(share.0)) / i128::from(BasisPoints::ONE.0))
-                        as i64,
-                )),
-            };
-            let actual = match total.0 {
-                0 => BasisPoints::ZERO,
-                _ => BasisPoints(
-                    ((i128::from(row.actual.0) * i128::from(BasisPoints::ONE.0))
-                        / i128::from(total.0)) as i64,
-                ),
-            };
-            ComputedRow {
-                target,
-                actual,
-                // From the stored basis points on both sides, so the column
-                // the screen prints adds up against the columns beside it.
-                delta: target.map(|target| BasisPoints((target.0 - actual.0).max(0))),
-            }
-        })
-        .collect();
-
-    let target_total = BasisPoints(
-        computed
-            .iter()
-            .filter_map(|row| row.target)
-            .map(|target| target.0)
-            .sum(),
+    let intl_share = intl_equity_share.0.clamp(0, BasisPoints::ONE.0);
+    let intl_stock = BasisPoints(
+        ((i128::from(equity_remainder) * i128::from(intl_share)) / i128::from(BasisPoints::ONE.0))
+            as i64,
     );
+    let us_stock = BasisPoints(equity_remainder - intl_stock.0);
 
-    // Written out rather than `max_by_key`, which returns the *last* maximum
-    // on a tie where the spec wants the first.
-    let mut furthest_down: Option<usize> = None;
-    for (i, row) in computed.iter().enumerate() {
-        let delta = row.delta.map_or(0, |delta| delta.0);
-        let better = furthest_down
-            .is_none_or(|best| delta > computed[best].delta.map_or(0, |delta| delta.0));
-        if delta > 0 && better {
-            furthest_down = Some(i);
-        }
-    }
-
-    Computed {
-        rows: computed,
-        total,
-        target_total,
-        furthest_down,
+    Targets {
+        bonds,
+        us_stock,
+        intl_stock,
     }
 }
 
@@ -158,175 +92,85 @@ mod tests {
     use super::*;
     use crate::test_support::day;
 
-    fn age_row(dollars: i64) -> Row {
-        Row {
-            rule: Rule::AgeOver30,
-            actual: Cents::from_dollars(dollars),
+    #[test]
+    fn the_bond_target_is_one_point_a_year_over_thirty() {
+        let t = targets(Some(48), BasisPoints(4_000));
+        assert_eq!(t.bonds, Some(BasisPoints(1_800)));
+    }
+
+    #[test]
+    fn the_equity_remainder_splits_by_the_configured_share() {
+        let t = targets(Some(48), BasisPoints(4_000));
+        // 82% equity, 40% of it international.
+        assert_eq!(t.intl_stock, BasisPoints(3_280));
+        assert_eq!(t.us_stock, BasisPoints(4_920));
+    }
+
+    #[test]
+    fn the_three_targets_foot_to_one_hundred_percent() {
+        let t = targets(Some(48), BasisPoints(4_000));
+        let total = t.bonds.unwrap().0 + t.us_stock.0 + t.intl_stock.0;
+        assert_eq!(total, 10_000);
+    }
+
+    #[test]
+    fn with_no_birth_date_the_equity_targets_divide_the_whole_hundred_percent() {
+        let t = targets(None, BasisPoints(4_000));
+        assert_eq!(
+            t.bonds, None,
+            "a missing birth date became a zero bond target"
+        );
+        assert_eq!(t.intl_stock, BasisPoints(4_000));
+        assert_eq!(t.us_stock, BasisPoints(6_000));
+    }
+
+    #[test]
+    fn an_age_at_or_under_thirty_targets_no_bonds_rather_than_a_negative_share() {
+        assert_eq!(
+            targets(Some(30), BasisPoints(4_000)).bonds,
+            Some(BasisPoints::ZERO)
+        );
+        assert_eq!(
+            targets(Some(22), BasisPoints(4_000)).bonds,
+            Some(BasisPoints::ZERO)
+        );
+    }
+
+    #[test]
+    fn an_age_past_a_hundred_and_thirty_targets_all_bonds_rather_than_overflowing() {
+        assert_eq!(
+            targets(Some(200), BasisPoints(4_000)).bonds,
+            Some(BasisPoints(10_000))
+        );
+    }
+
+    /// The setting behind `intl_equity_share` is a ratio of two cells read
+    /// off the sheet unbounded, so a negative one against a larger positive
+    /// one stores a negative share. Unclamped, that is a negative
+    /// international target beside a US target over 100% -- two wrong
+    /// percentages that still foot to a hundred, which is what makes it
+    /// unnoticeable rather than obviously broken.
+    #[test]
+    fn an_equity_split_outside_the_range_is_clamped_rather_than_drawn() {
+        let below = targets(Some(48), BasisPoints(-2_000));
+        assert_eq!(below.intl_stock, BasisPoints::ZERO);
+        assert_eq!(
+            below.us_stock,
+            BasisPoints(8_200),
+            "the whole equity remainder"
+        );
+
+        let above = targets(Some(48), BasisPoints(12_000));
+        assert_eq!(above.intl_stock, BasisPoints(8_200));
+        assert_eq!(above.us_stock, BasisPoints::ZERO);
+
+        for t in [below, above] {
+            assert_eq!(
+                t.bonds.unwrap().0 + t.us_stock.0 + t.intl_stock.0,
+                10_000,
+                "the clamp broke the three targets' footing"
+            );
         }
-    }
-
-    fn share_row(share_bp: i64, dollars: i64) -> Row {
-        Row {
-            rule: Rule::RemainderShare(BasisPoints(share_bp)),
-            actual: Cents::from_dollars(dollars),
-        }
-    }
-
-    /// A whole block, all three columns at once. The bond row is 10% at 40,
-    /// and the two equity rows split the 90% it leaves 40/60 into 36% and
-    /// 54%. The values divide into thirds and sixths of the 180,000 total,
-    /// so the actual column truncates rather than landing exactly.
-    #[test]
-    fn a_block_derives_its_target_actual_and_delta_columns_together() {
-        let computed = compute(
-            &[
-                age_row(30_000),
-                share_row(4_000, 60_000),
-                share_row(6_000, 90_000),
-            ],
-            Some(40),
-        );
-
-        let targets: Vec<Option<BasisPoints>> = computed.rows.iter().map(|r| r.target).collect();
-        assert_eq!(
-            targets,
-            vec![
-                Some(BasisPoints(1_000)),
-                Some(BasisPoints(3_600)),
-                Some(BasisPoints(5_400))
-            ]
-        );
-
-        let actual: Vec<BasisPoints> = computed.rows.iter().map(|r| r.actual).collect();
-        assert_eq!(
-            actual,
-            vec![BasisPoints(1_666), BasisPoints(3_333), BasisPoints(5_000)]
-        );
-
-        let delta: Vec<Option<BasisPoints>> = computed.rows.iter().map(|r| r.delta).collect();
-        assert_eq!(
-            delta,
-            vec![
-                Some(BasisPoints::ZERO),
-                Some(BasisPoints(267)),
-                Some(BasisPoints(400))
-            ]
-        );
-
-        assert_eq!(computed.total, Cents::from_dollars(180_000));
-        assert_eq!(computed.target_total, BasisPoints::ONE);
-        assert_eq!(computed.furthest_down, Some(2));
-    }
-
-    /// The row the next contribution should go to.
-    #[test]
-    fn the_furthest_down_row_is_the_one_with_the_largest_gap() {
-        let computed = compute(&[share_row(5_000, 10), share_row(5_000, 90)], None);
-        assert_eq!(computed.furthest_down, Some(0));
-    }
-
-    /// A tie takes the first, so the answer does not depend on iteration
-    /// order.
-    #[test]
-    fn a_tie_takes_the_first_row() {
-        let computed = compute(&[share_row(5_000, 50), share_row(5_000, 50)], None);
-        assert_eq!(computed.furthest_down, None, "both are exactly at target");
-
-        let tied = compute(
-            &[
-                share_row(2_500, 0),
-                share_row(2_500, 0),
-                share_row(5_000, 1),
-            ],
-            None,
-        );
-        assert_eq!(tied.furthest_down, Some(0));
-    }
-
-    #[test]
-    fn no_row_is_furthest_down_when_every_row_is_at_or_above_target() {
-        let computed = compute(&[share_row(2_500, 50), share_row(2_500, 50)], None);
-        assert!(
-            computed
-                .rows
-                .iter()
-                .all(|r| r.delta == Some(BasisPoints::ZERO))
-        );
-        assert_eq!(computed.furthest_down, None);
-    }
-
-    /// An empty portfolio must not divide by its total.
-    #[test]
-    fn a_zero_total_gives_every_row_a_zero_actual_share() {
-        let computed = compute(&[age_row(0), share_row(4_000, 0)], Some(40));
-        let actual: Vec<BasisPoints> = computed.rows.iter().map(|r| r.actual).collect();
-        assert_eq!(actual, vec![BasisPoints::ZERO, BasisPoints::ZERO]);
-        assert_eq!(computed.total, Cents::ZERO);
-        // Nothing is funded, so the largest target is the largest gap -- the
-        // equity row's 36% of the remainder, not the bond row's 10%.
-        assert_eq!(computed.furthest_down, Some(1));
-    }
-
-    /// Nothing is left for the share rows to take a share of.
-    #[test]
-    fn a_zero_remainder_leaves_every_share_row_at_zero() {
-        let computed = compute(&[age_row(1), share_row(6_000, 1)], Some(130));
-        assert_eq!(computed.rows[0].target, Some(BasisPoints(10_000)));
-        assert_eq!(computed.rows[1].target, Some(BasisPoints::ZERO));
-    }
-
-    /// Under thirty there is no bond allocation, and the clamp is what stops
-    /// it going negative and inflating the remainder past 100%.
-    #[test]
-    fn an_age_under_thirty_puts_the_bond_row_at_zero() {
-        let computed = compute(&[age_row(1), share_row(4_000, 1)], Some(22));
-        assert_eq!(computed.rows[0].target, Some(BasisPoints::ZERO));
-        assert_eq!(computed.rows[1].target, Some(BasisPoints(4_000)));
-    }
-
-    /// An unset birth date is neither an error nor a silent zero: the row has
-    /// no target to show, and the rows beside it divide the whole 100% rather
-    /// than being told the bond row claimed nothing when it does.
-    #[test]
-    fn an_unknown_age_leaves_the_age_row_without_a_target_or_a_delta() {
-        let computed = compute(&[age_row(1), share_row(4_000, 1)], None);
-        assert_eq!(computed.rows[0].target, None);
-        assert_eq!(computed.rows[0].delta, None);
-        assert_eq!(computed.rows[1].target, Some(BasisPoints(4_000)));
-        assert_eq!(
-            computed.target_total,
-            BasisPoints(4_000),
-            "an unknown target is left out of the sum rather than counted as zero"
-        );
-    }
-
-    /// Shown, never refused: adding the first share row always leaves the
-    /// shares short, so a refusal would block ordinary entry.
-    #[test]
-    fn shares_that_do_not_sum_to_one_are_computed_as_given() {
-        let computed = compute(&[share_row(4_000, 1), share_row(800, 1)], None);
-        assert_eq!(computed.target_total, BasisPoints(4_800));
-    }
-
-    /// A real portfolio times 10,000 overflows `i64` partway through, and
-    /// only the `i128` widening keeps it out of the wrap.
-    #[test]
-    fn a_large_portfolio_does_not_overflow() {
-        let huge = Cents(i64::MAX / 4);
-        let computed = compute(
-            &[
-                Row {
-                    rule: Rule::RemainderShare(BasisPoints(5_000)),
-                    actual: huge,
-                },
-                Row {
-                    rule: Rule::RemainderShare(BasisPoints(5_000)),
-                    actual: huge,
-                },
-            ],
-            None,
-        );
-        assert_eq!(computed.rows[0].actual, BasisPoints(5_000));
     }
 
     /// `DATEDIF(..., "y")` semantics: whole years only.

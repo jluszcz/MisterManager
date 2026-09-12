@@ -584,8 +584,8 @@ mod tests {
     #[test]
     fn containers_come_back_in_the_accounts_own_order() {
         let db = db::open_in_memory().unwrap();
-        let sav = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
-        let nst = account::insert(&db, "NST", "Nest Egg", Kind::Cash, 1).unwrap();
+        let sav = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let nst = account::insert(&db, "NST", "Nest Egg", Kind::Cash, 1, None).unwrap();
         for (container, name) in [(nst, "Nest Egg goal"), (sav, "Rainy Day goal")] {
             goal::insert(
                 &db,

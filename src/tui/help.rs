@@ -176,6 +176,8 @@ pub(super) enum Topic {
     LedgerSearch,
     /// `/` on the Savings screen.
     SavingsSearch,
+    /// `/` on the Funds screen.
+    FundsSearch,
     /// `/` on the Recurring Goals screen.
     RecurringGoalsSearch,
     /// `/` then a non-digit inside a worksheet.
@@ -402,26 +404,48 @@ const PLANNING: [Entry; 9] = [
     },
 ];
 
-const FUNDS: [Entry; 4] = [
+const FUNDS: [Entry; 9] = [
+    Entry::filter(
+        ACCOUNT_FILTER,
+        "Cycle the account filter: All, then one entry per investment account.",
+    ),
+    Entry {
+        key: "BackTab",
+        label: Label::Hidden,
+        detail: "Cycle the account filter the other way.",
+    },
+    Entry::filter(
+        CLEAR_FILTER,
+        "Clear a kept search if one is narrowing the list; otherwise return the account filter to All.",
+    ),
+    Entry::filter(
+        SEARCH_FILTER,
+        "Filter holdings by ticker or account as you type. Enter keeps the filter and leaves the box; Esc clears it.",
+    ),
     Entry {
         key: "a",
-        label: Label::Own("add"),
-        detail: "Add a fund: a name, whether its target tracks your age or takes a share of what age leaves, and the value it holds now.",
+        label: Label::Shared("holding"),
+        detail: "Add a holding: the account it sits in, its ticker, and the balance typed for it.",
     },
     Entry {
         key: "e",
-        label: Label::Own("value"),
-        detail: "Edit just the figure on the selected row -- the value that fund holds. Whole dollars; cents are refused rather than rounded.",
-    },
-    Entry {
-        key: "E",
-        label: Label::Own("edit"),
-        detail: "Edit the selected row in full: the same form 'a' adds with.",
+        label: Label::Shared("holding"),
+        detail: "Edit the selected holding's account, ticker and balance.",
     },
     Entry {
         key: "d",
-        label: Label::Own("delete"),
-        detail: "Delete the selected row, after a confirmation. Nothing here holds money, so no balance moves.",
+        label: Label::Shared("holding"),
+        detail: "Delete the selected holding. Confirms first, because the write commits immediately.",
+    },
+    Entry {
+        key: "g",
+        label: Label::Own("refresh"),
+        detail: "Refresh the selected holding's ticker from SEC's latest N-PORT filing. SEC refuses a request declaring no contact, so a run without one on record refuses too, saying what to add to the config file.",
+    },
+    Entry {
+        key: "G",
+        label: Label::Own("all"),
+        detail: "Refresh every ticker any holding names.",
     },
 ];
 
@@ -799,8 +823,7 @@ const FORM: [Entry; 10] = [
         label: Label::Hidden,
         detail: concat!(
             "Save. A value that will not parse reports itself in the status line and the form stays open.",
-            date_detail!(),
-            " The birth-date prompt is the exception and takes YYYY-MM-DD alone: every M/D reading is present or future."
+            date_detail!()
         ),
     },
     Entry {
@@ -927,6 +950,7 @@ impl Topic {
             Topic::Accounts => &ACCOUNTS,
             Topic::LedgerSearch
             | Topic::SavingsSearch
+            | Topic::FundsSearch
             | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch => &SEARCH,
@@ -955,6 +979,7 @@ impl Topic {
             Topic::Accounts => "Accounts",
             Topic::LedgerSearch => "Ledger search",
             Topic::SavingsSearch => "Savings search",
+            Topic::FundsSearch => "Funds search",
             Topic::RecurringGoalsSearch => "Recurring Goals search",
             Topic::WorksheetSearch => "Worksheet search",
             Topic::DestinationSearch => "Destination search",
@@ -997,6 +1022,7 @@ impl Topic {
             | Topic::Accounts => true,
             Topic::LedgerSearch
             | Topic::SavingsSearch
+            | Topic::FundsSearch
             | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch
@@ -1027,6 +1053,7 @@ impl Topic {
             | Topic::SuggestForm
             | Topic::LedgerSearch
             | Topic::SavingsSearch
+            | Topic::FundsSearch
             | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch => true,
@@ -1066,6 +1093,7 @@ impl Topic {
             | Topic::SuggestForm
             | Topic::LedgerSearch
             | Topic::SavingsSearch
+            | Topic::FundsSearch
             | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch
@@ -1320,7 +1348,7 @@ mod tests {
 
     /// Every topic there is. `SCREENS` stays separate because only those eight
     /// join a footer.
-    const ALL: [Topic; 22] = [
+    const ALL: [Topic; 23] = [
         Topic::Overview,
         Topic::Ledger,
         Topic::Savings,
@@ -1331,6 +1359,7 @@ mod tests {
         Topic::Accounts,
         Topic::LedgerSearch,
         Topic::SavingsSearch,
+        Topic::FundsSearch,
         Topic::RecurringGoalsSearch,
         Topic::WorksheetSearch,
         Topic::DestinationSearch,
@@ -1450,8 +1479,8 @@ mod tests {
         }
     }
 
-    /// Only a modal or a search box may join no footer. A screen topic with no
-    /// labelled entries would render an empty footer line.
+    /// Only a modal or a search box may join no footer -- every screen topic
+    /// answers at least one key of its own.
     #[test]
     fn every_screen_topic_joins_a_non_empty_footer() {
         for topic in SCREENS {
@@ -1491,6 +1520,10 @@ mod tests {
             "e edit · E/a/d bill · t transfers · f expense · Enter why · p pin · P unpin"
         );
         assert_eq!(
+            Topic::Funds.footer(),
+            "Tab acct · Esc clear · / search · a/e/d holding · g refresh · G all"
+        );
+        assert_eq!(
             Topic::RecurringTxns.footer(),
             "a add · e edit · d delete · g regen · G all · x extend · P paycheck"
         );
@@ -1499,11 +1532,6 @@ mod tests {
             "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings"
         );
         assert_eq!(Topic::Accounts.footer(), "a add · e edit");
-    }
-
-    #[test]
-    fn the_funds_footer_names_every_key_the_screen_answers() {
-        assert_eq!(Topic::Funds.footer(), "a add · e value · E edit · d delete");
     }
 
     /// The Credit ledger shares the Ledger topic with Cash but has no `t`:

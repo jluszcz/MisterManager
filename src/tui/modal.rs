@@ -14,7 +14,7 @@ use super::autocomplete::Autocomplete;
 use super::cursor::Scroll;
 use super::destination;
 use super::form::{self, FormFields, ValueForm};
-use super::fund::{self as fund_screen, FundForm};
+use super::fund::{self as fund_screen, HoldingForm};
 use super::goal_form::{self, AllocationForm, CloseForm, GoalForm, GoalTransferForm};
 use super::help::Topic;
 use super::history::{self, History, Mode as HistoryMode};
@@ -27,13 +27,13 @@ use super::search::Search;
 use super::widget;
 use super::worksheet::{self, Worksheet};
 use crate::db::bill;
-use crate::db::fund;
 use crate::db::goal;
+use crate::db::holding;
 use crate::db::recurring_goal;
 use crate::db::recurring_txn;
 use crate::db::txn;
 use crate::db::{
-    AccountId, AllocationId, BatchId, BillId, Db, FundId, RecurringGoalId, RecurringTxnId, TxnId,
+    AccountId, AllocationId, BatchId, BillId, Db, HoldingId, RecurringGoalId, RecurringTxnId, TxnId,
 };
 use anyhow::Result;
 use ratatui::Frame;
@@ -74,7 +74,6 @@ pub(super) enum Modal {
     /// `t` on the Planning screen: the resolved rows and an editable date,
     /// confirmed before anything is written.
     PlanTransfers(TransferConfirm),
-    Fund(FundForm),
     /// `e` on an account row: its name, band, position and interest policy.
     /// Everything the owner may say about an account, and nothing the
     /// workbook says.
@@ -83,6 +82,8 @@ pub(super) enum Modal {
     /// writes that correct one. Its own three modes live inside [`History`]
     /// rather than as a modal over a modal.
     History(History),
+    /// `a`/`e` on Funds: a holding's account, ticker and balance.
+    Holding(HoldingForm),
 }
 
 impl Modal {
@@ -107,7 +108,6 @@ impl Modal {
             Modal::Details(..) => None,
             Modal::RecurringGoalEntry(form) => Some(form),
             Modal::PlanTransfers(_) => None,
-            Modal::Fund(form) => Some(form),
             Modal::Account(form) => Some(form),
             // Only while the history is editing: in the other two modes it is
             // a list and a question, neither of which has a field.
@@ -115,6 +115,7 @@ impl Modal {
                 HistoryMode::Editing(form) => Some(form),
                 HistoryMode::List | HistoryMode::Confirming { .. } => None,
             },
+            Modal::Holding(form) => Some(form),
         }
     }
 
@@ -143,7 +144,8 @@ impl Modal {
             | Modal::GoalTransfer(_)
             | Modal::Value(..)
             | Modal::Bill(_)
-            | Modal::RecurringGoalEntry(_) => Topic::Form,
+            | Modal::RecurringGoalEntry(_)
+            | Modal::Holding(_) => Topic::Form,
             // Under match guards, the construction `Modal::Worksheet` above
             // already uses for its search box: the footer follows the mode
             // without any screen asking it to.
@@ -153,7 +155,6 @@ impl Modal {
             }
             Modal::History(_) => Topic::History,
             Modal::PlanTransfers(_) => Topic::PlanTransfers,
-            Modal::Fund(_) => Topic::Form,
             Modal::Account(_) => Topic::Form,
         }
     }
@@ -162,7 +163,7 @@ impl Modal {
 /// What a [`Modal::Value`] is collecting: one prefilled field, and the thing
 /// on the far side of it.
 ///
-/// Four screens edit a single figure through this one modal, and the only
+/// Two screens edit a single figure through this one modal, and the only
 /// thing that differs between them is where `Enter` writes. A variant per
 /// screen carrying an identical `ValueForm` would spell that difference out
 /// four times over -- in `fields_mut`, in `topic`, in `render` and in
@@ -170,7 +171,7 @@ impl Modal {
 /// only the handler asks.
 ///
 /// One variant per thing that can be edited, for the reason [`Confirm`] is
-/// one per thing that can be confirmed: a fifth figure cannot be added
+/// one per thing that can be confirmed: a third figure cannot be added
 /// without saying what commits it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum ValueTarget {
@@ -181,12 +182,6 @@ pub(super) enum ValueTarget {
     /// that account holds. Session state on the `Ledger`, so committing it
     /// writes nothing and reloads nothing.
     Reconcile(AccountId),
-    /// `e` on a fund row: the value that fund holds.
-    Fund(FundId),
-    /// The Funds screen has an age row and no birth date on record. `Esc`
-    /// dismisses it -- the screen still draws, with the age row's target as
-    /// `—`.
-    BirthDate,
 }
 
 /// What a [`Modal::Confirm`] is asking about: the row `y` writes to, and
@@ -212,12 +207,13 @@ pub(super) enum Confirm {
     /// `recurring_goal::delete` itself refuses while any goal still
     /// references the entry, open or closed.
     DeleteRecurringGoal(RecurringGoalId),
-    /// Nothing here holds money, but the row's share of the split disappears
-    /// with it.
-    DeleteFund(FundId),
     /// One row of a goal's allocation history. The goal's balance moves with
     /// it, and so does every figure derived from it.
     DeleteAllocation(AllocationId),
+    /// A holding on the Funds screen. Nothing else references it -- no
+    /// account, goal or transaction links to one -- so the write is a plain
+    /// delete.
+    DeleteHolding(HoldingId),
 }
 
 impl Confirm {
@@ -230,8 +226,8 @@ impl Confirm {
             Confirm::DeleteBill(_) => "Delete this bill?",
             Confirm::DeleteRecurringTxn(_) => "Delete this recurring transaction?",
             Confirm::DeleteRecurringGoal(_) => "Delete this recurring goal?",
-            Confirm::DeleteFund(_) => "Delete this fund?",
             Confirm::DeleteAllocation(_) => "Delete this allocation?",
+            Confirm::DeleteHolding(_) => "Delete this holding?",
         }
     }
 
@@ -248,8 +244,8 @@ impl Confirm {
             | Confirm::DeleteBill(_)
             | Confirm::DeleteRecurringTxn(_)
             | Confirm::DeleteRecurringGoal(_)
-            | Confirm::DeleteFund(_)
-            | Confirm::DeleteAllocation(_) => "y deletes · any other key cancels",
+            | Confirm::DeleteAllocation(_)
+            | Confirm::DeleteHolding(_) => "y deletes · any other key cancels",
         }
     }
 
@@ -262,8 +258,8 @@ impl Confirm {
             | Confirm::DeleteBill(_)
             | Confirm::DeleteRecurringTxn(_)
             | Confirm::DeleteRecurringGoal(_)
-            | Confirm::DeleteFund(_)
-            | Confirm::DeleteAllocation(_) => "delete cancelled",
+            | Confirm::DeleteAllocation(_)
+            | Confirm::DeleteHolding(_) => "delete cancelled",
         }
     }
 
@@ -293,13 +289,13 @@ impl Confirm {
                 recurring_goal::delete(db, id)?;
                 "recurring goal deleted".to_string()
             }
-            Confirm::DeleteFund(id) => {
-                fund::delete(db, id)?;
-                "fund deleted".to_string()
-            }
             Confirm::DeleteAllocation(id) => {
                 goal::delete_allocation(db, id)?;
                 "allocation deleted".to_string()
+            }
+            Confirm::DeleteHolding(id) => {
+                holding::delete(db, id)?;
+                "holding deleted".to_string()
             }
         })
     }
@@ -379,12 +375,12 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
             planning::render_transfers(frame, confirm);
             0
         }
-        Some(Modal::Fund(f)) => {
-            fund_screen::render_form(frame, f);
-            0
-        }
         Some(Modal::Account(f)) => {
             accounts_screen::render_form(frame, f);
+            0
+        }
+        Some(Modal::Holding(f)) => {
+            fund_screen::render_holding(frame, f);
             0
         }
         // Each mode draws where the app already draws that shape: the form
@@ -441,8 +437,8 @@ mod tests {
             Confirm::DeleteBill(BillId(1)),
             Confirm::DeleteRecurringTxn(RecurringTxnId(1)),
             Confirm::DeleteRecurringGoal(RecurringGoalId(1)),
-            Confirm::DeleteFund(FundId(1)),
             Confirm::DeleteAllocation(AllocationId(1)),
+            Confirm::DeleteHolding(HoldingId(1)),
         ] {
             let title = action.title();
             assert!(title.starts_with("Delete this "), "{title}");

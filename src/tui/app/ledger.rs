@@ -190,7 +190,7 @@ impl App {
     /// card payment read off a statement belongs to the sitting the rows
     /// around it belong to.
     fn open_transfer(&mut self) -> Result<()> {
-        let accounts = account::list(&self.db)?;
+        let accounts = account::list_ledger(&self.db)?;
         self.modal = Some(Modal::Transfer(TransferForm::transfer(
             accounts,
             self.entry_field(),
@@ -202,7 +202,7 @@ impl App {
     /// Opens on [`App::entry_date`], for the reason [`App::open_transfer`]
     /// gives.
     fn open_payment(&mut self) -> Result<()> {
-        let accounts = account::list(&self.db)?;
+        let accounts = account::list_ledger(&self.db)?;
         self.modal = Some(Modal::Transfer(TransferForm::payment(
             accounts,
             self.entry_field(),
@@ -486,15 +486,15 @@ mod tests {
     /// single-month fixture above cannot step at all.
     fn app_spanning_three_months() -> App {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
-        let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0).unwrap();
+        let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
         write(&db, checking, day(2026, 7, 5), 100_000, "July");
         write(&db, checking, day(2026, 8, 5), 100_000, "August");
         write(&db, checking, day(2026, 9, 5), 100_000, "September");
         write(&db, card_one, day(2026, 7, 6), 1_000, "July card");
         write(&db, card_one, day(2026, 9, 6), 1_000, "September card");
-        App::new(db, today()).unwrap()
+        App::new(db, today(), None).unwrap()
     }
 
     #[test]
@@ -1011,9 +1011,9 @@ mod tests {
     #[test]
     fn a_on_a_ledger_with_no_accounts_reports_it_in_the_status_line() {
         let db = db::open_in_memory().unwrap();
-        let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0).unwrap();
+        let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
         write(&db, card_one, day(2026, 8, 11), 1_499, "Movies");
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
 
         press(&mut app, KeyCode::Char('2'));
         press(&mut app, KeyCode::Char('a'));
@@ -1206,12 +1206,12 @@ mod tests {
     #[test]
     fn stepping_the_month_leaves_the_ledger_total_alone() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
         write(&db, checking, day(2026, 7, 4), 50_000, "July");
         write(&db, checking, day(2026, 8, 10), 30_000, "August");
         write(&db, checking, day(2026, 8, 20), 999_999, "Not yet");
-        let mut app = App::new(db, today()).unwrap();
+        let mut app = App::new(db, today(), None).unwrap();
 
         press(&mut app, KeyCode::Char('2'));
         assert_eq!(app.cash.rows().len(), 2, "August");

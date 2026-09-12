@@ -41,7 +41,7 @@ impl App {
     }
 
     fn open_recurring_txn_add(&mut self) -> Result<()> {
-        let accounts = account::list(&self.db)?;
+        let accounts = account::list_ledger(&self.db)?;
         self.modal = Some(Modal::RecurringTxn(RecurringTxnForm::add(
             accounts, self.today,
         )?));
@@ -53,7 +53,7 @@ impl App {
             return self.nothing_selected();
         };
         let found = recurring_txn::get(&self.db, row.recurring_txn_id)?;
-        let accounts = account::list(&self.db)?;
+        let accounts = account::list_ledger(&self.db)?;
         self.modal = Some(Modal::RecurringTxn(RecurringTxnForm::edit(
             accounts, self.today, &found,
         )?));
@@ -663,7 +663,7 @@ mod tests {
 
     fn recurring_txns_app() -> App {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
         // The workbook's pre-entered future rows, unclaimed. A "Salary
         // Income" row lets the paycheck form's Esc dismiss the suggestion
@@ -671,7 +671,7 @@ mod tests {
         write(&db, checking, day(2026, 9, 1), -120_000, "Mortgage");
         write(&db, checking, day(2026, 10, 1), -120_000, "Mortgage");
         write(&db, checking, day(2026, 8, 28), 500_000, "Salary");
-        App::new(db, today()).unwrap()
+        App::new(db, today(), None).unwrap()
     }
 
     fn add_mortgage_rule(app: &mut App) {

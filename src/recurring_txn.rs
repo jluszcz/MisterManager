@@ -377,7 +377,7 @@ mod tests {
     /// A database with one recurring transaction and no ledger rows at all.
     fn fresh() -> (Db, AccountId, RecurringTxnId) {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let id = recurring_txn::insert(&db, &mortgage(checking)).unwrap();
         (db, checking, id)
     }
@@ -650,7 +650,7 @@ mod tests {
     #[test]
     fn a_rules_own_horizon_cuts_the_run_short() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let mut new = mortgage(checking);
         new.horizon = Some(day(2026, 10, 1));
         let id = recurring_txn::insert(&db, &new).unwrap();
@@ -666,7 +666,7 @@ mod tests {
     #[test]
     fn a_rule_with_no_horizon_stops_at_the_rolling_one() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let mut new = mortgage(checking);
         new.horizon = None;
         let id = recurring_txn::insert(&db, &new).unwrap();
@@ -694,7 +694,7 @@ mod tests {
     #[test]
     fn a_horizon_setting_past_ten_years_is_clamped_to_ten_years() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let mut new = mortgage(checking);
         new.horizon = None;
         let id = recurring_txn::insert(&db, &new).unwrap();
@@ -712,7 +712,7 @@ mod tests {
     #[test]
     fn an_extension_past_the_rolling_horizon_generates_out_to_it() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let mut new = mortgage(checking);
         new.horizon = None;
         let id = recurring_txn::insert(&db, &new).unwrap();
@@ -730,7 +730,7 @@ mod tests {
     #[test]
     fn an_extension_the_rolling_horizon_has_overtaken_changes_nothing() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let mut new = mortgage(checking);
         new.horizon = None;
         let id = recurring_txn::insert(&db, &new).unwrap();
@@ -764,7 +764,7 @@ mod tests {
     #[test]
     fn an_extension_past_ten_years_is_clamped_to_ten_years() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let mut new = mortgage(checking);
         new.horizon = None;
         let id = recurring_txn::insert(&db, &new).unwrap();
@@ -783,7 +783,7 @@ mod tests {
     #[test]
     fn extending_generates_one_more_horizon_of_rows() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let mut new = mortgage(checking);
         new.horizon = None;
         let id = recurring_txn::insert(&db, &new).unwrap();
@@ -807,7 +807,7 @@ mod tests {
     #[test]
     fn extending_twice_reaches_two_horizons_out() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let mut new = mortgage(checking);
         new.horizon = None;
         let id = recurring_txn::insert(&db, &new).unwrap();
@@ -882,7 +882,7 @@ mod tests {
     #[test]
     fn extending_past_ten_years_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let mut new = mortgage(checking);
         new.horizon = None;
         let id = recurring_txn::insert(&db, &new).unwrap();
@@ -897,7 +897,7 @@ mod tests {
     #[test]
     fn regenerate_all_sums_its_counters_across_every_rule() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let first = recurring_txn::insert(&db, &mortgage(checking)).unwrap();
         let mut hoa = mortgage(checking);
         hoa.description = "HOA".to_string();
@@ -926,7 +926,7 @@ mod tests {
     #[test]
     fn the_next_paycheck_comes_from_the_flagged_rule() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         recurring_txn::insert(&db, &mortgage(checking)).unwrap();
         let pay = recurring_txn::insert(
             &db,
@@ -956,7 +956,7 @@ mod tests {
     #[test]
     fn there_is_no_next_paycheck_without_a_paycheck_rule() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         recurring_txn::insert(&db, &mortgage(checking)).unwrap();
         assert_eq!(next_paycheck(&db, today()).unwrap(), None);
     }

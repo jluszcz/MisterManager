@@ -983,10 +983,10 @@ mod tests {
     /// Brokerage containers, and one goal behind each configured line.
     fn configured() -> (db::Db, AccountId, AccountId) {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
-        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 2).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
+        let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 2, None).unwrap();
 
         let add = |container: AccountId, name: &str| -> GoalId {
             goal::insert(
@@ -1209,7 +1209,7 @@ mod tests {
     fn a_taxed_goal_funded_to_its_base_is_still_in_the_plugs_set() {
         let db = db::open_in_memory().unwrap();
         setting::set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let taxed = goal::insert(
             &db,
             &NewGoal {
@@ -1284,7 +1284,7 @@ mod tests {
     fn a_taxed_goal_funded_to_its_taxed_figure_drops_out_of_the_plugs_set() {
         let db = db::open_in_memory().unwrap();
         setting::set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let taxed = goal::insert(
             &db,
             &NewGoal {
@@ -1335,7 +1335,7 @@ mod tests {
     #[test]
     fn a_floating_goal_is_never_in_the_plugs_set() {
         let db = db::open_in_memory().unwrap();
-        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         goal::insert(
             &db,
             &NewGoal {
@@ -1948,7 +1948,7 @@ mod tests {
     #[test]
     fn a_non_zero_plug_with_no_unclaimed_goal_is_an_error() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
         let l = Lines {
             goals: Cents::from_dollars(100),
@@ -2000,7 +2000,7 @@ mod tests {
     #[test]
     fn a_database_with_no_configured_destination_is_refused() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
 
         let err = plan(&db, &lines(), None).unwrap_err();
@@ -2013,7 +2013,7 @@ mod tests {
     #[test]
     fn a_lone_unconfigured_line_is_a_withdrawal_rather_than_a_refusal() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
         let l = Lines {
             retirement: Cents::from_dollars(100),
@@ -2032,7 +2032,7 @@ mod tests {
     #[test]
     fn two_stranded_lines_with_no_transfer_between_them_are_refused() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
         let l = Lines {
             retirement: Cents::from_dollars(100),
@@ -2050,7 +2050,7 @@ mod tests {
     #[test]
     fn source_is_the_account_in_the_checking_band() {
         let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         account::set_group(&db, checking, Group::Checking).unwrap();
         assert_eq!(source(&db).unwrap(), checking);
     }
@@ -2062,7 +2062,7 @@ mod tests {
     #[test]
     fn source_with_no_checking_account_is_an_error() {
         let db = db::open_in_memory().unwrap();
-        account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0).unwrap();
+        account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         let err = source(&db).unwrap_err();
         assert!(err.to_string().contains("Checking band"), "{err}");
     }
@@ -2074,7 +2074,7 @@ mod tests {
     fn source_with_two_checking_accounts_is_an_error() {
         let db = db::open_in_memory().unwrap();
         for (code, name, sort) in [("CHK", "Everyday", 0), ("SAV", "Rainy Day", 1)] {
-            let id = account::insert(&db, code, name, Kind::Cash, sort).unwrap();
+            let id = account::insert(&db, code, name, Kind::Cash, sort, None).unwrap();
             account::set_group(&db, id, Group::Checking).unwrap();
         }
         let err = source(&db).unwrap_err();

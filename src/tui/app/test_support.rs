@@ -9,6 +9,7 @@ use super::*;
 use crate::db;
 use crate::db::account::Group;
 use crate::db::goal;
+use crate::db::holding;
 use crate::db::txn::NewTxn;
 use crate::gate::Gate;
 use crate::money::Cents;
@@ -45,11 +46,11 @@ pub(super) fn write(db: &Db, account_id: AccountId, date: NaiveDate, cents: i64,
 /// on.
 pub(super) fn app() -> App {
     let db = db::open_in_memory().unwrap();
-    let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+    let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
     account::set_group(&db, checking, Group::Checking).unwrap();
-    let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
-    let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0).unwrap();
-    let card_two = account::insert(&db, "CC2", "Card Two", Kind::Credit, 1).unwrap();
+    let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
+    let card_one = account::insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
+    let card_two = account::insert(&db, "CC2", "Card Two", Kind::Credit, 1, None).unwrap();
     write(&db, checking, day(2026, 8, 1), 100_000, "Paycheck");
     write(&db, checking, day(2026, 8, 10), -5_000, "Whole Foods");
     write(&db, savings, day(2026, 8, 12), 20_000, "Transfer");
@@ -90,7 +91,7 @@ pub(super) fn app() -> App {
     )
     .unwrap();
     goal::insert_allocation(&db, couch, day(2026, 8, 1), Cents(25_000), None, None).unwrap();
-    App::new(db, today()).unwrap()
+    App::new(db, today(), None).unwrap()
 }
 
 pub(super) fn savings_names(app: &App) -> Vec<String> {
@@ -250,10 +251,10 @@ pub(super) fn with_bills(db: &Db) {
 /// an unclaimed goal and `spread_container` would refuse to pick one.
 pub(super) fn planning_app() -> App {
     let db = db::open_in_memory().unwrap();
-    let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+    let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
     account::set_group(&db, checking, Group::Checking).unwrap();
-    let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1).unwrap();
-    let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 2).unwrap();
+    let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
+    let brokerage = account::insert(&db, "BKR", "Brokerage", Kind::Cash, 2, None).unwrap();
     // A few cents of drift off the round paycheck so `Excess (Actual)`
     // has something for `floor_to_dollar` to floor.
     write(&db, checking, day(2026, 8, 1), 5_000_007, "Paycheck");
@@ -311,7 +312,96 @@ pub(super) fn planning_app() -> App {
     setting::set(&db, key(Line::MomAndDad), mom_and_dad).unwrap();
     setting::set(&db, Gate::EmergencyFund.key(), emergency).unwrap();
 
-    App::new(db, today()).unwrap()
+    App::new(db, today(), None).unwrap()
+}
+
+/// Two investment accounts and three holdings across them, from the fund
+/// vocabulary, and no `fund_mix` rows at all -- the absence is the point,
+/// since a database nobody has run the fetcher against is the state every
+/// one of them starts in.
+///
+/// Split two-and-one across the accounts, not evenly, so a test narrowing
+/// the `Tab` filter to one account sees the list actually shrink.
+pub(super) fn app_with_holdings() -> App {
+    let db = db::open_in_memory().unwrap();
+    let first = account::insert(
+        &db,
+        "BRK",
+        "Holdings",
+        Kind::Investment,
+        0,
+        Some(account::TaxTreatment::Taxable),
+    )
+    .unwrap();
+    let second = account::insert(
+        &db,
+        "RET",
+        "Long Haul",
+        Kind::Investment,
+        1,
+        Some(account::TaxTreatment::TaxFree),
+    )
+    .unwrap();
+    holding::insert(&db, first, "USM", Cents::from_dollars(10_000)).unwrap();
+    holding::insert(&db, first, "USB", Cents::from_dollars(5_000)).unwrap();
+    holding::insert(&db, second, "ISM", Cents::from_dollars(3_000)).unwrap();
+    App::new(db, today(), None).unwrap()
+}
+
+/// `app_with_holdings` plus a composition for every ticker but `USM`, and a
+/// birth date so the target column has something to state.
+///
+/// **`USM` is the one left unfetched**, and which one it is decides whether
+/// the `Tab` test means anything: the holding without a mix has to sit in an
+/// account that still holds a covered one, or narrowing to it would leave the
+/// same covered set the All filter had and the summary would not move. `USM`
+/// sits in `BRK` beside the bond fund, so `BRK` summarises as bonds alone and
+/// `RET` as international stock alone -- and All, which is neither. It is also
+/// what leaves the U.S. stock row at nothing against a target of nearly half
+/// the portfolio, which is exactly the gap the panel's coverage term exists to
+/// explain.
+pub(super) fn app_with_mixes() -> App {
+    use crate::db::fund_mix::{self, AssetClass, Slice};
+    use crate::rate::BasisPoints;
+
+    let slice = |class, weight| Slice {
+        class,
+        weight: BasisPoints(weight),
+    };
+    let app = app_with_holdings();
+    // One filing date for both: what a mix is *made of* is what the summary
+    // reads, and two dates here would be two facts nothing asserts.
+    let filed = day(2026, 6, 30);
+    fund_mix::set_for_ticker(
+        &app.db,
+        "USB",
+        filed,
+        &[
+            slice(AssetClass::UsBond, 7_000),
+            slice(AssetClass::IntlBond, 2_500),
+            slice(AssetClass::Cash, 500),
+        ],
+    )
+    .unwrap();
+    fund_mix::set_for_ticker(
+        &app.db,
+        "ISM",
+        filed,
+        &[
+            slice(AssetClass::IntlStock, 9_500),
+            slice(AssetClass::Cash, 500),
+        ],
+    )
+    .unwrap();
+    // Derived from the fixture's own day rather than written out: a literal
+    // year that lands on a plausible age is a plausible real birth date in a
+    // tracked file.
+    let birth = today().with_year(today().year() - 48).unwrap();
+    setting::set(&app.db, key::BIRTH_DATE, birth).unwrap();
+
+    let mut app = app;
+    app.reload().unwrap();
+    app
 }
 
 /// `planning_app` plus one Everyday row three days after today, so the three

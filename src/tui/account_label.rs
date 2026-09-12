@@ -219,6 +219,12 @@ mod tests {
             // too and now draws its containers through
             // `Savings::container_account`.
             ("tui/savings.rs", "map_or(\"?\", |a| a.name.as_str())"),
+            // `Funds::account_name`, raw text rather than a draw either way it
+            // is used: the `/` filter matches it directly, the same split
+            // `search::searchable_amount` makes for a figure, and the delete
+            // confirmation's label masks it through `crate::demo::text`
+            // before it ever reaches the screen.
+            ("tui/fund.rs", "map_or(\"?\", |a| a.name.as_str())"),
             // `account::checking`'s ambiguity error, which the Planning
             // screen draws in place of the plan. Prose rather than a cell, so
             // it carries no color anywhere -- but it is read by a viewer, so
@@ -231,6 +237,14 @@ mod tests {
             // the status line verbatim. Prose for the same reason, masked the
             // same way.
             ("db/account.rs", "crate::demo::text(existing.code.as_str())"),
+            // `set_tax_treatment`'s wrong-kind refusal, which the Accounts
+            // screen puts on the status line verbatim. Prose for the same
+            // reason, masked the same way.
+            ("db/account.rs", "crate::demo::text(account.name.as_str())"),
+            // `holding::insert`'s wrong-kind refusal, which the Funds screen
+            // puts on the status line verbatim. Prose for the same reason,
+            // masked the same way.
+            ("db/holding.rs", "crate::demo::text(owner.name.as_str())"),
         ];
 
         let mut found: Vec<String> = Vec::new();

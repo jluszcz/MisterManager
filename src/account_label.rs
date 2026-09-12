@@ -378,6 +378,7 @@ mod tests {
             sort: 0,
             group: Group::Checking,
             color,
+            tax_treatment: None,
         }
     }
 

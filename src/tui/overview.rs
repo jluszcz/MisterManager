@@ -172,7 +172,7 @@ mod tests {
     /// its kind's default band, appended to whatever that kind holds.
     fn imported(db: &Db, code: &str, kind: Kind) -> AccountId {
         let sort = account::list_by_kind(db, kind).unwrap().len() as i64;
-        account::insert(db, code, code, kind, sort).unwrap()
+        account::insert(db, code, code, kind, sort, None).unwrap()
     }
 
     /// The same, then named and banded the way the owner would on the

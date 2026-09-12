@@ -81,7 +81,7 @@ mod tests {
 
     fn with_paycheck(anchor: NaiveDate) -> Db {
         let db = crate::db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0).unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
         let id = recurring_txn::insert(
             &db,
             &NewRecurringTxn {

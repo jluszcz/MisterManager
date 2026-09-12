@@ -341,6 +341,7 @@ mod tests {
                 interval_days: 7,
             }),
             report: None,
+            sec: None,
         };
 
         let outcome = run_if_due(

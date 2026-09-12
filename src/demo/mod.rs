@@ -11,9 +11,10 @@
 //! several of the strings a demo scrambles are built below it:
 //! `transfer::diagnose` writes the plug's figure into prose for the Planning
 //! screen to draw, the plug's own error quotes it as well, and the refusals
-//! `goal::target`, `db::account` and `db::goal` raise each name an account or
-//! a goal in prose a screen prints verbatim -- the Planning screen in place
-//! of the plan, or the status line. A message masked where it is built is one
+//! `goal::target`, `db::account`, `db::goal`, `db::holding` and
+//! `mix::fetch_ticker` raise each name an account, a goal or a fund's ticker
+//! in prose a screen prints verbatim -- the Planning screen in place of the
+//! plan, or the status line. A message masked where it is built is one
 //! message rather than one rewrite per caller.
 //!
 //! **Absolute figures, and a name the owner typed.** `text` draws a
