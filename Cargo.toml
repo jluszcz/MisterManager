@@ -6,11 +6,12 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
-# ring rather than the default aws-lc: aws-lc-sys compiles C, which the
-# aarch64-unknown-linux-musl build in CI has no toolchain for. aws-sdk-s3's
-# "rustls" feature is the ring-based client (aws-smithy-runtime/tls-rustls);
-# aws-config has no equivalent feature at all in this version, so its default
-# aws-lc-based https client is left off entirely rather than swapped.
+# Two rustls crypto backends stand in this tree, and only this half is the
+# crate's own choice: ring, because aws-sdk-s3's "rustls" feature is the
+# ring-based client (aws-smithy-runtime/tls-rustls), and aws-config has no
+# equivalent feature at all in this version, so its default aws-lc-based
+# https client is left off entirely rather than swapped. The other backend
+# arrives through reqwest whatever is written here -- see its own line below.
 aws-config = { version = "1.10", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
 aws-sdk-s3 = { version = "1.142", default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
 aws-smithy-types = "1.6"
@@ -22,7 +23,18 @@ minify-html = "0.18"
 quick-xml = "0.38"
 ratatui = "0.30"
 # `jluszcz_rust_utils::query` builds and returns the client; this crate only
-# ever names request/response types, never a TLS or transport feature.
+# ever names request/response types, and this declaration turns on no TLS or
+# transport feature. That is a fact about the declaration and not about the
+# build: features unify across the whole graph, rust-utils takes reqwest with
+# its defaults on, and reqwest resolves default -> default-tls -> rustls ->
+# __rustls-aws-lc-rs. So aws-lc-sys is an ordinary dependency of this crate
+# (`cargo tree -i aws-lc-sys` walks it back through rustls and reqwest), which
+# is the second backend beside the ring above, and the C it compiles. Nothing
+# written on this line can drop it -- the reqwest declaration that decides it
+# is rust-utils', and the change is there: see
+# docs/superpowers/plans/2026-09-11-rust-utils-tls-provider.md. What it buys
+# is build weight and coherence rather than a build that works, which this
+# one does on every target CI builds.
 reqwest = { version = "0.13", default-features = false }
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
