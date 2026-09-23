@@ -411,7 +411,9 @@ funded, and every shade between — off the same ramp, so a goal is the same
 color on the phone as it is in the terminal.
 
 Cash and Credit carry **every** transaction, not the month or two the screens
-window to, with a dropdown that filters to one month at a time. They open on
+window to, with a dropdown that filters to one month at a time. Their amounts
+are colored the way the screens color them — red below zero on Cash, green
+below zero on Credit, where it is the card being paid down. They open on
 the current month — or on all of them, in the first days of a month with
 nothing entered in it yet. That dropdown is a `<details>` full of radio buttons
 rather than a `<select>`: CSS cannot see which option of a `<select>` is

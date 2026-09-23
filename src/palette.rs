@@ -14,7 +14,8 @@
 //! either of them would be a second decision about what an account looks
 //! like, and the two would drift on the first re-tint.
 
-use crate::db::account::AccountColor;
+use crate::db::account::{AccountColor, Kind};
+use crate::money::Cents;
 use crate::rate::Percent;
 
 /// A color as three channels. Not a `Color`: this module is below every
@@ -28,8 +29,8 @@ pub type Rgb = (u8, u8, u8);
 /// brightness -- reordering can separate them, which is why `account.color`
 /// holds a name instead of an index.
 ///
-/// No red and no green: those two are spoken for by [`NEGATIVE`] and by the
-/// percentage ramp, and an account tinted like a warning is a warning nobody
+/// No red and no green: those two are spoken for by [`NEGATIVE`], by
+/// [`POSITIVE`] and by the percentage ramp, and an account tinted like a warning is a warning nobody
 /// reads.
 pub fn account(color: AccountColor) -> Rgb {
     match color {
@@ -46,6 +47,78 @@ pub fn account(color: AccountColor) -> Rgb {
 
 /// A negative amount, in every medium that renders one.
 pub const NEGATIVE: Rgb = (178, 34, 34);
+
+/// A figure the good news lands on: a Credit row paying the card down, in
+/// every medium that draws the Credit ledger, and -- on the screen alone --
+/// the reconciliation delta on the side of its target the owner wants.
+///
+/// Deliberately not the counterpart of [`NEGATIVE`] in every column -- a
+/// figure on the ordinary side of zero takes no color at all, whichever side
+/// that is, which is what keeps a green one meaning something. On the Credit
+/// ledger the ordinary side is the charge, so green stays the minority of the
+/// column there exactly as it is everywhere else.
+pub const POSITIVE: Rgb = (70, 170, 70);
+
+/// Which way a column's sign runs, and so which side of zero is the loss.
+///
+/// Cash rows are signed naturally and credit rows are signed as debt, so the
+/// *same* figure means opposite things on the two ledgers: `-42.00` is money
+/// gone from a checking account and a card paid down by forty-two dollars.
+/// Every other column in either medium is natural.
+///
+/// Here rather than beside the screen, because the screen and the report's
+/// Credit tab draw the same column and have to agree about which of its
+/// figures is the good news -- the reason [`NEGATIVE`] is here at all.
+///
+/// A type of its own rather than [`Kind`], which already tells cash from
+/// credit: its third variant has no ledger and no column, so matching on it
+/// everywhere a sign is colored would be an arm about investments saying
+/// something about a sign. [`Sense::of_ledger`] is the one place that arm is
+/// written.
+///
+/// **No `Default`.** An unstated sense meaning `Natural` is exactly the
+/// silence [`Sense::of_ledger`] spells its `Kind` arms out to avoid: a column
+/// added later would take a sign nobody chose for it, with nothing failing to
+/// compile. Every construction names a variant.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Sense {
+    /// Positive is money held. Every column but the Credit ledger's.
+    Natural,
+    /// Positive is money owed. The Credit ledger, which renders as stored.
+    Debt,
+}
+
+impl Sense {
+    /// Which way a ledger of `kind` runs, on the screen and the page alike.
+    ///
+    /// Investment accounts have no ledger, so the arm naming one never runs.
+    /// It is spelled out rather than left to a `_`, which would send a `Kind`
+    /// added later to `Natural` with nothing failing to compile -- the same
+    /// thing `text_enum!` exists to stop a variant doing to the lists it
+    /// generates.
+    pub fn of_ledger(kind: Kind) -> Sense {
+        match kind {
+            Kind::Credit => Sense::Debt,
+            Kind::Cash | Kind::Investment => Sense::Natural,
+        }
+    }
+}
+
+/// The color an amount takes in a column running in `sense`, or `None` for
+/// the ordinary side of zero.
+///
+/// Only a figure below zero is ever colored, in either sense: what turns over
+/// is which color it wears, never which side of zero is marked. The screen's
+/// `tui::style::amount_color_of` and the report's `html::money_in` both read
+/// this, so a Credit row cannot be good news in one medium and bad in the
+/// other.
+pub fn amount(sense: Sense, cents: Cents) -> Option<Rgb> {
+    let below = match sense {
+        Sense::Natural => NEGATIVE,
+        Sense::Debt => POSITIVE,
+    };
+    (cents < Cents::ZERO).then_some(below)
+}
 
 /// The funding ramp's three stops: nothing saved, halfway, funded.
 ///
@@ -251,7 +324,26 @@ mod tests {
     fn the_negative_color_is_not_one_of_the_account_colors() {
         for color in AccountColor::ALL {
             assert_ne!(account(color), NEGATIVE, "{color:?} is the negative color");
+            assert_ne!(account(color), POSITIVE, "{color:?} is the positive color");
         }
+    }
+
+    #[test]
+    fn only_a_negative_amount_is_colored_in_either_sense() {
+        for sense in [Sense::Natural, Sense::Debt] {
+            assert_eq!(amount(sense, Cents::ZERO), None, "{sense:?}");
+            assert_eq!(amount(sense, Cents(1)), None, "{sense:?}");
+        }
+        assert_eq!(amount(Sense::Natural, Cents(-1)), Some(NEGATIVE));
+        assert_eq!(amount(Sense::Debt, Cents(-1)), Some(POSITIVE));
+    }
+
+    /// Credit is the one ledger signed as debt; every other kind reads its
+    /// figures the natural way round.
+    #[test]
+    fn only_the_credit_ledger_runs_as_debt() {
+        assert_eq!(Sense::of_ledger(Kind::Credit), Sense::Debt);
+        assert_eq!(Sense::of_ledger(Kind::Cash), Sense::Natural);
     }
 
     #[test]

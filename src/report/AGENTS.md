@@ -71,7 +71,10 @@ about a figure, one of them is wrong.
   offline with no query to re-run. It **opens on the month `today` falls in**,
   and on `All months` when that month has no rows yet: a selection matching no
   group would draw an empty table and no reason for it, which is what the first
-  of a month would otherwise look like.
+  of a month would otherwise look like. **The Credit tab reads its signs the way the Credit screen
+  does**: a figure below zero is the card paid down and draws in `palette::POSITIVE`, through the
+  same `palette::Sense::of_ledger` and `palette::amount` the screen reads, so a payment cannot be
+  good news in one medium and bad in the other.
 - **The Overview is one table on the page, where it is three on the screen.**
   The three projection dates are that table's header row, and a header labels
   only the table it sits in -- split per section, each would size its columns

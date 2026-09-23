@@ -825,12 +825,13 @@ deferred to nothing.
   the money leaves the tracked system, which is how Retirement and Investment are meant to stand. An
   unset line with nothing to suggest is drawn plain, because a warning that is always on is a
   warning nobody reads.
-- **Which side of zero wears a color is the column's, not the app's.** `style::Sense` is the two
+- **Which side of zero wears a color is the column's, not the app's.** `palette::Sense` is the two
   answers — `Natural`, where positive is money held, and `Debt`, where positive is money owed —
-  and `style::amount_color_of` and `delta_color_of` are the one place each is spent. Why the Credit
-  ledger's Amount column is the one `Debt` column, and why `amount_color` keeps a bare spelling
-  where a delta does not, are both on `style::Sense`; `Ledger::sense` is the one function that
-  answers it, and spells its `Kind` arms out rather than leaning on a `_`.
+  re-exported as `style::Sense`, and `palette::amount` and `style::delta_color_of` are the one
+  place each is spent. Why the Credit ledger's Amount column is the one `Debt` column is on
+  `palette::Sense`, and why `amount_color` keeps a bare spelling where a delta does not is on
+  `style::amount_color`; `Sense::of_ledger` is the one function that answers which ledger runs
+  which way, and spells its `Kind` arms out rather than leaning on a `_`.
   - **`Debt` reaches the rows and nothing else on the screen.** `Today` and `Target` stay
     `Natural`, through `tui::money_span`, and `ledger::title_line` says what that costs — an
     overpaid card draws a red `Today` over a green payment row, and the Overview draws the same
@@ -842,10 +843,10 @@ deferred to nothing.
     there and green on the Credit ledger. It is the one column a screen-wide sense cannot serve —
     the sense would have to come off each row's own account — and nothing has been asked of it
     yet.
-  - **The report does not follow either.** `report::html::ledger` draws a credit figure in the same
-    red it draws a cash one, so the page and the screen disagree on purpose; `report::html::money`
-    is where that is argued, and `a_negative_credit_figure_stays_red_on_the_page` is what holds it
-    up.
+  - **The report's Credit tab follows the rows.** `report::html::ledger` reads the same
+    `Sense::of_ledger` and `palette::amount`, so a card paid down is green on the page as on the
+    screen. The page has no `Today`, `Target` or `Δ`, so the rows are all of the rule it has to
+    carry.
 - **A tinted cell colors its characters, never its padding and never its indent.** `tui::tinted`
   is the one place that happens, and says at its own definition what a `Cell::style` does instead;
   `account_cell`, `money_cell`, `savings::percent`, Planning's three
