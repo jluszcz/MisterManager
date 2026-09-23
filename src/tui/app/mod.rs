@@ -596,6 +596,9 @@ impl App {
         match key.code {
             KeyCode::Left => self.scrub(week_step(key, Step::PREVIOUS_WEEK, Step::PREVIOUS))?,
             KeyCode::Right => self.scrub(week_step(key, Step::NEXT_WEEK, Step::NEXT))?,
+            // A press with no scrub to undo says nothing: "back to
+            // Paycheck-Eve" would report a move that did not happen.
+            KeyCode::Esc if self.scrubbed_days() != 0 => self.move_adhoc(self.dates.adhoc)?,
             _ => {}
         }
         Ok(())
@@ -605,9 +608,16 @@ impl App {
     /// transaction. To-Date is derived from today and cannot scrub; Month-End
     /// is derived from this date and moves with it.
     fn scrub(&mut self, step: Step) -> Result<()> {
-        self.adhoc = step
+        let adhoc = step
             .apply(self.adhoc)
             .context("the ad-hoc date ran off the end of the calendar")?;
+        self.move_adhoc(adhoc)
+    }
+
+    /// Put the Paycheck-Eve view on `adhoc` -- a step from `scrub`, or the
+    /// baseline itself from `Esc` -- and reload every screen quoting it.
+    fn move_adhoc(&mut self, adhoc: NaiveDate) -> Result<()> {
+        self.adhoc = adhoc;
         self.reload_overview()?;
         // The drift is what the press did, so it is a message rather than a
         // property of the screen: it takes `STATUS_TTL` from `on_key` like
@@ -744,7 +754,12 @@ impl App {
             return TextLine::from(self.status.clone());
         }
         match self.screen {
-            Screen::Overview => TextLine::from(Topic::Overview.footer()),
+            // The pin's reasoning, for the scrub: with nothing scrubbed `Esc`
+            // has nothing to clear, and naming it would offer to.
+            Screen::Overview => TextLine::from(match self.scrubbed_days() {
+                0 => Topic::Overview.footer_without(&["Esc"]),
+                _ => Topic::Overview.footer(),
+            }),
             Screen::Cash | Screen::Credit if self.ledger().is_searching() => {
                 search_footer(self.ledger())
             }
@@ -1371,6 +1386,42 @@ mod tests {
 
         assert_eq!(footer(&app), keys);
         assert_eq!(app.scrubbed_days(), 7, "the message faded, not the scrub");
+    }
+
+    /// `Esc` backs out of the scrub whatever its size, rather than making the
+    /// owner count arrows back. Far enough to carry Month-End into the next
+    /// month and Planning past the fixture's Rent, so every column and screen
+    /// the scrub moved has to come back with it.
+    #[test]
+    fn esc_puts_a_scrubbed_overview_back_on_paycheck_eve() {
+        let mut app = planning_app_with_a_row_after_today();
+        let before = app.planning.excess_actual();
+        let dates = app.overview.dates;
+        for _ in 0..3 {
+            shift_press(&mut app, KeyCode::Right);
+        }
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.scrubbed_days(), 22);
+        assert_ne!(app.overview.dates.month_end, dates.month_end);
+        assert_ne!(app.planning.excess_actual(), before);
+
+        press(&mut app, KeyCode::Esc);
+
+        assert_eq!(app.scrubbed_days(), 0);
+        assert_eq!(app.overview.dates, dates);
+        assert_eq!(app.planning.excess_actual(), before);
+        assert_eq!(app.status, "back to Paycheck-Eve");
+    }
+
+    /// With nothing scrubbed there is nothing to report: the date did not move.
+    #[test]
+    fn esc_on_an_unscrubbed_overview_says_nothing() {
+        let mut app = app();
+
+        press(&mut app, KeyCode::Esc);
+
+        assert_eq!(app.scrubbed_days(), 0);
+        assert_eq!(app.status, "");
     }
 
     /// The derived date is the baseline the marker and the counter compare
@@ -2197,6 +2248,22 @@ mod tests {
         );
     }
 
+    /// `Esc` clears a scrub, so the footer names it only while there is one to
+    /// clear -- the reasoning `P unpin` follows for a pin.
+    #[test]
+    fn the_overview_footer_offers_esc_only_while_the_date_is_scrubbed() {
+        let mut app = app();
+        assert_eq!(footer(&app), "←/→ scrub · Shift+←/→ week");
+
+        press(&mut app, KeyCode::Right);
+        app.expire_status_at(Instant::now() + STATUS_TTL);
+        assert_eq!(footer(&app), "←/→ scrub · Shift+←/→ week · Esc clear");
+
+        press(&mut app, KeyCode::Esc);
+        app.expire_status_at(Instant::now() + STATUS_TTL);
+        assert_eq!(footer(&app), "←/→ scrub · Shift+←/→ week");
+    }
+
     /// The pin is the one footer entry whose word changes with state. The table
     /// carries "pin"; this is what turns it into "unpin", and nothing else in the
     /// line may be touched on the way.
@@ -2615,7 +2682,7 @@ mod tests {
     #[test]
     fn every_key_a_screen_handler_matches_appears_in_its_table() {
         let handlers: [(Topic, &[&str]); 8] = [
-            (Topic::Overview, &["←/→", "Shift+←/→"]),
+            (Topic::Overview, &["←/→", "Shift+←/→", "Esc"]),
             (
                 Topic::Ledger,
                 &[
