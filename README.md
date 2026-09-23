@@ -45,10 +45,18 @@ Each title ends with the balance of whatever `Tab` narrows the screen to — `Ca
 Today $42,000.00` — and that figure is the to-date balance the Overview quotes, so neither the month
 on show nor a search moves it.
 
+Amounts are shown as they are stored, which means the two screens read their signs opposite ways:
+Cash counts money held, so a negative row is money gone and draws red; Credit counts money owed, so
+a negative row is the card being paid down and draws green. A charge is uncolored on Credit for the
+reason money coming in is uncolored on Cash — it is the ordinary case, and a color on every row is a
+color nobody reads.
+
 Narrowed to one account, `r` takes the balance a statement says that account holds and the title
-carries the difference after it — `… · Today $1,160.00 · Target $1,200.00 · Δ -$40.00`, green above,
-red below, a dash when they match — so a typo or a missed row shows up while the rows are still
-being entered. Nothing is written: quitting forgets every target.
+carries the difference after it — `… · Today $1,160.00 · Target $1,200.00 · Δ -$40.00`, green on
+the side of the target worth being on and red on the other, a `✓` when they match — so a typo or a
+missed row shows up while the rows are still being entered. Which side is which turns over on
+Credit, where a balance above the statement is more debt than it says rather than more money.
+Nothing is written: quitting forgets every target.
 
 ### `4` Savings
 
@@ -346,7 +354,8 @@ nothing should be built on it.
 Percentages, dates, counts, and the app's own words are left alone — a
 percentage is the shape of a plan rather than a sum, a scrambled date is not
 a date, and a count over rows the reader can see would read as a rendering
-fault. Negatives keep their sign and their red.
+fault. Negatives keep their sign, and the color a figure would have had
+either way — red on Cash, green on Credit.
 
 Only the drawing changes. What is typed into a form still parses, so the app
 can be driven rather than only watched, and the figures behind the mask are the

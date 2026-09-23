@@ -56,13 +56,14 @@ pub const NEGATIVE: Color = Color::Rgb(
     crate::palette::NEGATIVE.2,
 );
 
-/// A figure that is *above* what it is being compared with, where being above
-/// it is the good news: the ledger's reconciliation delta, and nothing else so
-/// far.
+/// A figure the good news lands on: the ledgers' reconciliation delta on the
+/// side of it the owner wants, and a Credit row paying the card down.
 ///
-/// Deliberately not the counterpart of [`NEGATIVE`] on every screen -- an
-/// amount above zero is the ordinary case and takes no color at all, which is
-/// what keeps a green one meaning something.
+/// Deliberately not the counterpart of [`NEGATIVE`] on every screen -- a
+/// figure on the ordinary side of zero takes no color at all, whichever side
+/// that is, which is what keeps a green one meaning something. On the Credit
+/// ledger the ordinary side is the charge, so green stays the minority of the
+/// column there exactly as it is everywhere else.
 pub const POSITIVE: Color = Color::Rgb(70, 170, 70);
 
 /// Something the owner probably meant to configure and has not.
@@ -132,23 +133,76 @@ pub fn tone_color(tone: Tone) -> Option<Color> {
     }
 }
 
-/// The color for an amount, or `None` to leave the surrounding style alone.
+/// Which way a column's sign runs, and so which side of zero is the loss.
+///
+/// Cash rows are signed naturally and credit rows are signed as debt, so the
+/// *same* figure means opposite things on the two ledgers: `-42.00` is money
+/// gone from a checking account and a card paid down by forty-two dollars.
+/// Every other column in the app is natural, which is why [`amount_color`]
+/// keeps its one-argument spelling and this is the parameter the Credit
+/// ledger passes.
+///
+/// A type of its own rather than [`crate::db::account::Kind`], which already
+/// tells cash from credit: its third variant has no ledger and no column, so
+/// matching on it here would be an arm about investments that says something
+/// about a sign.
+///
+/// **No `Default`.** An unstated sense meaning `Natural` is exactly the
+/// silence [`crate::tui::ledger::Ledger::sense`] spells its `Kind` arms out
+/// to avoid: a column added later would take a sign nobody chose for it, with
+/// nothing failing to compile. Every construction here names a variant.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Sense {
+    /// Positive is money held. Every column but the Credit ledger's.
+    Natural,
+    /// Positive is money owed. The Credit ledger, which renders as stored.
+    Debt,
+}
+
+/// The color for an amount in a naturally signed column, or `None` to leave
+/// the surrounding style alone.
 ///
 /// `None` rather than `Color::Reset` so a cell composes with the style its row
 /// already carries -- the ledger dims rows dated after today, and setting a
 /// foreground must not clear that.
 pub fn amount_color(cents: Cents) -> Option<Color> {
-    (cents < Cents::ZERO).then_some(NEGATIVE)
+    amount_color_of(Sense::Natural, cents)
 }
 
-/// The color for a reconciliation delta, or `None` for the reconciled case.
+/// The same decision made in whichever [`Sense`] the column runs.
 ///
-/// Zero is not a third color: the border draws it as a check, and a color there
-/// would read as one of the two states it is the absence of.
-pub fn delta_color(cents: Cents) -> Option<Color> {
+/// One function rather than a twin per sense, for [`crate::reading::Reading`]'s
+/// reason: the two differ in nothing but the thing they name, and a second
+/// function would be a second place for "the ordinary side takes no color" to
+/// be written down.
+pub fn amount_color_of(sense: Sense, cents: Cents) -> Option<Color> {
+    let below = match sense {
+        Sense::Natural => NEGATIVE,
+        Sense::Debt => POSITIVE,
+    };
+    (cents < Cents::ZERO).then_some(below)
+}
+
+/// The color for a reconciliation delta, in whichever [`Sense`] the column
+/// runs, or `None` for the reconciled case: the delta is `Today − Target` on
+/// both ledgers, so what turns over is the color and never the figure.
+///
+/// No one-argument spelling beside it, where [`amount_color`] has one: a
+/// delta is drawn in exactly one place, and both ledgers reach it through
+/// [`crate::tui::ledger`], so a `Natural`-only twin would be a function
+/// nothing called.
+///
+/// Zero is not a third color in either sense: the border draws it as a check,
+/// and a color there would read as one of the two states it is the absence
+/// of.
+pub fn delta_color_of(sense: Sense, cents: Cents) -> Option<Color> {
+    let (over, under) = match sense {
+        Sense::Natural => (POSITIVE, NEGATIVE),
+        Sense::Debt => (NEGATIVE, POSITIVE),
+    };
     match cents.cmp(&Cents::ZERO) {
-        std::cmp::Ordering::Greater => Some(POSITIVE),
-        std::cmp::Ordering::Less => Some(NEGATIVE),
+        std::cmp::Ordering::Greater => Some(over),
+        std::cmp::Ordering::Less => Some(under),
         std::cmp::Ordering::Equal => None,
     }
 }
@@ -306,6 +360,36 @@ mod tests {
         assert_eq!(amount_color(Cents(1)), None);
     }
 
+    /// A credit ledger stores debt as positive, so a figure below zero is
+    /// the card being paid down. Drawing it in the red every other column
+    /// spends on a loss would paint the good news as the bad.
+    #[test]
+    fn a_debt_column_draws_a_negative_amount_as_the_good_news_it_is() {
+        assert_eq!(amount_color_of(Sense::Debt, Cents(-1)), Some(POSITIVE));
+        assert_eq!(
+            amount_color_of(Sense::Debt, Cents(-100_000)),
+            Some(POSITIVE)
+        );
+    }
+
+    /// A charge is what a credit ledger is mostly made of, so it stays the
+    /// ordinary case and takes no color -- the same rule the natural columns
+    /// keep, read from the other end.
+    #[test]
+    fn a_debt_column_leaves_a_charge_uncolored() {
+        assert_eq!(amount_color_of(Sense::Debt, Cents::ZERO), None);
+        assert_eq!(amount_color_of(Sense::Debt, Cents(1)), None);
+    }
+
+    /// The default spelling is what every column but the Credit ledger's
+    /// draws, so `amount_color` and the natural sense cannot come apart.
+    #[test]
+    fn the_natural_sense_is_what_amount_color_already_said() {
+        for cents in [Cents(-100_000), Cents(-1), Cents::ZERO, Cents(1)] {
+            assert_eq!(amount_color_of(Sense::Natural, cents), amount_color(cents));
+        }
+    }
+
     /// The whole point of keying on the id: the same account is the same
     /// color on Cash, Savings, Recurring Transactions and Overview alike.
     #[test]
@@ -393,21 +477,32 @@ mod tests {
         }
     }
 
-    /// The reconciliation delta on the ledgers: above the target is money the
-    /// owner has and had not counted, below it is money missing from the
-    /// ledger.
+    /// The reconciliation delta on the Cash ledger: above the target is
+    /// money the owner has and had not counted, below it is money missing
+    /// from the ledger.
     #[test]
     fn a_delta_above_its_target_reads_green_and_below_reads_red() {
-        assert_eq!(delta_color(Cents(1)), Some(POSITIVE));
-        assert_eq!(delta_color(Cents(-1)), Some(NEGATIVE));
+        assert_eq!(delta_color_of(Sense::Natural, Cents(1)), Some(POSITIVE));
+        assert_eq!(delta_color_of(Sense::Natural, Cents(-1)), Some(NEGATIVE));
     }
 
-    /// A reconciled account is neither a gain nor a warning, and the border
-    /// draws it as a plain check. Coloring zero would make "done" look like
-    /// one of the two states it is the absence of.
+    /// Over the target on a card is more debt than the statement says, which
+    /// is the direction worth a warning; under it is the card owing less.
+    /// The figures are signed as stored, so only the colors turn over.
     #[test]
-    fn a_reconciled_delta_takes_no_color_of_its_own() {
-        assert_eq!(delta_color(Cents::ZERO), None);
+    fn a_debt_delta_above_its_target_reads_red_and_below_reads_green() {
+        assert_eq!(delta_color_of(Sense::Debt, Cents(1)), Some(NEGATIVE));
+        assert_eq!(delta_color_of(Sense::Debt, Cents(-1)), Some(POSITIVE));
+    }
+
+    /// A reconciled account is neither a gain nor a warning whichever way the
+    /// column's sign runs, and the border draws it as a plain check. Coloring
+    /// zero would make "done" look like one of the two states it is the
+    /// absence of.
+    #[test]
+    fn a_reconciled_delta_takes_no_color_in_either_sense() {
+        assert_eq!(delta_color_of(Sense::Debt, Cents::ZERO), None);
+        assert_eq!(delta_color_of(Sense::Natural, Cents::ZERO), None);
     }
 
     /// The two carry opposite instructions -- "this plan will not run" and

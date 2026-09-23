@@ -100,15 +100,27 @@ pub fn share_of(pot: Cents, n: i64) -> Result<Cents> {
     Ok(Cents::from_dollars(pot.dollars() / n))
 }
 
-/// A money cell: right-aligned, and colored by [`style::amount_color`].
+/// A money cell in a naturally signed column: right-aligned, and colored by
+/// [`style::amount_color`].
 ///
-/// Every screen that renders a `Cents` goes through here, so "negative reads
-/// red" is one decision rather than one per screen. Right alignment is not decoration
+/// Every screen that renders a `Cents` goes through here or [`amount_in`], so
+/// which side of zero wears a color is one decision rather than one per
+/// screen. Right alignment is not decoration
 /// either -- a truncated right-aligned cell loses its *leading* characters, so
 /// a column too narrow for its figures is visibly wrong rather than quietly
 /// off by a digit.
 fn amount(cents: Cents) -> Cell<'static> {
-    money_cell(cents, crate::demo::figure(cents))
+    amount_in(style::Sense::Natural, cents)
+}
+
+/// The same cell in whichever [`style::Sense`] the column runs.
+///
+/// The Credit ledger is the one caller that passes anything but
+/// [`style::Sense::Natural`]: it renders as stored, so a figure below zero
+/// there is the card being paid down. The figure itself is untouched -- only
+/// which side of zero wears a color changes.
+fn amount_in(sense: style::Sense, cents: Cents) -> Cell<'static> {
+    money_cell(sense, cents, crate::demo::figure(cents))
 }
 
 /// The same cell with the cents dropped before the color is chosen — see
@@ -127,6 +139,7 @@ fn amount(cents: Cents) -> Cell<'static> {
 /// no other screen quoting that amount draws.
 fn whole_amount(cents: Cents) -> Cell<'static> {
     money_cell(
+        style::Sense::Natural,
         cents.trunc_to_dollar(),
         crate::demo::truncated_figure(cents),
     )
@@ -194,10 +207,10 @@ fn tax_treatment_cell(treatment: Option<TaxTreatment>) -> Cell<'static> {
     })
 }
 
-fn money_cell(cents: Cents, text: String) -> Cell<'static> {
+fn money_cell(sense: style::Sense, cents: Cents, text: String) -> Cell<'static> {
     tinted(
         TextLine::from(text).right_aligned(),
-        style::amount_color(cents),
+        style::amount_color_of(sense, cents),
     )
 }
 

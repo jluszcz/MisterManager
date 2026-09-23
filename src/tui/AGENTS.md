@@ -390,10 +390,12 @@ deferred to nothing.
 ## Invariants worth knowing before editing a screen
 
 - **No screen formats a `Cents` itself.** Every figure a screen draws goes through `tui::amount`,
-  `whole_amount`, `money_span` or `money_text` — or, where it lands in prose rather than a cell,
-  through `demo::figure`/`whole_figure` directly. Two reasons, and the second is why the rule is
-  absolute: "negative reads red" is one decision rather than one per screen, and `mm --demo`
-  scrambles every absolute figure's digits at those same four functions. A `format!("{cents}")` written
+  `amount_in`, `whole_amount`, `money_span`, `money_text` or `whole_money_span` — or, where it
+  lands in prose rather than a cell, through `demo::figure`/`whole_figure` directly. Two reasons,
+  and the second is why the rule is absolute: which side of zero wears a color is one decision
+  rather than one per screen, and `mm --demo` scrambles every absolute figure's digits at the four
+  of those that reach a `Cents` — `amount_in`, `whole_amount`, `money_text` and `whole_money_span`,
+  `amount` being `amount_in`'s natural spelling and `money_span` `money_text`'s colored one. A `format!("{cents}")` written
   at a call site is outside both — it draws an uncolored figure, and it publishes a real balance to
   whoever the app is being demonstrated to. `crate::demo` is where the mask lives and what it looks
   like; it sits at the crate root rather than here because `transfer::diagnose` writes the plug's
@@ -823,6 +825,27 @@ deferred to nothing.
   the money leaves the tracked system, which is how Retirement and Investment are meant to stand. An
   unset line with nothing to suggest is drawn plain, because a warning that is always on is a
   warning nobody reads.
+- **Which side of zero wears a color is the column's, not the app's.** `style::Sense` is the two
+  answers — `Natural`, where positive is money held, and `Debt`, where positive is money owed —
+  and `style::amount_color_of` and `delta_color_of` are the one place each is spent. Why the Credit
+  ledger's Amount column is the one `Debt` column, and why `amount_color` keeps a bare spelling
+  where a delta does not, are both on `style::Sense`; `Ledger::sense` is the one function that
+  answers it, and spells its `Kind` arms out rather than leaning on a `_`.
+  - **`Debt` reaches the rows and nothing else on the screen.** `Today` and `Target` stay
+    `Natural`, through `tui::money_span`, and `ledger::title_line` says what that costs — an
+    overpaid card draws a red `Today` over a green payment row, and the Overview draws the same
+    card a third way again, `overview::load` being the one reader that negates credit. Three
+    readings of one account is the price of coloring only what moves, and it is a price rather
+    than an oversight.
+  - **The Recurring Transactions screen is `Natural` throughout**, though it is the one table that
+    mixes both kinds in a single Amount column. A credit rule's `-$200.00` therefore draws red
+    there and green on the Credit ledger. It is the one column a screen-wide sense cannot serve —
+    the sense would have to come off each row's own account — and nothing has been asked of it
+    yet.
+  - **The report does not follow either.** `report::html::ledger` draws a credit figure in the same
+    red it draws a cash one, so the page and the screen disagree on purpose; `report::html::money`
+    is where that is argued, and `a_negative_credit_figure_stays_red_on_the_page` is what holds it
+    up.
 - **A tinted cell colors its characters, never its padding and never its indent.** `tui::tinted`
   is the one place that happens, and says at its own definition what a `Cell::style` does instead;
   `account_cell`, `money_cell`, `savings::percent`, Planning's three
@@ -1467,9 +1490,14 @@ deferred to nothing.
   the typing is done. **Only under an account filter**: All quotes the whole kind's balance, which
   no statement names, so `r` there says so in the status line rather than opening a form over a
   figure it cannot check. The delta is `Today − Target` on **both** ledgers — Credit renders as
-  stored like every other figure on it — and it is the app's one green figure, through
-  `style::delta_color` rather than `amount_color`, which would leave a surplus in the same no-color
-  as every other positive number. Zero renders as a `✓`: a state to see at a glance, where
+  stored like every other figure on it — but the *colors* turn over with the screen's
+  `style::Sense`, through `style::delta_color_of` rather than `amount_color_of`. Above the target is
+  money the Cash ledger had not counted and debt the Credit ledger had not counted, which are
+  opposite pieces of news, and **both directions are worth a color here where only one is in a
+  column of amounts**: an amount above zero is the ordinary case, and a delta either side of its
+  target is an answer. Sent through `amount_color_of` instead, a Cash surplus would sit in the same
+  no-color as every other positive number and a Credit deficit in the same no-color as every other
+  charge. Zero renders as a `✓`: a state to see at a glance, where
   `$0.00` is a figure to compare with the two beside it. **It carries a trailing space**, because
   the delta is the title's last term and the title is drawn flush into the block's top border: it
   is the one thing that border ever meets that is not a digit, and a mark set against a `─` run
