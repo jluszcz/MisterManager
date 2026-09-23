@@ -105,7 +105,8 @@ struct Filter {
 /// The order and the four words are stated here and nowhere else -- the
 /// constants below are handles into this array rather than four more
 /// literals. A screen offering some of these shows them in this order,
-/// before the first key it owns alone;
+/// before the first key it owns alone -- all but the Overview's `Esc`, which
+/// follows the scrub it undoes;
 /// `the_shared_filters_lead_every_screen_footer_in_one_order` is what holds
 /// that up, and `every_filter_key_is_labelled_with_its_shared_word` is what
 /// stops a table naming one of these keys itself.
@@ -208,7 +209,7 @@ pub(super) enum Topic {
     PlanTransfers,
 }
 
-const OVERVIEW: [Entry; 2] = [
+const OVERVIEW: [Entry; 3] = [
     Entry {
         key: "←/→",
         label: Label::Own("scrub"),
@@ -219,6 +220,14 @@ const OVERVIEW: [Entry; 2] = [
         label: Label::Own("week"),
         detail: "The same scrub, a week at a time, as Shift does on every date in the app.",
     },
+    // After the screen's own keys rather than among the filters leading
+    // them, unlike every other screen's `Esc`: the Overview narrows nothing,
+    // so this undoes the scrub beside it rather than a filter, and reads as
+    // the scrub's own way back.
+    Entry::filter(
+        CLEAR_FILTER,
+        "Put a scrubbed Paycheck-Eve column back on the derived date, however far it was moved.",
+    ),
 ];
 
 const LEDGER: [Entry; 11] = [
@@ -1454,10 +1463,19 @@ mod tests {
     /// reaching for a filter then finds it in the same place on every screen
     /// that has one, rather than wherever that screen's table happened to put
     /// it.
+    ///
+    /// The Overview's `Esc` is the one item exempt: it clears the scrub
+    /// rather than a filter, and follows the arrows it undoes. Only that item
+    /// is dropped, so a filter the Overview grows later is still held to the
+    /// rule.
     #[test]
     fn the_shared_filters_lead_every_screen_footer_in_one_order() {
+        let scrub_clear = format!("{} {}", CLEAR_FILTER.key, CLEAR_FILTER.word);
         for topic in SCREENS {
-            let items = footer_items(topic.keys());
+            let mut items = footer_items(topic.keys());
+            if topic == Topic::Overview {
+                items.retain(|item| *item != scrub_clear);
+            }
             let places: Vec<Option<usize>> = items
                 .iter()
                 .map(|item| {
@@ -1506,7 +1524,10 @@ mod tests {
     /// so no footer names them.
     #[test]
     fn each_screen_topic_joins_the_footer_it_always_showed() {
-        assert_eq!(Topic::Overview.footer(), "←/→ scrub · Shift+←/→ week");
+        assert_eq!(
+            Topic::Overview.footer(),
+            "←/→ scrub · Shift+←/→ week · Esc clear"
+        );
         assert_eq!(
             Topic::Ledger.footer(),
             "Tab acct · [ ] month · Esc clear · / search · r target · a/t/p money · e edit · d delete"

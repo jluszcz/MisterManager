@@ -35,7 +35,7 @@ forget, and the copy that goes stale is always the one further from the code.
 | `←` / `→` | move the caret in a text field, step a date a day at a time, or cycle the focused selector — see the invariant below |
 | `Shift`+`←` / `Shift`+`→` | the same nudge, a week at a time on a date; one choice on a selector |
 | `Ctrl`+a letter | edit the text under the caret, in every box in the app — see the invariant below |
-| `Esc` | back out of the innermost thing: a form, a search box, a filter, the panel |
+| `Esc` | back out of the innermost thing: a form, a search box, a filter, the Overview's scrub, the panel |
 | `Tab` | cycle the screen's filter, or move to the next field in a form |
 | `BackTab` | the same cycle or field order backwards — `Shift`+`Tab` steps back wherever `Tab` steps forward |
 | `/` | filter by typing — and, where a screen has a pot to divide, `/N` takes 1/N of it |
@@ -105,15 +105,17 @@ naming none. The open Help panel is the one context outside that match — it is
 status message withholds the chrome for an unrelated reason: it borrows the whole line for
 `STATUS_TTL` and gives it back.
 
-**The shared filter keys lead every footer that has them, in one order, under one word each.**
+**The shared filter keys lead every footer that has them but the Overview's, in one order, under one
+word each.**
 `Tab acct`, `[ ] month`, `Esc clear`, `/ search` — `help::FILTERS` states the order and the four
 words, and a table reaches them through `Entry::filter` rather than writing a `Label::Own` of its
 own, so a filter over the same thing cannot be called two names by two screens. What a screen still
 writes is the `detail`: `Esc` genuinely clears to different places — All and today's window on the
-ledgers, All on Savings and Recurring Goals — and the panel is where that difference belongs, which is why
+ledgers, All on Savings and Recurring Goals, the derived Paycheck-Eve on the Overview — and the panel is where that difference belongs, which is why
 the shared word is `clear` rather than one screen's answer imposed on the others. Two tests hold it
 up: `every_filter_key_is_labelled_with_its_shared_word` over every topic there is, and
-`the_shared_filters_lead_every_screen_footer_in_one_order` over the eight with footers.
+`the_shared_filters_lead_every_screen_footer_in_one_order` over the eight with footers, less the
+Overview's `Esc`, which clears a scrub rather than a filter and follows the arrows it undoes.
 
 **A footer must fit `MIN_WIDTH`, and the budget is what decides how a key is labelled.** ratatui
 truncates a `Paragraph` from the right, so an over-wide left half runs into the chrome and drops its
@@ -731,20 +733,27 @@ deferred to nothing.
   A field **editing** an existing row is not an exception and takes `DateField::given`: it opens on
   that row's own date, which is what editing one means. `given` marks it touched for the same
   reason `Field::given` does — a real date the owner can see and did not ask to change.
-- **`←`/`→` on the Overview is the one key that changes another screen.** It moves `App::adhoc`,
-  and Planning reads that same date: `Excess (Actual)` is the checking balance at it, and so is
-  every figure below. `App::scrub` therefore reloads both screens, and `t` and `p` act on the
+- **The Overview scrub is the one thing a key changes on another screen.** `←`/`→` and `Esc` move
+  `App::adhoc`, and Planning reads that same date: `Excess (Actual)` is the checking balance at it,
+  and so is every figure below. `App::move_adhoc`, which both go through, therefore reloads both
+  screens, and `t` and `p` act on the
   scrubbed plan, since a confirmation or a pin quoting a different day than the rows above it is
   the failure this exists to prevent. Overview marks the scrub on its column header; Planning has no
   header to mark, so `build` puts the date in the `Excess (Actual)` extra column, `*`-suffixed, and
   only when `View::scrubbed_adhoc` is `Some`. `App` decides whether the plan is scrubbed — the
   screen only renders what it is handed.
-  **The drift the press reports is a status message**, written by `App::scrub` and expiring with
+  **The drift the press reports is a status message**, written by `App::move_adhoc` and expiring with
   every other one. It says what the press did rather than what the screen is, so a scrub left
   standing while its columns are read costs the Overview's keys for four seconds rather than for
   as long as it stands; the `*` is what carries the state after the message has gone. Landing back
   on the baseline reports that instead of a `+0d` drift, since an arrow that undoes a scrub is
   still an arrow that did something.
+  **`Esc` is the scrub's `clear`**, back onto the baseline in one press however far the arrows
+  went, and it reports the same `back to Paycheck-Eve` an arrow landing there does. Unscrubbed it
+  says nothing, since no date moved, and the footer names it only while a scrub stands — through
+  `footer_without`, as `P unpin` is named only while a pin does. It is the one `Esc clear` drawn after a screen's own keys
+  rather than among the shared filters ahead of them: the Overview narrows nothing, so the key is
+  the scrub's way back and sits after the arrows it undoes.
 - **`p` always pins, and `P` is the only way out of a pin.** The pin freezes `excess_used` so the
   waterfall holds still while a payday's legs are entered — transfers land *before* the ad-hoc
   date, so each leg entered collapses `Excess (Actual)` with the rest still to go, which is the

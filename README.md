@@ -34,8 +34,9 @@ a total under each kind.
 `←`/`→` scrub the Paycheck-Eve column against the date derived from the paycheck transaction, which
 is always a day still ahead of today: on the eve itself the column names the eve of the paycheck
 *after* rather than naming today, and it reads today until a transaction is marked on screen `8`.
-`Shift` with them moves a week, as it does on every date in the app. **The scrub reaches Planning**,
-whose excess is quoted at whatever the column is left at.
+`Shift` with them moves a week, as it does on every date in the app, and `Esc` puts the column back on
+the derived date in one press, however far it was moved. **The scrub reaches Planning**, whose
+excess is quoted at whatever the column is left at.
 
 ### `2` Cash and `3` Credit
 
