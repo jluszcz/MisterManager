@@ -152,6 +152,38 @@ mod tests {
         panel(&page(snapshot), "cash").to_string()
     }
 
+    /// The Credit ledger's screen draws a figure below zero green -- the card
+    /// paid down -- and the page deliberately does not follow. `html::money`
+    /// is where that is argued; this is what would fail if someone acted on
+    /// the remedy it names, since nothing else on the page would.
+    #[test]
+    fn a_negative_credit_figure_stays_red_on_the_page() {
+        use crate::palette;
+
+        let snapshot = snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000);
+        let credit = panel(&page(&snapshot), "credit").to_string();
+        let negative = snapshot
+            .credit
+            .months
+            .iter()
+            .flat_map(|m| &m.rows)
+            .find(|r| r.cents < crate::money::Cents::ZERO)
+            .expect("the credit fixture carries a row below zero");
+        let cell = super::money(negative.cents.to_string(), negative.cents);
+        assert!(
+            cell.contains(&palette::hex(palette::NEGATIVE)),
+            "a credit figure below zero is drawn {cell}"
+        );
+        assert!(
+            credit.contains(&cell),
+            "that cell is not on the page: {cell}"
+        );
+        assert!(
+            !credit.contains(&palette::hex((70, 170, 70))),
+            "the page has taken the screen's green"
+        );
+    }
+
     /// The page carries every row there is, where the screen carries a
     /// window: a report that stopped at the current month would be missing
     /// exactly what someone opens it to check.

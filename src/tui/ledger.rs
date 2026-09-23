@@ -311,6 +311,24 @@ impl Ledger {
         self.total
     }
 
+    /// Which way this screen's sign runs.
+    ///
+    /// Cash rows are signed naturally and credit rows as debt, which is the
+    /// whole of the difference between the two screens -- so the one thing
+    /// that difference is allowed to reach is the color a figure takes.
+    ///
+    /// Investment accounts have no ledger, so the arm naming one never runs.
+    /// It is spelled out rather than left to a `_`, which would send a `Kind`
+    /// added later to `Natural` with nothing failing to compile -- the same
+    /// thing `text_enum!` exists to stop a variant doing to the lists it
+    /// generates.
+    fn sense(&self) -> super::style::Sense {
+        match self.kind {
+            Kind::Credit => super::style::Sense::Debt,
+            Kind::Cash | Kind::Investment => super::style::Sense::Natural,
+        }
+    }
+
     /// What the filtered account's balance is being reconciled against, or
     /// `None` when it has no target and under the All filter -- where the
     /// balance is the whole kind's and no statement quotes it.
@@ -437,7 +455,7 @@ impl Search for Ledger {
 impl_scroll!(Ledger, visible);
 
 use super::{
-    Chrome, Label, account_cell, amount, label_line, money_span, money_text, render_table,
+    Chrome, Label, account_cell, amount_in, label_line, money_span, money_text, render_table,
     right_header,
 };
 use ratatui::Frame;
@@ -448,10 +466,24 @@ use ratatui::widgets::{Cell, Row};
 
 /// [`Ledger::title`]'s spans, and then the balance that chain names.
 ///
-/// The figure carries [`super::style::amount_color`] the way every money cell
-/// does, which a bare [`Label`] cannot -- only an account segment takes a
-/// color. The figure goes last and the filter terms stay contiguous, so it
-/// sits in the same place whether or not a search is running.
+/// The figure carries [`super::style::amount_color`], which a bare [`Label`]
+/// cannot -- only an account segment takes a color. The figure goes last and
+/// the filter terms stay contiguous, so it sits in the same place whether or
+/// not a search is running.
+///
+/// **`Today` and `Target` stay naturally signed on both ledgers**, where the
+/// rows below them take the screen's [`Ledger::sense`]. They are balances
+/// rather than movements: what a row says is whether the last thing to happen
+/// was good news, and what these say is where the account stands, which is a
+/// reading a color adds nothing to on a screen already headed `Credit`.
+///
+/// It is worth knowing what that costs, because it is not nothing: `Today`
+/// on an overpaid card draws red here while the payment row under it draws
+/// green, and the Overview draws that same card a third way again --
+/// `overview::load` negates credit, so a debt is negative and red there and
+/// positive and plain here. Three readings of one account is the price of
+/// coloring only what moves. The `Δ` is the movement, and it is the one
+/// figure in this line that turns over -- see [`delta_span`].
 ///
 /// `Today` is not decoration: `Aug 2026` is two terms to its left, and without
 /// the word the figure reads as a total of the month on show rather than a
@@ -464,17 +496,22 @@ fn title_line(ledger: &Ledger) -> TextLine<'static> {
         spans.push(Span::raw(" · Target "));
         spans.push(money_span(target));
         spans.push(Span::raw(" · Δ "));
-        spans.push(delta_span(delta));
+        spans.push(delta_span(ledger.sense(), delta));
     }
     TextLine::from(spans)
 }
 
-/// The delta, green above the target and red below it, and a check when
-/// there is none.
+/// The delta, colored by whether it lands on the good side of its target,
+/// and a check when there is none.
 ///
 /// Not [`super::money_span`]: that colors a figure by its sign, which leaves
 /// a surplus in the same no-color as every other positive number on screen.
 /// Here the sign is the answer, so both directions are worth a color.
+///
+/// Which direction is the good one is the screen's [`super::style::Sense`] to
+/// say: above the target is money the Cash ledger had not counted and debt
+/// the Credit ledger had not counted, which are opposite pieces of news. The
+/// figure stays `Today − Target` on both, so only the colors turn over.
 ///
 /// The mark is a state to see rather than a figure to read -- `$0.00` says
 /// "reconciled" only to whoever stops to compare it with the two figures to
@@ -484,8 +521,8 @@ fn title_line(ledger: &Ledger) -> TextLine<'static> {
 /// ever ends in that is not a digit: [`title_line`] is drawn flush into a
 /// bordered block, so the glyph after it is a border rule, and a mark set
 /// against that run reads as one shape with it rather than as an answer.
-fn delta_span(delta: Cents) -> Span<'static> {
-    match super::style::delta_color(delta) {
+fn delta_span(sense: super::style::Sense, delta: Cents) -> Span<'static> {
+    match super::style::delta_color_of(sense, delta) {
         Some(color) => Span::styled(money_text(delta), Style::default().fg(color)),
         None => Span::raw("✓ "),
     }
@@ -494,7 +531,9 @@ fn delta_span(delta: Cents) -> Span<'static> {
 /// Date, Account, Description, Amount.
 ///
 /// Amounts render **as stored**: cash signed naturally, credit signed as
-/// debt, so each screen matches its sheet. Only Overview negates.
+/// debt, so each screen matches its sheet. Only Overview negates. What the
+/// two conventions *do* reach is the color, through [`Ledger::sense`] and
+/// [`super::style::amount_color_of`], which is where the choice is argued.
 ///
 /// Rows dated after today render dim — the projection model made visible.
 ///
@@ -503,6 +542,7 @@ fn delta_span(delta: Cents) -> Span<'static> {
 /// `Ledger`.
 pub(super) fn render(frame: &mut Frame, area: Rect, ledger: &Ledger, today: NaiveDate) -> Viewport {
     let future = Style::default().add_modifier(Modifier::DIM);
+    let sense = ledger.sense();
     let rows: Vec<Row> = ledger
         .rows()
         .iter()
@@ -511,7 +551,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, ledger: &Ledger, today: Naiv
                 Cell::from(t.date.to_string()),
                 account_cell(&super::Account::named(ledger.accounts(), t.account_id)),
                 Cell::from(description::render(&t.description).to_string()),
-                amount(t.cents),
+                amount_in(sense, t.cents),
             ])
             .style(if t.date > today {
                 future
@@ -557,7 +597,7 @@ mod tests {
     use super::*;
     use crate::db::{RecurringTxnId, TxnId};
     use crate::money::Cents;
-    use crate::test_support::{cash, day};
+    use crate::test_support::{cash, credit, day};
     use crate::tui::MIN_WIDTH;
     use crate::tui::cursor::Scroll;
     use chrono::NaiveDate;
@@ -586,6 +626,21 @@ mod tests {
     /// unclamped unless a test sets one.
     fn ledger(today: NaiveDate) -> Ledger {
         Ledger::new(Kind::Cash, accounts(), None, today)
+    }
+
+    /// The Credit screen's ledger, over its own two accounts.
+    ///
+    /// A fixture of its own rather than a `kind` parameter on [`ledger`]:
+    /// every test above is about a column signed naturally, and threading the
+    /// kind through all of them would make each one restate the thing only
+    /// the credit tests are about.
+    fn credit_ledger(today: NaiveDate) -> Ledger {
+        Ledger::new(
+            Kind::Credit,
+            vec![credit(1, "CC1"), credit(2, "CC2")],
+            None,
+            today,
+        )
     }
 
     /// A ledger with its `Tab` filter cycled onto `id`.
@@ -726,6 +781,42 @@ mod tests {
             .find(needle)
             .unwrap_or_else(|| panic!("{needle:?} is not in {row:?}"));
         u16::try_from(row[..byte].chars().count()).expect("a row is at most MIN_WIDTH cells")
+    }
+
+    /// The screen drawn once, as a buffer to read colors back off.
+    ///
+    /// Shared because reading a color back is most of these tests' whole
+    /// body, and a copy per test is one more place for the terminal size to
+    /// drift. One draw per test rather than one per assertion: a test naming
+    /// two cells is making a claim about *a* rendering, and two frames cannot
+    /// carry it.
+    fn drawn(ledger: &Ledger, today: NaiveDate) -> ratatui::buffer::Buffer {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), ledger, today);
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// The title's own row, which the border is drawn flush into -- row 0.
+    /// Every caller passes it to its assertion, since a color that is not the
+    /// expected one is unreadable without the line it was drawn on.
+    fn title_row(buffer: &ratatui::buffer::Buffer) -> String {
+        (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect()
+    }
+
+    /// The last cell of the Amount column on the first data row.
+    ///
+    /// Right-aligned in the last column, so the figure ends at the last
+    /// column the rows are given: inside the right border and the gutter
+    /// both. The first data row sits below the border and the header.
+    fn amount_end(buffer: &ratatui::buffer::Buffer) -> &ratatui::buffer::Cell {
+        &buffer[(MIN_WIDTH - 2 - super::super::GUTTER, 2)]
     }
 
     /// The window is stated as its inclusive bounds, which is what the filter
@@ -1249,8 +1340,6 @@ mod tests {
     /// rows the projection model exists to mark.
     #[test]
     fn a_negative_amount_reads_red_without_losing_a_future_rows_dim() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
         use ratatui::style::Modifier;
 
         let today = day(2026, 8, 15);
@@ -1261,18 +1350,8 @@ mod tests {
             ..dated_row(1, day(2026, 8, 20))
         }]);
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
-
-        // Right-aligned in the last column, so the figure ends at the last
-        // column the rows are given: inside the right border and the gutter
-        // both. The first data row sits below the border and the header.
-        let buffer = terminal.backend().buffer();
-        let cell = &buffer[(MIN_WIDTH - 2 - super::super::GUTTER, 2)];
+        let buffer = drawn(&ledger, today);
+        let cell = amount_end(&buffer);
         assert_eq!(cell.symbol(), "0", "expected the end of -42.00: {cell:?}");
         assert_eq!(cell.fg, super::super::style::NEGATIVE);
         assert!(cell.modifier.contains(Modifier::DIM), "{cell:?}");
@@ -1530,39 +1609,27 @@ mod tests {
         );
     }
 
-    /// The delta is the one green figure in the app, and it is green on its
-    /// own terms rather than on `amount_color`'s -- which would leave a
-    /// surplus in the same no-color as every other positive figure.
+    /// The Cash delta is green on its own terms rather than on
+    /// `amount_color`'s -- which would leave a surplus in the same no-color
+    /// as every other positive figure. The Credit ledger's paid-down rows are
+    /// the only other green the app draws, through `style::Sense::Debt`.
     #[test]
     fn a_balance_above_its_target_reads_green() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         ledger.next_account();
         ledger.set_total(Cents(124_000));
         ledger.set_target(Some(Cents(120_000)));
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
-
-        let buffer = terminal.backend().buffer();
-        let row: String = (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect();
-        let figure = column_of(&row, "$40.00");
+        let buffer = drawn(&ledger, today);
+        let row = title_row(&buffer);
         assert_eq!(
-            buffer[(figure, 0)].fg,
+            buffer[(column_of(&row, "$40.00"), 0)].fg,
             super::super::style::POSITIVE,
             "{row}"
         );
-
-        let target = column_of(&row, "$1,200.00");
         assert_ne!(
-            buffer[(target, 0)].fg,
+            buffer[(column_of(&row, "$1,200.00"), 0)].fg,
             super::super::style::POSITIVE,
             "only the delta is green: {row}"
         );
@@ -1572,27 +1639,16 @@ mod tests {
     /// about, which is the same red every shortfall on screen wears.
     #[test]
     fn a_balance_below_its_target_reads_red() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         ledger.next_account();
         ledger.set_total(Cents(116_000));
         ledger.set_target(Some(Cents(120_000)));
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
-
-        let buffer = terminal.backend().buffer();
-        let row: String = (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect();
-        let figure = column_of(&row, "-$40.00");
+        let buffer = drawn(&ledger, today);
+        let row = title_row(&buffer);
         assert_eq!(
-            buffer[(figure, 0)].fg,
+            buffer[(column_of(&row, "-$40.00"), 0)].fg,
             super::super::style::NEGATIVE,
             "{row}"
         );
@@ -1731,6 +1787,88 @@ mod tests {
         assert_eq!(
             ledger(day(2026, 12, 28)).title().plain_text(),
             "Cash · Dec 2026 – Jan 2027 · All"
+        );
+    }
+
+    /// A credit ledger stores debt as positive, so a figure below zero is the
+    /// card being paid down. Drawn in the red the cash column spends on a
+    /// loss, the one row on the screen that is good news would read as the
+    /// worst of them.
+    #[test]
+    fn a_negative_credit_amount_reads_green() {
+        let today = day(2026, 8, 15);
+        let mut ledger = credit_ledger(today);
+        ledger.set_rows(vec![Txn {
+            cents: Cents(-4_200),
+            ..dated_row(1, day(2026, 8, 10))
+        }]);
+
+        let buffer = drawn(&ledger, today);
+        let cell = amount_end(&buffer);
+        assert_eq!(cell.symbol(), "0", "expected the end of -42.00: {cell:?}");
+        assert_eq!(cell.fg, super::super::style::POSITIVE);
+    }
+
+    /// Over the target on a card is more debt than the statement says, which
+    /// is the direction worth a warning. The delta is `Today − Target` on
+    /// both ledgers, so what turns over here is the color and not the figure.
+    #[test]
+    fn a_credit_balance_above_its_target_reads_red() {
+        let today = day(2026, 8, 15);
+        let mut ledger = credit_ledger(today);
+        ledger.next_account();
+        ledger.set_total(Cents(124_000));
+        ledger.set_target(Some(Cents(120_000)));
+
+        let buffer = drawn(&ledger, today);
+        let row = title_row(&buffer);
+        assert_eq!(
+            buffer[(column_of(&row, "$40.00"), 0)].fg,
+            super::super::style::NEGATIVE,
+            "{row}"
+        );
+    }
+
+    /// The card owing less than the statement says is the good direction,
+    /// and it is the one the Cash screen draws red.
+    #[test]
+    fn a_credit_balance_below_its_target_reads_green() {
+        let today = day(2026, 8, 15);
+        let mut ledger = credit_ledger(today);
+        ledger.next_account();
+        ledger.set_total(Cents(116_000));
+        ledger.set_target(Some(Cents(120_000)));
+
+        let buffer = drawn(&ledger, today);
+        let row = title_row(&buffer);
+        assert_eq!(
+            buffer[(column_of(&row, "-$40.00"), 0)].fg,
+            super::super::style::POSITIVE,
+            "{row}"
+        );
+    }
+
+    /// The Credit screen's `Today` is deliberately left naturally signed
+    /// where the rows under it turn over: it is a balance rather than a
+    /// movement. So a card sitting in credit draws the same red every other
+    /// balance in the app draws below zero.
+    ///
+    /// Pinned because nothing else would fail if `title_line`'s
+    /// `money_span` were threaded with [`Ledger::sense`] along with the
+    /// rows, and the two answers are a keystroke apart in the same function.
+    #[test]
+    fn the_credit_screens_balance_stays_naturally_signed() {
+        let today = day(2026, 8, 15);
+        let mut ledger = credit_ledger(today);
+        ledger.next_account();
+        ledger.set_total(Cents(-5_000));
+
+        let buffer = drawn(&ledger, today);
+        let row = title_row(&buffer);
+        assert_eq!(
+            buffer[(column_of(&row, "-$50.00"), 0)].fg,
+            super::super::style::NEGATIVE,
+            "{row}"
         );
     }
 }

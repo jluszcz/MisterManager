@@ -51,8 +51,19 @@ fn escape(text: &str) -> String {
     out
 }
 
-/// A money cell. `negative` is the one thing that colors a figure, and it is
-/// the same decision `tui::style::amount_color` makes.
+/// A money cell. Below zero is the one thing that colors a figure, and it is
+/// the decision `tui::style::amount_color` makes in its natural sense.
+///
+/// **The Credit ledger's tab is deliberately not the exception the screen
+/// is.** There a figure below zero is the card paid down, and
+/// `style::Sense::Debt` draws it green; here every ledger reads alike,
+/// because the page is read offline on a phone -- one column at a time, with
+/// no `Kind` in the reader's head and no second Amount column beside it to
+/// read the convention off. Following the screen means moving
+/// `tui::style::POSITIVE` down into `palette`, which is where the two mediums
+/// already meet, and is a change to make deliberately rather than to tidy
+/// into: `ledger::tests::a_negative_credit_figure_stays_red_on_the_page` is
+/// what says so out loud.
 fn money(text: String, cents: Cents) -> String {
     let color = if cents < Cents::ZERO {
         format!(" style=\"color:{}\"", palette::hex(palette::NEGATIVE))
