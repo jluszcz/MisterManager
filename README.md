@@ -519,8 +519,8 @@ dependencies that would otherwise reach everywhere are confined by name — `rat
 `rusqlite` to `src/db/`, `calamine` to `src/import/`, which is what lets that last one be optional
 and a default build carry no spreadsheet parser at all — everything outside `src/db/` reaches the
 database through the query modules rather than a connection, ids are one type per table, and
-`Cents` is the only money type in it. `CLAUDE.md` carries the path-by-path map and states each of those rules in
-full; the module `CLAUDE.md` files under `src/import/`, `src/calc/`, `src/tui/`, `src/report/`,
+`Cents` is the only money type in it. `AGENTS.md` carries the path-by-path map and states each of those rules in
+full; the module `AGENTS.md` files under `src/import/`, `src/calc/`, `src/tui/`, `src/report/`,
 `src/backup/` and `src/mix/` go a level below it.
 
 ## Development
@@ -547,7 +547,7 @@ skip into a failure. `--features import` is part of that invocation rather than 
 every one of the workbook binaries is behind the feature, so without it they compile to nothing and the
 run goes green having asserted nothing.
 
-Why there is no default path, and the rest of what that sentence is protecting, are in `CLAUDE.md`
+Why there is no default path, and the rest of what that sentence is protecting, are in `AGENTS.md`
 under "The workbook is the test oracle". `tests/common/mod.rs` is what reads the three variables.
 
 One test has a different oracle: `tests/sec_live.rs` asks SEC about a real fund, and is the only
@@ -568,5 +568,5 @@ Everything it asserts is structural, so a quarter's worth of new holdings does n
 This repository is public and the owner's finances are not. Nothing committed here carries a real
 balance, a real institution, a real account code, or a goal name traceable to a real person, and the
 tests that do assert against real figures read them out of the untracked workbook at run time.
-`CLAUDE.md` states the rule in full and carries the invented-fixture vocabulary a new test copies
+`AGENTS.md` states the rule in full and carries the invented-fixture vocabulary a new test copies
 from.

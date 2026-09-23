@@ -186,7 +186,7 @@ on the payday where every line is zero and there is no line to draw a `Δ` besid
 ### The gates, in priority order
 
 Emergency → Roth, each firing on `remaining_* > 0`. `plan.rs` resolves each remainder from goal
-ids stored in `setting` under the keys `gate::Gate` owns — never by name; see the root `CLAUDE.md`
+ids stored in `setting` under the keys `gate::Gate` owns — never by name; see the root `AGENTS.md`
 on why goal names cannot be keys.
 
 - **Emergency shuts off everything else.** Roth, retirement and investment go to zero, and the

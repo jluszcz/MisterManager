@@ -3,7 +3,7 @@
 //! Shared rather than one per module, because six builders would drift into
 //! six different databases and a page-wide assertion could then hold on none
 //! of them. Every figure here is invented; see the no-real-data rule in
-//! `CLAUDE.md`.
+//! `AGENTS.md`.
 
 use crate::calc::fund::Targets;
 use crate::calc::planning::{PlanInputs, PlanSettings};

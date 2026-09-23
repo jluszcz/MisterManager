@@ -3,7 +3,7 @@
 //!
 //! A `detail` answers "what does this key do", in the fewest sentences that
 //! answer it. "Why is it this key" is a maintainer's question and belongs in
-//! `src/tui/CLAUDE.md`, which is where a maintainer looks for it; an owner
+//! `src/tui/AGENTS.md`, which is where a maintainer looks for it; an owner
 //! pressing `?` wants the first answer and has to read past the second to
 //! reach it. [`tests::no_panel_entry_runs_longer_than_a_glance`] is what
 //! keeps the two apart.
@@ -1853,7 +1853,7 @@ mod tests {
     /// Eight lines is what the tallest entry -- Planning's `e`, which
     /// answers for four different kinds of editable row -- comes to. An
     /// entry that outgrows that is one explaining *why* the key is the key
-    /// it is, and that reason belongs in `src/tui/CLAUDE.md`, where a
+    /// it is, and that reason belongs in `src/tui/AGENTS.md`, where a
     /// maintainer looks for it, rather than in front of an owner who pressed
     /// `?` to find out what a key does.
     #[test]

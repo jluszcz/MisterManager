@@ -179,7 +179,7 @@ mod tests {
     /// than written down directly -- a literal birth year picked to land on
     /// a real age (44, the workbook block's own age) would be a plausible
     /// real birth date committed to the repository, which the root
-    /// `CLAUDE.md`'s rule against writing personal data into persistent
+    /// `AGENTS.md`'s rule against writing personal data into persistent
     /// artifacts exists to keep out.
     #[test]
     fn whole_years_does_not_count_a_birthday_still_to_come_this_year() {

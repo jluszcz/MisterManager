@@ -177,7 +177,7 @@ mod tests {
             // `Wiring`'s `Container` and the `Row::Transfer` beside it. Both
             // are real displays, and both keep the color in a field of their
             // own for the Planning screen to tint through `planning::Tint` --
-            // see `src/tui/CLAUDE.md`'s account-color section. They are the
+            // see `src/tui/AGENTS.md`'s account-color section. They are the
             // one pair of sanctioned sites where the name and the color are
             // carried apart rather than never separated.
             ("transfer.rs", "name: a.name.as_str().to_string()"),
@@ -186,13 +186,13 @@ mod tests {
             // owns the text.
             ("tui/accounts.rs", "Field::given(account.name.as_str()"),
             // The destination picker's `Offered.container` -- the first entry
-            // in the residual list in `src/tui/CLAUDE.md`'s account-color
+            // in the residual list in `src/tui/AGENTS.md`'s account-color
             // section.
             ("tui/app/planning.rs", "map_or(\"?\", |a| a.name.as_str())"),
             // The `accounts::Row` `Code` column, deliberately uncolored: the
             // next cell along that row already names the account in color, so
             // tinting the code too would say it twice. The last entry in the
-            // residual list in `src/tui/CLAUDE.md`'s account-color section.
+            // residual list in `src/tui/AGENTS.md`'s account-color section.
             ("tui/app/accounts.rs", "code: account.code.as_str()"),
             // The two status lines reporting a write, transient prose like
             // every other status message sanctioned above -- masked through

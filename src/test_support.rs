@@ -12,7 +12,7 @@
 //! fixture nobody selected.
 //!
 //! Every figure reachable from here is invented; see the no-real-data rule in
-//! `CLAUDE.md`.
+//! `AGENTS.md`.
 
 use crate::db::AccountId;
 use crate::db::account::{Account, Group, Kind, TaxTreatment};
@@ -23,7 +23,7 @@ pub fn day(y: i32, m: u32, d: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(y, m, d).unwrap_or_else(|| panic!("{y}-{m}-{d} is not a date"))
 }
 
-/// The name `CLAUDE.md`'s fixture vocabulary pairs with a code, by kind.
+/// The name `AGENTS.md`'s fixture vocabulary pairs with a code, by kind.
 ///
 /// The pairing is stated once here rather than at each fixture, because a
 /// second reading of it -- `SAV` named `Savings`, say -- is exactly what the
@@ -57,7 +57,7 @@ fn name_of(kind: Kind, code: &str) -> &'static str {
     };
     named.unwrap_or_else(|| {
         panic!(
-            "{code} is not a {} code in CLAUDE.md's fixture table",
+            "{code} is not a {} code in AGENTS.md's fixture table",
             kind.as_str()
         )
     })
@@ -114,7 +114,7 @@ pub fn investment(id: i64, code: &str) -> Account {
     account(id, code, Kind::Investment)
 }
 
-/// The fund name `CLAUDE.md`'s fund vocabulary pairs with a ticker.
+/// The fund name `AGENTS.md`'s fund vocabulary pairs with a ticker.
 ///
 /// A second table beside [`name_of`]'s: a fund fixture takes a ticker rather
 /// than an account code, and the two vocabularies never share a codespace.
@@ -132,7 +132,7 @@ pub fn fund_name(ticker: &str) -> &'static str {
         "USB" => "Total Bond Index Fund",
         "ISB" => "International Bond Index Fund",
         "UNC" => "Overseas Growth Fund",
-        _ => panic!("{ticker} is not a fund ticker in CLAUDE.md's fixture table"),
+        _ => panic!("{ticker} is not a fund ticker in AGENTS.md's fixture table"),
     }
 }
 

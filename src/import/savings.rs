@@ -51,7 +51,7 @@ impl Containers {
 ///   against an empty database a two-step.
 /// - **Set and resolving** is the ordinary state.
 /// - **Set and dangling** is a corrupt database and a loud error naming the
-///   key, per the root `CLAUDE.md`: a key pointing at a row that is gone must
+///   key, per the root `AGENTS.md`: a key pointing at a row that is gone must
 ///   never be quietly reinterpreted as "not configured", which here would
 ///   silently re-open the two-step and then import a whole sheet into a
 ///   container the owner never chose.

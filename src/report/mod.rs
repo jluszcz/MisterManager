@@ -611,7 +611,7 @@ mod tests {
 
     /// Two investment accounts holding something, one holding nothing, and a
     /// fund nobody has fetched a filing for. Every figure invented; see
-    /// `CLAUDE.md`.
+    /// `AGENTS.md`.
     fn with_holdings() -> Db {
         use crate::db::fund_mix::{AssetClass, Slice};
         let db = seeded();

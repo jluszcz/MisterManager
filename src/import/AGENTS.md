@@ -32,7 +32,7 @@ is still true and losing it would make every replace a two-step.
 Import is **not additive**. `import_all` refuses to run against a database already holding
 transactions or goals, because re-running would double every row with no signal beyond a healthy
 exit code. `--replace` clears the imported tables first — but not `account` and not
-`recurring_txn`, which are the owner's rather than the sheet's. See the root `CLAUDE.md`.
+`recurring_txn`, which are the owner's rather than the sheet's. See the root `AGENTS.md`.
 
 A `Constants`-only pass writes neither a transaction nor a goal, so `has_imported_data` stays false
 and the second pass needs no flag.

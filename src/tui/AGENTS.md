@@ -683,7 +683,7 @@ deferred to nothing.
   - **An unset key and one naming an account that is gone are the same state**: `opening_index`
     falls back to the head of the list. This is a prefill rather than a resolution — nothing is
     spent on the answer, and the owner can see which account the selector landed on before pressing
-    Enter — so the root `CLAUDE.md`'s rule about dangling keys does not reach it. Refusing to open
+    Enter — so the root `AGENTS.md`'s rule about dangling keys does not reach it. Refusing to open
     would also be a refusal to open the form the owner uses most, over a setting corrected two
     screens away.
 - **One form backs `t` and `p`, and `TransferForm::title` is what says which one is open.** They
@@ -748,7 +748,7 @@ deferred to nothing.
 - **`p` always pins, and `P` is the only way out of a pin.** The pin freezes `excess_used` so the
   waterfall holds still while a payday's legs are entered — transfers land *before* the ad-hoc
   date, so each leg entered collapses `Excess (Actual)` with the rest still to go, which is the
-  whole reason the pin exists (see `src/calc/CLAUDE.md`). `App::pin` and `App::unpin` each say why
+  whole reason the pin exists (see `src/calc/AGENTS.md`). `App::pin` and `App::unpin` each say why
   theirs is not a toggle, why the two keys move together, and why only one of them is refused
   without a live view. What belongs here is the vocabulary: the capital is the *inverse* of `p`
   rather than the usual "same verb, wider object", and it is named on the footer only while
@@ -1042,7 +1042,7 @@ deferred to nothing.
   - **The `Savings` field is the one thing on this screen an import *reads*.** Every other field is
     a placement the import leaves alone; this one gates it, because the sheet names its two blocks
     by position and carries no account code, so until both are pointed at a container `mm import`
-    writes the accounts and stops. What that means for the import is the root `CLAUDE.md`'s to say
+    writes the accounts and stops. What that means for the import is the root `AGENTS.md`'s to say
     and what a block *is* is `savings_block::Block`'s.
   - **A rename has to reach the screens holding their own account list.** `Ledger` and `Savings`
     each cache a `Vec<Account>`, so a name changed here would not appear on either until a restart
@@ -1346,7 +1346,7 @@ deferred to nothing.
   `Target::PeriodsPerYear` on the Planning screen, whose commit reloads this one, and a copy held
   on the screen would leave the column quoting the cadence the app opened with. `App` holds no copy
   either -- `App::periods_per_year` reads it. The days between two paydays are
-  `calc::period_days` of that count rather than a setting of their own; see the root `CLAUDE.md`.
+  `calc::period_days` of that count rather than a setting of their own; see the root `AGENTS.md`.
 - **A filter narrows what is *looked at*, never where value may go.** The Savings title above
   counts the visible rows because that is the question it asks; the destination lists `c` and `t`
   offer are the opposite call. Both open through `App::selected_goal_with_siblings`, which reads
