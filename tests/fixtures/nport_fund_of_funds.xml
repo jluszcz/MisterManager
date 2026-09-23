@@ -2,7 +2,7 @@
 <!--
   A minimal, invented N-PORT primary_doc.xml for a fund-of-funds -- the
   element names and nesting a real filing carries, with every name, id and
-  figure invented per CLAUDE.md's fixture vocabulary. TDF45 (Target 2045
+  figure invented per AGENTS.md's fixture vocabulary. TDF45 (Target 2045
   Fund) holds four other funds from the same vocabulary.
 -->
 <edgarSubmission xmlns="http://www.sec.gov/edgar/nport">

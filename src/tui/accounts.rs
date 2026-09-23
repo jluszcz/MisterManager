@@ -1721,7 +1721,7 @@ mod tests {
         assert_eq!(new.kind, Kind::Credit);
     }
 
-    /// An account code is one of the four categories `CLAUDE.md` bans from a
+    /// An account code is one of the four categories `AGENTS.md` bans from a
     /// tracked file outright, and the Accounts screen's own table already
     /// masks it -- the add form's own `Code` field is the same text, typed
     /// rather than read off a row, and a demo must hide it just the same.

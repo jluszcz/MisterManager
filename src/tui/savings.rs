@@ -108,7 +108,7 @@ impl Savings {
     /// prefill, and `App::open_history`, which hands the name to `History` so
     /// that modal's `e` can build the same form without going back to the
     /// Savings rows. It is a residual, listed with its reason in
-    /// `src/tui/CLAUDE.md`'s account-color section -- `AllocationForm` is
+    /// `src/tui/AGENTS.md`'s account-color section -- `AllocationForm` is
     /// outside this guarantee.
     pub fn account_name(&self, id: AccountId) -> &str {
         self.accounts

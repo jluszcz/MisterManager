@@ -49,7 +49,7 @@ is the only test in the crate that can notice the hops coming apart.
   `refresh_every_mix` and `mm mixes` with no `--ticker` are the same reading, and both take their
   tickers out of `holding`, where `tui::fund::HoldingForm::commit` has already uppercased them.
   `mm mixes --ticker` is the one route that reads no holding, so it uppercases and trims its own
-  argument where the argument is read — the root `CLAUDE.md`'s rule that a ticker is normalised
+  argument where the argument is read — the root `AGENTS.md`'s rule that a ticker is normalised
   once, by whichever writer takes it, since neither `fund_mix`'s primary key nor `holding`'s
   duplicate guards fold case.
 - **A refresh with no tickers touches neither SEC nor the database.** `resolve_series` is the first
@@ -70,7 +70,7 @@ is the only test in the crate that can notice the hops coming apart.
   name and title, and a large one as a book of securities and classified by `assetCat` and
   `invCountry`. `FUND_OF_FUNDS_MAX` is the fork and carries the measurement behind it; the two
   keyword orders and the category list are each argued where they are written. What a holding
-  matching nothing becomes is `classify`'s to say, and the root `CLAUDE.md` states the rule it
+  matching nothing becomes is `classify`'s to say, and the root `AGENTS.md` states the rule it
   answers to.
 
 - **A weight the parser cannot believe is refused at the seam, because `classify` cannot refuse

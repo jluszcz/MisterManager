@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -56,8 +56,8 @@ features and all of them, which is what keeps the feature from rotting; a local 
 exercise the importer passes it explicitly.
 
 The workbook's own layout and formulas are documented next to the code that reproduces them:
-`src/import/CLAUDE.md` maps every sheet, block, and cell reference the importer reads;
-`src/calc/CLAUDE.md` carries the formula derivations, the rounding policy, and the Planning
+`src/import/AGENTS.md` maps every sheet, block, and cell reference the importer reads;
+`src/calc/AGENTS.md` carries the formula derivations, the rounding policy, and the Planning
 waterfall's ordering and gates. Read the relevant one before touching either module. The golden
 values themselves stay in the tests, where they are asserted against the workbook rather than
 restated.
@@ -71,15 +71,15 @@ ordinary build. Its oracle is SEC's live service, so it asserts structurally rat
 any figure, and it skips on an unset `MM_SEC_TICKER` the way the others skip on `MM_WORKBOOK`,
 with `MM_REQUIRE_SEC=1` as its own turn-the-skip-into-a-failure. Which funds the owner holds is the
 same kind of fact as an account code, which is why the ticker is a variable and not a literal.
-`src/mix/CLAUDE.md` is where it is set out, including the one constant in that module no fixture
+`src/mix/AGENTS.md` is where it is set out, including the one constant in that module no fixture
 can confirm.
 
-`src/tui/CLAUDE.md` sits beside those two and answers a different set of questions: what a key is
+`src/tui/AGENTS.md` sits beside those two and answers a different set of questions: what a key is
 allowed to mean, what each screen owns, and how much width it may spend. The app is driven entirely
 by single keystrokes, so the same action takes the same key on every screen that offers it. Read it
 before touching anything under `src/tui/` — nothing about the screens is documented here.
 
-`src/report/CLAUDE.md`, `src/backup/CLAUDE.md` and `src/mix/CLAUDE.md` complete the set. The
+`src/report/AGENTS.md`, `src/backup/AGENTS.md` and `src/mix/AGENTS.md` complete the set. The
 report's invariants follow from two facts — the page carries no script, and it is read offline on a
 phone — and the backup's from one: the key is long-lived and unattended, so what bounds it is an
 IAM policy rather than a setting. Two of the backup's invariants span `mistermanager.tf` at the
@@ -203,7 +203,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and the allocation in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own, and its Funds tab of `allocation`, with one stacked section per account where the screen cycles them with `Tab`. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/backup/` | The schedule, the snapshot, and the upload. `aws_config` and `aws_sdk_s3` are named only in `s3.rs`, which is one of two places `tokio` is -- `src/mix/sec.rs` is the other. |
-| `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/CLAUDE.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `tui/mod.rs` rather than in whichever screen needed it first. `app` is a directory, one module per screen over one `App`. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/CLAUDE.md`. |
+| `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/AGENTS.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `tui/mod.rs` rather than in whichever screen needed it first. `app` is a directory, one module per screen over one `App`. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/AGENTS.md`. |
 | `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `report`, `mixes` and `backup` are always subcommands, and `import` is a fourth behind the `import` feature -- a default build does not offer it. |
 
 **`rusqlite` is named only inside `src/db/`.** `Db` holds a private `Connection` and deliberately does
@@ -266,7 +266,7 @@ code *cannot*: a rule that spans modules, a pairing nothing enforces, a state th
 opposite of what it looks like. **Where a rule is enforced at one item, this file states the rule
 and names the item — the derivation belongs on the item.** Two copies of an explanation are two
 places to edit and one place to forget, and the copy that goes stale is always the one further from
-the code. The same rule governs each module `CLAUDE.md` against the code beneath it.
+the code. The same rule governs each module `AGENTS.md` against the code beneath it.
 
 - **Goal names are not unique.** "Lego" names several goals in the workbook, "Dropbox" more than
   one. Nothing downstream may key a goal by name. Name matching happens exactly once, at import,
@@ -307,7 +307,7 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   one module.
   Which screens honour that is not left to each screen: an account reaches a glyph through
   `account_label::Account`, which colors what it draws, everywhere but the residual list in
-  `src/tui/CLAUDE.md`'s account-color section, and `AccountName`/`AccountCode` have no `Display`,
+  `src/tui/AGENTS.md`'s account-color section, and `AccountName`/`AccountCode` have no `Display`,
   so an account cannot be flattened into a `String` on the way.
 - **Which account answers for what is in no cell of the workbook, and every one of those answers
   is configured on the Accounts screen.** The `Savings` sheet names its two blocks by *position* --
@@ -459,7 +459,7 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   filing carrying none still yields a usable composition, and a mix written before the column
   existed reads the same way until the next `g`. It names a *series*, so two share classes of one
   fund carry one name and the ticker is what tells them apart — which is why the ticker stays the
-  row's identity and the column that is never truncated. `src/mix/CLAUDE.md` is where the choice
+  row's identity and the column that is never truncated. `src/mix/AGENTS.md` is where the choice
   of element is argued, and `fund_label::short` is how it is drawn — a trailing `Fund` is dropped,
   being the word the column is already headed with; a filer who shouts is title-cased and a filer
   who cased their own name is left alone; and what is stored is untouched by either rule. **No rule drops the issuer from the front of it**, which is what would let that
@@ -690,7 +690,7 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   because none of them prints a figure. It compiles only under the non-default `demo` Cargo
   feature, so a default build has no `--demo` flag and none of the code behind it. The rules for reaching the
   mask — and the one place a caller has to say whether its figure is money — are in
-  `src/tui/CLAUDE.md`.
+  `src/tui/AGENTS.md`.
 - **The quit path skips a page the day already has.** `report::is_due` rewrites only when this run
   wrote a row -- `db::Db::wrote_rows`, over SQLite's own counter -- or when the report directory
   holds no page whose mtime falls on the day this run is quoting. Both halves are proxies with a
@@ -794,7 +794,7 @@ the code. The same rule governs each module `CLAUDE.md` against the code beneath
   the goal it was written against**: re-pointing one across containers would move a goal's value
   with no cash moved between the accounts, the boundary `goal::move_value` already refuses to
   cross, so the form offers no field that could. What the modal over those rows does with them is
-  `src/tui/CLAUDE.md`'s.
+  `src/tui/AGENTS.md`'s.
 - **The interest prefill is a property of the account, not a setting.** `account.interest_policy` is
   `pro_rata` or `manual` (which is also what `NULL` reads as), because a per-container setting key
   cannot be a `Key<T>` constant. It is set on the Accounts screen and no import ever writes it: which

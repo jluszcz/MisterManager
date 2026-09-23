@@ -19,5 +19,5 @@ fixture: two small, invented N-PORT filings that `src/mix/sec.rs`'s
 `parse_filing` tests read with `include_bytes!`. Unlike the workbook, these
 *are* committed -- no `MM_WORKBOOK`-style restriction applies to them,
 because nothing in either file is real. The element names and nesting are a
-real filing's; every name, id and figure is drawn from `CLAUDE.md`'s fixture
+real filing's; every name, id and figure is drawn from `AGENTS.md`'s fixture
 vocabulary rather than downloaded from EDGAR.

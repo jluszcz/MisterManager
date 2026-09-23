@@ -414,7 +414,7 @@ pub fn wiring(db: &Db) -> Result<Wired> {
             id: a.id,
             // A `String`, not a `label::Account`: the Planning screen
             // tints this through `planning::Tint` instead -- see
-            // `src/tui/CLAUDE.md`'s account-color section.
+            // `src/tui/AGENTS.md`'s account-color section.
             name: a.name.as_str().to_string(),
             color: a.color,
         })
@@ -792,7 +792,7 @@ fn merge_transfer(
     transfers.push(Row::Transfer {
         to,
         // A `String`, not a `label::Account`: the Planning screen tints
-        // this through `planning::Tint` instead -- see `src/tui/CLAUDE.md`'s
+        // this through `planning::Tint` instead -- see `src/tui/AGENTS.md`'s
         // account-color section.
         name: account.name.as_str().to_string(),
         color: account.color,
@@ -1504,7 +1504,7 @@ mod tests {
             id: account.id,
             // A `String`, not a `label::Account`: the Planning screen
             // tints this through `planning::Tint` instead -- see
-            // `src/tui/CLAUDE.md`'s account-color section.
+            // `src/tui/AGENTS.md`'s account-color section.
             name: account.name.as_str().to_string(),
             color: account.color,
         }

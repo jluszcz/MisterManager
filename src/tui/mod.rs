@@ -450,7 +450,7 @@ impl Chrome {
 /// an empty list.
 ///
 /// What stays at the call sites is what each screen decides for itself: its
-/// `widths`, which this directory's `CLAUDE.md` budgets per screen, and the
+/// `widths`, which this directory's `AGENTS.md` budgets per screen, and the
 /// bolding of its own header.
 fn render_table(
     frame: &mut Frame,

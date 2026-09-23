@@ -44,7 +44,7 @@ pub fn workbook() -> Option<PathBuf> {
 /// does not carry: the `Savings` sheet names its two blocks by position and
 /// no cell anywhere says which account is the current one. The app asks for
 /// all three on the Accounts screen. A test has no screen to ask on, and the
-/// codes cannot live in this repository -- see the root `CLAUDE.md` -- so
+/// codes cannot live in this repository -- see the root `AGENTS.md` -- so
 /// they come from the environment, in this order:
 ///
 /// ```sh

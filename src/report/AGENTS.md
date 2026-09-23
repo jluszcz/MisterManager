@@ -9,7 +9,7 @@ The page carries **no script**, by rule, and is read offline on a phone. Almost 
 follows from those two facts: what a control is allowed to be, what a column may do with its
 width, and why the file is renamed onto its name rather than written to it.
 
-`src/tui/CLAUDE.md` is the companion for the screens the page mirrors — where the two disagree
+`src/tui/AGENTS.md` is the companion for the screens the page mirrors — where the two disagree
 about a figure, one of them is wrong.
 
 ## Invariants

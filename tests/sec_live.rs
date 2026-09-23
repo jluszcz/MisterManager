@@ -41,7 +41,7 @@
 //! this binary compiling to nothing.
 //!
 //! **If this fails with a 403 rather than a parse error, read
-//! `src/mix/CLAUDE.md`'s note on the throttle marker first.** The text
+//! `src/mix/AGENTS.md`'s note on the throttle marker first.** The text
 //! `src/mix/sec.rs` tells SEC's own throttle apart by is the one thing in
 //! the module no fixture can confirm, and a marker that never matches turns
 //! a backoff into an immediate failure.
