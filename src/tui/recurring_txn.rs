@@ -37,6 +37,13 @@ pub struct Row {
     /// and they resolve against each other rather than against a table.
     pub account: super::Account,
     pub cents: Cents,
+    /// Which way `cents` is signed, off this row's own account: this is the
+    /// one Amount column holding both kinds, so no screen-wide sense serves
+    /// it, and a credit rule's `-200.00` is the card being paid down exactly
+    /// as it is on the Credit ledger. A rule on an account that is gone has
+    /// no kind to ask, and draws `Natural` -- as stored, the same reading
+    /// every column without a sense of its own gets.
+    pub sense: super::style::Sense,
     pub cadence: Cadence,
     pub anchor_date: NaiveDate,
     /// The furthest-dated ledger row this recurring transaction owns, and
@@ -79,6 +86,13 @@ impl RecurringTxns {
             .into_iter()
             .map(|txn| Row {
                 account: super::Account::coded(&self.accounts, txn.account_id),
+                sense: self
+                    .accounts
+                    .iter()
+                    .find(|a| a.id == txn.account_id)
+                    .map_or(super::style::Sense::Natural, |a| {
+                        super::style::Sense::of_ledger(a.kind)
+                    }),
                 owned: owned.get(&txn.id).copied().unwrap_or(0),
                 last_owned: last_owned.get(&txn.id).copied(),
                 recurring_txn_id: txn.id,
@@ -328,7 +342,7 @@ impl FormFields for RecurringTxnForm {
 
 use super::autocomplete::Autocomplete;
 use super::widget::{field_stack, render_fields, render_popup};
-use super::{Chrome, account_cell, amount, render_table, right_header};
+use super::{Chrome, account_cell, amount_in, render_table, right_header};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
@@ -365,7 +379,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> Vie
                 Cell::from(if r.is_paycheck { "$" } else { " " }),
                 Cell::from(crate::demo::text(&r.description).into_owned()),
                 account_cell(&r.account),
-                amount(r.cents),
+                amount_in(r.sense, r.cents),
                 Cell::from(r.cadence.as_str()),
                 Cell::from(r.anchor_date.to_string()),
                 optional(r.last_owned.map(|d| d.to_string())),
@@ -1109,6 +1123,60 @@ mod tests {
             super::super::style::account_color(AccountId(1), None),
         );
         colored("-1,200.00", super::super::style::NEGATIVE);
+    }
+
+    /// The one Amount column holding both kinds takes its sense per row: a
+    /// cash rule's `-200.00` is money gone and draws red, a credit rule's is
+    /// the card being paid down and draws green, as it does on the Credit
+    /// ledger. A screen-wide `Natural` drew both red.
+    #[test]
+    fn a_negative_rule_is_colored_by_its_own_accounts_kind() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut list = RecurringTxns::new(vec![cash(1, "CHK"), credit(2, "CC1")]);
+        list.set_recurring_txns(
+            vec![
+                recurring_txn(1, "Transfer Out", -20_000, Cadence::Monthly, false),
+                RecurringTxn {
+                    account_id: AccountId(2),
+                    ..recurring_txn(2, "Autopay", -20_000, Cadence::Monthly, false)
+                },
+            ],
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &list);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let color_of_amount = |y: u16| {
+            let row: String = (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect();
+            buffer[(super::super::column_of(&row, "-200.00"), y)].fg
+        };
+        // Row 0 is the border and row 1 the header.
+        assert_eq!(color_of_amount(2), super::super::style::NEGATIVE);
+        assert_eq!(color_of_amount(3), super::super::style::POSITIVE);
+    }
+
+    /// A rule whose account is not in the list has no kind to take a sense
+    /// from, so it reads as stored rather than borrowing credit's reversal.
+    #[test]
+    fn a_rule_on_an_account_that_is_gone_reads_naturally() {
+        let mut list = RecurringTxns::new(vec![credit(2, "CC1")]);
+        list.set_recurring_txns(
+            vec![RecurringTxn {
+                account_id: AccountId(9),
+                ..recurring_txn(1, "Autopay", -20_000, Cadence::Monthly, false)
+            }],
+            HashMap::new(),
+            HashMap::new(),
+        );
+        assert_eq!(list.rows()[0].sense, super::super::style::Sense::Natural);
     }
 
     /// `Amount` and `Rows` are the two right-aligned columns, so they are the

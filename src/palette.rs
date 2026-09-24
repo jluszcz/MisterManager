@@ -66,7 +66,9 @@ pub const POSITIVE: Rgb = (70, 170, 70);
 /// Cash rows are signed naturally and credit rows are signed as debt, so the
 /// *same* figure means opposite things on the two ledgers: `-42.00` is money
 /// gone from a checking account and a card paid down by forty-two dollars.
-/// Every other column in either medium is natural.
+/// Every other column in either medium is natural, but for the Recurring
+/// Transactions screen's Amount, which holds rules on both kinds and so takes
+/// its sense per row.
 ///
 /// Here rather than beside the screen, because the screen and the report's
 /// Credit tab draw the same column and have to agree about which of its
@@ -84,14 +86,18 @@ pub const POSITIVE: Rgb = (70, 170, 70);
 /// compile. Every construction names a variant.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Sense {
-    /// Positive is money held. Every column but the Credit ledger's.
+    /// Positive is money held. Every column but the Credit ledger's, and
+    /// every cash rule on the Recurring Transactions screen.
     Natural,
-    /// Positive is money owed. The Credit ledger, which renders as stored.
+    /// Positive is money owed. The Credit ledger, which renders as stored,
+    /// and every credit rule on the Recurring Transactions screen.
     Debt,
 }
 
 impl Sense {
-    /// Which way a ledger of `kind` runs, on the screen and the page alike.
+    /// Which way a ledger of `kind` runs, on the screen and the page alike,
+    /// and so which way a recurring rule on an account of that kind is
+    /// signed: the rows it writes are that ledger's rows.
     ///
     /// Investment accounts have no ledger, so the arm naming one never runs.
     /// It is spelled out rather than left to a `_`, which would send a `Kind`

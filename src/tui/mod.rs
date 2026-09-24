@@ -115,9 +115,10 @@ fn amount(cents: Cents) -> Cell<'static> {
 
 /// The same cell in whichever [`style::Sense`] the column runs.
 ///
-/// The Credit ledger is the one caller that passes anything but
-/// [`style::Sense::Natural`]: it renders as stored, so a figure below zero
-/// there is the card being paid down. The figure itself is untouched -- only
+/// The Credit ledger passes [`style::Sense::Debt`] for every row, and the
+/// Recurring Transactions screen for each rule on a credit account: both
+/// render as stored, so a figure below zero there is the card being paid
+/// down. The figure itself is untouched -- only
 /// which side of zero wears a color changes.
 fn amount_in(sense: style::Sense, cents: Cents) -> Cell<'static> {
     money_cell(sense, cents, crate::demo::figure(cents))

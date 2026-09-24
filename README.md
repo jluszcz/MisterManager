@@ -168,6 +168,10 @@ The rows whose amount and date are known in advance — the paycheck and the mon
 transaction the Paycheck-Eve column is derived from. `g` regenerates the selected one and `G` every
 one, reporting `removed / released / adopted / inserted`.
 
+Rules on Cash and Credit accounts share one Amount column, and each figure is colored the way its own
+ledger colors it: a negative cash rule is money gone and draws red, a negative credit rule is the
+card being paid down and draws green.
+
 Regeneration adopts a matching unclaimed row before inserting, so the first `g` after an import
 claims what the workbook already held instead of duplicating it. A row it owns on a date the
 schedule no longer produces — the mortgage moved by hand from the 1st to the 5th — is *released*

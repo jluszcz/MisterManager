@@ -838,11 +838,11 @@ deferred to nothing.
     card a third way again, `overview::load` being the one reader that negates credit. Three
     readings of one account is the price of coloring only what moves, and it is a price rather
     than an oversight.
-  - **The Recurring Transactions screen is `Natural` throughout**, though it is the one table that
-    mixes both kinds in a single Amount column. A credit rule's `-$200.00` therefore draws red
-    there and green on the Credit ledger. It is the one column a screen-wide sense cannot serve —
-    the sense would have to come off each row's own account — and nothing has been asked of it
-    yet.
+  - **The Recurring Transactions screen takes its sense per row**, because it is the one table
+    that mixes both kinds in a single Amount column and no screen-wide sense can serve it.
+    `recurring_txn::Row::sense` comes off the row's own account through `Sense::of_ledger`, so a
+    credit rule's `-200.00` draws green there exactly as it does on the Credit ledger. A rule on
+    an account that is gone has no kind to ask and draws `Natural`.
   - **The report's Credit tab follows the rows.** `report::html::ledger` reads the same
     `Sense::of_ledger` and `palette::amount`, so a card paid down is green on the page as on the
     screen. The page has no `Today`, `Target` or `Δ`, so the rows are all of the rule it has to
