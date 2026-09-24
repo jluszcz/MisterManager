@@ -45,6 +45,7 @@ fn month_id(kind: Kind, key: &str) -> String {
 /// rather than read, so it keeps its word whole and the panel scrolls under a
 /// name long enough to need it.
 fn month(kind: Kind, m: &LedgerMonth) -> String {
+    let sense = Sense::of_ledger(kind);
     let rows: String = m
         .rows
         .iter()
@@ -57,7 +58,7 @@ fn month(kind: Kind, m: &LedgerMonth) -> String {
                 r.date,
                 account(&r.account),
                 escape(&description::render(&r.description)),
-                money_in(Sense::of_ledger(kind), r.cents.to_string(), r.cents),
+                money_in(sense, r.cents.to_string(), r.cents),
             )
         })
         .collect();

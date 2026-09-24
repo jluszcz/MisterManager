@@ -41,7 +41,12 @@ use ratatui::style::Style;
 /// down to a variant before either sink sees it, so the ratatui sink starts
 /// from a resolved [`AccountColor`] rather than from an id and an `Option`.
 pub fn palette(color: AccountColor) -> Color {
-    let (r, g, b) = crate::palette::account(color);
+    rgb(crate::palette::account(color))
+}
+
+/// A [`crate::palette`] triple as a terminal color -- the one conversion
+/// every wrapper here makes.
+const fn rgb((r, g, b): crate::palette::Rgb) -> Color {
     Color::Rgb(r, g, b)
 }
 
@@ -51,19 +56,11 @@ pub fn palette(color: AccountColor) -> Color {
 /// count, or a gate's verdict -- so it carries a `negative` flag rather than
 /// the `Cents` [`amount_color`] would need. It reads the same constant, so
 /// there is still one decision here about what a negative figure looks like.
-pub const NEGATIVE: Color = Color::Rgb(
-    crate::palette::NEGATIVE.0,
-    crate::palette::NEGATIVE.1,
-    crate::palette::NEGATIVE.2,
-);
+pub const NEGATIVE: Color = rgb(crate::palette::NEGATIVE);
 
 /// A figure the good news lands on -- see [`crate::palette::POSITIVE`],
 /// which the report's Credit tab reads too.
-pub const POSITIVE: Color = Color::Rgb(
-    crate::palette::POSITIVE.0,
-    crate::palette::POSITIVE.1,
-    crate::palette::POSITIVE.2,
-);
+pub const POSITIVE: Color = rgb(crate::palette::POSITIVE);
 
 /// Something the owner probably meant to configure and has not.
 ///
@@ -156,7 +153,7 @@ pub fn amount_color(cents: Cents) -> Option<Color> {
 /// itself is [`crate::palette::amount`]'s, because the report's Credit tab
 /// draws the same column and must not come to a second opinion about it.
 pub fn amount_color_of(sense: Sense, cents: Cents) -> Option<Color> {
-    crate::palette::amount(sense, cents).map(|(r, g, b)| Color::Rgb(r, g, b))
+    crate::palette::amount(sense, cents).map(rgb)
 }
 
 /// The color for a reconciliation delta, in whichever [`Sense`] the column
@@ -204,8 +201,7 @@ pub fn account_color(id: AccountId, chosen: Option<AccountColor>) -> Color {
 /// [`crate::palette::account`]: which color a class takes is a fact about the
 /// portfolio's vocabulary rather than about a terminal.
 pub fn class(class: crate::allocation::Class) -> Color {
-    let (r, g, b) = crate::palette::CLASSES[class.index()];
-    Color::Rgb(r, g, b)
+    rgb(crate::palette::CLASSES[class.index()])
 }
 
 /// The ink a figure drawn *on* one class's color takes.
@@ -215,8 +211,7 @@ pub fn class(class: crate::allocation::Class) -> Color {
 /// which is the only place in the app where text sits on a filled block that
 /// is not the cursor row's own reversal.
 pub fn on_class(class: crate::allocation::Class) -> Color {
-    let (r, g, b) = crate::palette::on(crate::palette::CLASSES[class.index()]);
-    Color::Rgb(r, g, b)
+    rgb(crate::palette::on(crate::palette::CLASSES[class.index()]))
 }
 
 /// The color a shortfall is spelled in, wherever one is drawn as a figure
@@ -236,8 +231,7 @@ pub fn negative() -> Color {
 /// ramp rather than about a terminal, and the report's Savings tab colors its
 /// own `%` column off the same three.
 pub fn percent_color(percent: Percent) -> Color {
-    let (r, g, b) = crate::palette::percent(percent);
-    Color::Rgb(r, g, b)
+    rgb(crate::palette::percent(percent))
 }
 
 #[cfg(test)]

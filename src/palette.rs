@@ -7,7 +7,9 @@
 //! one per medium. The funding ramp is here for the same reason: how funded a
 //! goal is reads as a color on the Savings screen and on the Savings tab of
 //! the report, and a second set of stops in either would drift on the first
-//! re-tint.
+//! re-tint. [`Sense`] and [`amount`] are here for it too: which side of zero
+//! wears which color is drawn on the Credit screen and the report's Credit
+//! tab alike.
 //!
 //! Medium-neutral on purpose. `tui::style` wraps these into a ratatui
 //! `Color::Rgb` and the report formats them as `#rrggbb`; a second table in
@@ -30,8 +32,8 @@ pub type Rgb = (u8, u8, u8);
 /// holds a name instead of an index.
 ///
 /// No red and no green: those two are spoken for by [`NEGATIVE`], by
-/// [`POSITIVE`] and by the percentage ramp, and an account tinted like a warning is a warning nobody
-/// reads.
+/// [`POSITIVE`] and by the percentage ramp, and an account tinted like a
+/// warning is a warning nobody reads.
 pub fn account(color: AccountColor) -> Rgb {
     match color {
         AccountColor::Blue => (70, 130, 180),
@@ -318,10 +320,10 @@ mod tests {
         assert_eq!(hex((255, 255, 255)), "#ffffff");
     }
 
-    /// The negative color is a warning, and a warning that reads as an
-    /// account tint is a warning nobody sees.
+    /// The sign colors are a warning and its good-news counterpart, and
+    /// either one reading as an account tint is a signal nobody sees.
     #[test]
-    fn the_negative_color_is_not_one_of_the_account_colors() {
+    fn neither_sign_color_is_one_of_the_account_colors() {
         for color in AccountColor::ALL {
             assert_ne!(account(color), NEGATIVE, "{color:?} is the negative color");
             assert_ne!(account(color), POSITIVE, "{color:?} is the positive color");
@@ -342,8 +344,13 @@ mod tests {
     /// figures the natural way round.
     #[test]
     fn only_the_credit_ledger_runs_as_debt() {
-        assert_eq!(Sense::of_ledger(Kind::Credit), Sense::Debt);
-        assert_eq!(Sense::of_ledger(Kind::Cash), Sense::Natural);
+        for kind in Kind::ALL {
+            let expected = match kind {
+                Kind::Credit => Sense::Debt,
+                _ => Sense::Natural,
+            };
+            assert_eq!(Sense::of_ledger(kind), expected, "{kind:?}");
+        }
     }
 
     #[test]
