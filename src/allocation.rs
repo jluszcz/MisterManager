@@ -459,7 +459,8 @@ impl Recommendation {
 /// share of the payday reserved first, in the candidate holding most of that
 /// class: its shortfall in dollars then does not grow, and its share can only
 /// rise. A reservation under [`MIN_PURCHASE_DOLLARS`] is not made, a slice
-/// that small being one nobody places.
+/// that small being one nobody places, and nor is one the payday cannot
+/// deliver whole -- [`reserve`] says which those are and who goes first.
 ///
 /// **What is left is spent a dollar at a time**, each to whichever candidate
 /// lowers the score most, ties to the earlier one. The score is a convex
@@ -534,36 +535,51 @@ pub fn recommend(
 }
 
 /// The whole dollars each of `pool` takes before anything is scored: for
-/// every targeted class the portfolio is short of, its target share of
+/// each targeted class the portfolio is short of, its target share of
 /// `dollars`, in the fund of `pool` holding most of that class.
 ///
 /// Sized so the *class* receives its share, so a fund holding only part of
 /// the class takes proportionally more. A fund carrying two reservations
 /// takes the larger rather than the sum, since each dollar of it delivers
-/// both classes at once. Should the reservations come to more than `dollars`
-/// -- which funds each holding a sliver of several classes can do -- they
-/// are scaled down to fit.
+/// both classes at once.
+///
+/// **A reservation is made whole or not at all.** Whole is what keeps the
+/// promise [`recommend`] makes of it -- the class's shortfall does not grow
+/// -- and a shrunk one keeps no promise while still taking dollars the
+/// squared gaps would have spent better. So a class is passed over when its
+/// purest fund holds less of it than its target share, no part of the payday
+/// then being able to deliver that share; and when the reservations cannot
+/// all fit in `dollars`, the classes furthest short in dollars are reserved
+/// first and a class that no longer fits is passed over. A class passed over
+/// is left to the squared gaps like any class the portfolio is not short of.
 fn reserve(holdings: &[Held<'_>], pool: &[usize], dollars: i64, targets: Targets) -> Vec<i64> {
     let covered: i128 = holdings
         .iter()
         .filter(|held| held.mix.is_some())
         .map(|held| i128::from(held.balance.0))
         .sum();
+    // (shortfall in cents times basis points, target) for each class short
+    // of its target, furthest short first -- ties in `Class::ALL` order, the
+    // sort being stable.
+    let mut short: Vec<(Class, i128, i64)> = Class::ALL
+        .iter()
+        .filter_map(|class| {
+            let target = class.target(targets)?;
+            let held: i128 = holdings
+                .iter()
+                .filter_map(|held| {
+                    held.mix
+                        .map(|mix| i128::from(held.balance.0) * i128::from(class.actual(mix).0))
+                })
+                .sum();
+            let shortfall = i128::from(target.0) * covered - held;
+            (shortfall > 0).then_some((*class, shortfall, target.0))
+        })
+        .collect();
+    short.sort_by_key(|(_, shortfall, _)| std::cmp::Reverse(*shortfall));
+
     let mut reserved = vec![0i64; pool.len()];
-    for class in Class::ALL {
-        let Some(target) = class.target(targets) else {
-            continue;
-        };
-        let held: i128 = holdings
-            .iter()
-            .filter_map(|held| {
-                held.mix
-                    .map(|mix| i128::from(held.balance.0) * i128::from(class.actual(mix).0))
-            })
-            .sum();
-        if held >= i128::from(target.0) * covered {
-            continue;
-        }
+    for (class, _, target) in short {
         // The purest fund, ties to the earlier: `min_by_key` keeps the first
         // of equals, so the weight is negated rather than maximised.
         let purest = pool
@@ -577,15 +593,14 @@ fn reserve(holdings: &[Held<'_>], pool: &[usize], dollars: i64, targets: Targets
         };
         // Rounded up, so the class receives at least its share. `weight` is
         // positive and so is the product, which is all the sum needs.
-        let need = ((target.0 * dollars + weight - 1) / weight).min(dollars);
-        if need >= MIN_PURCHASE_DOLLARS {
-            reserved[fund] = reserved[fund].max(need);
+        let need = (target * dollars + weight - 1) / weight;
+        if need < MIN_PURCHASE_DOLLARS || need > dollars {
+            continue;
         }
-    }
-    let total: i64 = reserved.iter().sum();
-    if total > dollars {
-        for amount in &mut reserved {
-            *amount = *amount * dollars / total;
+        let taken: i64 = reserved.iter().sum();
+        let grows_by = (need - reserved[fund]).max(0);
+        if taken + grows_by <= dollars {
+            reserved[fund] = reserved[fund].max(need);
         }
     }
     reserved
@@ -1327,11 +1342,40 @@ mod tests {
         assert_eq!(buys.iter().map(|(_, d)| d).sum::<i64>(), 3_000);
     }
 
-    /// Reservations that would spend more than the payday are scaled to fit
-    /// it: here U.S. can only be had through a 60/30/10 fund, so its share
-    /// alone asks for 91% of the payday before intl's 36.4% is added.
+    /// A class's dollar shortfall before a purchase and after it, in cents
+    /// times basis points: what [`reserve`] promises not to grow.
+    fn shortfall(
+        held: &[Held<'_>],
+        bought: &[(usize, i64)],
+        class: Class,
+        targets: Targets,
+    ) -> i128 {
+        let mut after = held.to_vec();
+        for (i, dollars) in bought {
+            after[*i].balance += Cents::from_dollars(*dollars);
+        }
+        let covered: i128 = after
+            .iter()
+            .filter(|h| h.mix.is_some())
+            .map(|h| i128::from(h.balance.0))
+            .sum();
+        let owned: i128 = after
+            .iter()
+            .filter_map(|h| {
+                h.mix
+                    .map(|m| i128::from(h.balance.0) * i128::from(class.actual(m).0))
+            })
+            .sum();
+        i128::from(class.target(targets).unwrap().0) * covered - owned
+    }
+
+    /// Reservations that cannot all fit in the payday are not shrunk to fit:
+    /// a shrunk one delivers less than its class's share and so keeps no
+    /// promise. U.S. is furthest short, so it is reserved whole through the
+    /// 60/30/10 fund -- $1,820, to deliver 54.6% of $2,000 -- and intl's $728
+    /// no longer fits beside it, so intl is left to the squared gaps.
     #[test]
-    fn reservations_past_the_payday_are_scaled_to_fit_it() {
+    fn a_reservation_that_does_not_fit_is_passed_over_rather_than_shrunk() {
         let blend = slices(&[
             (AssetClass::UsStock, 6_000),
             (AssetClass::IntlStock, 3_000),
@@ -1345,11 +1389,39 @@ mod tests {
         ];
         let targets = fund::targets(Some(39), BasisPoints(4_000));
 
-        let reserved = reserve(&held, &[0, 1], 2_000, targets);
-        assert!(reserved.iter().sum::<i64>() <= 2_000, "{reserved:?}");
-        assert!(reserved.iter().all(|d| *d > 0), "{reserved:?}");
+        assert_eq!(reserve(&held, &[0, 1], 2_000, targets), [1_820, 0]);
 
         let pick = recommend(&held, &[0, 1], Cents::from_dollars(2_000), targets).unwrap();
+        let buys = bought(&pick);
         assert_eq!(pick.total(), Cents::from_dollars(2_000));
+        assert!(
+            shortfall(&held, &buys, Class::UsStock, targets)
+                <= shortfall(&held, &[], Class::UsStock, targets),
+            "the reserved class fell further behind: {buys:?}"
+        );
+    }
+
+    /// A class whose purest fund holds less of it than its target share
+    /// cannot be delivered that share by any part of the payday, so no
+    /// reservation is made for it -- rather than one spending the payday on a
+    /// fund that leaves the class further behind anyway. Here bonds can only
+    /// be had through a fund a tenth bonds, against a target of 18%.
+    #[test]
+    fn a_class_its_purest_fund_cannot_deliver_is_not_reserved() {
+        let target_date = slices(&[
+            (AssetClass::UsStock, 5_400),
+            (AssetClass::IntlStock, 3_600),
+            (AssetClass::UsBond, 1_000),
+        ]);
+        let bond = whole(AssetClass::UsBond);
+        let held = [
+            held(80_000, Some(target_date.as_slice())),
+            held(7_000, Some(bond.as_slice())),
+        ];
+        // 48: 18% bonds, against $15,000 of $87,000 -- 17.2% -- held.
+        let targets = fund::targets(Some(48), BasisPoints(4_000));
+        assert!(shortfall(&held, &[], Class::Bonds, targets) > 0);
+
+        assert_eq!(reserve(&held, &[0], 20_000, targets), [0]);
     }
 }
