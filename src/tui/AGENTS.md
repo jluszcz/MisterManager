@@ -191,8 +191,12 @@ order it was entered in rather than an arrangement worth making, which is why `d
 `reorder` where `db::account` and `db::goal` do. Above that list it draws the allocation summary — the portfolio
 by asset class against what the age rule asks for, over whatever the filters have left — whose rows
 and apportioning are `crate::allocation`'s rather than this module's, the report's Funds tab
-spelling the same ones. `recurring_goal` is the seventh screen and `recurring_txn` the
-eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
+spelling the same ones. The panel also names where this payday's `Investment` line is best
+spent — `invest $N in TICKER, $M in TICKER` in its title and a `Δ After` column beside the `Δ` —
+and draws both only while no filter narrows the rows: the purchases are judged against the whole
+portfolio, so beside one account's `Δ` the figure would be on another denominator.
+`Funds::recommendation` is where that gate is. `recurring_goal` is the seventh screen and
+`recurring_txn` the eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
 smallest: `a`, which creates an account the workbook does not name, and `e`, over everything the
 workbook does not say about one.
 
@@ -1050,9 +1054,14 @@ deferred to nothing.
   and there is no moment between insert and a second write at which the row could exist half
   finished, so the field is conditional on the kind selector rather than always asked and sometimes
   ignored. `e`'s is that a mis-pick at creation would otherwise be uncorrectable short of
-  hand-editing the database — the same reason `Interest`, `Savings` and `Default` are conditional on
+  hand-editing the database — the same reason `Interest` and `Savings` are conditional on
   `Kind::Cash` below: the column means something for exactly one kind, and only that kind is asked
-  about it. Which fields each shows, and why the split falls there, are `AccountForm::fields`' to
+  about it. **`Default` is the one column two kinds answer**, each in its own terms: on a cash
+  account it is which money forms open their `From` there, and on an investment account it is
+  whether the Planning `Investment` line buys into it — `key::INVESTMENT_ACCOUNT`, drawn as
+  `investment`. One column rather than two because it is one question, what this account is the
+  default answer for, and no row has both halves to say; `Default`'s width is measured over both
+  sets of labels, so the longer one still decides it. Which fields each shows, and why the split falls there, are `AccountForm::fields`' to
   state, including why an edit form's length depends on the kind: no count is written down here,
   because there is no one number to write.
   - **The `Tax` column draws what those two fields write, and `—` where the kind can hold

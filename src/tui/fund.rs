@@ -17,6 +17,14 @@
 //! module's -- the report's Funds tab spells the same ones -- and what is
 //! decided here is only what a terminal has to decide: the bar's glyphs, the
 //! column widths, and how many lines the panel may take off the list.
+//!
+//! The panel also says where this payday's `Investment` money is best spent:
+//! the funds in the account that line buys into, and how many whole dollars
+//! each, that leave the portfolio nearest the age rule. The choosing is
+//! [`allocation::recommend`]'s; what is decided here is that it is drawn only
+//! while the summary is the whole portfolio's, since the purchases are judged
+//! against every holding and a narrowed summary's Δ is not the figure they
+//! move.
 
 use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::form::{AccountChoice, Field, Focused, FormFields, Step, next_in, parse_whole_amount};
@@ -25,7 +33,7 @@ use super::widget::{field_stack, render_fields};
 use super::{
     Account, Chrome, GUTTER, Label, account_cell, render_table, right_header, whole_amount,
 };
-use crate::allocation::{self, Allocation, Class, Held, SummaryRow};
+use crate::allocation::{self, Allocation, Class, Held, Recommendation, SummaryRow};
 use crate::calc::fund::Targets;
 use crate::db::account;
 use crate::db::account::TaxTreatment;
@@ -92,6 +100,15 @@ pub struct Funds {
     /// a narrowing that moved one and not the other would put a portfolio's
     /// composition over one account's holdings.
     allocation: Allocation,
+    /// The account the Planning `Investment` line buys into and what it
+    /// carries this payday, or `None` when there is nothing to recommend --
+    /// `crate::fund::investment`'s answer, handed in because `Funds` holds no
+    /// `Db`.
+    investment: Option<(AccountId, Cents)>,
+    /// Where that money is best spent, over every row whatever the filters
+    /// leave: the purchase lands in the whole portfolio, so it is judged
+    /// against the whole of it.
+    recommendation: Option<Recommendation>,
     /// `None` is the All filter, an id rather than an index into `accounts`
     /// for the reason `Savings::container` is one: nothing here has to be
     /// carried across a reload the way a ledger's position would be.
@@ -113,6 +130,8 @@ impl Funds {
             // writes the sheet's own.
             targets: crate::calc::fund::targets(None, crate::fund::DEFAULT_INTL_EQUITY_SHARE),
             allocation: Allocation::default(),
+            investment: None,
+            recommendation: None,
             account: None,
             rows: Vec::new(),
             visible: Vec::new(),
@@ -136,17 +155,27 @@ impl Funds {
     pub fn set_rows(&mut self, rows: Vec<Row>) {
         self.rows = rows;
         self.refilter();
+        self.recompute_recommendation();
+    }
+
+    /// Take the account the `Investment` line buys into and its amount, as
+    /// `crate::fund::investment` read them.
+    pub fn set_investment(&mut self, investment: Option<(AccountId, Cents)>) {
+        self.investment = investment;
+        self.recompute_recommendation();
     }
 
     /// Take every composition on record, by ticker.
     pub fn set_mixes(&mut self, mixes: HashMap<String, Vec<Slice>>) {
         self.mixes = mixes;
         self.recompute_allocation();
+        self.recompute_recommendation();
     }
 
     /// Take the age rule's three shares, as of the day the app was opened on.
     pub fn set_targets(&mut self, targets: Targets) {
         self.targets = targets;
+        self.recompute_recommendation();
     }
 
     /// The portfolio look-through over the rows on screen, footing to
@@ -169,6 +198,47 @@ impl Funds {
 
     pub(super) fn allocation(&self) -> &Allocation {
         &self.allocation
+    }
+
+    /// The funds to buy with this payday's `Investment` money, each beside
+    /// its amount, and what they would leave -- or `None` while the filters
+    /// narrow the summary, since the Δ it would be read beside is then one
+    /// account's rather than the portfolio the purchases are judged against.
+    pub fn recommendation(&self) -> Option<(Vec<(&Row, Cents)>, &Recommendation)> {
+        if self.visible.len() != self.rows.len() {
+            return None;
+        }
+        let recommendation = self.recommendation.as_ref()?;
+        let purchases = recommendation
+            .purchases
+            .iter()
+            .map(|purchase| (&self.rows[purchase.holding], purchase.amount))
+            .collect();
+        Some((purchases, recommendation))
+    }
+
+    /// Where the `Investment` line's money leaves the portfolio nearest its
+    /// targets, over every row rather than the visible ones.
+    fn recompute_recommendation(&mut self) {
+        self.recommendation = self.investment.and_then(|(account, amount)| {
+            let held: Vec<Held<'_>> = self
+                .rows
+                .iter()
+                .map(|row| Held {
+                    balance: row.balance,
+                    treatment: row.tax_treatment,
+                    mix: self.mixes.get(&row.ticker).map(Vec::as_slice),
+                })
+                .collect();
+            let candidates: Vec<usize> = self
+                .rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.account_id == account)
+                .map(|(i, _)| i)
+                .collect();
+            allocation::recommend(&held, &candidates, amount, self.targets)
+        });
     }
 
     fn recompute_allocation(&mut self) {
@@ -726,6 +796,7 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
         super::tinted(share(bp), color)
     };
 
+    let recommendation = funds.recommendation();
     let rows: Vec<TableRow> = Class::ALL
         .iter()
         .filter_map(|class| funds.summary_row(*class))
@@ -743,6 +814,9 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
                 percent(Some(row.actual)),
                 delta(row.delta),
             ];
+            if let Some((_, recommendation)) = recommendation {
+                cells.push(delta(recommendation.delta_after(row.class, funds.targets)));
+            }
             cells.extend(
                 TaxTreatment::ALL
                     .iter()
@@ -758,6 +832,9 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
         right_header("Actual"),
         right_header("Δ"),
     ];
+    if recommendation.is_some() {
+        header_cells.push(right_header(AFTER));
+    }
     header_cells.extend(
         TaxTreatment::ALL
             .iter()
@@ -775,16 +852,40 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
         Constraint::Length(7),
         Constraint::Length(8),
     ];
+    if recommendation.is_some() {
+        widths.push(Constraint::Length(8));
+    }
     widths.extend(
         TaxTreatment::ALL
             .iter()
             .map(|treatment| Constraint::Length(treatment.label().len() as u16 + 1)),
     );
 
-    let title = match allocation.coverage() {
+    let mut title = match allocation.coverage() {
         None => "Allocation".to_string(),
         Some(coverage) => format!("Allocation · {coverage}"),
     };
+    if let Some((purchases, _)) = &recommendation {
+        // A single purchase *is* the Planning `Investment` line with its
+        // cents dropped, so it is masked off the line's own value: keyed on
+        // the truncation, `mm --demo` would draw it with digits unrelated to
+        // the ones the Planning row shows for the same amount.
+        let whole = match (purchases.as_slice(), funds.investment) {
+            ([_], Some((_, line))) => Some(line),
+            _ => None,
+        };
+        let spelled: Vec<String> = purchases
+            .iter()
+            .map(|(row, amount)| {
+                format!(
+                    "${} in {}",
+                    crate::demo::whole_figure(whole.unwrap_or(*amount)),
+                    crate::demo::text(&row.ticker),
+                )
+            })
+            .collect();
+        title.push_str(&format!(" · invest {}", spelled.join(", ")));
+    }
     // The block is drawn first and the two halves into what it leaves, rather
     // than handed to the table: the bar is not a row, and a table owning the
     // border would have no line below itself to put one on.
@@ -813,6 +914,10 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
         bar_area,
     );
 }
+
+/// What the summary heads the Δ each class would carry once this payday's
+/// `Investment` money is in the recommended fund.
+const AFTER: &str = "Δ After";
 
 /// The fewest lines the list is left before the summary gives up the screen
 /// to it: the list's own chrome -- two border lines and a header -- and the

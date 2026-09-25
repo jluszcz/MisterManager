@@ -424,8 +424,9 @@ fn an_import_with_resolved_containers_completes_in_one_pass() {
     }
 }
 
-/// The other two Accounts-screen settings that live in `setting` rather than
-/// on the row: which account `t` and `p` open their `From` on.
+/// The other three Accounts-screen settings that live in `setting` rather
+/// than on the row: which account `t` and `p` open their `From` on, and which
+/// one the Planning `Investment` line buys into.
 ///
 /// They are the owner's, they are set on the screen whose every other field
 /// survives a `--replace`, and the accounts they name survive it too -- so a
@@ -442,6 +443,9 @@ fn a_replace_keeps_the_accounts_the_money_forms_open_on() {
     for source in Source::ALL {
         setting::set(&db, source.key(), account).unwrap();
     }
+    // Any id will do: the import carries the key across without resolving
+    // it, so the account need not be an investment one for this to hold.
+    setting::set(&db, key::INVESTMENT_ACCOUNT, account).unwrap();
 
     import::import_all(&db, &path, today, true).unwrap();
 
@@ -453,4 +457,9 @@ fn a_replace_keeps_the_accounts_the_money_forms_open_on() {
             source.key()
         );
     }
+    assert_eq!(
+        setting::get(&db, key::INVESTMENT_ACCOUNT).unwrap(),
+        Some(account),
+        "the investment account did not survive a --replace"
+    );
 }

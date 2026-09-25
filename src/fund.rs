@@ -5,8 +5,11 @@
 //! `calc`, hands the result back up.
 
 use crate::calc::fund as calc_fund;
-use crate::db::Db;
+use crate::db::account::{self, Kind};
 use crate::db::setting::{self, key};
+use crate::db::{AccountId, Db};
+use crate::money::Cents;
+use crate::plan;
 use crate::rate::BasisPoints;
 use anyhow::Result;
 use chrono::NaiveDate;
@@ -27,6 +30,41 @@ pub fn targets_from_db(db: &Db, today: NaiveDate) -> Result<calc_fund::Targets> 
     // Unset is a real state: a database nobody has imported into yet.
     let intl = setting::get(db, key::INTL_EQUITY_SHARE)?.unwrap_or(DEFAULT_INTL_EQUITY_SHARE);
     Ok(calc_fund::targets(age, intl))
+}
+
+/// The account the Planning waterfall's `Investment` line is bought into, and
+/// what the waterfall puts on that line at `adhoc` -- or `None` when there is
+/// no recommendation to make.
+///
+/// `None` covers three states, none of them an error: no account chosen (or
+/// one chosen that is gone, or is no longer an investment account -- see
+/// [`key::INVESTMENT_ACCOUNT`]), a plan that will not resolve, and a line at
+/// zero. The first is the Accounts screen's to fix and the second the
+/// Planning screen's to explain; a recommendation beside either would be
+/// advice about money the waterfall is not moving.
+///
+/// `adhoc` for the reason `plan::compute_from_db` takes it: the figure is the
+/// one on the Planning screen's `Investment` row, and that row follows the
+/// scrub.
+pub fn investment(db: &Db, adhoc: NaiveDate) -> Result<Option<(AccountId, Cents)>> {
+    let Some(id) = setting::get(db, key::INVESTMENT_ACCOUNT)? else {
+        return Ok(None);
+    };
+    if !account::list_by_kind(db, Kind::Investment)?
+        .iter()
+        .any(|a| a.id == id)
+    {
+        return Ok(None);
+    }
+    // Both reads are the plan's, and the Planning screen reports either
+    // failing in place of the plan rather than failing the reload -- so
+    // neither may fail it from here.
+    let Ok(plan) =
+        plan::settings_from_db(db).and_then(|settings| plan::compute_from_db(db, &settings, adhoc))
+    else {
+        return Ok(None);
+    };
+    Ok((plan.lines.investment > Cents::ZERO).then_some((id, plan.lines.investment)))
 }
 
 #[cfg(test)]
