@@ -5,6 +5,7 @@
 
 use super::App;
 use crate::db::account::{self, Kind};
+use crate::db::setting::{Key, key};
 use crate::db::{AccountId, setting};
 use crate::default_source::Source;
 use crate::savings_block::Block as SavingsBlock;
@@ -62,6 +63,7 @@ impl App {
         let accounts = account::list(&self.db)?;
         let containers = self.savings_containers()?;
         let defaults = self.default_sources()?;
+        let investment = setting::get(&self.db, key::INVESTMENT_ACCOUNT)?;
         let mut rows = Vec::with_capacity(accounts.len());
         for account in &accounts {
             rows.push(accounts_screen::Row {
@@ -73,6 +75,7 @@ impl App {
                 tax: account.tax_treatment,
                 block: block_of(&containers, account.id),
                 defaults: sources_of(&defaults, account.id),
+                invests: investment == Some(account.id),
             });
         }
         self.accounts.set_rows(rows);
@@ -96,14 +99,20 @@ impl App {
     /// so editing one account never disturbs the other block's mapping.
     fn set_savings_block(&mut self, id: AccountId, block: Option<SavingsBlock>) -> Result<()> {
         for candidate in SavingsBlock::ALL {
-            let key = candidate.key();
-            match Some(candidate) == block {
-                true => setting::set(&self.db, key, id)?,
-                false if setting::get(&self.db, key)? == Some(id) => setting::clear(&self.db, key)?,
-                false => {}
-            }
+            self.point(candidate.key(), id, Some(candidate) == block)?;
         }
         Ok(())
+    }
+
+    /// Point `key` at this account when `names`, and otherwise clear it --
+    /// but only when this account is the one it names, so editing one
+    /// account never disturbs a key another account answers for.
+    fn point(&self, key: Key<AccountId>, id: AccountId, names: bool) -> Result<()> {
+        match names {
+            true => setting::set(&self.db, key, id),
+            false if setting::get(&self.db, key)? == Some(id) => setting::clear(&self.db, key),
+            false => Ok(()),
+        }
     }
 
     /// Point the forms in `defaults` at this account, and off whichever ones
@@ -117,12 +126,7 @@ impl App {
     /// answer for both.
     fn set_default_sources(&mut self, id: AccountId, defaults: &[Source]) -> Result<()> {
         for source in Source::ALL {
-            let key = source.key();
-            match defaults.contains(&source) {
-                true => setting::set(&self.db, key, id)?,
-                false if setting::get(&self.db, key)? == Some(id) => setting::clear(&self.db, key)?,
-                false => {}
-            }
+            self.point(source.key(), id, defaults.contains(&source))?;
         }
         Ok(())
     }
@@ -152,8 +156,9 @@ impl App {
         let policy = account::interest_policy(&self.db, id)?;
         let block = block_of(&self.savings_containers()?, id);
         let defaults = sources_of(&self.default_sources()?, id);
+        let invests = setting::get(&self.db, key::INVESTMENT_ACCOUNT)? == Some(id);
         self.modal = Some(Modal::Account(AccountForm::edit(
-            &account, policy, position, of_kind, block, &defaults,
+            &account, policy, position, of_kind, block, &defaults, invests,
         )));
         Ok(())
     }
@@ -193,14 +198,15 @@ impl App {
         Ok(defaults)
     }
 
-    /// `a`'s one write, or the seven `e` stands for.
+    /// `a`'s one write, or the several `e` stands for.
     ///
-    /// The seven are ordered so `reorder` means what it says: it renumbers by
+    /// They are ordered so `reorder` means what it says: it renumbers by
     /// position, so it goes after the band change rather than before one that
-    /// could move the row. The two `setting` writes under it read no column
-    /// at all, which is why they can follow. `a` writes none of the seven -- a
-    /// new account takes its kind's default band, no color, no interest
-    /// policy, no `Savings` block and neither money form's default, and `e`
+    /// could move the row. The `setting` writes under it read no column at
+    /// all, which is why they can follow. `a` writes none of them -- a new
+    /// account takes its kind's default band, no color, no interest policy,
+    /// no `Savings` block, neither money form's default and not the
+    /// `Investment` line's, and `e`
     /// is where it is placed -- except the tax treatment, which `a` writes
     /// itself for an investment account (see `commit_new_account`) because
     /// the schema's paired `CHECK` will not let the row exist without one.
@@ -219,6 +225,7 @@ impl App {
         account::reorder(&self.db, id, edit.position)?;
         self.set_savings_block(id, edit.block)?;
         self.set_default_sources(id, &edit.defaults)?;
+        self.point(key::INVESTMENT_ACCOUNT, id, edit.invests)?;
         // Gated on the account being an investment: `set_tax_treatment`
         // itself refuses any other kind, and `edit.tax_treatment` is `None`
         // on every kind but that one, so a cash or credit account never
@@ -1068,6 +1075,59 @@ mod tests {
         assert_eq!(
             setting::get(&app.db, SavingsBlock::Buckets.key()).unwrap(),
             Some(cash[1].id)
+        );
+    }
+
+    /// `e` on an investment account is where the Funds screen's
+    /// recommendation is pointed, and one key holds one account: marking a
+    /// second moves the key rather than adding to it, and unmarking an
+    /// account the key does not name leaves it alone.
+    #[test]
+    fn an_investment_accounts_default_points_the_investment_line_at_it() {
+        let mut app = app_with_holdings();
+        let investment = account::list_by_kind(&app.db, Kind::Investment).unwrap();
+        let (first, second) = (investment[0].id, investment[1].id);
+        press(&mut app, KeyCode::Char('9'));
+
+        let mark = |app: &mut crate::tui::app::App, id: AccountId| {
+            walk_until!(
+                app.accounts.selected().unwrap().account.id() == id,
+                press(app, KeyCode::Down)
+            );
+            press(app, KeyCode::Char('e'));
+            walk_until!(
+                matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Default),
+                press(app, KeyCode::Tab)
+            );
+            press(app, KeyCode::Right);
+            press(app, KeyCode::Enter);
+            assert!(app.modal.is_none(), "the form did not save");
+        };
+
+        mark(&mut app, first);
+        assert_eq!(
+            setting::get(&app.db, key::INVESTMENT_ACCOUNT).unwrap(),
+            Some(first)
+        );
+        assert!(
+            app.accounts
+                .rows()
+                .iter()
+                .any(|r| r.account.id() == first && r.invests)
+        );
+
+        mark(&mut app, second);
+        assert_eq!(
+            setting::get(&app.db, key::INVESTMENT_ACCOUNT).unwrap(),
+            Some(second),
+            "the key moved to the second account"
+        );
+        assert!(
+            !app.accounts
+                .rows()
+                .iter()
+                .any(|r| r.account.id() == first && r.invests),
+            "the first account still reads as marked"
         );
     }
 }

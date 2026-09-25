@@ -93,6 +93,9 @@ pub fn import_all(db: &Db, path: &Path, today: NaiveDate, replace: bool) -> Resu
         // are not, so what is read here is still true afterwards.
         let containers = savings::containers(db)?;
         let defaults = default_sources(db)?;
+        // The Accounts screen's third such setting, carried across for the
+        // same reason and with the same tolerance: a stale id reads as unset.
+        let investment = setting::get(db, key::INVESTMENT_ACCOUNT)?;
 
         if db::has_imported_data(db)? {
             if !replace {
@@ -108,6 +111,9 @@ pub fn import_all(db: &Db, path: &Path, today: NaiveDate, replace: bool) -> Resu
         // Before the early return below, not after it: a `--replace` that
         // stops after the accounts has cleared `setting` just the same.
         set_default_sources(db, &defaults)?;
+        if let Some(id) = investment {
+            setting::set(db, key::INVESTMENT_ACCOUNT, id)?;
+        }
 
         let Some(containers) = containers else {
             return Ok(Report::AccountsOnly {

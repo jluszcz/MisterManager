@@ -1,7 +1,8 @@
 //! The Accounts screen: what each account the workbook names is called here,
 //! which Overview band it sits in, in what order, how an interest posting
 //! against it is divided, which block of the `Savings` sheet it is the
-//! container for, and which of the two money forms open their `From` on it.
+//! container for, which of the two money forms open their `From` on it, and
+//! whether it is the brokerage the Planning `Investment` line buys into.
 //!
 //! The workbook carries a short code per account and nothing else. Everything
 //! on this screen is therefore the owner's rather than the importer's, and
@@ -78,6 +79,28 @@ pub struct Row {
     /// `Source::ALL`'s order. Both, one, or -- for every account but the two
     /// the keys name -- neither.
     pub defaults: Vec<Source>,
+    /// Whether this is the account [`key::INVESTMENT_ACCOUNT`] names -- the
+    /// one the Funds screen recommends a fund from.
+    ///
+    /// [`key::INVESTMENT_ACCOUNT`]: crate::db::setting::key::INVESTMENT_ACCOUNT
+    pub invests: bool,
+}
+
+/// What the `Default` column and field say of the account the Planning
+/// `Investment` line buys into.
+///
+/// The same column as the money forms' defaults because it is the same
+/// question -- what this account is the default answer for -- asked of the
+/// other kind: a source is only ever a cash account and this only ever an
+/// investment one, so no row has both to say.
+pub(super) const INVESTMENT_DEFAULT: &str = "investment";
+
+/// A `Default` cell or field value for an investment account.
+fn invests_label(invests: bool) -> &'static str {
+    match invests {
+        true => INVESTMENT_DEFAULT,
+        false => "—",
+    }
 }
 
 pub struct Accounts {
@@ -154,7 +177,9 @@ pub enum AccountField {
     Order,
     Interest,
     Savings,
-    /// Which money forms open their `From` on this account.
+    /// Which money forms open their `From` on this account -- or, on an
+    /// investment account, whether the Planning `Investment` line buys into
+    /// it.
     Default,
 }
 
@@ -276,6 +301,10 @@ pub struct AccountEdit {
     /// answers for, so dropping a source is the only way a form's default
     /// goes away from here.
     pub defaults: Vec<Source>,
+    /// Whether the Planning `Investment` line buys into this account. Always
+    /// `false` on any kind but `Investment`, and `false` *clears* the key when
+    /// this account is the one it names, for `defaults`' reason.
+    pub invests: bool,
     /// `Some` for an investment account, `None` for every other kind --
     /// `account::set_tax_treatment` refuses a kind that is not `Investment`,
     /// so this is what tells `App::commit_account` whether to call it at
@@ -343,6 +372,9 @@ pub struct AccountForm {
     policy: usize,
     block: usize,
     defaults: usize,
+    /// The investment account's `Default`: a yes or no rather than a subset,
+    /// since one key names one account and there is one thing to answer for.
+    invests: bool,
 }
 
 impl AccountForm {
@@ -373,6 +405,7 @@ impl AccountForm {
             policy: 0,
             block: 0,
             defaults: 0,
+            invests: false,
         }
     }
 
@@ -384,6 +417,7 @@ impl AccountForm {
         of_kind: usize,
         block: Option<SavingsBlock>,
         defaults: &[Source],
+        invests: bool,
     ) -> AccountForm {
         AccountForm {
             editing: Some(account.id),
@@ -450,6 +484,7 @@ impl AccountForm {
                 .iter()
                 .position(|d| d.len() == defaults.len() && d.iter().all(|s| defaults.contains(s)))
                 .unwrap_or(0),
+            invests,
         }
     }
 
@@ -480,10 +515,13 @@ impl AccountForm {
     /// the schema's paired `CHECK` refuses the row without it, and there is
     /// no moment between insert and a second write at which the row could
     /// exist half finished. An edit form offers the same field for the
-    /// reason `Interest`, `Savings` and `Default` are gated on `Kind::Cash`
-    /// below: the column means something for exactly one kind, so only that
-    /// kind is asked about it -- `set_tax_treatment` refuses any other.
-    /// Every other field an edit form's kind decides is an ordinary
+    /// reason `Interest` and `Savings` are gated on `Kind::Cash` below: the
+    /// column means something for exactly one kind, so only that kind is
+    /// asked about it -- `set_tax_treatment` refuses any other. `Default`
+    /// is asked of both kinds that have one, and means a different thing on
+    /// each: the money forms that open on a cash account, or whether the
+    /// Planning `Investment` line buys into an investment one. A card has
+    /// neither. Every other field an edit form's kind decides is an ordinary
     /// placement, gated the same way.
     pub fn fields(&self) -> Vec<AccountField> {
         if self.editing.is_none() {
@@ -505,6 +543,9 @@ impl AccountForm {
         fields.push(AccountField::Order);
         if self.shows_tax_treatment() {
             fields.push(AccountField::TaxTreatment);
+            // The investment account's own default: whether the Planning
+            // `Investment` line buys into it.
+            fields.push(AccountField::Default);
         }
         if self.kind() == Kind::Cash {
             fields.push(AccountField::Interest);
@@ -544,7 +585,10 @@ impl AccountForm {
                 None => "—".to_string(),
                 Some(block) => block.label().to_string(),
             },
-            AccountField::Default => defaults_label(&default_choices()[self.defaults]),
+            AccountField::Default => match self.kind() {
+                Kind::Investment => invests_label(self.invests).to_string(),
+                Kind::Cash | Kind::Credit => defaults_label(&default_choices()[self.defaults]),
+            },
         })
     }
 
@@ -597,6 +641,7 @@ impl AccountForm {
             policy: InterestPolicy::ALL[self.policy],
             block: savings_choices()[self.block],
             defaults: default_choices()[self.defaults].clone(),
+            invests: self.kind() == Kind::Investment && self.invests,
             tax_treatment: self
                 .shows_tax_treatment()
                 .then(|| TaxTreatment::ALL[self.tax_treatment]),
@@ -656,6 +701,9 @@ impl AccountForm {
             }
             AccountField::Savings => {
                 self.block = step_index(self.block, savings_choices().len(), step);
+            }
+            AccountField::Default if self.kind() == Kind::Investment => {
+                self.invests = !self.invests;
             }
             AccountField::Default => {
                 self.defaults = step_index(self.defaults, default_choices().len(), step);
@@ -727,7 +775,10 @@ fn widths() -> [Constraint; 7] {
         label_width("Interest", InterestPolicy::ALL.iter().map(|p| p.label())),
         label_width("Savings", SavingsBlock::ALL.iter().map(|b| b.label())),
         label_width("Tax", TaxTreatment::ALL.iter().map(|t| t.label())),
-        label_width("Default", [defaults_label(&Source::ALL)]),
+        label_width(
+            "Default",
+            [defaults_label(&Source::ALL), INVESTMENT_DEFAULT.to_string()],
+        ),
     ]
 }
 
@@ -753,7 +804,10 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
                     None => "—",
                 }),
                 tax_treatment_cell(r.tax),
-                Cell::from(defaults_label(&r.defaults)),
+                Cell::from(match r.kind {
+                    Kind::Investment => invests_label(r.invests).to_string(),
+                    Kind::Cash | Kind::Credit => defaults_label(&r.defaults),
+                }),
             ])
         })
         .collect();
@@ -818,6 +872,7 @@ mod tests {
             tax: None,
             block: None,
             defaults: Vec::new(),
+            invests: false,
         }
     }
 
@@ -874,6 +929,7 @@ mod tests {
             3,
             None,
             &[],
+            false,
         );
         assert_eq!(
             cash.fields(),
@@ -895,6 +951,7 @@ mod tests {
             2,
             None,
             &[],
+            false,
         );
         assert_eq!(
             card.fields(),
@@ -903,9 +960,10 @@ mod tests {
     }
 
     /// The tax treatment is a placement for an investment account exactly as
-    /// `Interest`, `Savings` and `Default` are for a cash one: only the kind
-    /// the column means something for is asked about it. Credit gets neither
-    /// -- it has no bands, no goals, and no tax treatment.
+    /// `Interest` and `Savings` are for a cash one: only the kind the column
+    /// means something for is asked about it. `Default` follows it, being
+    /// that kind's own answer to the column. Credit gets neither -- it has no
+    /// bands, no goals, and no tax treatment.
     #[test]
     fn the_edit_form_offers_a_tax_treatment_only_for_an_investment_account() {
         let cash = AccountForm::edit(
@@ -915,6 +973,7 @@ mod tests {
             3,
             None,
             &[],
+            false,
         );
         assert!(
             !cash.fields().contains(&AccountField::TaxTreatment),
@@ -924,7 +983,7 @@ mod tests {
 
         let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
         investment.tax_treatment = Some(TaxTreatment::Taxable);
-        let form = AccountForm::edit(&investment, InterestPolicy::Manual, 0, 1, None, &[]);
+        let form = AccountForm::edit(&investment, InterestPolicy::Manual, 0, 1, None, &[], false);
         assert_eq!(
             form.fields(),
             vec![
@@ -932,8 +991,35 @@ mod tests {
                 AccountField::Color,
                 AccountField::Order,
                 AccountField::TaxTreatment,
+                AccountField::Default,
             ]
         );
+    }
+
+    /// An investment account's `Default` is a yes or no -- whether the
+    /// Planning `Investment` line buys into it -- rather than the cash
+    /// accounts' subset of money forms, which no investment account's `From`
+    /// could ever land on.
+    #[test]
+    fn an_investment_accounts_default_is_whether_the_investment_line_buys_into_it() {
+        let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
+        investment.tax_treatment = Some(TaxTreatment::Taxable);
+        let mut form =
+            AccountForm::edit(&investment, InterestPolicy::Manual, 0, 1, None, &[], false);
+        assert_eq!(form.display(AccountField::Default).plain_text(), "—");
+        assert!(!form.commit().unwrap().invests);
+
+        form.next_choice_on(AccountField::Default);
+        assert_eq!(
+            form.display(AccountField::Default).plain_text(),
+            INVESTMENT_DEFAULT
+        );
+        let edit = form.commit().unwrap();
+        assert!(edit.invests);
+        assert!(edit.defaults.is_empty(), "no money form defaults to it");
+
+        form.next_choice_on(AccountField::Default);
+        assert!(!form.commit().unwrap().invests, "the toggle comes back off");
     }
 
     /// An edit form has to open on what the account already holds, the same
@@ -946,7 +1032,7 @@ mod tests {
     fn an_edit_form_opens_on_the_accounts_current_tax_treatment() {
         let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
         investment.tax_treatment = Some(TaxTreatment::TaxDeferred);
-        let form = AccountForm::edit(&investment, InterestPolicy::Manual, 0, 1, None, &[]);
+        let form = AccountForm::edit(&investment, InterestPolicy::Manual, 0, 1, None, &[], false);
         assert_eq!(
             form.display(AccountField::TaxTreatment).plain_text(),
             TaxTreatment::TaxDeferred.label()
@@ -968,6 +1054,7 @@ mod tests {
             3,
             None,
             &[],
+            false,
         );
         assert_eq!(form.display(AccountField::Band).plain_text(), "Checking");
         form.next_choice_on(AccountField::Band);
@@ -991,6 +1078,7 @@ mod tests {
             3,
             None,
             &[],
+            false,
         );
         let mut seen = vec![form.commit().unwrap().defaults];
         for _ in 1..default_choices().len() {
@@ -1028,6 +1116,7 @@ mod tests {
                 3,
                 None,
                 &given,
+                false,
             );
             assert_eq!(
                 form.display(AccountField::Default).plain_text(),
@@ -1049,6 +1138,7 @@ mod tests {
             3,
             None,
             &[],
+            false,
         );
         assert_eq!(form.display(AccountField::Order).plain_text(), "3 of 3");
         assert_eq!(form.commit().unwrap().position, 2);
@@ -1086,6 +1176,7 @@ mod tests {
             3,
             None,
             &[],
+            false,
         );
         let opening = form.commit().unwrap().color;
         assert_eq!(opening, Some(AccountColor::derived(AccountId(1))));
@@ -1112,7 +1203,7 @@ mod tests {
     fn the_form_opens_on_the_color_the_account_already_holds() {
         let mut account = account(2, "Rainy Day", Kind::Cash, Group::Savings);
         account.color = Some(AccountColor::Violet);
-        let form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None, &[]);
+        let form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None, &[], false);
         assert_eq!(form.display(AccountField::Color).plain_text(), "Violet");
         assert_eq!(form.commit().unwrap().color, Some(AccountColor::Violet));
     }
@@ -1126,6 +1217,7 @@ mod tests {
             3,
             None,
             &[],
+            false,
         );
         assert_eq!(form.commit().unwrap().policy, InterestPolicy::ProRata);
         for _ in 0..InterestPolicy::ALL.len() {
@@ -1148,6 +1240,7 @@ mod tests {
             3,
             None,
             &[],
+            false,
         );
         for _ in 0.."Everyday".len() {
             form.edit(backspace_key());
@@ -1164,6 +1257,7 @@ mod tests {
             3,
             None,
             &[],
+            false,
         );
         form.edit(char_key('!'));
         assert_eq!(form.commit().unwrap().name, "Everyday!");
@@ -1527,7 +1621,7 @@ mod tests {
 
         let mut account = account(2, "Rainy Day", Kind::Cash, Group::Savings);
         account.color = Some(AccountColor::Violet);
-        let mut form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None, &[]);
+        let mut form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None, &[], false);
 
         let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 16)).unwrap();
         terminal
@@ -1575,6 +1669,7 @@ mod tests {
             3,
             None,
             &[],
+            false,
         );
         let derived = AccountColor::derived(AccountId(2));
         assert_eq!(
@@ -1601,6 +1696,7 @@ mod tests {
             3,
             None,
             &[],
+            false,
         );
         walk_until!(
             form.color_choice().is_none(),
@@ -1786,6 +1882,7 @@ mod savings_block_tests {
             3,
             None,
             &[],
+            false,
         );
         assert_eq!(form.display(AccountField::Savings).plain_text(), "—");
         assert_eq!(form.commit().unwrap().block, None);
@@ -1813,6 +1910,7 @@ mod savings_block_tests {
             2,
             None,
             &[],
+            false,
         );
         assert!(!card.fields().contains(&AccountField::Savings));
     }
@@ -1828,6 +1926,7 @@ mod savings_block_tests {
             3,
             Some(SavingsBlock::Buckets),
             &[],
+            false,
         );
         assert_eq!(
             form.display(AccountField::Savings).plain_text(),

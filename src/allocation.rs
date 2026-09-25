@@ -391,6 +391,295 @@ impl SummaryRow {
     }
 }
 
+/// The smallest purchase a recommendation splits off: a slice under it is
+/// not worth an order of its own, and below a fund's own minimum for a
+/// subsequent purchase it is not one the fund would take.
+pub const MIN_PURCHASE_DOLLARS: i64 = 500;
+
+/// One fund bought with part of the `Investment` line.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Purchase {
+    /// Which of the holdings [`recommend`] was handed takes the money -- an
+    /// index into that slice, so the caller names it off its own row.
+    pub holding: usize,
+    /// Whole dollars, never less than [`MIN_PURCHASE_DOLLARS`] unless it is
+    /// the only purchase.
+    pub amount: Cents,
+}
+
+/// Where the Planning waterfall's `Investment` line is best spent: the funds
+/// that, bought in whole dollars, leave the portfolio nearest what the age
+/// rule asks for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Recommendation {
+    /// Largest first. One entry when one fund is the answer, which it is
+    /// whenever splitting would not bring the targeted classes nearer or
+    /// would leave a slice under [`MIN_PURCHASE_DOLLARS`].
+    pub purchases: Vec<Purchase>,
+    /// The whole portfolio as it would stand after every purchase.
+    pub after: Allocation,
+}
+
+impl Recommendation {
+    /// What the purchases come to: the line's own figure with its cents
+    /// dropped, those staying in the account rather than being split.
+    pub fn total(&self) -> Cents {
+        self.purchases
+            .iter()
+            .fold(Cents::ZERO, |sum, purchase| sum + purchase.amount)
+    }
+
+    /// A class's Δ once the purchases are made, signed as
+    /// [`SummaryRow::delta`] is, and `None` wherever that is.
+    pub fn delta_after(&self, class: Class, targets: Targets) -> Option<BasisPoints> {
+        SummaryRow::new(class, &self.after.slices, targets).delta
+    }
+}
+
+/// How `amount` is best spent among `candidates`, in whole dollars, to leave
+/// `holdings` closest to `targets` -- or `None` when there is nothing to buy
+/// or not a dollar to buy it with.
+///
+/// `candidates` are indices into `holdings`: the funds the money can reach,
+/// which is a narrower set than the portfolio being measured. A candidate with
+/// no mix on record is passed over, since what buying it would do is exactly
+/// what nobody knows.
+///
+/// **Closest is the sum of squared gaps over the classes the rule targets.**
+/// Squaring is what makes the biggest gap the one worth closing first, and
+/// what makes a split worth making: once one class has closed far enough
+/// that another fund does more good, the next dollar goes there. `Other` is
+/// not scored, the rule having nothing to say about it.
+///
+/// **First, no class the portfolio is short of may fall further behind.**
+/// Left to the squared gaps alone, a payday small beside the portfolio goes
+/// whole to the class furthest out -- and every other class short of its
+/// target then slips further, because the portfolio grew and nothing of it
+/// was theirs. So each targeted class under its target has its own target
+/// share of the payday reserved first, in the candidate holding most of that
+/// class: its shortfall in dollars then does not grow, and its share can only
+/// rise. A reservation under [`MIN_PURCHASE_DOLLARS`] is not made, a slice
+/// that small being one nobody places, and nor is one the payday cannot
+/// deliver whole -- [`reserve`] says which those are and who goes first.
+///
+/// **What is left is spent a dollar at a time**, each to whichever candidate
+/// lowers the score most, ties to the earlier one. The score is a convex
+/// quadratic, so the greedy walk lands within a dollar of the best split --
+/// and it does so in integers, where a least-squares solver would need the
+/// floats this crate has none of. It is scored on the exact balance-weighted
+/// sums rather than on [`apportion`]'s basis points: a basis point of a large
+/// portfolio is many dollars, and a score rounded that coarsely would not
+/// move for a one-dollar step.
+///
+/// **Then the minimum.** A split leaving any slice under
+/// [`MIN_PURCHASE_DOLLARS`] drops the fund with the smallest slice and walks
+/// again over the rest, until every slice clears it or one fund is left --
+/// which is also how an `amount` under the minimum lands whole in one fund.
+pub fn recommend(
+    holdings: &[Held<'_>],
+    candidates: &[usize],
+    amount: Cents,
+    targets: Targets,
+) -> Option<Recommendation> {
+    let dollars = amount.trunc_to_dollar().dollars();
+    let mut pool: Vec<usize> = candidates
+        .iter()
+        .copied()
+        .filter(|i| holdings.get(*i).is_some_and(|held| held.mix.is_some()))
+        .collect();
+    if dollars <= 0 || pool.is_empty() {
+        return None;
+    }
+
+    let purchases = loop {
+        let reserved = reserve(holdings, &pool, dollars, targets);
+        let spent = spend(holdings, &pool, dollars, &reserved, targets);
+        let mut purchases: Vec<Purchase> = pool
+            .iter()
+            .zip(&spent)
+            .filter(|(_, dollars)| **dollars > 0)
+            .map(|(holding, dollars)| Purchase {
+                holding: *holding,
+                amount: Cents::from_dollars(*dollars),
+            })
+            .collect();
+        // Largest first, and the earlier candidate first between two equal
+        // slices, so the smallest -- the one dropped -- is the last.
+        purchases.sort_by(|a, b| {
+            b.amount.cmp(&a.amount).then(
+                candidates
+                    .iter()
+                    .position(|c| *c == a.holding)
+                    .cmp(&candidates.iter().position(|c| *c == b.holding)),
+            )
+        });
+        match purchases.last() {
+            Some(smallest)
+                if purchases.len() > 1
+                    && smallest.amount < Cents::from_dollars(MIN_PURCHASE_DOLLARS) =>
+            {
+                pool.retain(|i| *i != smallest.holding);
+            }
+            _ => break purchases,
+        }
+    };
+
+    let mut bought = holdings.to_vec();
+    for purchase in &purchases {
+        bought[purchase.holding].balance += purchase.amount;
+    }
+    Some(Recommendation {
+        after: apportion(&bought),
+        purchases,
+    })
+}
+
+/// The whole dollars each of `pool` takes before anything is scored: for
+/// each targeted class the portfolio is short of, its target share of
+/// `dollars`, in the fund of `pool` holding most of that class.
+///
+/// Sized so the *class* receives its share, so a fund holding only part of
+/// the class takes proportionally more. A fund carrying two reservations
+/// takes the larger rather than the sum, since each dollar of it delivers
+/// both classes at once.
+///
+/// **A reservation is made whole or not at all.** Whole is what keeps the
+/// promise [`recommend`] makes of it -- the class's shortfall does not grow
+/// -- and a shrunk one keeps no promise while still taking dollars the
+/// squared gaps would have spent better. So a class is passed over when its
+/// purest fund holds less of it than its target share, no part of the payday
+/// then being able to deliver that share; and when the reservations cannot
+/// all fit in `dollars`, the classes furthest short in dollars are reserved
+/// first and a class that no longer fits is passed over. A class passed over
+/// is left to the squared gaps like any class the portfolio is not short of.
+fn reserve(holdings: &[Held<'_>], pool: &[usize], dollars: i64, targets: Targets) -> Vec<i64> {
+    let covered: i128 = holdings
+        .iter()
+        .filter(|held| held.mix.is_some())
+        .map(|held| i128::from(held.balance.0))
+        .sum();
+    // (shortfall in cents times basis points, target) for each class short
+    // of its target, furthest short first -- ties in `Class::ALL` order, the
+    // sort being stable.
+    let mut short: Vec<(Class, i128, i64)> = Class::ALL
+        .iter()
+        .filter_map(|class| {
+            let target = class.target(targets)?;
+            let held: i128 = holdings
+                .iter()
+                .filter_map(|held| {
+                    held.mix
+                        .map(|mix| i128::from(held.balance.0) * i128::from(class.actual(mix).0))
+                })
+                .sum();
+            let shortfall = i128::from(target.0) * covered - held;
+            (shortfall > 0).then_some((*class, shortfall, target.0))
+        })
+        .collect();
+    short.sort_by_key(|(_, shortfall, _)| std::cmp::Reverse(*shortfall));
+
+    let mut reserved = vec![0i64; pool.len()];
+    for (class, _, target) in short {
+        // The purest fund, ties to the earlier: `min_by_key` keeps the first
+        // of equals, so the weight is negated rather than maximised.
+        let purest = pool
+            .iter()
+            .enumerate()
+            .map(|(f, i)| (f, class.actual(holdings[*i].mix.unwrap_or_default()).0))
+            .filter(|(_, weight)| *weight > 0)
+            .min_by_key(|(_, weight)| -weight);
+        let Some((fund, weight)) = purest else {
+            continue;
+        };
+        // Rounded up, so the class receives at least its share. `weight` is
+        // positive and so is the product, which is all the sum needs.
+        let need = (target * dollars + weight - 1) / weight;
+        if need < MIN_PURCHASE_DOLLARS || need > dollars {
+            continue;
+        }
+        let taken: i64 = reserved.iter().sum();
+        let grows_by = (need - reserved[fund]).max(0);
+        if taken + grows_by <= dollars {
+            reserved[fund] = reserved[fund].max(need);
+        }
+    }
+    reserved
+}
+
+/// `dollars` spent among `pool`: `reserved` first, then the rest one at a
+/// time, each to the fund that lowers the score most. How many dollars each
+/// of `pool` takes, in `pool`'s order.
+fn spend(
+    holdings: &[Held<'_>],
+    pool: &[usize],
+    dollars: i64,
+    reserved: &[i64],
+    targets: Targets,
+) -> Vec<i64> {
+    // The classes the rule has a target for, and what it asks of each.
+    let targeted: Vec<(Class, i128)> = Class::ALL
+        .iter()
+        .filter_map(|class| class.target(targets).map(|t| (*class, i128::from(t.0))))
+        .collect();
+    // Everything below is cents times basis points. The covered balance once
+    // every dollar is spent is the same whichever fund takes them, so each
+    // class's gap is its weighted sum less its target share of that total.
+    let basis: i128 = holdings
+        .iter()
+        .filter(|held| held.mix.is_some())
+        .map(|held| i128::from(held.balance.0))
+        .sum::<i128>()
+        + i128::from(dollars) * 100;
+    let mut gaps: Vec<i128> = targeted
+        .iter()
+        .map(|(class, target)| {
+            let held: i128 = holdings
+                .iter()
+                .filter_map(|held| {
+                    held.mix
+                        .map(|mix| i128::from(held.balance.0) * i128::from(class.actual(mix).0))
+                })
+                .sum();
+            held - target * basis
+        })
+        .collect();
+    // What one dollar into each fund in the pool adds to each class.
+    let steps: Vec<Vec<i128>> = pool
+        .iter()
+        .map(|i| {
+            let mix = holdings[*i]
+                .mix
+                .expect("the pool holds only funds with a mix");
+            targeted
+                .iter()
+                .map(|(class, _)| 100 * i128::from(class.actual(mix).0))
+                .collect()
+        })
+        .collect();
+
+    let mut spent = reserved.to_vec();
+    for (f, amount) in reserved.iter().enumerate() {
+        for (gap, step) in gaps.iter_mut().zip(&steps[f]) {
+            *gap += step * i128::from(*amount);
+        }
+    }
+    for _ in 0..dollars - reserved.iter().sum::<i64>() {
+        let best = (0..pool.len())
+            .min_by_key(|f| {
+                gaps.iter()
+                    .zip(&steps[*f])
+                    .map(|(gap, step)| (gap + step).pow(2))
+                    .sum::<i128>()
+            })
+            .expect("the pool is never empty");
+        for (gap, step) in gaps.iter_mut().zip(&steps[best]) {
+            *gap += step;
+        }
+        spent[best] += 1;
+    }
+    spent
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -752,5 +1041,387 @@ mod tests {
             BasisPoints(9_500),
             "the actual is known whatever the target is"
         );
+    }
+
+    fn whole(class: AssetClass) -> Vec<Slice> {
+        slices(&[(class, 10_000)])
+    }
+
+    /// Which holdings a recommendation buys, and how many dollars each.
+    fn bought(recommendation: &Recommendation) -> Vec<(usize, i64)> {
+        recommendation
+            .purchases
+            .iter()
+            .map(|p| (p.holding, p.amount.dollars()))
+            .collect()
+    }
+
+    /// A payday too small to close the bond gap goes to the bond fund whole:
+    /// no split brings the targeted classes nearer while bonds are the
+    /// furthest out.
+    #[test]
+    fn a_small_investment_goes_whole_to_the_fund_that_closes_the_biggest_gap() {
+        let (us, intl, bond) = (
+            whole(AssetClass::UsStock),
+            whole(AssetClass::IntlStock),
+            whole(AssetClass::UsBond),
+        );
+        let held = [
+            held(6_000, Some(us.as_slice())),
+            held(3_000, Some(intl.as_slice())),
+            held(1_000, Some(bond.as_slice())),
+        ];
+        // 48: 18% bonds, then 60/40 of the rest -- 49.2% U.S., 32.8% intl.
+        let targets = fund::targets(Some(48), BasisPoints(4_000));
+
+        let pick = recommend(&held, &[0, 1, 2], Cents::from_dollars(1_000), targets).unwrap();
+        assert_eq!(bought(&pick), [(2, 1_000)]);
+        // $2,000 of bonds in $11,000 is 18.18%.
+        assert_eq!(
+            pick.delta_after(Class::Bonds, targets),
+            Some(BasisPoints(1_818 - 1_800))
+        );
+    }
+
+    /// Enough money to close every gap at once: at $15,000 the rule asks
+    /// $7,380 of U.S. stock, $4,920 of intl and $2,700 of bonds, so the
+    /// payday splits three ways -- including into U.S. stock, which was
+    /// over its share before the purchase and is under it at the new total.
+    #[test]
+    fn money_enough_to_close_every_gap_is_split_to_close_all_of_them() {
+        let (us, intl, bond) = (
+            whole(AssetClass::UsStock),
+            whole(AssetClass::IntlStock),
+            whole(AssetClass::UsBond),
+        );
+        let held = [
+            held(6_000, Some(us.as_slice())),
+            held(3_000, Some(intl.as_slice())),
+            held(1_000, Some(bond.as_slice())),
+        ];
+        let targets = fund::targets(Some(48), BasisPoints(4_000));
+
+        let pick = recommend(&held, &[0, 1, 2], Cents::from_dollars(5_000), targets).unwrap();
+        assert_eq!(bought(&pick), [(1, 1_920), (2, 1_700), (0, 1_380)]);
+        for class in [Class::UsStock, Class::IntlStock, Class::Bonds] {
+            assert_eq!(
+                pick.delta_after(class, targets),
+                Some(BasisPoints::ZERO),
+                "{class:?}"
+            );
+        }
+    }
+
+    /// A slice under the minimum is folded back: the fund it would have gone
+    /// to is dropped, and the rest is re-spent over what is left.
+    #[test]
+    fn no_purchase_is_split_off_under_the_minimum() {
+        let (us, intl, bond) = (
+            whole(AssetClass::UsStock),
+            whole(AssetClass::IntlStock),
+            whole(AssetClass::UsBond),
+        );
+        // Every class near its target, so a modest payday left to itself
+        // spreads across all three funds in slices of a few hundred dollars.
+        let held = [
+            held(5_000, Some(us.as_slice())),
+            held(3_000, Some(intl.as_slice())),
+            held(1_790, Some(bond.as_slice())),
+        ];
+        let targets = fund::targets(Some(48), BasisPoints(4_000));
+        // Unfolded, $1,500 spreads three ways with a slice under the minimum
+        // -- the case the fold-back exists for.
+        let raw = spend(&held, &[0, 1, 2], 1_500, &[0; 3], targets);
+        assert!(
+            raw.iter().any(|d| *d > 0 && *d < MIN_PURCHASE_DOLLARS),
+            "the fixture never needs folding: {raw:?}"
+        );
+        for dollars in [200, 600, 1_500, 4_000] {
+            let pick = recommend(&held, &[0, 1, 2], Cents::from_dollars(dollars), targets).unwrap();
+            let buys = bought(&pick);
+            assert_eq!(buys.iter().map(|(_, d)| d).sum::<i64>(), dollars);
+            if buys.len() > 1 {
+                assert!(
+                    buys.iter().all(|(_, d)| *d >= MIN_PURCHASE_DOLLARS),
+                    "${dollars} split a slice under the minimum: {buys:?}"
+                );
+            }
+        }
+        let small = recommend(&held, &[0, 1, 2], Cents::from_dollars(200), targets).unwrap();
+        assert_eq!(
+            small.purchases.len(),
+            1,
+            "under the minimum is one purchase"
+        );
+    }
+
+    /// The cents stay behind: every purchase is whole dollars, and together
+    /// they are the line with its cents dropped.
+    #[test]
+    fn the_purchases_are_whole_dollars_and_leave_the_cents() {
+        let (intl, bond) = (whole(AssetClass::IntlStock), whole(AssetClass::UsBond));
+        let held = [
+            held(1_000, Some(intl.as_slice())),
+            held(1_000, Some(bond.as_slice())),
+        ];
+        let targets = fund::targets(Some(48), BasisPoints(4_000));
+        let pick = recommend(&held, &[0, 1], Cents(1_234_567), targets).unwrap();
+        assert_eq!(pick.total(), Cents::from_dollars(12_345));
+        assert!(pick.purchases.iter().all(|p| p.amount.0 % 100 == 0));
+        assert_eq!(recommend(&held, &[0, 1], Cents(99), targets), None);
+    }
+
+    /// The money can only reach the candidates, but it is measured against
+    /// the whole portfolio -- so a bond fund held elsewhere counts toward the
+    /// bond share without being offered.
+    #[test]
+    fn only_a_candidate_is_offered_but_the_whole_portfolio_is_measured() {
+        let (us, intl, bond) = (
+            whole(AssetClass::UsStock),
+            whole(AssetClass::IntlStock),
+            whole(AssetClass::UsBond),
+        );
+        let held = [
+            held(1_000, Some(bond.as_slice())),
+            held(5_000, Some(us.as_slice())),
+            held(3_000, Some(intl.as_slice())),
+        ];
+        let targets = fund::targets(Some(48), BasisPoints(4_000));
+
+        let pick = recommend(&held, &[1, 2], Cents::from_dollars(1_000), targets).unwrap();
+        // $10,000 after, bonds 8 points short either way. Into U.S. stock:
+        // 10.8 over and 2.8 short. Into intl: 0.8 over and 7.2 over -- so
+        // intl, and at $1,000 nothing is worth splitting off to U.S.
+        assert_eq!(bought(&pick), [(2, 1_000)]);
+        assert_eq!(
+            pick.after.slices.iter().map(|s| s.weight.0).sum::<i64>(),
+            10_000
+        );
+    }
+
+    #[test]
+    fn a_candidate_with_no_mix_is_never_recommended() {
+        let (us, bond) = (whole(AssetClass::UsStock), whole(AssetClass::UsBond));
+        let targets = fund::targets(Some(48), BasisPoints(4_000));
+        let unfetched = [held(1_000, None), held(9_000, Some(us.as_slice()))];
+        assert_eq!(
+            recommend(&unfetched, &[0], Cents::from_dollars(500), targets),
+            None
+        );
+        let beside_a_bond = [held(1_000, None), held(9_000, Some(bond.as_slice()))];
+        assert_eq!(
+            recommend(&beside_a_bond, &[0, 1], Cents::from_dollars(500), targets)
+                .map(|r| bought(&r)),
+            Some(vec![(1, 500)])
+        );
+    }
+
+    #[test]
+    fn nothing_to_invest_recommends_nothing() {
+        let us = whole(AssetClass::UsStock);
+        let held = [held(1_000, Some(us.as_slice()))];
+        let targets = fund::targets(Some(48), BasisPoints(4_000));
+        assert_eq!(recommend(&held, &[0], Cents::ZERO, targets), None);
+        assert_eq!(
+            recommend(&held, &[], Cents::from_dollars(100), targets),
+            None
+        );
+    }
+
+    /// With no birth date the rule targets only the two equities, so a bond
+    /// fund's pull toward a bond target that does not exist is not scored.
+    #[test]
+    fn with_no_bond_target_only_the_equities_are_scored() {
+        let (us, intl, bond) = (
+            whole(AssetClass::UsStock),
+            whole(AssetClass::IntlStock),
+            whole(AssetClass::UsBond),
+        );
+        let held = [
+            held(1_000, Some(bond.as_slice())),
+            held(8_000, Some(us.as_slice())),
+            held(1_000, Some(intl.as_slice())),
+        ];
+        let targets = fund::targets(None, BasisPoints(4_000));
+        let pick = recommend(&held, &[0, 1, 2], Cents::from_dollars(1_000), targets).unwrap();
+        assert_eq!(bought(&pick), [(2, 1_000)]);
+        assert_eq!(pick.delta_after(Class::Bonds, targets), None);
+    }
+
+    /// Two identical funds score identically at every dollar, so every dollar
+    /// goes to the earlier candidate rather than being dealt between them.
+    #[test]
+    fn a_tie_goes_to_the_earlier_candidate() {
+        let us = whole(AssetClass::UsStock);
+        let held = [
+            held(1_000, Some(us.as_slice())),
+            held(1_000, Some(us.as_slice())),
+        ];
+        let targets = fund::targets(Some(48), BasisPoints(4_000));
+        let pick = recommend(&held, &[1, 0], Cents::from_dollars(2_000), targets).unwrap();
+        assert_eq!(bought(&pick), [(1, 2_000)]);
+    }
+
+    /// Both equities short, U.S. by far the more: left to the squared gaps
+    /// every dollar would go to U.S. stock and intl would slip as the
+    /// portfolio grew around it. Its target share is reserved instead, so it
+    /// is bought too and its share rises rather than falls.
+    #[test]
+    fn a_class_short_of_its_target_is_bought_its_share_rather_than_left_to_slip() {
+        let (us, intl, bond) = (
+            whole(AssetClass::UsStock),
+            whole(AssetClass::IntlStock),
+            whole(AssetClass::UsBond),
+        );
+        let held = [
+            held(49_000, Some(us.as_slice())),
+            held(35_000, Some(intl.as_slice())),
+            held(16_000, Some(bond.as_slice())),
+        ];
+        // 39: 9% bonds, then 54.6% U.S. and 36.4% intl.
+        let targets = fund::targets(Some(39), BasisPoints(4_000));
+        let before = apportion(&held);
+
+        let pick = recommend(&held, &[0, 1, 2], Cents::from_dollars(4_000), targets).unwrap();
+        // Intl's 36.4% of $4,000 is $1,456, U.S.'s 54.6% is $2,184, and the
+        // $360 left goes where the gap is widest, which is still U.S.
+        assert_eq!(bought(&pick), [(0, 2_544), (1, 1_456)]);
+        for class in [Class::UsStock, Class::IntlStock] {
+            let was = SummaryRow::new(class, &before.slices, targets)
+                .delta
+                .unwrap();
+            let now = pick.delta_after(class, targets).unwrap();
+            assert!(now > was, "{class:?} slipped from {was} to {now}");
+        }
+    }
+
+    /// A reservation under the minimum is not made: at $1,000 intl's share
+    /// is $364, so the whole payday goes where the gap is widest.
+    #[test]
+    fn a_share_under_the_minimum_is_not_reserved() {
+        let (us, intl, bond) = (
+            whole(AssetClass::UsStock),
+            whole(AssetClass::IntlStock),
+            whole(AssetClass::UsBond),
+        );
+        let held = [
+            held(49_000, Some(us.as_slice())),
+            held(35_000, Some(intl.as_slice())),
+            held(16_000, Some(bond.as_slice())),
+        ];
+        let targets = fund::targets(Some(39), BasisPoints(4_000));
+        let pick = recommend(&held, &[0, 1, 2], Cents::from_dollars(1_000), targets).unwrap();
+        assert_eq!(bought(&pick), [(0, 1_000)]);
+    }
+
+    /// A class's share is reserved in the fund holding most of it, and sized
+    /// by how much of that fund the class is: intl lands in the pure intl
+    /// fund rather than the 90/10 fund beside it, and U.S. in the 90/10 fund
+    /// takes a ninth more than its share to deliver it.
+    #[test]
+    fn a_share_is_reserved_in_the_purest_fund_and_sized_to_deliver_it() {
+        let blend = slices(&[(AssetClass::UsStock, 9_000), (AssetClass::IntlStock, 1_000)]);
+        let (intl, bond) = (whole(AssetClass::IntlStock), whole(AssetClass::UsBond));
+        let held = [
+            held(50_000, Some(blend.as_slice())),
+            held(10_000, Some(intl.as_slice())),
+            held(40_000, Some(bond.as_slice())),
+        ];
+        let targets = fund::targets(Some(39), BasisPoints(4_000));
+
+        let reserved = reserve(&held, &[0, 1], 3_000, targets);
+        // U.S. 54.6% of $3,000 is $1,638, which is 90% of $1,820.
+        assert_eq!(reserved, [1_820, 1_092]);
+
+        let pick = recommend(&held, &[0, 1], Cents::from_dollars(3_000), targets).unwrap();
+        let buys = bought(&pick);
+        assert!(
+            buys.iter().any(|(i, d)| *i == 1 && *d >= 1_092),
+            "intl's share left the pure intl fund: {buys:?}"
+        );
+        assert_eq!(buys.iter().map(|(_, d)| d).sum::<i64>(), 3_000);
+    }
+
+    /// A class's dollar shortfall before a purchase and after it, in cents
+    /// times basis points: what [`reserve`] promises not to grow.
+    fn shortfall(
+        held: &[Held<'_>],
+        bought: &[(usize, i64)],
+        class: Class,
+        targets: Targets,
+    ) -> i128 {
+        let mut after = held.to_vec();
+        for (i, dollars) in bought {
+            after[*i].balance += Cents::from_dollars(*dollars);
+        }
+        let covered: i128 = after
+            .iter()
+            .filter(|h| h.mix.is_some())
+            .map(|h| i128::from(h.balance.0))
+            .sum();
+        let owned: i128 = after
+            .iter()
+            .filter_map(|h| {
+                h.mix
+                    .map(|m| i128::from(h.balance.0) * i128::from(class.actual(m).0))
+            })
+            .sum();
+        i128::from(class.target(targets).unwrap().0) * covered - owned
+    }
+
+    /// Reservations that cannot all fit in the payday are not shrunk to fit:
+    /// a shrunk one delivers less than its class's share and so keeps no
+    /// promise. U.S. is furthest short, so it is reserved whole through the
+    /// 60/30/10 fund -- $1,820, to deliver 54.6% of $2,000 -- and intl's $728
+    /// no longer fits beside it, so intl is left to the squared gaps.
+    #[test]
+    fn a_reservation_that_does_not_fit_is_passed_over_rather_than_shrunk() {
+        let blend = slices(&[
+            (AssetClass::UsStock, 6_000),
+            (AssetClass::IntlStock, 3_000),
+            (AssetClass::UsBond, 1_000),
+        ]);
+        let (intl, bond) = (whole(AssetClass::IntlStock), whole(AssetClass::UsBond));
+        let held = [
+            held(50_000, Some(blend.as_slice())),
+            held(5_000, Some(intl.as_slice())),
+            held(45_000, Some(bond.as_slice())),
+        ];
+        let targets = fund::targets(Some(39), BasisPoints(4_000));
+
+        assert_eq!(reserve(&held, &[0, 1], 2_000, targets), [1_820, 0]);
+
+        let pick = recommend(&held, &[0, 1], Cents::from_dollars(2_000), targets).unwrap();
+        let buys = bought(&pick);
+        assert_eq!(pick.total(), Cents::from_dollars(2_000));
+        assert!(
+            shortfall(&held, &buys, Class::UsStock, targets)
+                <= shortfall(&held, &[], Class::UsStock, targets),
+            "the reserved class fell further behind: {buys:?}"
+        );
+    }
+
+    /// A class whose purest fund holds less of it than its target share
+    /// cannot be delivered that share by any part of the payday, so no
+    /// reservation is made for it -- rather than one spending the payday on a
+    /// fund that leaves the class further behind anyway. Here bonds can only
+    /// be had through a fund a tenth bonds, against a target of 18%.
+    #[test]
+    fn a_class_its_purest_fund_cannot_deliver_is_not_reserved() {
+        let target_date = slices(&[
+            (AssetClass::UsStock, 5_400),
+            (AssetClass::IntlStock, 3_600),
+            (AssetClass::UsBond, 1_000),
+        ]);
+        let bond = whole(AssetClass::UsBond);
+        let held = [
+            held(80_000, Some(target_date.as_slice())),
+            held(7_000, Some(bond.as_slice())),
+        ];
+        // 48: 18% bonds, against $15,000 of $87,000 -- 17.2% -- held.
+        let targets = fund::targets(Some(48), BasisPoints(4_000));
+        assert!(shortfall(&held, &[], Class::Bonds, targets) > 0);
+
+        assert_eq!(reserve(&held, &[0], 20_000, targets), [0]);
     }
 }

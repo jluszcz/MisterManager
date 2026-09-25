@@ -195,8 +195,8 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/savings.rs` | A goal's derived columns — `%`, `$/Pay`, expired — and what a container has left unallocated. Read by the Savings screen and by `report`. |
 | `src/plan.rs` | Reads settings and balances out of `db`, feeds `calc::planning::compute`. |
 | `src/fund_label.rs` | What a fund's filed name reads as, in any medium — `seriesName` with its trailing `Fund` dropped and its shouting undone, and the initialisms inside it left alone. A peer of `description.rs`, and for its reason: the Funds screen draws these and the report's holdings table is the obvious second reader. |
-| `src/fund.rs` | Reads the birth date and the international-equity split out of `db`, feeds `calc::fund::targets`. |
-| `src/allocation.rs` | The look-through: each holding's balance apportioned by its fund's composition and summed by asset class, against what the age rule asks for. A peer of `overview`, `savings` and `plan_rows`, in neither medium — the Funds screen and the report's Funds tab both read it, so the apportioning, the row order, the four-class bar's classes and the combining of the two bond classes are stated once here. It is a share of what it *covers*: a holding whose fund has no composition on record is outside the denominator, and `Allocation::coverage` is what says so. |
+| `src/fund.rs` | Reads the birth date and the international-equity split out of `db`, feeds `calc::fund::targets`; and `investment`, the account the Planning `Investment` line buys into beside what the waterfall puts on that line. |
+| `src/allocation.rs` | The look-through: each holding's balance apportioned by its fund's composition and summed by asset class, against what the age rule asks for. A peer of `overview`, `savings` and `plan_rows`, in neither medium — the Funds screen and the report's Funds tab both read it, so the apportioning, the row order, the four-class bar's classes and the combining of the two bond classes are stated once here. It is a share of what it *covers*: a holding whose fund has no composition on record is outside the denominator, and `Allocation::coverage` is what says so. `recommend` is the one place the Planning `Investment` line is matched to funds. |
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. `spread_asks` prices the plug's set, and `unmet_asks` says when the plug falls short of it. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
@@ -466,6 +466,17 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   column be narrow: the words that do the dropping are the fund families the owner holds, which
   are brokerages, and no institution they hold may be named here. The screen is sized for the
   whole name instead.
+- **The `Investment` line is split across the chosen account's funds, judged against the whole
+  portfolio.** `allocation::recommend` is the one place the split is made, and where how it is
+  scored, what it reserves first and why no slice falls under `MIN_PURCHASE_DOLLARS` are argued.
+  It is drawn on the Funds screen and deliberately not on the report's Funds tab: the report is
+  read, not acted on, and the recommendation exists for the moment a payday's transfers are made.
+  Which account is chosen is `key::INVESTMENT_ACCOUNT`, set as the investment account's `Default`
+  on the Accounts screen — not `Line::Investment`'s destination key, which names the *cash*
+  account the money lands in, or nothing when it leaves as a withdrawal. Like
+  `default_source::Source`, nothing is spent on the answer, so a stale id reads as unset, and
+  `mm import` carries the key across a `--replace` beside those two. The amount is quoted at the
+  ad-hoc date for the reason `plan::compute_from_db` takes it, so a scrub moves it.
 - **A fund with no `fund_mix` row has never been fetched, which is not the same as holding
   nothing.** `tui::fund::Row::stock_percent` and `Row::as_of` are `Option` for that reason, and
   both sinks draw their own "nothing here" rather than a zero — a fund genuinely reported to hold

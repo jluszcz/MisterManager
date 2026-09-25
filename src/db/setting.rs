@@ -266,6 +266,7 @@ fn set_raw(db: &Db, key: &str, value: &str) -> Result<()> {
 /// belong to `plan_line::Line`. See `src/plan_line.rs`.
 pub mod key {
     use super::Key;
+    use crate::db::AccountId;
     use crate::money::Cents;
     use crate::rate::{BasisPoints, Percent};
     use chrono::NaiveDate;
@@ -288,6 +289,15 @@ pub mod key {
     /// which is the reason only `Constants!G2` is imported for the pay
     /// cadence. Domestic is what is left.
     pub const INTL_EQUITY_SHARE: Key<BasisPoints> = Key::new("allocation.intl_equity_share");
+    /// The investment account the Planning waterfall's `Investment` line is
+    /// bought into, which is what the Funds screen recommends a fund from.
+    ///
+    /// Not the line's own destination key: that names the *cash* account
+    /// the money lands in, or nothing when it leaves as a withdrawal, and
+    /// the brokerage it is spent in afterwards is a second fact. Nothing is
+    /// spent on the answer, so a stale id reads as unset rather than as a
+    /// corrupt database -- `default_source::Source`'s stance, for its reason.
+    pub const INVESTMENT_ACCOUNT: Key<AccountId> = Key::new("allocation.investment_account_id");
 
     /// `Planning!D1`.
     pub const PLANNING_TARGET: Key<Cents> = Key::new("planning.target");

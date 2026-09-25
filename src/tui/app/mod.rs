@@ -632,8 +632,10 @@ impl App {
         };
         // The Overview is not the only screen quoting a balance at this date:
         // Planning's `Excess (Actual)` is the checking balance there, and the
-        // payday `t` writes is computed from it.
-        self.reload_planning()
+        // payday `t` writes is computed from it -- and the Funds screen's
+        // recommendation spends that payday's `Investment` line.
+        self.reload_planning()?;
+        self.reload_investment()
     }
 
     fn dates(&self) -> Dates {

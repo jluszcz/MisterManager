@@ -169,11 +169,23 @@ impl App {
         self.reload()
     }
 
+    /// Re-read the `Investment` line the recommendation spends, and nothing
+    /// else -- what a scrub moves on this screen.
+    ///
+    /// At the scrubbed date, the one the Planning screen's `Investment` row is
+    /// quoted at: the recommendation spends that figure.
+    pub(super) fn reload_investment(&mut self) -> Result<()> {
+        self.funds
+            .set_investment(crate::fund::investment(&self.db, self.adhoc)?);
+        Ok(())
+    }
+
     pub(super) fn reload_funds(&mut self) -> Result<()> {
         let accounts = account::list_by_kind(&self.db, Kind::Investment)?;
         self.funds.set_accounts(accounts.clone());
         self.funds
             .set_targets(crate::fund::targets_from_db(&self.db, self.today)?);
+        self.reload_investment()?;
 
         let holdings = holding::list(&self.db)?;
         let mut mixes: HashMap<String, fund_mix::Mix> = HashMap::new();
@@ -866,5 +878,137 @@ mod tests {
             "a missing birth date drew a zero bond target"
         );
         assert_eq!(bonds.delta, None);
+    }
+
+    /// `planning_app`'s resolvable waterfall, with a portfolio short of
+    /// bonds beside it and the taxable account chosen as the one the
+    /// `Investment` line buys into -- so the bond fund there is the answer.
+    fn app_recommending() -> super::App {
+        use crate::db::account::{self, Kind, TaxTreatment};
+        use crate::db::holding;
+        use chrono::Datelike;
+
+        let mut app = test_support::planning_app();
+        let slice = |class, weight| Slice {
+            class,
+            weight: BasisPoints(weight),
+        };
+        let brokerage = account::insert(
+            &app.db,
+            "BRK",
+            "Holdings",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::Taxable),
+        )
+        .unwrap();
+        let retirement = account::insert(
+            &app.db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            1,
+            Some(TaxTreatment::TaxFree),
+        )
+        .unwrap();
+        holding::insert(&app.db, brokerage, "USM", Cents::from_dollars(10_000)).unwrap();
+        holding::insert(&app.db, brokerage, "USB", Cents::from_dollars(1_000)).unwrap();
+        holding::insert(&app.db, retirement, "ISM", Cents::from_dollars(6_000)).unwrap();
+        let filed = day(2026, 6, 30);
+        for (ticker, class) in [
+            ("USM", AssetClass::UsStock),
+            ("USB", AssetClass::UsBond),
+            ("ISM", AssetClass::IntlStock),
+        ] {
+            fund_mix::set_for_ticker(&app.db, ticker, filed, None, &[slice(class, 10_000)])
+                .unwrap();
+        }
+        let birth = test_support::today()
+            .with_year(test_support::today().year() - 48)
+            .unwrap();
+        setting::set(&app.db, key::BIRTH_DATE, birth).unwrap();
+        setting::set(&app.db, key::INVESTMENT_ACCOUNT, brokerage).unwrap();
+        app.reload().unwrap();
+        app
+    }
+
+    /// The figure is the Planning screen's own `Investment` line, and the
+    /// fund is the one in the chosen account that closes the bond gap.
+    #[test]
+    fn the_investment_line_is_recommended_into_the_fund_that_closes_the_biggest_gap() {
+        let mut app = app_recommending();
+        let settings = crate::plan::settings_from_db(&app.db).unwrap();
+        let plan = crate::plan::compute_from_db(&app.db, &settings, app.adhoc).unwrap();
+        assert!(
+            plan.lines.investment > Cents::ZERO,
+            "the fixture's plan invests nothing"
+        );
+
+        let (purchases, recommendation) = app.funds.recommendation().expect("a recommendation");
+        let tickers: Vec<&str> = purchases
+            .iter()
+            .map(|(row, _)| row.ticker.as_str())
+            .collect();
+        // `USM` is the only other fund the chosen account holds, and U.S.
+        // stock is already over, so nothing is worth splitting off to it.
+        assert_eq!(tickers, ["USB"]);
+        assert_eq!(
+            recommendation.total(),
+            plan.lines.investment.trunc_to_dollar()
+        );
+
+        test_support::press(&mut app, KeyCode::Char('6'));
+        let screen = test_support::drawn(&mut app);
+        assert!(
+            screen.contains(&format!(
+                "invest ${} in USB",
+                plan.lines.investment.to_whole_dollars()
+            )),
+            "{screen}"
+        );
+        assert!(screen.contains("After"), "{screen}");
+    }
+
+    /// Nothing chosen is the state every database starts in, and a key naming
+    /// an account that has gone reads the same way: nothing is spent on the
+    /// answer, so there is nothing to refuse.
+    #[test]
+    fn with_no_investment_account_chosen_nothing_is_recommended() {
+        let mut app = app_recommending();
+        setting::clear(&app.db, key::INVESTMENT_ACCOUNT).unwrap();
+        app.reload().unwrap();
+        assert!(app.funds.recommendation().is_none());
+
+        test_support::press(&mut app, KeyCode::Char('6'));
+        let screen = test_support::drawn(&mut app);
+        assert!(!screen.contains("After"), "{screen}");
+        assert!(!screen.contains("invest $"), "{screen}");
+
+        setting::set(
+            &app.db,
+            key::INVESTMENT_ACCOUNT,
+            crate::db::AccountId(9_999),
+        )
+        .unwrap();
+        app.reload().unwrap();
+        assert!(app.funds.recommendation().is_none());
+    }
+
+    /// The purchase is judged against the whole portfolio, so beside one
+    /// account's summary its `After` would be measured on another
+    /// denominator than the `Δ` next to it.
+    #[test]
+    fn narrowing_the_summary_to_one_account_withdraws_the_recommendation() {
+        let mut app = app_recommending();
+        test_support::press(&mut app, KeyCode::Char('6'));
+        assert!(app.funds.recommendation().is_some());
+
+        test_support::press(&mut app, KeyCode::Tab);
+        assert!(app.funds.recommendation().is_none());
+        let screen = test_support::drawn(&mut app);
+        assert!(!screen.contains("After"), "{screen}");
+
+        test_support::press(&mut app, KeyCode::Esc);
+        assert!(app.funds.recommendation().is_some());
     }
 }
