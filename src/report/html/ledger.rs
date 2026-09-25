@@ -6,9 +6,10 @@
 //! "the option that is chosen", so a `<select>` here would render and do
 //! nothing. Radios are the only control CSS can read.
 
-use super::{account, escape, full_width_row, money};
+use super::{account, escape, full_width_row, money_in};
 use crate::db::account::Kind;
 use crate::description;
+use crate::palette::Sense;
 use crate::report::{Ledger, LedgerMonth};
 
 /// Date, Account, Description, Amount -- the ledger screen's own columns, in
@@ -44,6 +45,7 @@ fn month_id(kind: Kind, key: &str) -> String {
 /// rather than read, so it keeps its word whole and the panel scrolls under a
 /// name long enough to need it.
 fn month(kind: Kind, m: &LedgerMonth) -> String {
+    let sense = Sense::of_ledger(kind);
     let rows: String = m
         .rows
         .iter()
@@ -56,7 +58,7 @@ fn month(kind: Kind, m: &LedgerMonth) -> String {
                 r.date,
                 account(&r.account),
                 escape(&description::render(&r.description)),
-                money(r.cents.to_string(), r.cents),
+                money_in(sense, r.cents.to_string(), r.cents),
             )
         })
         .collect();
@@ -152,35 +154,54 @@ mod tests {
         panel(&page(snapshot), "cash").to_string()
     }
 
-    /// The Credit ledger's screen draws a figure below zero green -- the card
-    /// paid down -- and the page deliberately does not follow. `html::money`
-    /// is where that is argued; this is what would fail if someone acted on
-    /// the remedy it names, since nothing else on the page would.
+    /// The Credit tab reads its signs the way the Credit screen does: a
+    /// figure below zero is the card paid down, and draws green rather than
+    /// the red the Cash tab spends on the same sign.
     #[test]
-    fn a_negative_credit_figure_stays_red_on_the_page() {
+    fn a_negative_figure_is_green_on_the_credit_tab_and_red_on_the_cash_tab() {
+        use crate::money::Cents;
         use crate::palette;
 
         let snapshot = snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000);
-        let credit = panel(&page(&snapshot), "credit").to_string();
-        let negative = snapshot
+        let page = page(&snapshot);
+        for (tab, ledger, rgb) in [
+            ("credit", &snapshot.credit, palette::POSITIVE),
+            ("cash", &snapshot.cash, palette::NEGATIVE),
+        ] {
+            let drawn = panel(&page, tab);
+            let negative = ledger
+                .months
+                .iter()
+                .flat_map(|m| &m.rows)
+                .find(|r| r.cents < Cents::ZERO)
+                .unwrap_or_else(|| panic!("the {tab} fixture carries a row below zero"));
+            let cell = format!(
+                "<td class=\"n\" style=\"color:{}\">{}</td>",
+                palette::hex(rgb),
+                negative.cents
+            );
+            assert!(drawn.contains(&cell), "{tab} does not draw {cell}");
+        }
+    }
+
+    /// A charge is the ordinary case on a card, so it stays uncolored -- the
+    /// rule every naturally signed column keeps for money coming in.
+    #[test]
+    fn a_charge_on_the_credit_tab_takes_no_color() {
+        let snapshot = snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000);
+        let page = page(&snapshot);
+        let credit = panel(&page, "credit");
+        let charge = snapshot
             .credit
             .months
             .iter()
             .flat_map(|m| &m.rows)
-            .find(|r| r.cents < crate::money::Cents::ZERO)
-            .expect("the credit fixture carries a row below zero");
-        let cell = super::money(negative.cents.to_string(), negative.cents);
-        assert!(
-            cell.contains(&palette::hex(palette::NEGATIVE)),
-            "a credit figure below zero is drawn {cell}"
-        );
+            .find(|r| r.cents > crate::money::Cents::ZERO)
+            .expect("the credit fixture carries a charge");
+        let cell = format!("<td class=\"n\">{}</td>", charge.cents);
         assert!(
             credit.contains(&cell),
-            "that cell is not on the page: {cell}"
-        );
-        assert!(
-            !credit.contains(&palette::hex((70, 170, 70))),
-            "the page has taken the screen's green"
+            "a charge is not drawn plain: {cell}"
         );
     }
 

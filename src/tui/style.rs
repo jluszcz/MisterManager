@@ -15,9 +15,10 @@
 //! 24-bit-color terminal.
 //!
 //! What those shades *are* is `crate::palette`'s to say wherever a color is
-//! drawn in more than one medium -- the account tints, the negative red, and
-//! the funding ramp all reach a screen through a wrapper here, so the report
-//! cannot come to a second opinion about what half funded looks like. What is
+//! drawn in more than one medium -- the account tints, the negative red, the
+//! positive green and which side of zero wears each, and the funding ramp all
+//! reach a screen through a wrapper here, so the report cannot come to a
+//! second opinion about what half funded looks like. What is
 //! chosen in this file is what nothing outside a terminal draws: the warning
 //! amber, the favorite band and the foreground it has to bring with it, and,
 //! for all of them, which value wears which color.
@@ -40,7 +41,12 @@ use ratatui::style::Style;
 /// down to a variant before either sink sees it, so the ratatui sink starts
 /// from a resolved [`AccountColor`] rather than from an id and an `Option`.
 pub fn palette(color: AccountColor) -> Color {
-    let (r, g, b) = crate::palette::account(color);
+    rgb(crate::palette::account(color))
+}
+
+/// A [`crate::palette`] triple as a terminal color -- the one conversion
+/// every wrapper here makes.
+const fn rgb((r, g, b): crate::palette::Rgb) -> Color {
     Color::Rgb(r, g, b)
 }
 
@@ -50,21 +56,11 @@ pub fn palette(color: AccountColor) -> Color {
 /// count, or a gate's verdict -- so it carries a `negative` flag rather than
 /// the `Cents` [`amount_color`] would need. It reads the same constant, so
 /// there is still one decision here about what a negative figure looks like.
-pub const NEGATIVE: Color = Color::Rgb(
-    crate::palette::NEGATIVE.0,
-    crate::palette::NEGATIVE.1,
-    crate::palette::NEGATIVE.2,
-);
+pub const NEGATIVE: Color = rgb(crate::palette::NEGATIVE);
 
-/// A figure the good news lands on: the ledgers' reconciliation delta on the
-/// side of it the owner wants, and a Credit row paying the card down.
-///
-/// Deliberately not the counterpart of [`NEGATIVE`] on every screen -- a
-/// figure on the ordinary side of zero takes no color at all, whichever side
-/// that is, which is what keeps a green one meaning something. On the Credit
-/// ledger the ordinary side is the charge, so green stays the minority of the
-/// column there exactly as it is everywhere else.
-pub const POSITIVE: Color = Color::Rgb(70, 170, 70);
+/// A figure the good news lands on -- see [`crate::palette::POSITIVE`],
+/// which the report's Credit tab reads too.
+pub const POSITIVE: Color = rgb(crate::palette::POSITIVE);
 
 /// Something the owner probably meant to configure and has not.
 ///
@@ -133,31 +129,12 @@ pub fn tone_color(tone: Tone) -> Option<Color> {
     }
 }
 
-/// Which way a column's sign runs, and so which side of zero is the loss.
+/// Which way a column's sign runs -- [`crate::palette::Sense`], re-exported
+/// because every screen that passes one reaches it through here.
 ///
-/// Cash rows are signed naturally and credit rows are signed as debt, so the
-/// *same* figure means opposite things on the two ledgers: `-42.00` is money
-/// gone from a checking account and a card paid down by forty-two dollars.
-/// Every other column in the app is natural, which is why [`amount_color`]
-/// keeps its one-argument spelling and this is the parameter the Credit
-/// ledger passes.
-///
-/// A type of its own rather than [`crate::db::account::Kind`], which already
-/// tells cash from credit: its third variant has no ledger and no column, so
-/// matching on it here would be an arm about investments that says something
-/// about a sign.
-///
-/// **No `Default`.** An unstated sense meaning `Natural` is exactly the
-/// silence [`crate::tui::ledger::Ledger::sense`] spells its `Kind` arms out
-/// to avoid: a column added later would take a sign nobody chose for it, with
-/// nothing failing to compile. Every construction here names a variant.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Sense {
-    /// Positive is money held. Every column but the Credit ledger's.
-    Natural,
-    /// Positive is money owed. The Credit ledger, which renders as stored.
-    Debt,
-}
+/// Every column but the Credit ledger's is natural, which is why
+/// [`amount_color`] keeps its one-argument spelling.
+pub use crate::palette::Sense;
 
 /// The color for an amount in a naturally signed column, or `None` to leave
 /// the surrounding style alone.
@@ -172,15 +149,11 @@ pub fn amount_color(cents: Cents) -> Option<Color> {
 /// The same decision made in whichever [`Sense`] the column runs.
 ///
 /// One function rather than a twin per sense, for [`crate::reading::Reading`]'s
-/// reason: the two differ in nothing but the thing they name, and a second
-/// function would be a second place for "the ordinary side takes no color" to
-/// be written down.
+/// reason: the two differ in nothing but the thing they name. The decision
+/// itself is [`crate::palette::amount`]'s, because the report's Credit tab
+/// draws the same column and must not come to a second opinion about it.
 pub fn amount_color_of(sense: Sense, cents: Cents) -> Option<Color> {
-    let below = match sense {
-        Sense::Natural => NEGATIVE,
-        Sense::Debt => POSITIVE,
-    };
-    (cents < Cents::ZERO).then_some(below)
+    crate::palette::amount(sense, cents).map(rgb)
 }
 
 /// The color for a reconciliation delta, in whichever [`Sense`] the column
@@ -228,8 +201,7 @@ pub fn account_color(id: AccountId, chosen: Option<AccountColor>) -> Color {
 /// [`crate::palette::account`]: which color a class takes is a fact about the
 /// portfolio's vocabulary rather than about a terminal.
 pub fn class(class: crate::allocation::Class) -> Color {
-    let (r, g, b) = crate::palette::CLASSES[class.index()];
-    Color::Rgb(r, g, b)
+    rgb(crate::palette::CLASSES[class.index()])
 }
 
 /// The ink a figure drawn *on* one class's color takes.
@@ -239,8 +211,7 @@ pub fn class(class: crate::allocation::Class) -> Color {
 /// which is the only place in the app where text sits on a filled block that
 /// is not the cursor row's own reversal.
 pub fn on_class(class: crate::allocation::Class) -> Color {
-    let (r, g, b) = crate::palette::on(crate::palette::CLASSES[class.index()]);
-    Color::Rgb(r, g, b)
+    rgb(crate::palette::on(crate::palette::CLASSES[class.index()]))
 }
 
 /// The color a shortfall is spelled in, wherever one is drawn as a figure
@@ -260,8 +231,7 @@ pub fn negative() -> Color {
 /// ramp rather than about a terminal, and the report's Savings tab colors its
 /// own `%` column off the same three.
 pub fn percent_color(percent: Percent) -> Color {
-    let (r, g, b) = crate::palette::percent(percent);
-    Color::Rgb(r, g, b)
+    rgb(crate::palette::percent(percent))
 }
 
 #[cfg(test)]

@@ -31,7 +31,7 @@ use crate::palette;
 /// simply not be there.
 ///
 /// Escapes `&`, `<`, `>` and `"`, never `'`: the page's only double-quoted
-/// attributes carrying interpolated data are `money`'s, `account`'s and
+/// attributes carrying interpolated data are `money_in`'s, `account`'s and
 /// `savings::percent`'s `style="color:{hex}"`, and the hex always comes from
 /// `palette::hex` over an enum-derived triple or the funding ramp's clamped
 /// interpolation -- never owner text. A call site that puts escaped text
@@ -51,24 +51,20 @@ fn escape(text: &str) -> String {
     out
 }
 
-/// A money cell. Below zero is the one thing that colors a figure, and it is
-/// the decision `tui::style::amount_color` makes in its natural sense.
-///
-/// **The Credit ledger's tab is deliberately not the exception the screen
-/// is.** There a figure below zero is the card paid down, and
-/// `style::Sense::Debt` draws it green; here every ledger reads alike,
-/// because the page is read offline on a phone -- one column at a time, with
-/// no `Kind` in the reader's head and no second Amount column beside it to
-/// read the convention off. Following the screen means moving
-/// `tui::style::POSITIVE` down into `palette`, which is where the two mediums
-/// already meet, and is a change to make deliberately rather than to tidy
-/// into: `ledger::tests::a_negative_credit_figure_stays_red_on_the_page` is
-/// what says so out loud.
+/// A money cell in a naturally signed column -- every one on the page but
+/// the Credit tab's Amount.
 fn money(text: String, cents: Cents) -> String {
-    let color = if cents < Cents::ZERO {
-        format!(" style=\"color:{}\"", palette::hex(palette::NEGATIVE))
-    } else {
-        String::new()
+    money_in(palette::Sense::Natural, text, cents)
+}
+
+/// A money cell in whichever [`palette::Sense`] the column runs. Below zero
+/// is the one thing that colors a figure, and [`palette::amount`] is the
+/// decision -- the same one `tui::style::amount_color_of` reads, so a card
+/// paid down is green on the Credit tab exactly as it is on the screen.
+fn money_in(sense: palette::Sense, text: String, cents: Cents) -> String {
+    let color = match palette::amount(sense, cents) {
+        Some(rgb) => format!(" style=\"color:{}\"", palette::hex(rgb)),
+        None => String::new(),
     };
     format!("<td class=\"n\"{color}>{}</td>", escape(&text))
 }

@@ -316,17 +316,10 @@ impl Ledger {
     /// Cash rows are signed naturally and credit rows as debt, which is the
     /// whole of the difference between the two screens -- so the one thing
     /// that difference is allowed to reach is the color a figure takes.
-    ///
-    /// Investment accounts have no ledger, so the arm naming one never runs.
-    /// It is spelled out rather than left to a `_`, which would send a `Kind`
-    /// added later to `Natural` with nothing failing to compile -- the same
-    /// thing `text_enum!` exists to stop a variant doing to the lists it
-    /// generates.
+    /// [`crate::palette::Sense::of_ledger`] is the mapping, which the
+    /// report's two ledger tabs read too.
     fn sense(&self) -> super::style::Sense {
-        match self.kind {
-            Kind::Credit => super::style::Sense::Debt,
-            Kind::Cash | Kind::Investment => super::style::Sense::Natural,
-        }
+        super::style::Sense::of_ledger(self.kind)
     }
 
     /// What the filtered account's balance is being reconciled against, or
