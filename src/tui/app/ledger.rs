@@ -200,13 +200,20 @@ impl App {
     }
 
     /// Opens on [`App::entry_date`], for the reason [`App::open_transfer`]
-    /// gives.
+    /// gives, and on the Credit ledger pays the card it is filtered to, for
+    /// the reason [`App::open_add`] opens on it. The Cash ledger's filter
+    /// names a cash account, which is no card to pay.
     fn open_payment(&mut self) -> Result<()> {
         let accounts = account::list_ledger(&self.db)?;
+        let card = match self.screen {
+            Screen::Credit => self.ledger().selected_account(),
+            _ => None,
+        };
         self.modal = Some(Modal::Transfer(TransferForm::payment(
             accounts,
             self.entry_field(),
             setting::get(&self.db, Source::Payment.key())?,
+            card,
         )?));
         Ok(())
     }
@@ -741,6 +748,30 @@ mod tests {
         press(&mut app, KeyCode::Char('p'));
 
         assert_eq!(opens_on(&app).0, cash[0].id);
+    }
+
+    /// `p` on a Credit ledger filtered to one card pays that card, for the
+    /// reason `a` there opens on it.
+    #[test]
+    fn p_on_an_account_filtered_credit_ledger_pays_that_card() {
+        let mut app = app();
+        let cards = account::list_by_kind(&app.db, Kind::Credit).unwrap();
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.credit.selected_account(), Some(cards[1].id));
+
+        press(&mut app, KeyCode::Char('p'));
+        assert_eq!(opens_on(&app).1, cards[1].id);
+    }
+
+    #[test]
+    fn p_on_an_unfiltered_credit_ledger_opens_on_the_first_card() {
+        let mut app = app();
+        let first = account::list_by_kind(&app.db, Kind::Credit).unwrap()[0].id;
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('p'));
+        assert_eq!(opens_on(&app).1, first);
     }
 
     /// One account may answer for both, which is what two independent keys
