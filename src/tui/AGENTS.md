@@ -688,6 +688,10 @@ deferred to nothing.
     form on a transfer from an account to itself — the one pair `TransferForm::commit` refuses. `p`
     needs no such step: its two lists are disjoint by kind, so no card it opens on can be the cash
     account paying it.
+  - **`p` on the Credit ledger opens its `To` on the card the ledger is filtered to**, for the
+    reason `a` opens on it: a payment misfiled to the head of the list is a plausible slip in exactly
+    the workflow `Tab` exists for. The Cash ledger's filter names a cash account and reaches neither
+    selector.
   - **An unset key and one naming an account that is gone are the same state**: `opening_index`
     falls back to the head of the list. This is a prefill rather than a resolution — nothing is
     spent on the answer, and the owner can see which account the selector landed on before pressing
