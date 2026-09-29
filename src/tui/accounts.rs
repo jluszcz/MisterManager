@@ -131,17 +131,15 @@ impl Accounts {
         self.rows.get(self.cursor.index())
     }
 
-    /// Where the selected account sits among the accounts of its own kind,
-    /// and how many there are -- what the form's `Order` selector cycles.
+    /// Put the cursor on `id`, wherever a reorder has just moved it.
     ///
-    /// Derived from the rows the screen already holds rather than re-queried:
-    /// `set_rows` takes `account::list` order, which is `kind, sort, code`,
-    /// so the accounts of one kind are contiguous and in position order.
-    pub fn position_of(&self, id: AccountId) -> Option<(usize, usize)> {
-        let row = self.rows.iter().find(|r| r.account.id() == id)?;
-        let of_kind: Vec<&Row> = self.rows.iter().filter(|r| r.kind == row.kind).collect();
-        let position = of_kind.iter().position(|r| r.account.id() == id)?;
-        Some((position, of_kind.len()))
+    /// By id and not by index, for `Savings::select_goal`'s reason: the rows
+    /// moved under the cursor, so the index it held would leave the selection
+    /// on whichever account took the vacated place.
+    pub fn select_account(&mut self, id: AccountId) {
+        if let Some(index) = self.rows.iter().position(|r| r.account.id() == id) {
+            self.cursor.select(index);
+        }
     }
 
     pub fn title(&self) -> String {
@@ -174,7 +172,6 @@ pub enum AccountField {
     Name,
     Color,
     Band,
-    Order,
     Interest,
     Savings,
     /// Which money forms open their `From` on this account -- or, on an
@@ -192,7 +189,6 @@ impl AccountField {
             AccountField::Name => "Name",
             AccountField::Color => "Color",
             AccountField::Band => "Band",
-            AccountField::Order => "Order",
             AccountField::Interest => "Interest",
             AccountField::Savings => "Savings",
             AccountField::Default => "Default",
@@ -287,8 +283,6 @@ pub struct AccountEdit {
     /// The color the name draws in, or `None` for the one its id derives.
     pub color: Option<AccountColor>,
     pub group: Group,
-    /// Where among the accounts of this kind it should sit.
-    pub position: usize,
     pub policy: InterestPolicy,
     /// Which `Savings` block this account holds, if either. `None` also
     /// *clears* a block this account used to hold -- the field has one value,
@@ -316,7 +310,7 @@ pub struct AccountEdit {
 ///
 /// The code and the kind are the whole of it beyond a name, because they are
 /// the two an account cannot be given later -- everything else on this screen
-/// is a *placement*, and `e` is where an account is placed.
+/// is a *placement*, made on this screen once the row exists.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewAccount {
     pub code: String,
@@ -335,11 +329,13 @@ pub struct NewAccount {
 /// accident. `a` asks the two things an account cannot be given afterwards --
 /// the code and the kind, which are what `account::by_code` matches the next
 /// import against, so editing either would orphan the row from the sheet that
-/// produced it. `e` asks the seven the workbook does not carry, none of which
-/// a new account needs before it exists.
+/// produced it. `e` asks the six the workbook does not carry, none of which
+/// a new account needs before it exists. Its place among its kind is not one
+/// of them: that is `Shift`+`↑`/`↓` on the list, the key Savings moves a goal
+/// with.
 ///
 /// All but the name and the code are selectors rather than text, so a band
-/// the schema's `CHECK` would refuse, a position off the end, a policy that is
+/// the schema's `CHECK` would refuse, a policy that is
 /// not a policy, a kind that is not a kind, and an account claiming both
 /// `Savings` blocks at once are all unrepresentable. Which fields an *edit*
 /// shows depends on the kind: credit does not split into bands, so there is
@@ -366,9 +362,6 @@ pub struct AccountForm {
     name: Field,
     color: usize,
     band: usize,
-    position: usize,
-    /// How many accounts of this kind there are, which bounds `position`.
-    of_kind: usize,
     policy: usize,
     block: usize,
     defaults: usize,
@@ -394,14 +387,12 @@ impl AccountForm {
             // read only while the kind selector is on `Investment`.
             tax_treatment: 0,
             name: Field::default(),
-            // None of the seven is on an add form. They are what `e` asks,
+            // None of the six is on an add form. They are what `e` asks,
             // and an account takes its kind's defaults until it is asked: the
-            // default band, no color, appended last, `NULL` interest policy,
+            // default band, no color, `NULL` interest policy,
             // no `Savings` block, and neither form's default source.
             color: 0,
             band: 0,
-            position: 0,
-            of_kind: 1,
             policy: 0,
             block: 0,
             defaults: 0,
@@ -409,12 +400,9 @@ impl AccountForm {
         }
     }
 
-    /// `position` and `of_kind` come from [`Accounts::position_of`].
     pub fn edit(
         account: &Account,
         policy: InterestPolicy,
-        position: usize,
-        of_kind: usize,
         block: Option<SavingsBlock>,
         defaults: &[Source],
         invests: bool,
@@ -427,7 +415,7 @@ impl AccountForm {
             // `a` is where it is said. Reading it here to fill a field nobody
             // sees would be an account's text taken as a bare string, which
             // is how one reaches a screen with no color on it. The *kind* is
-            // still read, because it decides which of the seven fields below
+            // still read, because it decides which of the six fields below
             // are worth asking about.
             code: Field::default(),
             kind: Kind::ALL
@@ -466,8 +454,6 @@ impl AccountForm {
                 .iter()
                 .position(|g| *g == account.group)
                 .unwrap_or(0),
-            position,
-            of_kind: of_kind.max(1),
             policy: InterestPolicy::ALL
                 .iter()
                 .position(|p| *p == policy)
@@ -540,7 +526,6 @@ impl AccountForm {
         if Group::bands(self.kind()).len() > 1 {
             fields.push(AccountField::Band);
         }
-        fields.push(AccountField::Order);
         if self.shows_tax_treatment() {
             fields.push(AccountField::TaxTreatment);
             // The investment account's own default: whether the Planning
@@ -578,8 +563,6 @@ impl AccountForm {
                 Some(color) => color.label().to_string(),
             },
             AccountField::Band => Group::bands(self.kind())[self.band].label().to_string(),
-            // One-based, because it is a place in a list rather than an index.
-            AccountField::Order => format!("{} of {}", self.position + 1, self.of_kind),
             AccountField::Interest => InterestPolicy::ALL[self.policy].label().to_string(),
             AccountField::Savings => match savings_choices()[self.block] {
                 None => "—".to_string(),
@@ -637,7 +620,6 @@ impl AccountForm {
             name,
             color: color_choices()[self.color],
             group: Group::bands(self.kind())[self.band],
-            position: self.position,
             policy: InterestPolicy::ALL[self.policy],
             block: savings_choices()[self.block],
             defaults: default_choices()[self.defaults].clone(),
@@ -669,7 +651,6 @@ impl FormFields for AccountForm {
             | AccountField::TaxTreatment
             | AccountField::Color
             | AccountField::Band
-            | AccountField::Order
             | AccountField::Interest
             | AccountField::Savings
             | AccountField::Default => Focused::Selector,
@@ -692,9 +673,6 @@ impl AccountForm {
             }
             AccountField::Band => {
                 self.band = step_index(self.band, Group::bands(self.kind()).len(), step);
-            }
-            AccountField::Order => {
-                self.position = step_index(self.position, self.of_kind, step);
             }
             AccountField::Interest => {
                 self.policy = step_index(self.policy, InterestPolicy::ALL.len(), step);
@@ -876,9 +854,7 @@ mod tests {
         }
     }
 
-    /// `account::list` order: kind, then sort, then code -- so the cash
-    /// accounts are contiguous and in position order, which is what
-    /// `position_of` reads.
+    /// `account::list` order: kind, then sort, then code.
     fn screen() -> Accounts {
         let mut accounts = Accounts::new();
         accounts.set_rows(vec![
@@ -904,18 +880,6 @@ mod tests {
         }
     }
 
-    /// A position is a place among the accounts of one *kind*: the cash
-    /// accounts count from zero and so do the cards, because `sort` is a
-    /// per-kind column and the Overview bands are applied on top of it.
-    #[test]
-    fn a_position_counts_from_zero_within_its_own_kind() {
-        let accounts = screen();
-        assert_eq!(accounts.position_of(AccountId(1)), Some((0, 3)));
-        assert_eq!(accounts.position_of(AccountId(3)), Some((2, 3)));
-        assert_eq!(accounts.position_of(AccountId(5)), Some((1, 2)));
-        assert_eq!(accounts.position_of(AccountId(99)), None);
-    }
-
     /// Credit does not split into bands, so there is nothing for a band
     /// selector to cycle -- and only a cash account holds the goals an
     /// interest posting is divided among, fills a `Savings` block, or can be
@@ -925,8 +889,6 @@ mod tests {
         let cash = AccountForm::edit(
             &account(1, "Everyday", Kind::Cash, Group::Checking),
             InterestPolicy::Manual,
-            0,
-            3,
             None,
             &[],
             false,
@@ -937,7 +899,6 @@ mod tests {
                 AccountField::Name,
                 AccountField::Color,
                 AccountField::Band,
-                AccountField::Order,
                 AccountField::Interest,
                 AccountField::Savings,
                 AccountField::Default
@@ -947,16 +908,11 @@ mod tests {
         let card = AccountForm::edit(
             &account(4, "Card One", Kind::Credit, Group::Credit),
             InterestPolicy::Manual,
-            0,
-            2,
             None,
             &[],
             false,
         );
-        assert_eq!(
-            card.fields(),
-            vec![AccountField::Name, AccountField::Color, AccountField::Order]
-        );
+        assert_eq!(card.fields(), vec![AccountField::Name, AccountField::Color]);
     }
 
     /// The tax treatment is a placement for an investment account exactly as
@@ -969,8 +925,6 @@ mod tests {
         let cash = AccountForm::edit(
             &account(1, "Everyday", Kind::Cash, Group::Checking),
             InterestPolicy::Manual,
-            0,
-            3,
             None,
             &[],
             false,
@@ -983,13 +937,12 @@ mod tests {
 
         let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
         investment.tax_treatment = Some(TaxTreatment::Taxable);
-        let form = AccountForm::edit(&investment, InterestPolicy::Manual, 0, 1, None, &[], false);
+        let form = AccountForm::edit(&investment, InterestPolicy::Manual, None, &[], false);
         assert_eq!(
             form.fields(),
             vec![
                 AccountField::Name,
                 AccountField::Color,
-                AccountField::Order,
                 AccountField::TaxTreatment,
                 AccountField::Default,
             ]
@@ -1004,8 +957,7 @@ mod tests {
     fn an_investment_accounts_default_is_whether_the_investment_line_buys_into_it() {
         let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
         investment.tax_treatment = Some(TaxTreatment::Taxable);
-        let mut form =
-            AccountForm::edit(&investment, InterestPolicy::Manual, 0, 1, None, &[], false);
+        let mut form = AccountForm::edit(&investment, InterestPolicy::Manual, None, &[], false);
         assert_eq!(form.display(AccountField::Default).plain_text(), "—");
         assert!(!form.commit().unwrap().invests);
 
@@ -1032,7 +984,7 @@ mod tests {
     fn an_edit_form_opens_on_the_accounts_current_tax_treatment() {
         let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
         investment.tax_treatment = Some(TaxTreatment::TaxDeferred);
-        let form = AccountForm::edit(&investment, InterestPolicy::Manual, 0, 1, None, &[], false);
+        let form = AccountForm::edit(&investment, InterestPolicy::Manual, None, &[], false);
         assert_eq!(
             form.display(AccountField::TaxTreatment).plain_text(),
             TaxTreatment::TaxDeferred.label()
@@ -1050,8 +1002,6 @@ mod tests {
         let mut form = AccountForm::edit(
             &account(1, "Everyday", Kind::Cash, Group::Checking),
             InterestPolicy::Manual,
-            0,
-            3,
             None,
             &[],
             false,
@@ -1074,8 +1024,6 @@ mod tests {
         let mut form = AccountForm::edit(
             &account(1, "Everyday", Kind::Cash, Group::Checking),
             InterestPolicy::Manual,
-            0,
-            3,
             None,
             &[],
             false,
@@ -1112,8 +1060,6 @@ mod tests {
             let form = AccountForm::edit(
                 &account(1, "Everyday", Kind::Cash, Group::Checking),
                 InterestPolicy::Manual,
-                0,
-                3,
                 None,
                 &given,
                 false,
@@ -1125,31 +1071,6 @@ mod tests {
             );
             assert_eq!(form.commit().unwrap().defaults, Source::ALL.to_vec());
         }
-    }
-
-    /// One-based on the form, zero-based in the write: it is a place in a
-    /// list to whoever reads it and an index to `account::reorder`.
-    #[test]
-    fn the_order_selector_reads_one_based_and_commits_zero_based() {
-        let mut form = AccountForm::edit(
-            &account(3, "Brokerage", Kind::Cash, Group::Savings),
-            InterestPolicy::Manual,
-            2,
-            3,
-            None,
-            &[],
-            false,
-        );
-        assert_eq!(form.display(AccountField::Order).plain_text(), "3 of 3");
-        assert_eq!(form.commit().unwrap().position, 2);
-
-        form.next_choice_on(AccountField::Order);
-        assert_eq!(form.display(AccountField::Order).plain_text(), "1 of 3");
-        assert_eq!(form.commit().unwrap().position, 0);
-
-        form.choice(Step::PREVIOUS);
-        // Focus is still Name, so the arrow must not have moved the order.
-        assert_eq!(form.display(AccountField::Order).plain_text(), "1 of 3");
     }
 
     /// `—` first, then one entry per name: the choice the owner takes back
@@ -1172,8 +1093,6 @@ mod tests {
         let mut form = AccountForm::edit(
             &account(1, "Everyday", Kind::Cash, Group::Checking),
             InterestPolicy::Manual,
-            0,
-            3,
             None,
             &[],
             false,
@@ -1203,7 +1122,7 @@ mod tests {
     fn the_form_opens_on_the_color_the_account_already_holds() {
         let mut account = account(2, "Rainy Day", Kind::Cash, Group::Savings);
         account.color = Some(AccountColor::Violet);
-        let form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None, &[], false);
+        let form = AccountForm::edit(&account, InterestPolicy::Manual, None, &[], false);
         assert_eq!(form.display(AccountField::Color).plain_text(), "Violet");
         assert_eq!(form.commit().unwrap().color, Some(AccountColor::Violet));
     }
@@ -1213,8 +1132,6 @@ mod tests {
         let mut form = AccountForm::edit(
             &account(2, "Rainy Day", Kind::Cash, Group::Savings),
             InterestPolicy::ProRata,
-            1,
-            3,
             None,
             &[],
             false,
@@ -1236,8 +1153,6 @@ mod tests {
         let mut form = AccountForm::edit(
             &account(1, "Everyday", Kind::Cash, Group::Checking),
             InterestPolicy::Manual,
-            0,
-            3,
             None,
             &[],
             false,
@@ -1253,8 +1168,6 @@ mod tests {
         let mut form = AccountForm::edit(
             &account(1, "Everyday", Kind::Cash, Group::Checking),
             InterestPolicy::Manual,
-            0,
-            3,
             None,
             &[],
             false,
@@ -1621,7 +1534,7 @@ mod tests {
 
         let mut account = account(2, "Rainy Day", Kind::Cash, Group::Savings);
         account.color = Some(AccountColor::Violet);
-        let mut form = AccountForm::edit(&account, InterestPolicy::Manual, 1, 3, None, &[], false);
+        let mut form = AccountForm::edit(&account, InterestPolicy::Manual, None, &[], false);
 
         let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 16)).unwrap();
         terminal
@@ -1665,8 +1578,6 @@ mod tests {
         let form = AccountForm::edit(
             &account(2, "Rainy Day", Kind::Cash, Group::Savings),
             InterestPolicy::Manual,
-            1,
-            3,
             None,
             &[],
             false,
@@ -1692,8 +1603,6 @@ mod tests {
         let mut form = AccountForm::edit(
             &account(2, "Rainy Day", Kind::Cash, Group::Savings),
             InterestPolicy::Manual,
-            1,
-            3,
             None,
             &[],
             false,
@@ -1878,8 +1787,6 @@ mod savings_block_tests {
         let mut form = AccountForm::edit(
             &account(1, "Everyday", Kind::Cash, Group::Checking),
             InterestPolicy::Manual,
-            0,
-            3,
             None,
             &[],
             false,
@@ -1906,8 +1813,6 @@ mod savings_block_tests {
         let card = AccountForm::edit(
             &account(4, "Card One", Kind::Credit, Group::Credit),
             InterestPolicy::Manual,
-            0,
-            2,
             None,
             &[],
             false,
@@ -1922,8 +1827,6 @@ mod savings_block_tests {
         let form = AccountForm::edit(
             &account(2, "Rainy Day", Kind::Cash, Group::Savings),
             InterestPolicy::Manual,
-            1,
-            3,
             Some(SavingsBlock::Buckets),
             &[],
             false,

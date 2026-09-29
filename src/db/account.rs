@@ -555,6 +555,12 @@ pub fn list_by_kind(db: &Db, kind: Kind) -> Result<Vec<Account>> {
     super::collect_rows(rows)
 }
 
+/// The ids of one kind's accounts in stored order: the block [`reorder`]
+/// renumbers, and so the list a position handed to it counts.
+pub fn ids_by_kind(db: &Db, kind: Kind) -> Result<Vec<AccountId>> {
+    Ok(list_by_kind(db, kind)?.into_iter().map(|a| a.id).collect())
+}
+
 /// One account by id. A missing account is an error, not `None`: an id read
 /// off another row is a foreign key, and a dangling one is a corrupt
 /// database.
@@ -654,11 +660,7 @@ pub fn set_name(db: &Db, id: AccountId, name: &str) -> Result<()> {
 /// where a position past the end lands.
 pub fn reorder(db: &Db, id: AccountId, position: usize) -> Result<()> {
     db.transaction(|db| {
-        let account = get(db, id)?;
-        let ordered: Vec<AccountId> = list_by_kind(db, account.kind)?
-            .into_iter()
-            .map(|a| a.id)
-            .collect();
+        let ordered = ids_by_kind(db, get(db, id)?.kind)?;
         super::renumber_sort(db, "account", &ordered, id, position)
     })
 }
@@ -898,7 +900,7 @@ mod tests {
         assert_eq!(cards, vec![one, two]);
     }
 
-    /// A position past the end lands last. The selector cannot produce one,
+    /// A position past the end lands last. No key on the screen produces one,
     /// but clamping is the answer a drag past the bottom of a list gives.
     #[test]
     fn reorder_past_the_end_lands_last() {

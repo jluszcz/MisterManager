@@ -15,7 +15,7 @@ use crate::tui::cursor;
 use crate::tui::goal_form::{AllocationForm, CloseForm, GoalForm, GoalTarget, GoalTransferForm};
 use crate::tui::modal::Modal;
 use crate::tui::search::{self, Search};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 /// A goal on the Savings screen and where its value may go, read together.
@@ -29,6 +29,9 @@ struct SelectedGoal {
 
 impl App {
     pub(super) fn savings_key(&mut self, key: KeyEvent) -> Result<()> {
+        if let Some(direction) = Move::from_key(key) {
+            return self.move_goal(direction);
+        }
         if cursor::scroll_key(&mut self.savings, key.code) {
             return Ok(());
         }
@@ -53,8 +56,6 @@ impl App {
             KeyCode::Char('e') => self.open_goal_edit()?,
             KeyCode::Char('c') => self.open_close_out()?,
             KeyCode::Char('n') => self.open_new_goal()?,
-            KeyCode::Char('K') => self.move_goal(Move::Up)?,
-            KeyCode::Char('J') => self.move_goal(Move::Down)?,
             KeyCode::Char('f') => self.toggle_favorite()?,
             KeyCode::Char('U') => self.open_undo()?,
             // The long form of the balance cell the row already carries.
@@ -241,11 +242,7 @@ impl App {
             .filter(|g| g.goal_date.is_none())
             .map(|g| g.id)
             .collect();
-        let from = undated
-            .iter()
-            .position(|g| *g == id)
-            .context("the selected goal is open and undated, so its container lists it")?;
-        let Some(to) = direction.applied(from, undated.len()) else {
+        let Some(to) = direction.within(&undated, id)? else {
             return Ok(());
         };
         goal::reorder(&self.db, id, to)?;
@@ -424,7 +421,7 @@ mod tests {
     }
 
     /// One container holding three undated goals and one dated, for the
-    /// manual order `K` and `J` move things around in.
+    /// manual order `Shift`+`↑`/`↓` move things around in.
     fn app_with_undated_goals() -> App {
         let db = db::open_in_memory().unwrap();
         let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
@@ -464,13 +461,13 @@ mod tests {
     /// The whole point of the manual order: the owner arranges the goals no
     /// deadline arranges for them.
     #[test]
-    fn k_moves_the_selected_undated_goal_up() {
+    fn shift_up_moves_the_selected_undated_goal_up() {
         let mut app = app_with_undated_goals();
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Down);
         assert_eq!(app.savings.selected().unwrap().name, "Camera");
 
-        press(&mut app, KeyCode::Char('K'));
+        shift_press(&mut app, KeyCode::Up);
 
         assert_eq!(
             savings_names(&app),
@@ -488,9 +485,9 @@ mod tests {
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Down);
 
-        press(&mut app, KeyCode::Char('K'));
+        shift_press(&mut app, KeyCode::Up);
         assert_eq!(app.savings.selected().unwrap().name, "Camera");
-        press(&mut app, KeyCode::Char('K'));
+        shift_press(&mut app, KeyCode::Up);
 
         assert_eq!(
             savings_names(&app),
@@ -501,11 +498,11 @@ mod tests {
     }
 
     #[test]
-    fn j_moves_the_selected_undated_goal_down() {
+    fn shift_down_moves_the_selected_undated_goal_down() {
         let mut app = app_with_undated_goals();
         assert_eq!(app.savings.selected().unwrap().name, "Couch");
 
-        press(&mut app, KeyCode::Char('J'));
+        shift_press(&mut app, KeyCode::Down);
 
         assert_eq!(
             savings_names(&app),
@@ -520,7 +517,7 @@ mod tests {
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Down);
 
-        press(&mut app, KeyCode::Char('J'));
+        shift_press(&mut app, KeyCode::Down);
 
         assert_eq!(
             savings_names(&app),
@@ -537,7 +534,7 @@ mod tests {
         press(&mut app, KeyCode::End);
         assert_eq!(app.savings.selected().unwrap().name, "Vacation 2027");
 
-        press(&mut app, KeyCode::Char('K'));
+        shift_press(&mut app, KeyCode::Up);
 
         assert_eq!(
             savings_names(&app),
@@ -562,7 +559,7 @@ mod tests {
         assert_eq!(savings_names(&app), vec!["Bike", "Camera"]);
         press(&mut app, KeyCode::Down);
 
-        press(&mut app, KeyCode::Char('K'));
+        shift_press(&mut app, KeyCode::Up);
 
         assert_eq!(savings_names(&app), vec!["Bike", "Camera"]);
         assert!(

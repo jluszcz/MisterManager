@@ -34,6 +34,7 @@ forget, and the copy that goes stale is always the one further from the code.
 | `[` / `]` | step a month: the filter a screen narrows by, or the date a field holds |
 | `←` / `→` | move the caret in a text field, step a date a day at a time, or cycle the focused selector — see the invariant below |
 | `Shift`+`←` / `Shift`+`→` | the same nudge, a week at a time on a date; one choice on a selector |
+| `Shift`+`↑` / `Shift`+`↓` | move the selected row one place in an order kept by hand: a goal on Savings, an account on Accounts |
 | `Ctrl`+a letter | edit the text under the caret, in every box in the app — see the invariant below |
 | `Esc` | back out of the innermost thing: a form, a search box, a filter, the Overview's scrub, the panel |
 | `Tab` | cycle the screen's filter, or move to the next field in a form |
@@ -124,7 +125,7 @@ own last keys with nothing on screen to say a word went missing.
 halves plus the separator; `app`'s two own width tests measure what `App::footer` composes at
 runtime, which a `Topic` alone does not see. The first lever when a screen runs out of room is
 `Label::Shared`: several keys join under one word naming what they act *on* — `E/a/d bill` on
-Planning, `a/A/i/t allocate` and `n/e/c/K/J/f/Enter goal` on Savings, `a/t/p money` on the ledgers,
+Planning, `a/A/i/t allocate` and `n/e/c/⇧↑↓/f/Enter goal` on Savings, `a/t/p money` on the ledgers,
 where the three keys that write new rows join against the `e` and `d` that act on the one selected —
 which buys back a whole item's separator per key absorbed, and the verbs it costs are a keystroke
 away in the panel, which has room for them. A shorter word is the smaller adjustment beside it —
@@ -132,10 +133,15 @@ the `acct` every screen's `Tab` takes. What neither of them does is drop a key: 
 advertises is a key nobody presses, so `Label::Hidden` stays for the entries a footer word would
 only say twice, `BackTab` being the one.
 
+**`Shift` is spelled `⇧` wherever a key is printed** — a footer, a panel row — the glyph macOS
+prints for it, and one column where the word is six. `⇧↑↓` is what let Savings' move keys into its
+`goal` run at all. The arrows under it drop their slash (`⇧←→`, not `⇧←/→`): inside a `Shared` run
+the slash is what separates keys, so `n/e/c/⇧↑/↓` would read as two.
+
 **Savings' footer is the one closest to the edge**, at one column of slack, so the next key that
 needs a group is likelier to be its than any other screen's — and its lever is spent: every key it
 has that writes or acts on one goal is already inside `a/A/i/t allocate` or
-`n/e/c/K/J/f/Enter goal`, which is what bought `Enter` and `t` their places there. The ledgers' is
+`n/e/c/⇧↑↓/f/Enter goal`, which is what bought `Enter` and `t` their places there. The ledgers' is
 the next widest, and both of *its* levers are spent too, the
 grouping on `a/t/p` and the shorter word on `Tab`. A footer that overflows has nothing left to fall
 back on but a shorter word somewhere.
@@ -704,8 +710,10 @@ deferred to nothing.
   the owner they pressed the wrong key, at the point where they still can. The title lives on the
   form beside `TransferKind` rather than at the render call, so a third caller cannot open it under
   a title that describes neither.
-- **The app reads two modifiers, and each means one thing.** `Shift` is always the same nudge with
-  a bigger step. It is on the key that already means "move this", rather than a second letter for
+- **The app reads two modifiers, and each means one thing.** `Shift` on `←`/`→` is always the same
+  nudge with a bigger step, and on `↑`/`↓` it moves the row the cursor is on rather than the cursor
+  — `Move::from_key` reads it, ahead of `cursor::scroll_key`, which matches the bare arrow and would
+  otherwise take the press as a scroll. The nudge is on the key that already means "move this", rather than a second letter for
   one action, and it reaches every date rather than only the Overview's — a horizon several paydays
   out is the plausible question on the scrub, and a bill three weeks off is the same question on a
   form. A week is the step that reaches the middle of the fortnightly paycheck cycle in one press
@@ -1048,7 +1056,9 @@ deferred to nothing.
   accounts come back in: an unplaced account sorts last and taking the scan order would let it
   split its own band in two. A subtotal is set apart by weight alone — every label starts in the
   same column, and the subtotals are the only bold rows. Blank rows separate sections, not bands.
-- **The Accounts screen has `a` and `e` and no `d`, and the two ask disjoint questions.** Deleting
+- **The Accounts screen has `a` and `e` and no `d`, and the two ask disjoint questions.** An
+  account's place among its kind is neither's: `Shift`+`↑`/`↓` moves it on the list, through the
+  same `Move` Savings moves a goal with and `account::reorder`, and the cursor follows it by id. Deleting
   an account would orphan every transaction, goal and recurring rule pointing at it, and the next
   import would put a sheet's account straight back — so there is no `d`, and a code typed wrongly is
   corrected by renaming around it rather than by starting over. `a` asks the code, the kind and the
@@ -1273,25 +1283,20 @@ deferred to nothing.
   them gets the same list. Among the dated goals `sort` survives only as a tiebreak between two
   falling on the same day, which is what keeps an arrangement made in the undated block from
   reaching in and reordering a deadline.
-  - **`K` and `J` move a goal one place, through `goal::reorder`, which takes a position.** The
-    same bargain `account::reorder` makes with a kind: it renumbers the container's undated block
-    `0..n-1`, so what the screen shows is what is stored, and "put it third" has a result the
-    caller can predict where "set sort to 2" does not. `App::move_goal` computes the position
-    against the container's undated goals rather than against the rows on screen — `reorder`
-    renumbers that block, and the two have to be counting the same list.
+  - **`Shift`+`↑`/`↓` move a goal one place, through `goal::reorder`, which takes a position.**
+    The same bargain `account::reorder` makes with a kind, and the same key the Accounts screen
+    moves one with: `Move::within` is the arithmetic both share, over the block each `reorder`
+    renumbers — the container's undated goals here, not the rows on screen, since the two have to
+    be counting the same list.
   - **The cursor is put back by id, not by index.** The rows moved under it, so an index would
     leave the selection on whichever goal took the vacated place and the next press would move
-    that one instead. `Savings::select_goal` is the one caller's reason for existing.
+    that one instead. `Savings::select_goal` and `Accounts::select_account` are each that.
   - **Two refusals, each with a message.** A dated goal has no manual order to move in, and a kept
     search hides part of the block being reordered — a move would then be one place in a list the
     owner cannot see. Both say so rather than doing nothing quietly, because a key that sometimes
     silently declines is a key nobody trusts. Reaching either end of the block is the third case
-    and is a genuine no-op: `Move::applied` returns `None` there, and the block simply has no
+    and is a genuine no-op: `Move::within` returns `None` there, and the block simply has no
     further place.
-  - **`K`/`J` join the `goal` run in the footer rather than taking a word.** This footer is one of
-    the two closest to `MIN_WIDTH`, and `K/J move` as its own item does not fit; grouped under the
-    word naming what the keys act on, they cost four characters instead of eleven. It is the lever
-    this document names for exactly this case, and the verbs are a keystroke away in the panel.
 - **A favorited goal is drawn as a band and moved nowhere.** `f` on Savings toggles
   `goal.favorite`, and `render` gives that row `style::favorite()` plus a bold. Standing out and
   coming first are different requests, so `refilter` and the `all_with_balances` order never read
