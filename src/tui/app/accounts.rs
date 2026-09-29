@@ -3,7 +3,7 @@
 //! its Overview band -- plus the interest policy and the two savings-block
 //! keys, which no cell of the sheet carries either.
 
-use super::App;
+use super::{App, Move};
 use crate::db::account::{self, Kind};
 use crate::db::setting::{Key, key};
 use crate::db::{AccountId, setting};
@@ -12,7 +12,7 @@ use crate::savings_block::Block as SavingsBlock;
 use crate::tui::accounts::{self as accounts_screen, AccountForm};
 use crate::tui::cursor;
 use crate::tui::modal::Modal;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 /// The account each `Savings` block names, one entry per `Block::ALL` entry.
@@ -30,7 +30,7 @@ impl App {
     /// the same reason: `sort` is only ever read through an `ORDER BY` that
     /// breaks ties by code, so "after the ones already there" is the only
     /// placement that does not depend on rows nobody has seen. Moving it
-    /// anywhere else is `e`'s `Order` selector, which renumbers the kind.
+    /// anywhere else is `Shift`+`↑`/`↓`, which renumbers the kind.
     ///
     /// `new.tax_treatment` is already `Some` or `None` exactly as the schema's
     /// paired `CHECK` requires -- `AccountForm::commit_new` is the guard, and
@@ -132,6 +132,9 @@ impl App {
     }
 
     pub(super) fn accounts_key(&mut self, key: KeyEvent) -> Result<()> {
+        if let Some(direction) = Move::from_key(key) {
+            return self.move_account(direction);
+        }
         if cursor::scroll_key(&mut self.accounts, key.code) {
             return Ok(());
         }
@@ -148,18 +151,37 @@ impl App {
             return self.nothing_selected();
         };
         let id = row.account.id();
-        let (position, of_kind) = self
-            .accounts
-            .position_of(id)
-            .context("the selected account is not in the list it came from")?;
         let account = account::get(&self.db, id)?;
         let policy = account::interest_policy(&self.db, id)?;
         let block = block_of(&self.savings_containers()?, id);
         let defaults = sources_of(&self.default_sources()?, id);
         let invests = setting::get(&self.db, key::INVESTMENT_ACCOUNT)? == Some(id);
         self.modal = Some(Modal::Account(AccountForm::edit(
-            &account, policy, position, of_kind, block, &defaults, invests,
+            &account, policy, block, &defaults, invests,
         )));
+        Ok(())
+    }
+
+    /// Move the selected account one place among the accounts of its kind,
+    /// and put the cursor back on it.
+    ///
+    /// `App::move_goal`'s shape without its refusals: every account has a
+    /// hand-kept place and the screen has no search to hide part of a kind.
+    /// The block is the kind as `account::reorder` renumbers it, and the
+    /// reload is the whole app's, since the Overview and both ledgers stack
+    /// accounts in this order too.
+    fn move_account(&mut self, direction: Move) -> Result<()> {
+        let Some(row) = self.accounts.selected() else {
+            return self.nothing_selected();
+        };
+        let (id, kind) = (row.account.id(), row.kind);
+        let of_kind = account::ids_by_kind(&self.db, kind)?;
+        let Some(to) = direction.within(&of_kind, id)? else {
+            return Ok(());
+        };
+        account::reorder(&self.db, id, to)?;
+        self.reload()?;
+        self.accounts.select_account(id);
         Ok(())
     }
 
@@ -200,10 +222,8 @@ impl App {
 
     /// `a`'s one write, or the several `e` stands for.
     ///
-    /// They are ordered so `reorder` means what it says: it renumbers by
-    /// position, so it goes after the band change rather than before one that
-    /// could move the row. The `setting` writes under it read no column at
-    /// all, which is why they can follow. `a` writes none of them -- a new
+    /// The `setting` writes read no column at all, which is why they can
+    /// follow the row's own. `a` writes none of them -- a new
     /// account takes its kind's default band, no color, no interest policy,
     /// no `Savings` block, neither money form's default and not the
     /// `Investment` line's, and `e`
@@ -222,7 +242,6 @@ impl App {
         account::set_color(&self.db, id, edit.color)?;
         account::set_group(&self.db, id, edit.group)?;
         account::set_interest_policy(&self.db, id, edit.policy)?;
-        account::reorder(&self.db, id, edit.position)?;
         self.set_savings_block(id, edit.block)?;
         self.set_default_sources(id, &edit.defaults)?;
         self.point(key::INVESTMENT_ACCOUNT, id, edit.invests)?;
@@ -327,58 +346,58 @@ mod tests {
         assert!(cached.iter().all(|n| *n == "Nest Egg"), "{cached:?}");
     }
 
+    fn ids(app: &App, kind: Kind) -> Vec<AccountId> {
+        account::ids_by_kind(&app.db, kind).unwrap()
+    }
+
     /// The order is a place among the accounts of one kind, and the write
-    /// renumbers all of them -- so moving the last cash account to the front
-    /// reverses nothing else.
+    /// renumbers all of them -- so moving the last cash account up swaps it
+    /// with its neighbour and reorders nothing else, cards included.
     #[test]
-    fn reordering_an_account_moves_it_among_its_own_kind() {
+    fn shift_up_moves_an_account_up_among_its_own_kind() {
         let mut app = app();
-        let before: Vec<AccountId> = account::list_by_kind(&app.db, Kind::Cash)
-            .unwrap()
-            .into_iter()
-            .map(|a| a.id)
-            .collect();
+        let before = ids(&app, Kind::Cash);
         assert!(before.len() > 1, "the fixture needs two cash accounts");
-        let cards: Vec<AccountId> = account::list_by_kind(&app.db, Kind::Credit)
-            .unwrap()
-            .into_iter()
-            .map(|a| a.id)
-            .collect();
+        let cards = ids(&app, Kind::Credit);
 
         press(&mut app, KeyCode::Char('9'));
         for _ in 1..before.len() {
             press(&mut app, KeyCode::Down);
         }
+        let moved = *before.last().unwrap();
+        assert_eq!(app.accounts.selected().unwrap().account.id(), moved);
+        shift_press(&mut app, KeyCode::Up);
+
+        let mut expected = before.clone();
+        let last = expected.len() - 1;
+        expected.swap(last - 1, last);
+        assert_eq!(ids(&app, Kind::Cash), expected);
+        assert_eq!(
+            ids(&app, Kind::Credit),
+            cards,
+            "reordering one kind moved the other"
+        );
+        // The rows moved under the cursor, so it is put back by id.
+        assert_eq!(app.accounts.selected().unwrap().account.id(), moved);
+    }
+
+    /// A kind is its own block: the last cash account sits directly above
+    /// the first card on screen, and moving it down must not carry it across.
+    #[test]
+    fn shift_down_stops_at_the_end_of_the_kind() {
+        let mut app = app();
+        let before = ids(&app, Kind::Cash);
+
+        press(&mut app, KeyCode::Char('9'));
+        for _ in 1..before.len() {
+            press(&mut app, KeyCode::Down);
+        }
+        shift_press(&mut app, KeyCode::Down);
+
+        assert_eq!(ids(&app, Kind::Cash), before);
         assert_eq!(
             app.accounts.selected().unwrap().account.id(),
             *before.last().unwrap()
-        );
-        press(&mut app, KeyCode::Char('e'));
-        // Tab to Order, then step it to the front.
-        walk_until!(
-            matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Order),
-            press(&mut app, KeyCode::Tab)
-        );
-        press(&mut app, KeyCode::Right);
-        press(&mut app, KeyCode::Enter);
-
-        let after: Vec<AccountId> = account::list_by_kind(&app.db, Kind::Cash)
-            .unwrap()
-            .into_iter()
-            .map(|a| a.id)
-            .collect();
-        let mut expected = before.clone();
-        let moved = expected.pop().unwrap();
-        expected.insert(0, moved);
-        assert_eq!(after, expected);
-        assert_eq!(
-            account::list_by_kind(&app.db, Kind::Credit)
-                .unwrap()
-                .into_iter()
-                .map(|a| a.id)
-                .collect::<Vec<_>>(),
-            cards,
-            "reordering one kind moved the other"
         );
     }
 
@@ -880,7 +899,6 @@ mod tests {
                 // ledger and on Recurring Transactions, so it is tinted
                 // there, and the choice belongs to every account.
                 accounts_screen::AccountField::Color,
-                accounts_screen::AccountField::Order
             ]
         );
     }

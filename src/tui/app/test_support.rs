@@ -112,6 +112,12 @@ pub(super) fn press(app: &mut App, code: KeyCode) {
     app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
 }
 
+/// The same key with Shift held, which crossterm reports as the arrow
+/// plus a modifier rather than a code of its own.
+pub(super) fn shift_press(app: &mut App, code: KeyCode) {
+    app.on_key(KeyEvent::new(code, KeyModifiers::SHIFT));
+}
+
 /// A `Ctrl` combination -- the editing keys, and nothing else in the app.
 pub(super) fn ctrl_press(app: &mut App, c: char) {
     app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));

@@ -216,7 +216,7 @@ const OVERVIEW: [Entry; 3] = [
         detail: "Move the Paycheck-Eve column a day at a time. View state only: nothing is saved, and restarting discards it.",
     },
     Entry {
-        key: "Shift+←/→",
+        key: "⇧←→",
         label: Label::Own("week"),
         detail: "The same scrub, a week at a time, as Shift does on every date in the app.",
     },
@@ -281,7 +281,7 @@ const LEDGER: [Entry; 11] = [
     },
 ];
 
-const SAVINGS: [Entry; 17] = [
+const SAVINGS: [Entry; 16] = [
     Entry::filter(
         ACCOUNT_FILTER,
         "Cycle the container filter: All, then one entry per account that holds goals.",
@@ -339,14 +339,9 @@ const SAVINGS: [Entry; 17] = [
         detail: "End the selected goal: return its value to unallocated, or move it to another goal in the same container. Crossing containers is refused.",
     },
     Entry {
-        key: "K",
+        key: "⇧↑↓",
         label: Label::Shared("goal"),
-        detail: "Move the selected goal up one place in its container's manual order. Only the undated goals are ordered by hand -- a dated goal takes its place from its date. Refused while a search is narrowing the list.",
-    },
-    Entry {
-        key: "J",
-        label: Label::Shared("goal"),
-        detail: "Move the selected goal down one place, the mirror of 'K'. It stops at the last undated goal.",
+        detail: "Move the selected goal one place in its container's manual order. Only the undated goals are ordered by hand -- a dated goal takes its place from its date. Refused while a search is narrowing the list.",
     },
     Entry {
         key: "f",
@@ -466,15 +461,15 @@ const FUNDS: [Entry; 9] = [
 /// run and what survives it would be answering a question that build cannot
 /// be asked. What is left is true of both, and is what the key does.
 #[cfg(feature = "import")]
-const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its Overview band, its place among its kind; for a cash account, how interest is divided, which Savings block it holds (what the first mm import waits on), and whether 't' and 'p' open on it; for an investment account, its tax treatment and whether the Investment line buys into it. The code and the kind are set by 'a'. All of it survives mm import --replace.";
+const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its color, its Overview band; for a cash account, how interest is divided, which Savings block it holds (what the first mm import waits on), and whether 't' and 'p' open on it; for an investment account, its tax treatment and whether the Investment line buys into it. The code and the kind are set by 'a'. All of it survives mm import --replace.";
 #[cfg(not(feature = "import"))]
-const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its Overview band, its place among the accounts of its kind, and -- for a cash account -- how an interest posting is divided, which block of the Savings sheet it is the container for, and whether 't' and 'p' open on it; for an investment account, its tax treatment and whether the Investment line buys into it. The code and the kind are set by 'a', not here.";
+const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its color, its Overview band, and -- for a cash account -- how an interest posting is divided, which block of the Savings sheet it is the container for, and whether 't' and 'p' open on it; for an investment account, its tax treatment and whether the Investment line buys into it. The code and the kind are set by 'a', not here.";
 
-/// Two keys, and no `d`. An account is created here or by the workbook
+/// Three keys, and no `d`. An account is created here or by the workbook
 /// naming it, and deleting one would orphan every transaction, goal and
 /// recurring rule pointing at it -- and the next import would put a sheet's
 /// account straight back.
-const ACCOUNTS: [Entry; 2] = [
+const ACCOUNTS: [Entry; 3] = [
     Entry {
         key: "a",
         label: Label::Own("add"),
@@ -484,6 +479,11 @@ const ACCOUNTS: [Entry; 2] = [
         key: "e",
         label: Label::Own("edit"),
         detail: ACCOUNT_EDIT,
+    },
+    Entry {
+        key: "⇧↑↓",
+        label: Label::Own("move"),
+        detail: "Move the selected account one place among the accounts of its kind -- the order the Overview and the ledgers list them in.",
     },
 ];
 
@@ -658,7 +658,7 @@ const WORKSHEET: [Entry; 15] = [
         detail: "Step the date back or forward a day, while the date has focus. It stays typeable; this is the nudge.",
     },
     Entry {
-        key: "Shift+←/→",
+        key: "⇧←→",
         label: Label::Hidden,
         detail: "The same step, a week at a time.",
     },
@@ -813,7 +813,7 @@ const FORM: [Entry; 10] = [
         detail: "The field under the caret decides: a text field moves the caret one character, a date field steps back or forward a day, and a choice field -- a bill's category, a close-out's destination -- cycles. A date stays typeable; the step is the nudge.",
     },
     Entry {
-        key: "Shift+←/→",
+        key: "⇧←→",
         label: Label::Hidden,
         detail: "The same arrows, a week at a time on a date. A choice field has no week to move, so it steps one choice as it would unmodified.",
     },
@@ -870,7 +870,7 @@ const SUGGEST_FORM: [Entry; 11] = [
         detail: "Cycle a choice field, such as the account -- or, on a date field, step it back or forward a day. A date stays typeable; this is the nudge.",
     },
     Entry {
-        key: "Shift+←/→",
+        key: "⇧←→",
         label: Label::Hidden,
         detail: "The same arrows, a week at a time on a date. A choice field has no week to move, so it steps one choice as it would unmodified.",
     },
@@ -922,7 +922,7 @@ const PLAN_TRANSFERS: [Entry; 7] = [
         detail: "Step the date back or forward a day. It stays typeable; this is the nudge.",
     },
     Entry {
-        key: "Shift+←/→",
+        key: "⇧←→",
         label: Label::Hidden,
         detail: "The same step, a week at a time.",
     },
@@ -1524,17 +1524,14 @@ mod tests {
     /// so no footer names them.
     #[test]
     fn each_screen_topic_joins_the_footer_it_always_showed() {
-        assert_eq!(
-            Topic::Overview.footer(),
-            "←/→ scrub · Shift+←/→ week · Esc clear"
-        );
+        assert_eq!(Topic::Overview.footer(), "←/→ scrub · ⇧←→ week · Esc clear");
         assert_eq!(
             Topic::Ledger.footer(),
             "Tab acct · [ ] month · Esc clear · / search · r target · a/t/p money · e edit · d delete"
         );
         assert_eq!(
             Topic::Savings.footer(),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t allocate · n/e/c/K/J/f/Enter goal · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t allocate · n/e/c/⇧↑↓/f/Enter goal · U undo"
         );
         assert_eq!(
             Topic::Planning.footer(),
@@ -1552,7 +1549,7 @@ mod tests {
             Topic::RecurringGoals.footer(),
             "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings"
         );
-        assert_eq!(Topic::Accounts.footer(), "a add · e edit");
+        assert_eq!(Topic::Accounts.footer(), "a add · e edit · ⇧↑↓ move");
     }
 
     /// The Credit ledger shares the Ledger topic with Cash but has no `t`:

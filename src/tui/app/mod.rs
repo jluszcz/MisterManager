@@ -134,12 +134,14 @@ impl Screen {
     }
 }
 
-/// Which way `K` and `J` move a goal in its container's manual order.
+/// Which way `Shift`+`↑`/`↓` move the selected row in a hand-kept order: a
+/// goal among its container's undated goals on Savings, an account among the
+/// accounts of its kind on Accounts.
 ///
 /// A direction rather than a signed delta because the two ends are not
 /// symmetric arithmetic: the top of the block and the bottom are each a place
-/// there is nothing beyond, and `applied` returning `None` there is what lets
-/// the caller stop before it writes rather than after it clamps.
+/// there is nothing beyond, and [`Move::within`] returning `None` there is
+/// what lets the caller stop before it writes rather than after it clamps.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Move {
     Up,
@@ -147,13 +149,37 @@ enum Move {
 }
 
 impl Move {
-    /// The position `from` moves to among `len` goals, or `None` when the
-    /// move would leave the block.
-    fn applied(self, from: usize, len: usize) -> Option<usize> {
-        match self {
-            Move::Up => from.checked_sub(1),
-            Move::Down => (from + 1 < len).then_some(from + 1),
+    /// The move `key` asks for, or `None` for every other key.
+    ///
+    /// Read ahead of `cursor::scroll_key`, which matches the bare arrow and
+    /// ignores the modifier: asked second, this would never see the press.
+    fn from_key(key: KeyEvent) -> Option<Move> {
+        if !key.modifiers.contains(KeyModifiers::SHIFT) {
+            return None;
         }
+        match key.code {
+            KeyCode::Up => Some(Move::Up),
+            KeyCode::Down => Some(Move::Down),
+            _ => None,
+        }
+    }
+
+    /// The position `id` moves to within `block` -- the rows its `reorder`
+    /// renumbers, in their stored order -- or `None` when the move would leave
+    /// the block.
+    ///
+    /// The block is the caller's to read, and it has to be the list the write
+    /// renumbers rather than the rows on screen, or the position handed to
+    /// `reorder` counts a different list than the one it is applied to.
+    fn within<T: PartialEq>(self, block: &[T], id: T) -> Result<Option<usize>> {
+        let from = block
+            .iter()
+            .position(|row| *row == id)
+            .context("the selected row is missing from the block it is ordered in")?;
+        Ok(match self {
+            Move::Up => from.checked_sub(1),
+            Move::Down => (from + 1 < block.len()).then_some(from + 1),
+        })
     }
 }
 
@@ -1189,12 +1215,6 @@ mod tests {
             .collect()
     }
 
-    /// The same key with Shift held, which crossterm reports as the arrow
-    /// plus a modifier rather than a code of its own.
-    fn shift_press(app: &mut App, code: KeyCode) {
-        app.on_key(KeyEvent::new(code, KeyModifiers::SHIFT));
-    }
-
     /// The footer is the screen's keys, and a message borrows it rather than
     /// owning it: once it has been up long enough to read, the keys come
     /// back without the owner having to press anything to dismiss it.
@@ -2219,7 +2239,7 @@ mod tests {
     #[test]
     fn every_screen_footer_reads_as_it_always_has() {
         let mut app = app();
-        assert_eq!(footer_of(&mut app, '1'), "←/→ scrub · Shift+←/→ week");
+        assert_eq!(footer_of(&mut app, '1'), "←/→ scrub · ⇧←→ week");
         assert_eq!(
             footer_of(&mut app, '2'),
             "Tab acct · [ ] month · Esc clear · / search · r target · a/t/p money · e edit · d delete"
@@ -2230,7 +2250,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '4'),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t allocate · n/e/c/K/J/f/Enter goal · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t allocate · n/e/c/⇧↑↓/f/Enter goal · U undo"
         );
         assert_eq!(
             footer_of(&mut app, '5'),
@@ -2255,15 +2275,15 @@ mod tests {
     #[test]
     fn the_overview_footer_offers_esc_only_while_the_date_is_scrubbed() {
         let mut app = app();
-        assert_eq!(footer(&app), "←/→ scrub · Shift+←/→ week");
+        assert_eq!(footer(&app), "←/→ scrub · ⇧←→ week");
 
         press(&mut app, KeyCode::Right);
         app.expire_status_at(Instant::now() + STATUS_TTL);
-        assert_eq!(footer(&app), "←/→ scrub · Shift+←/→ week · Esc clear");
+        assert_eq!(footer(&app), "←/→ scrub · ⇧←→ week · Esc clear");
 
         press(&mut app, KeyCode::Esc);
         app.expire_status_at(Instant::now() + STATUS_TTL);
-        assert_eq!(footer(&app), "←/→ scrub · Shift+←/→ week");
+        assert_eq!(footer(&app), "←/→ scrub · ⇧←→ week");
     }
 
     /// The pin is the one footer entry whose word changes with state. The table
@@ -2684,7 +2704,7 @@ mod tests {
     #[test]
     fn every_key_a_screen_handler_matches_appears_in_its_table() {
         let handlers: [(Topic, &[&str]); 8] = [
-            (Topic::Overview, &["←/→", "Shift+←/→", "Esc"]),
+            (Topic::Overview, &["←/→", "⇧←→", "Esc"]),
             (
                 Topic::Ledger,
                 &[
@@ -2694,8 +2714,22 @@ mod tests {
             (
                 Topic::Savings,
                 &[
-                    "Tab", "BackTab", "[ ]", "Esc", "/", "a", "A", "i", "t", "e", "c", "n", "K",
-                    "J", "f", "U", "Enter",
+                    "Tab",
+                    "BackTab",
+                    "[ ]",
+                    "Esc",
+                    "/",
+                    "a",
+                    "A",
+                    "i",
+                    "t",
+                    "e",
+                    "c",
+                    "n",
+                    "⇧↑↓",
+                    "f",
+                    "U",
+                    "Enter",
                 ],
             ),
             (
@@ -2711,7 +2745,7 @@ mod tests {
                 Topic::RecurringGoals,
                 &["[ ]", "Esc", "/", "a", "e", "d", "s"],
             ),
-            (Topic::Accounts, &["a", "e"]),
+            (Topic::Accounts, &["a", "e", "⇧↑↓"]),
         ];
         assert_documented(&handlers);
     }
@@ -2803,7 +2837,7 @@ mod tests {
                     "Tab",
                     "BackTab",
                     "←/→",
-                    "Shift+←/→",
+                    "⇧←→",
                     "[ ]",
                     "Space",
                     "*",
@@ -2832,7 +2866,7 @@ mod tests {
                     "BackTab",
                     "Backspace",
                     "←/→",
-                    "Shift+←/→",
+                    "⇧←→",
                     "[ ]",
                     "Enter",
                     "Esc",
@@ -2848,7 +2882,7 @@ mod tests {
                     "Backspace",
                     "↑/↓",
                     "←/→",
-                    "Shift+←/→",
+                    "⇧←→",
                     "[ ]",
                     "Enter",
                     "Esc",
@@ -2877,7 +2911,7 @@ mod tests {
                     "Ctrl+A/E/B/F/W/U/K/D",
                     "Esc",
                     "←/→",
-                    "Shift+←/→",
+                    "⇧←→",
                     "[ ]",
                     "Enter",
                     "Backspace",

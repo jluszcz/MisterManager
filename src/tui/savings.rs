@@ -212,7 +212,7 @@ impl Savings {
     /// Put the cursor on a goal by id, leaving it where it is if the goal is
     /// not among the visible rows.
     ///
-    /// By id and not by index, for the one caller that needs it: `K` and `J`
+    /// By id and not by index, for the one caller that needs it: `Shift`+`↑`/`↓`
     /// reorder the rows under the cursor, so the index it held before the
     /// move names a different goal after it.
     pub fn select_goal(&mut self, id: GoalId) {
