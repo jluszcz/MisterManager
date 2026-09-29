@@ -18,7 +18,7 @@ use crate::tui::recurring_goal::RecurringGoalForm;
 use crate::tui::recurring_txn::RecurringTxnForm;
 use crate::tui::search::{self, Search};
 use anyhow::{Result, ensure};
-use chrono::Datelike;
+use chrono::{Datelike, NaiveDate};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use std::collections::HashSet;
 
@@ -283,7 +283,8 @@ impl App {
     ///
     /// The container is the Savings screen's `Tab` filter, which is the app's
     /// one answer to "which container" -- this screen's entries carry none.
-    /// The month filter preselects rather than narrows, and an entry that
+    /// The screen's filters -- the month and a `/` search alike -- preselect
+    /// what the screen is showing rather than narrowing, and an entry that
     /// already has an open goal is left unticked: the annual reseed is what
     /// the preselection is for, and such an entry has already been through it.
     /// A second open goal against one entry is still legitimate, so `Space`
@@ -299,16 +300,34 @@ impl App {
             return Ok(());
         }
         let counts = recurring_goal::open_goal_counts(&self.db)?;
-        let month = self.recurring_goal.selected_month();
+        // The rows the screen is showing, rather than the month re-applied
+        // here: the screen's own filter is the one that already combines the
+        // month with the needle, so the two cannot disagree about what was
+        // on screen when `s` was pressed.
+        let showing: HashSet<RecurringGoalId> = self
+            .recurring_goal
+            .rows()
+            .iter()
+            .map(|row| row.recurring_goal_id)
+            .collect();
         let preselected: HashSet<RecurringGoalId> = entries
             .iter()
-            .filter(|e| month.is_none_or(|m| e.month == m))
+            .filter(|e| showing.contains(&e.id))
             .filter(|e| counts.get(&e.id).copied().unwrap_or(0) == 0)
             .map(|e| e.id)
             .collect();
+        // Dated here rather than at commit, so the year the picker draws
+        // beside an entry is the year its goal is written with.
+        let mut dated = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let has_goal_this_year =
+                goal::has_goal_dated_in_year(&self.db, entry.id, self.today.year())?;
+            let date = picker::goal_date(&entry, has_goal_this_year, self.today)?;
+            dated.push((entry, date));
+        }
         let account = account::get(&self.db, container)?;
         self.modal = Some(Modal::Picker(Picker::new(
-            entries,
+            dated,
             counts,
             &preselected,
             Account::named(std::slice::from_ref(&account), container),
@@ -344,13 +363,17 @@ impl App {
             return Ok(());
         };
         let container = picker.container();
-        let chosen: Vec<Entry> = picker.chosen().into_iter().cloned().collect();
+        let chosen: Vec<(Entry, NaiveDate)> = picker
+            .chosen()
+            .into_iter()
+            .map(|(entry, date)| (entry.clone(), date))
+            .collect();
         ensure!(!chosen.is_empty(), NOTHING_SELECTED);
         // The picker is the second place a taxed goal is written, alongside
         // the goal form's own commit, and it is the one that hands the flag
         // across rather than computing anything -- so it has to ask for the
         // rate here, before there is a goal for the read side to call corrupt.
-        if chosen.iter().any(|entry| entry.taxed) {
+        if chosen.iter().any(|(entry, _)| entry.taxed) {
             ensure!(
                 setting::get(&self.db, key::TAX_RATE)?.is_some(),
                 goal_engine::NO_TAX_RATE
@@ -364,9 +387,7 @@ impl App {
         // same day comes first.
         let first_sort = goal::next_sort(&self.db, container)?;
         let mut new_goals = Vec::with_capacity(chosen.len());
-        for (offset, entry) in chosen.iter().enumerate() {
-            let has_goal_this_year =
-                goal::has_goal_dated_in_year(&self.db, entry.id, self.today.year())?;
+        for (offset, (entry, goal_date)) in chosen.iter().enumerate() {
             new_goals.push(goal::NewGoal {
                 name: entry.name.clone(),
                 container_account_id: container,
@@ -375,7 +396,7 @@ impl App {
                 // from one the owner marked taxed by hand, and the lambda runs
                 // once, on read.
                 base_cents: entry.base_cents,
-                goal_date: Some(picker::goal_date(entry, has_goal_this_year, self.today)?),
+                goal_date: Some(*goal_date),
                 recurring_goal_id: Some(entry.id),
                 interest_eligible: true,
                 sort: first_sort + offset as i64,
@@ -1486,6 +1507,20 @@ mod tests {
         open_september_picker(&mut app);
 
         assert_eq!(chosen(&app), ["Lego"], "October's entry came along");
+    }
+
+    /// A kept `/` search narrows the screen the same way the month does, so it
+    /// narrows what `s` ticks the same way too.
+    #[test]
+    fn s_preselects_the_entries_a_kept_search_is_showing() {
+        let mut app = app_with_recurring_goals();
+        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "ro");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('s'));
+
+        assert_eq!(chosen(&app), ["Rolex"], "Lego is not on screen");
     }
 
     /// The annual reseed is what the preselection is for, and an entry that

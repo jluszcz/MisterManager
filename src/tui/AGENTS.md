@@ -1433,13 +1433,18 @@ deferred to nothing.
   title says only `Savings · All`, and `default_container` has quietly picked the first. The form
   carries that account id rather than re-reading it at commit, so the write cannot land somewhere
   the border did not say it would.
-  The picker's month filter **preselects rather than narrows**: the entries it ticks are also sorted
+  The screen's filters — the month and a kept `/` search alike — **preselect rather than narrow**:
+  `s` ticks exactly the rows the screen is showing, read off the screen rather than re-filtered, so
+  the picker cannot disagree with what was on screen. The ticked entries are also sorted
   to the top, since a tick alone is easy to miss in a list dozens long, but every entry is still
   listed below them — a filter is a starting point the list can be scrolled out of, not a cage. An
   entry that already has an open goal is left unticked and sinks with the rest, because the annual
   reseed is what the ticks are for. Unticked is not refused — goal names are not unique and a second
   open goal is legitimate, so `Space` still adds it. The ticked group being first is also the order
-  the goals are created in, and so the order they land in the container.
+  the goals are created in, and so the order they land in the container. Inside each group the list
+  runs by the date each goal would take, drawn as month and year: the catalog's own order says
+  nothing about when anything falls due, and a month already past this year lands two calendars
+  out. The date is computed once, when the picker opens, and is the date the commit writes.
 - **A created goal is dated for the year ahead, not the next occurrence.** `picker::goal_date`
   starts from `next_occurrence` — the first of the entry's month on or after today — and steps a
   year past it, because creating goals is a reseed rather than a catch-up. Counting from the

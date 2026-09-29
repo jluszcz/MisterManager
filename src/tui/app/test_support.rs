@@ -452,5 +452,9 @@ pub(super) fn entries(app: &App) -> Vec<String> {
 
 pub(super) fn chosen(app: &App) -> Vec<String> {
     let picker = picker(app);
-    picker.chosen().iter().map(|e| e.name.clone()).collect()
+    picker
+        .chosen()
+        .iter()
+        .map(|(e, _)| e.name.clone())
+        .collect()
 }

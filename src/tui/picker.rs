@@ -4,6 +4,11 @@
 //! `Enter` creates every selected entry at once, which is what the annual
 //! reseed of dozens of goals needs and still works for adding one.
 //!
+//! Each entry is listed beside the date its goal would take, and within the
+//! ticked group and the rest alike the list runs in that date's order -- the
+//! order the goals would fall due in, which is not the calendar's January to
+//! December once a month has already passed this year.
+//!
 //! It opens with a caller-chosen set already ticked *and sorted to the top*,
 //! which is what makes the reseed one keystroke; which set that is,
 //! `App::open_recurring_goals` decides. A tick alone is easy to miss in a list
@@ -70,6 +75,9 @@ pub fn goal_date(entry: &Entry, has_goal_this_year: bool, today: NaiveDate) -> R
 
 pub struct Picker {
     entries: Vec<Entry>,
+    /// Parallel to `entries`: the [`goal_date`] each would be created with,
+    /// computed once by the caller so the date drawn is the date written.
+    dates: Vec<NaiveDate>,
     open_counts: HashMap<RecurringGoalId, i64>,
     /// Parallel to `entries`, so the order the list shows is the order the
     /// goals are created in.
@@ -80,23 +88,27 @@ pub struct Picker {
 
 impl Picker {
     pub fn new(
-        entries: Vec<Entry>,
+        mut entries: Vec<(Entry, NaiveDate)>,
         open_counts: HashMap<RecurringGoalId, i64>,
         preselected: &HashSet<RecurringGoalId>,
         container: Account,
     ) -> Picker {
-        // A stable partition, so the table's own order survives inside each
-        // group: `selected` is built from the boundary rather than from a
-        // second pass over `preselected`, which could not then disagree with
-        // the order the entries ended up in.
-        let (mut entries, rest): (Vec<Entry>, Vec<Entry>) = entries
+        // Stable, so two entries due the same day keep the table's own order.
+        entries.sort_by_key(|(_, date)| *date);
+        // A stable partition, so the date order survives inside each group:
+        // `selected` is built from the boundary rather than from a second
+        // pass over `preselected`, which could not then disagree with the
+        // order the entries ended up in.
+        let (mut entries, rest): (Vec<_>, Vec<_>) = entries
             .into_iter()
-            .partition(|e| preselected.contains(&e.id));
+            .partition(|(e, _)| preselected.contains(&e.id));
         let boundary = entries.len();
         entries.extend(rest);
         let selected = (0..entries.len()).map(|i| i < boundary).collect();
+        let (entries, dates) = entries.into_iter().unzip();
         Picker {
             entries,
+            dates,
             open_counts,
             selected,
             cursor: Cursor::new(),
@@ -130,12 +142,18 @@ impl Picker {
         self.selected.iter().filter(|s| **s).count()
     }
 
-    pub fn chosen(&self) -> Vec<&Entry> {
+    pub fn goal_date(&self, index: usize) -> Option<NaiveDate> {
+        self.dates.get(index).copied()
+    }
+
+    /// Every ticked entry, beside the date its goal is created with.
+    pub fn chosen(&self) -> Vec<(&Entry, NaiveDate)> {
         self.entries
             .iter()
+            .zip(&self.dates)
             .zip(&self.selected)
             .filter(|(_, selected)| **selected)
-            .map(|(entry, _)| entry)
+            .map(|((entry, date), _)| (entry, *date))
             .collect()
     }
 
@@ -181,7 +199,13 @@ pub(super) fn render(frame: &mut Frame, picker: &Picker) -> Viewport {
             Row::new(vec![
                 Cell::from(if picker.is_selected(i) { "✓" } else { " " }),
                 Cell::from(crate::demo::text(&entry.name).into_owned()),
-                Cell::from(month_name(entry.month)),
+                // The goal's own date rather than the entry's bare month:
+                // which year a round lands in is the one thing the catalog
+                // cannot say and the reseed has to.
+                Cell::from(match picker.goal_date(i) {
+                    Some(date) => format!("{} {}", month_name(entry.month), date.year()),
+                    None => month_name(entry.month),
+                }),
                 amount(entry.base_cents),
                 Cell::from(entry.cadence.as_str()),
                 Cell::from(if open > 0 {
@@ -195,7 +219,7 @@ pub(super) fn render(frame: &mut Frame, picker: &Picker) -> Viewport {
     let widths = [
         Constraint::Length(2),
         Constraint::Min(20),
-        Constraint::Length(4),
+        Constraint::Length(8),
         Constraint::Length(12),
         Constraint::Length(8),
         Constraint::Length(7),
@@ -232,6 +256,115 @@ mod tests {
             taxed: false,
             cadence,
         }
+    }
+
+    /// Each entry beside the date a reseed on 2026-08-16 would give it.
+    fn dated(entries: Vec<Entry>) -> Vec<(Entry, NaiveDate)> {
+        entries
+            .into_iter()
+            .map(|e| {
+                let date = goal_date(&e, false, day(2026, 8, 16)).unwrap();
+                (e, date)
+            })
+            .collect()
+    }
+
+    fn names(picker: &Picker) -> Vec<&str> {
+        picker.entries().iter().map(|e| e.name.as_str()).collect()
+    }
+
+    /// The catalog's own order is insertion order, which says nothing about
+    /// when anything is due. The list runs in the order the goals would fall
+    /// due, so a month already past this year sorts after one still ahead.
+    #[test]
+    fn the_list_runs_in_the_order_the_goals_would_fall_due() {
+        let picker = Picker::new(
+            vec![
+                (entry(1, "Lego", 12, Cadence::Annual), day(2027, 12, 1)),
+                (
+                    entry(2, "Car Insurance", 3, Cadence::Annual),
+                    day(2028, 3, 1),
+                ),
+                (entry(3, "Dropbox", 9, Cadence::Annual), day(2027, 9, 1)),
+            ],
+            HashMap::new(),
+            &HashSet::new(),
+            Account::named(&accounts(), AccountId(1)),
+        );
+        assert_eq!(names(&picker), ["Dropbox", "Lego", "Car Insurance"]);
+        assert_eq!(picker.goal_date(0), Some(day(2027, 9, 1)));
+    }
+
+    /// The ticked group still leads, and each group runs in date order.
+    #[test]
+    fn the_ticked_group_leads_and_each_group_runs_in_date_order() {
+        let picker = Picker::new(
+            vec![
+                (entry(1, "Lego", 12, Cadence::Annual), day(2027, 12, 1)),
+                (
+                    entry(2, "Backblaze", 11, Cadence::Biennial),
+                    day(2027, 11, 1),
+                ),
+                (
+                    entry(3, "Car Insurance", 3, Cadence::Annual),
+                    day(2028, 3, 1),
+                ),
+                (entry(4, "Dropbox", 9, Cadence::Annual), day(2027, 9, 1)),
+            ],
+            HashMap::new(),
+            &HashSet::from([RecurringGoalId(1), RecurringGoalId(3)]),
+            Account::named(&accounts(), AccountId(1)),
+        );
+        assert_eq!(
+            names(&picker),
+            ["Lego", "Car Insurance", "Dropbox", "Backblaze"]
+        );
+        let chosen: Vec<_> = picker
+            .chosen()
+            .into_iter()
+            .map(|(e, date)| (e.name.as_str(), date))
+            .collect();
+        assert_eq!(
+            chosen,
+            [
+                ("Lego", day(2027, 12, 1)),
+                ("Car Insurance", day(2028, 3, 1))
+            ],
+            "each chosen entry carries the date it was drawn beside"
+        );
+    }
+
+    /// The year is what the bare month cannot say: a month already past this
+    /// year lands two calendars out, and the reseed has to show which.
+    #[test]
+    fn the_picker_draws_the_year_each_goal_lands_in() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let picker = Picker::new(
+            dated(vec![
+                entry(1, "Dropbox", 9, Cadence::Annual),
+                entry(2, "Car Insurance", 3, Cadence::Annual),
+            ]),
+            HashMap::new(),
+            &HashSet::new(),
+            Account::named(&accounts(), AccountId(1)),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, &picker);
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("Sep 2027"), "{text}");
+        assert!(text.contains("Mar 2028"), "{text}");
     }
 
     #[test]
@@ -335,7 +468,7 @@ mod tests {
 
         crate::demo::install_with_salt(7);
         let picker = Picker::new(
-            vec![entry(1, "Dropbox", 9, Cadence::Annual)],
+            dated(vec![entry(1, "Dropbox", 9, Cadence::Annual)]),
             HashMap::new(),
             &HashSet::new(),
             Account::named(&accounts(), AccountId(2)),
@@ -379,7 +512,7 @@ mod tests {
             entry(3, "Lego", 12, Cadence::Annual),
         ];
         let mut picker = Picker::new(
-            entries,
+            dated(entries),
             HashMap::new(),
             &HashSet::new(),
             Account::named(&accounts(), AccountId(1)),
@@ -392,7 +525,11 @@ mod tests {
         picker.toggle();
 
         assert_eq!(picker.selected_count(), 2);
-        let chosen: Vec<&str> = picker.chosen().iter().map(|e| e.name.as_str()).collect();
+        let chosen: Vec<&str> = picker
+            .chosen()
+            .iter()
+            .map(|(e, _)| e.name.as_str())
+            .collect();
         assert_eq!(chosen, ["Dropbox", "Lego"]);
 
         picker.toggle();
@@ -404,7 +541,7 @@ mod tests {
         let entries = vec![entry(1, "Dropbox", 9, Cadence::Annual)];
         let counts = HashMap::from([(RecurringGoalId(1), 2)]);
         let picker = Picker::new(
-            entries,
+            dated(entries),
             counts,
             &HashSet::new(),
             Account::named(&accounts(), AccountId(1)),
@@ -419,7 +556,7 @@ mod tests {
     #[test]
     fn the_picker_title_names_the_container_it_creates_in() {
         let picker = Picker::new(
-            vec![entry(1, "Dropbox", 9, Cadence::Annual)],
+            dated(vec![entry(1, "Dropbox", 9, Cadence::Annual)]),
             HashMap::new(),
             &HashSet::new(),
             Account::named(&accounts(), AccountId(2)),
