@@ -2473,22 +2473,17 @@ name = "mistermanager"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "aws-config",
- "aws-sdk-s3",
- "aws-smithy-types",
  "calamine",
  "chrono",
  "clap",
  "jluszcz_finance_utils",
  "jluszcz_rust_utils",
- "minify-html",
  "quick-xml 0.38.4",
  "ratatui",
  "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
  "tokio",
  "toml",
 ]

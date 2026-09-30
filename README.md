@@ -485,7 +485,7 @@ switched off is still an error.
 
 There is no key prefix. A backup is `money-<timestamp>.db` at the root of the bucket, which the
 application owns outright and which holds nothing else — a prefix would name the only thing in
-there, while being a string `backup::key_for` and the IAM policy each spell separately, with
+there, while being a string the key and the IAM policy would each spell separately, with
 `AccessDenied` as the way they announce having come apart. A `prefix` line in the config file is one
 of those unread keys, and does nothing.
 
@@ -508,7 +508,7 @@ from the caller's own account and region rather than chosen, which is what lets 
 repository: a name someone picked would say where the owner's finances are backed up, while a
 derived one is legible only to whoever already holds the profile. Nothing about it is public —
 public access is blocked four ways, and the only identity pointed at it may `PutObject` and nothing
-else.
+else, and only as a conditional write that refuses to replace an existing object.
 
 Its lifecycle rules move an object to Standard-Infrequent Access at 30 days and delete it at 365.
 Thirty is IA's own minimum billable duration, so nothing is charged for storage it did not use, and
@@ -516,12 +516,13 @@ IA's retrieval charge is only ever paid on a restore, since nothing reads a back
 IA also bills a 128 KB floor per object and S3 declines to transition anything under it, so the rule
 is a saving on a database with a ledger in it and a no-op on one without.
 
-The profile must carry static access keys: the AWS SDK is built here with `sso` and
-`credentials-process` support left off along with the default HTTPS client, so an SSO profile or
-one using `credential_process` will not authenticate.
+The profile must carry static access keys: an SSO profile or one using `credential_process` will
+not authenticate.
 
 `mm backup --status` prints the last upload and the next due date; `mm backup --force` uploads
-regardless of the schedule.
+regardless of the schedule. `mm backup` uploads whatever database it is given, `--db` included, but
+never opens it first: a `--db` naming no file is an error, rather than a new empty database
+uploaded as a backup.
 
 To restore, quit `mm` first, then list the bucket and copy the object you want over the database:
 
@@ -542,7 +543,7 @@ it is still there, SQLite replays it into the restored file the next time `mm` o
 why it has to go first.
 
 Both commands use your own identity. The `mistermanager` profile can only `PutObject` — it cannot
-read a backup, delete one, or list the bucket.
+read, overwrite, delete, or list backups.
 
 ## Layout
 
@@ -552,8 +553,8 @@ dependencies that would otherwise reach everywhere are confined by name — `rat
 and a default build carry no spreadsheet parser at all — everything outside `src/db/` reaches the
 database through the query modules rather than a connection, ids are one type per table, and
 `Cents` is the only money type in it. `AGENTS.md` carries the path-by-path map and states each of those rules in
-full; the module `AGENTS.md` files under `src/import/`, `src/calc/`, `src/tui/`, `src/report/`,
-`src/backup/` and `src/mix/` go a level below it.
+full; the module `AGENTS.md` files under `src/import/`, `src/calc/`, `src/tui/`, `src/report/`
+and `src/mix/` go a level below it.
 
 ## Development
 

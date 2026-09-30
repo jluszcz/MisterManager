@@ -1,5 +1,5 @@
-//! The configuration file, and the primary home of `serde` and `toml` -- named again in
-//! `src/backup/state.rs`, deliberate leakage rather than an oversight.
+//! The configuration file, and the only place outside a test that names `serde`
+//! and `toml`.
 //!
 //! An absent file, or one missing a section, means that section's feature is
 //! off -- the same rule an unset `setting` key follows, and what makes a clean
