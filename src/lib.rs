@@ -54,4 +54,19 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 8, 20, 14, 3, 5).unwrap();
         assert_eq!(BACKUP.key_for(now), "money-20260820T140305Z.db.zst");
     }
+
+    #[test]
+    fn backup_app_name_is_mistermanager() {
+        assert_eq!(BACKUP.app, "mistermanager");
+    }
+
+    #[test]
+    fn backup_profile_defaults_to_the_app_name_when_unset() {
+        let config = jluszcz_finance_utils::config::BackupConfig {
+            bucket: "a-bucket".into(),
+            profile: None,
+            interval_days: 7,
+        };
+        assert_eq!(config.profile_or(BACKUP.app), "mistermanager");
+    }
 }
