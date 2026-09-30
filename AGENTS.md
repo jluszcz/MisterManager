@@ -200,7 +200,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. `spread_asks` prices the plug's set, and `unmet_asks` says when the plug falls short of it. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
-| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and the allocation in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own, and its Funds tab of `allocation`, with one stacked section per account where the screen cycles them with `Tab`. |
+| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and the allocation in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` hands that page to `finance-utils`, which minifies it and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own, and its Funds tab of `allocation`, with one stacked section per account where the screen cycles them with `Tab`. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/backup/` | The schedule, the snapshot, and the upload. `aws_config` and `aws_sdk_s3` are named only in `s3.rs`, which is one of two places `tokio` is -- `src/mix/sec.rs` is the other. |
 | `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/AGENTS.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `tui/mod.rs` rather than in whichever screen needed it first. `app` is a directory, one module per screen over one `App`. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/AGENTS.md`. |
@@ -702,8 +702,8 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   feature, so a default build has no `--demo` flag and none of the code behind it. The rules for reaching the
   mask — and the one place a caller has to say whether its figure is money — are in
   `src/tui/AGENTS.md`.
-- **The quit path skips a page the day already has.** `report::is_due` rewrites only when this run
-  wrote a row -- `db::Db::wrote_rows`, over SQLite's own counter -- or when the report directory
+- **The quit path skips a page the day already has.** `finance-utils`' `report::is_due` rewrites
+  only when this run wrote a row -- `db::Db::wrote_rows`, over SQLite's own counter -- or when the report directory
   holds no page whose mtime falls on the day this run is quoting. Both halves are proxies with a
   blind spot, and both are set out on `is_due`. `mm report` is not gated, for the reason an unset
   `[report]` section does not stop it either.

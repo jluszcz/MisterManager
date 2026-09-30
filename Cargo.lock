@@ -2099,6 +2099,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jluszcz_finance_utils"
+version = "0.1.0"
+source = "git+https://github.com/jluszcz/finance-utils#f7447cea682569b6daafbfd94fc55b3364ba68f6"
+dependencies = [
+ "anyhow",
+ "aws-config",
+ "aws-sdk-s3",
+ "aws-smithy-types",
+ "chrono",
+ "clap",
+ "minify-html",
+ "ratatui",
+ "serde",
+ "thiserror 2.0.20",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "jluszcz_rust_utils"
 version = "0.1.0"
 source = "git+https://github.com/jluszcz/rust-utils#538bf21edb5d7a703652a16564153aeea96fbffc"
@@ -2460,6 +2479,7 @@ dependencies = [
  "calamine",
  "chrono",
  "clap",
+ "jluszcz_finance_utils",
  "jluszcz_rust_utils",
  "minify-html",
  "quick-xml 0.38.4",

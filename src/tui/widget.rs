@@ -11,6 +11,7 @@ use super::autocomplete::Autocomplete;
 use super::form::Caret;
 use super::style::Color;
 use super::{Label, label_line};
+pub(super) use jluszcz_finance_utils::tui::centered;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -21,18 +22,6 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 /// different width than the one beside it would move its fields under the
 /// hand that is already typing into them.
 pub(super) const FORM_WIDTH: u16 = 64;
-
-/// A centered rectangle, clamped to `area`.
-pub(super) fn centered(area: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(area.width);
-    let height = height.min(area.height);
-    Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    }
-}
 
 /// One labelled input line; the focused one carries a caret.
 pub(super) fn field_line(label: &str, value: Label, caret: Option<Caret>) -> TextLine<'static> {

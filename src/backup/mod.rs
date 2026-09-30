@@ -150,7 +150,12 @@ pub fn run_if_due(
         let bytes = std::fs::metadata(&snapshot)
             .with_context(|| format!("measuring {}", snapshot.display()))?
             .len();
-        s3::upload(&backup.profile, &backup.bucket, &key, &snapshot)?;
+        s3::upload(
+            backup.profile_or(crate::config::APP),
+            &backup.bucket,
+            &key,
+            &snapshot,
+        )?;
         Ok::<u64, anyhow::Error>(bytes)
     })();
 
@@ -335,9 +340,9 @@ mod tests {
         .unwrap();
 
         let cfg = crate::config::Config {
-            backup: Some(crate::config::Backup {
+            backup: Some(jluszcz_finance_utils::config::BackupConfig {
                 bucket: "a-bucket".to_string(),
-                profile: "a-profile".to_string(),
+                profile: Some("a-profile".to_string()),
                 interval_days: 7,
             }),
             report: None,

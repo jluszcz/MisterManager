@@ -18,8 +18,9 @@ use crate::db::account;
 use crate::db::txn::Suggestion;
 use crate::money::Cents;
 use crate::rate::BasisPoints;
-use anyhow::{Context, Result, anyhow, ensure};
-use chrono::{Datelike, Months, NaiveDate, TimeDelta};
+use anyhow::{Context, Result, ensure};
+use chrono::{Months, NaiveDate, TimeDelta};
+use jluszcz_finance_utils::tui::date::{iso, parse_shorthand};
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 
@@ -533,37 +534,10 @@ impl AccountChoice {
     }
 }
 
-/// A date written the way a field holds it, which is the way it is typed.
-fn iso(date: NaiveDate) -> String {
-    date.format("%Y-%m-%d").to_string()
-}
-
 /// Dates are typed in the format they are stored in.
 pub(super) fn parse_date(raw: &str) -> Result<NaiveDate> {
     NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d")
         .with_context(|| format!("not a YYYY-MM-DD date: {:?}", raw.trim()))
-}
-
-/// `M/D` -- a month and a day, taking the next year that month occurs in.
-///
-/// The year turns on the **month** alone, never on the whole date: `8/1`
-/// typed in August is the first of this August, a fortnight back, rather than
-/// next year's. Backdating a ledger row a week or two is the commonest thing
-/// the shorthand is typed for, and a rule that always resolved forward could
-/// not express it at all -- while a month already behind has no reading but
-/// the year ahead, which is the case the roll exists for.
-fn parse_shorthand(raw: &str, today: NaiveDate) -> Result<NaiveDate> {
-    let raw = raw.trim();
-    let malformed = || anyhow!("not a M/D date: {raw:?}");
-    let (month, day) = raw.split_once('/').ok_or_else(malformed)?;
-    let month: u32 = month.trim().parse().map_err(|_| malformed())?;
-    let day: u32 = day.trim().parse().map_err(|_| malformed())?;
-    let year = if month >= today.month() {
-        today.year()
-    } else {
-        today.year() + 1
-    };
-    NaiveDate::from_ymd_opt(year, month, day).ok_or_else(|| anyhow!("no such date: {raw:?}"))
 }
 
 /// The amount as `Cents::from_str` reads it: `$`, commas, and `.5` all work.

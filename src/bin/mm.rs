@@ -278,7 +278,7 @@ fn write_report(db: &db::Db, cfg: &config::Config, today: NaiveDate, demo: bool)
 fn print_written(written: &report::Written) {
     println!(
         "wrote {} to {}",
-        backup::human_bytes(written.bytes),
+        jluszcz_finance_utils::human_bytes(written.bytes),
         written.path.display()
     );
 }
@@ -304,7 +304,9 @@ fn print_backup_status(cfg: &config::Config, state_path: &Path) -> Result<()> {
     };
     println!(
         "bucket {}, profile {}, every {} days",
-        backup_cfg.bucket, backup_cfg.profile, backup_cfg.interval_days
+        backup_cfg.bucket,
+        backup_cfg.profile_or(config::APP),
+        backup_cfg.interval_days
     );
     // Matches `run_if_due`: the state file is advisory where a `setting` key is
     // binding, so an unreadable one is a warning and "never backed up" rather than
