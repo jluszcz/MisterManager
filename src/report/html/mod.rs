@@ -24,32 +24,15 @@ use super::Snapshot;
 use crate::money::Cents;
 use crate::palette;
 
-/// Every interpolation of owner-typed text goes through here.
-///
-/// Correctness rather than polish: a goal named with an angle bracket would
-/// otherwise truncate the page at its own row, and the figures below it would
-/// simply not be there.
-///
-/// Escapes `&`, `<`, `>` and `"`, never `'`: the page's only double-quoted
-/// attributes carrying interpolated data are `money_in`'s, `account`'s and
-/// `savings::percent`'s `style="color:{hex}"`, and the hex always comes from
-/// `palette::hex` over an enum-derived triple or the funding ramp's clamped
-/// interpolation -- never owner text. A call site that puts escaped text
-/// inside a single-quoted attribute reopens the injection this function
-/// exists to close.
-fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            _ => out.push(ch),
-        }
-    }
-    out
-}
+// Every interpolation of owner-typed text goes through `escape`: a goal named
+// with an angle bracket would otherwise truncate the page at its own row. It
+// escapes `&`, `<`, `>` and `"` but never `'`, because the page's only
+// attributes carrying interpolated data are double-quoted -- `money_in`'s,
+// `account`'s and `savings::percent`'s `style="color:{hex}"`, whose hex always
+// comes from `palette::hex`, never owner text. A call site that puts escaped
+// text inside a single-quoted attribute reopens the injection it exists to
+// close.
+use jluszcz_finance_utils::report::escape;
 
 /// A money cell in a naturally signed column -- every one on the page but
 /// the Credit tab's Amount.

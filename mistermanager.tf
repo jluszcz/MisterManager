@@ -132,6 +132,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "backup" {
     id     = "expire-noncurrent"
     status = "Enabled"
 
+    filter {}
+
     noncurrent_version_expiration {
       noncurrent_days = 30
     }
@@ -169,8 +171,9 @@ data "aws_iam_policy_document" "mistermanager" {
   # The whole bucket rather than a prefix under it: the bucket is this
   # application's own and holds nothing but backups, so a prefix would only
   # narrow the policy to the one thing already in there -- and a prefix written
-  # here is a prefix `backup::key_for` has to spell identically, with nothing
-  # tying the two together and `AccessDenied` as the way they disagree.
+  # here is a prefix `finance-utils`' `Spec::key_for` has to spell identically,
+  # with nothing tying the two together and `AccessDenied` as the way they
+  # disagree.
   #
   # No KMS statement is needed: the bucket encrypts under the AWS-managed aws/s3
   # key above, whose key policy already grants same-account principals use of it
@@ -179,6 +182,15 @@ data "aws_iam_policy_document" "mistermanager" {
   statement {
     actions   = ["s3:PutObject"]
     resources = ["${aws_s3_bucket.backup.arn}/*"]
+
+    # Only with `If-None-Match: *`, so a put can create a backup but never
+    # replace one. Without it the bucket has no versioning to fall back on,
+    # and an overwrite would destroy a backup as surely as a delete.
+    condition {
+      test     = "Null"
+      variable = "s3:if-none-match"
+      values   = ["false"]
+    }
   }
 }
 

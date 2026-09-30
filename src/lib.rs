@@ -1,6 +1,5 @@
 pub mod account_label;
 pub mod allocation;
-pub mod backup;
 pub mod calc;
 pub mod config;
 pub mod db;
@@ -32,8 +31,42 @@ pub mod savings_block;
 pub mod transfer;
 pub mod tui;
 
+/// MisterManager's backups: named `money-<timestamp>.db.zst` (zstd-compressed), as the
+/// `mistermanager` profile, with the state at `$XDG_STATE_HOME/mistermanager/`.
+pub const BACKUP: jluszcz_finance_utils::backup::Spec = jluszcz_finance_utils::backup::Spec {
+    app: config::APP,
+    stem: "money",
+};
+
 /// Fixtures the `mod tests` blocks share. Not compiled into the binary, and
 /// not reachable from an integration test in `tests/`, which compiles as its
 /// own crate -- those have `tests/common/mod.rs`.
 #[cfg(test)]
 mod test_support;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn backup_key_is_the_money_stem_and_a_utc_timestamp() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 20, 14, 3, 5).unwrap();
+        assert_eq!(BACKUP.key_for(now), "money-20260820T140305Z.db.zst");
+    }
+
+    #[test]
+    fn backup_app_name_is_mistermanager() {
+        assert_eq!(BACKUP.app, "mistermanager");
+    }
+
+    #[test]
+    fn backup_profile_defaults_to_the_app_name_when_unset() {
+        let config = jluszcz_finance_utils::config::BackupConfig {
+            bucket: "a-bucket".into(),
+            profile: None,
+            interval_days: 7,
+        };
+        assert_eq!(config.profile_or(BACKUP.app), "mistermanager");
+    }
+}

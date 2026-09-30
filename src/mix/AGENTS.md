@@ -1,8 +1,8 @@
 # mix — a fund's composition, from SEC
 
 `classify` is the whole of the feature's logic and has neither a network nor a database in it;
-`sec` is the network client, the only place `reqwest` and `jluszcz_rust_utils` are named and one of
-two places `tokio` is, `src/backup/s3.rs` being the other; `mod.rs` is the policy joining the two
+`sec` is the network client, the only place `reqwest`, `jluszcz_rust_utils` and `tokio` are named;
+`mod.rs` is the policy joining the two
 and the only thing here that writes `db::fund_mix`. Nothing in this directory draws anything — what
 the composition is *for* is `src/allocation.rs`, which both the Funds screen and the report's Funds
 tab read.

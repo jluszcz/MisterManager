@@ -101,7 +101,7 @@ pub use id::{
 };
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
 
 #[cfg(test)]
@@ -183,13 +183,18 @@ pub fn open_in_memory() -> Result<Db> {
 /// checkpointed. This writes a checkpointed, compacted copy in one statement.
 ///
 /// Deliberately opens the connection without `prepare`: taking a backup
-/// must not migrate the database as a side effect.
+/// must not migrate the database as a side effect. `src` is opened without
+/// the create flag, so a wrong path is an error rather than an empty database
+/// copied as though it were the real one.
 pub fn snapshot(src: &Path, dest: &Path) -> Result<()> {
     let dest = dest
         .to_str()
         .with_context(|| format!("{} is not valid UTF-8", dest.display()))?;
-    let conn =
-        Connection::open(src).with_context(|| format!("opening database at {}", src.display()))?;
+    let conn = Connection::open_with_flags(
+        src,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("opening database at {}", src.display()))?;
     conn.execute("VACUUM INTO ?1", [dest])
         .with_context(|| format!("snapshotting to {dest}"))?;
     Ok(())
@@ -775,6 +780,21 @@ mod tests {
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn snapshotting_a_path_with_no_database_is_an_error_rather_than_an_empty_backup() {
+        let dir = std::env::temp_dir().join(format!(
+            "mistermanager_snapshot_missing_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let absent = dir.join("absent.db");
+
+        assert!(snapshot(&absent, &dir.join("copy.db")).is_err());
+        assert!(!absent.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

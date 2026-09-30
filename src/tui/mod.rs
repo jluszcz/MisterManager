@@ -45,9 +45,10 @@ use anyhow::{Result, ensure};
 use app::App;
 use chrono::NaiveDate;
 use cursor::{Scroll, Viewport};
+use jluszcz_finance_utils::tui::is_press;
 use ratatui::DefaultTerminal;
 use ratatui::Frame;
-use ratatui::crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use ratatui::crossterm::event::{self, Event};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
@@ -664,22 +665,16 @@ pub fn run(db: Db, today: NaiveDate, demo: bool, sec_contact: Option<String>) ->
 /// Everything else -- a key release, a mouse event, focus crossing the
 /// window -- reaches no handler here, so the frame it would earn would be the
 /// frame already on screen.
+///
+/// Both this and the dispatch in the loop ask [`is_press`], because the two
+/// must widen together: a key the app answers and the loop draws no frame for
+/// is a stale screen, which is the failure the owed draw is not worth risking.
 fn redraws(event: &Event) -> bool {
     match event {
         Event::Key(key) => is_press(key),
         Event::Resize(..) => true,
         _ => false,
     }
-}
-
-/// Whether this is a key arriving rather than leaving.
-///
-/// Windows reports press and release both; acting on each would run every key
-/// twice. Written once because [`redraws`] and the dispatch in the loop must
-/// widen together: a key the app answers and the loop draws no frame for is a
-/// stale screen, which is the failure the owed draw is not worth risking.
-fn is_press(key: &KeyEvent) -> bool {
-    key.kind == KeyEventKind::Press
 }
 
 /// The loop that draws and reads keys, in that order.
@@ -817,7 +812,8 @@ mod tests {
     #[test]
     fn a_key_press_and_a_resize_owe_a_frame_and_nothing_else_does() {
         use ratatui::crossterm::event::{
-            KeyCode, KeyEventState, KeyModifiers, MouseEvent, MouseEventKind,
+            KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseEvent,
+            MouseEventKind,
         };
 
         let key = |kind| {

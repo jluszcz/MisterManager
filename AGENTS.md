@@ -65,7 +65,8 @@ restated.
 The holdings model has no workbook oracle: `holding` and `fund_mix` carry data the sheet never
 carried, so their coverage is unit tests against invented fixtures.
 
-**The one binary in `tests/` that is not a workbook oracle is `tests/sec_live.rs`**, and it is
+**Two binaries in `tests/` are not workbook oracles.** `tests/backup_cli.rs` runs `mm backup`
+against scratch paths and an AWS environment that can reach nothing. `tests/sec_live.rs` is
 outside the `import` feature because what it exercises — the fetcher behind `fund_mix` — is in an
 ordinary build. Its oracle is SEC's live service, so it asserts structurally rather than against
 any figure, and it skips on an unset `MM_SEC_TICKER` the way the others skip on `MM_WORKBOOK`,
@@ -79,13 +80,11 @@ allowed to mean, what each screen owns, and how much width it may spend. The app
 by single keystrokes, so the same action takes the same key on every screen that offers it. Read it
 before touching anything under `src/tui/` — nothing about the screens is documented here.
 
-`src/report/AGENTS.md`, `src/backup/AGENTS.md` and `src/mix/AGENTS.md` complete the set. The
-report's invariants follow from two facts — the page carries no script, and it is read offline on a
-phone — and the backup's from one: the key is long-lived and unattended, so what bounds it is an
-IAM policy rather than a setting. Two of the backup's invariants span `mistermanager.tf` at the
-repository root as well as that directory, and say so where they do; read that file before changing
-the bucket, what it keeps, or what the backup identity may do, since none of that is reachable from
-Rust. The mix's follow from one fact of their own: the service on the other end is SEC's, so that
+`src/report/AGENTS.md` and `src/mix/AGENTS.md` complete the set. The report's invariants follow
+from two facts — the page carries no script, and it is read offline on a phone. The backup has no
+directory of its own: its code is `finance-utils`', and what is MisterManager's is under
+[Backup](#backup) below, most of it in `mistermanager.tf` at the repository root. The mix's follow
+from one fact of their own: the service on the other end is SEC's, so that
 file carries what no fixture here can confirm alongside the rules that span the module and the
 places a refresh is triggered from.
 
@@ -176,7 +175,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/reading.rs` | `Reading` — whether a reader refuses a row it cannot resolve or draws past it. One parameter rather than a strict function and a tolerant twin, so the two readings differ in nothing but the thing they name. Taken by `goal::all_with_balances` and by the `transfer` readers built on it. |
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the setting key naming its container account. |
 | `src/default_source.rs` | `Source` — the two money forms, `t` and `p`, each owning the setting key naming the account its `From` opens on. |
-| `src/config.rs` | The TOML config file. `serde` and `toml` are named here, and both again in `src/backup/state.rs`, whose `State` derives `Serialize` as well as `Deserialize`. |
+| `src/config.rs` | The TOML config file. `serde` is named here and in `src/mix/sec.rs`; `toml` only in tests (`src/config.rs`, `src/report/mod.rs`). |
 | `src/plan_line.rs` | Every Planning line: its label, the amount it moves, and the setting key that says where it lands. |
 | `src/plan_rows.rs` | The Planning waterfall as an ordered list of rows, in neither medium -- a peer of `overview` and `savings`. The order, the labels, the grouping, the two footers outside the transfers block, and `Target`, the constant a row *is*. The Planning screen and the report's Planning tab both read it, and each spends `Row::depth` in its own units. |
 | `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `per_paycheck_over_years`, `period_days`, `pro_rata`, the Planning waterfall, `fund` (the age-based allocation target), `schedule` (when a recurring thing happens). No database. |
@@ -190,7 +189,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/db/fund_mix.rs` | The `fund_mix` table — one fund's composition by asset class, plus the name the fund files under, as of the filing both were read from. |
 | `src/db/recurring_txn.rs` | The `recurring_txn` table — rows whose amount and date are known in advance. CRUD plus the queries regeneration needs. |
 | `src/import/` | Reads `Money.xlsx` via `calamine`. Behind the non-default `import` Cargo feature — it is the only module naming `calamine`, which is what lets that dependency be `optional`, so a default build compiles no spreadsheet parser and offers no `mm import`. |
-| `src/mix/` | A fund's composition, read out of SEC's N-PORT filings and written to `db::fund_mix`. `sec` is the network client — the only place `reqwest` and `jluszcz_rust_utils` are named, and one of two places `tokio` is, `src/backup/s3.rs` being the other; `classify` is pure, with neither a network nor a database in it; `mod.rs` is the policy over the two. `mm mixes` and the Funds screen's `g`/`G` are the only things that run it. |
+| `src/mix/` | A fund's composition, read out of SEC's N-PORT filings and written to `db::fund_mix`. `sec` is the network client — the only place `reqwest`, `jluszcz_rust_utils` and `tokio` are named; `classify` is pure, with neither a network nor a database in it; `mod.rs` is the policy over the two. `mm mixes` and the Funds screen's `g`/`G` are the only things that run it. |
 | `src/overview.rs` | Reads balances at the three projection dates out of `db` and bands them into the Overview's sections and Net. Read by the Overview screen and by `report`. |
 | `src/savings.rs` | A goal's derived columns — `%`, `$/Pay`, expired — and what a container has left unallocated. Read by the Savings screen and by `report`. |
 | `src/plan.rs` | Reads settings and balances out of `db`, feeds `calc::planning::compute`. |
@@ -200,9 +199,9 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. `spread_asks` prices the plug's set, and `unmet_asks` says when the plug falls short of it. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
-| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and the allocation in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` minifies that page and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. `minify_html` is named only in `mod.rs`. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own, and its Funds tab of `allocation`, with one stacked section per account where the screen cycles them with `Tab`. |
+| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and the allocation in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` hands that page to `finance-utils`, which minifies it and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own, and its Funds tab of `allocation`, with one stacked section per account where the screen cycles them with `Tab`. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
-| `src/backup/` | The schedule, the snapshot, and the upload. `aws_config` and `aws_sdk_s3` are named only in `s3.rs`, which is one of two places `tokio` is -- `src/mix/sec.rs` is the other. |
+| `src/lib.rs` | `BACKUP`, the `finance-utils` `backup::Spec` naming the app and the key stem. The schedule, the upload, the state file and `mm backup`'s behavior are all the crate's; `db::snapshot` makes the copy, so `rusqlite` stays in `src/db/`. See [Backup](#backup). |
 | `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/AGENTS.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `tui/mod.rs` rather than in whichever screen needed it first. `app` is a directory, one module per screen over one `App`. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/AGENTS.md`. |
 | `src/bin/mm.rs` | clap CLI. No subcommand launches the TUI; `report`, `mixes` and `backup` are always subcommands, and `import` is a fourth behind the `import` feature -- a default build does not offer it. |
 
@@ -702,8 +701,8 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   feature, so a default build has no `--demo` flag and none of the code behind it. The rules for reaching the
   mask — and the one place a caller has to say whether its figure is money — are in
   `src/tui/AGENTS.md`.
-- **The quit path skips a page the day already has.** `report::is_due` rewrites only when this run
-  wrote a row -- `db::Db::wrote_rows`, over SQLite's own counter -- or when the report directory
+- **The quit path skips a page the day already has.** `finance-utils`' `report::is_due` rewrites
+  only when this run wrote a row -- `db::Db::wrote_rows`, over SQLite's own counter -- or when the report directory
   holds no page whose mtime falls on the day this run is quoting. Both halves are proxies with a
   blind spot, and both are set out on `is_due`. `mm report` is not gated, for the reason an unset
   `[report]` section does not stop it either.
@@ -883,6 +882,43 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   marks a scrubbed plan by naming the date in the `Excess (Actual)` extra column, the way the
   Overview marks its column header: this screen has no header to hang it off, and a screen quoting a
   hypothetical balance must say so.
+
+## Backup
+
+The shared invariants — `interval_days` clamped before `TimeDelta::days`, the real clock rather
+than `--today`, no key prefix, the snapshot removed on both paths — are in `finance-utils`'
+AGENTS.md. Read `mistermanager.tf` before changing the bucket, what it keeps, or what the backup
+identity may do, since none of that is reachable from Rust. What is MisterManager's own:
+
+- **The backup identity may only `PutObject`, and only with `If-None-Match: *`**, which the
+  crate's upload sends. The key in the `mistermanager` profile is long-lived and unattended, so the
+  policy is what bounds it: it can add a backup but never replace one, read one, delete one, or
+  list the bucket. The bucket keeps no versions, so an overwrite would destroy a backup as surely
+  as a delete. Restores are done by the owner under their own identity.
+- **The bucket is this repository's own, and its name is composed rather than configured.**
+  `mistermanager-<account id>-<region>-an`, built in `mistermanager.tf` from `aws_caller_identity`
+  and `var.aws_region`. A name that had to be *chosen* would say where the owner's finances are
+  backed up and would have to reach Terraform out of band to stay unsaid; one derived from the
+  profile is safe to commit. Owning the bucket is what makes the lifecycle rules declarable at all:
+  `aws_s3_bucket_lifecycle_configuration` is a whole-bucket resource, so two repositories declaring
+  one would revert each other on every apply.
+- **The lifecycle rules move an object to Standard-Infrequent Access at 30 days and expire it at
+  365.** 30 is IA's own minimum billable duration, so an object never pays for storage it did not
+  use, and nothing reads a backup on a schedule, which makes IA's retrieval charge a cost of
+  restoring rather than of keeping.
+- **`--db` opts out of the schedule.** The scheduled check runs after every arm but `backup`, and
+  only on the default database: the state file records *when* an upload last happened, not *what*
+  was uploaded, so a scratch database on the schedule would take the real one's turn and leave an
+  object nothing distinguishes from a real backup. An explicit `mm backup` uploads whatever it is
+  pointed at, and never opens the database first, so a mistyped `--db` is an error rather than a
+  freshly seeded file uploaded as a restore point.
+- **A backup is `money-<timestamp>.db.zst`**, compressed by the crate's upload; `BACKUP.stem` is
+  the part before the timestamp and the crate owns the rest of the name. Restoring needs `zstd -d`,
+  which the README spells out.
+- **The backup state file is advisory where a `setting` key is binding.** An unreadable
+  `~/.local/state/mistermanager/backup.toml` warns and reads as "never backed up", where a dangling
+  `setting` key refuses. The asymmetry is in the consequence: a dangling setting key moves real
+  money to the wrong place, while a corrupt state file costs one redundant upload.
 
 ## Testing conventions
 

@@ -1,82 +1,29 @@
-//! The configuration file, and the primary home of `serde` and `toml` -- named again in
-//! `src/backup/state.rs`, deliberate leakage rather than an oversight.
+//! The configuration file. `serde` is named here and in `src/mix/sec.rs`;
+//! `toml` only in tests, here and in `src/report/mod.rs`.
 //!
-//! Two failure modes that look alike are deliberately opposite. A file that
-//! is absent, or that carries no `[backup]` section, means the feature is
-//! off -- the same rule an unset `setting` key follows, and what makes a
-//! clean checkout and an unconfigured machine both do nothing. A file that
-//! is present but does not parse is an error instead, because the
-//! alternative is that a misspelled key leaves `bucket` unset and reads as
-//! "off": a backup that quietly stops running is the one failure nothing
-//! downstream ever notices.
-//!
-//! A key nothing reads is neither -- it is ignored, so a file written for
-//! another build still configures every key this one does understand. What
-//! keeps the paragraph above true is that `bucket` has **no default**: the
-//! typo that would switch backups off silently is a missing required field,
-//! and still an error. Refusing the whole file would only ever have caught
-//! keys that were additionally wrong.
+//! An absent file, or one missing a section, means that section's feature is
+//! off -- the same rule an unset `setting` key follows, and what makes a clean
+//! checkout and an unconfigured machine both do nothing. A file that is
+//! present but does not parse is an error instead. `[report]`'s `dir` and
+//! `[backup]`'s `bucket` have no default, so the typo that would otherwise
+//! switch a feature off silently is a missing field. Keys nothing reads are
+//! ignored, so a file written for another build still configures every key
+//! this one does understand.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
+use jluszcz_finance_utils::config::{self as shared, BackupConfig, ReportConfig};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+/// The application's name: its config and state directories, and the AWS
+/// profile a `[backup]` section that names none authenticates as.
+pub const APP: &str = "mistermanager";
+
 #[derive(Debug, Default, Deserialize, PartialEq)]
 pub struct Config {
-    pub backup: Option<Backup>,
-    pub report: Option<Report>,
+    pub backup: Option<BackupConfig>,
+    pub report: Option<ReportConfig>,
     pub sec: Option<Sec>,
-}
-
-#[derive(Debug, Deserialize, PartialEq)]
-pub struct Backup {
-    /// Where backups are written. No default: it names where the owner's
-    /// finances are kept, so it cannot be a literal in a public repository.
-    pub bucket: String,
-    /// The `~/.aws/credentials` profile to authenticate as.
-    #[serde(default = "default_profile")]
-    pub profile: String,
-    /// Zero means every run uploads, which is a legitimate thing to ask for
-    /// while setting this up.
-    #[serde(default = "default_interval_days")]
-    pub interval_days: u32,
-}
-
-fn default_profile() -> String {
-    "mistermanager".to_string()
-}
-
-fn default_interval_days() -> u32 {
-    7
-}
-
-/// Where the standing HTML report is written.
-///
-/// An absent section means the feature is off, the rule `[backup]` follows and
-/// the rule an unset `setting` key follows. There is deliberately no `enabled`
-/// key: the section's presence is the switch, and a second way to say "off"
-/// would be a second thing to get wrong.
-#[derive(Debug, Deserialize, PartialEq)]
-pub struct Report {
-    /// No default. It names where the owner's finances are written, the same
-    /// kind of fact as [`Backup::bucket`], so it cannot be a literal in a
-    /// public repository.
-    dir: PathBuf,
-}
-
-impl Report {
-    /// The directory, with a leading `~` expanded against `$HOME`.
-    ///
-    /// Only the first component: a `~` anywhere else is an ordinary character
-    /// in an ordinary directory name, and expanding it would rewrite a path
-    /// the owner meant literally.
-    pub fn dir(&self) -> Result<PathBuf> {
-        let Ok(rest) = self.dir.strip_prefix("~") else {
-            return Ok(self.dir.clone());
-        };
-        let home = std::env::var("HOME").context("HOME is not set")?;
-        Ok(PathBuf::from(home).join(rest))
-    }
 }
 
 /// What `mm mixes` puts in its `User-Agent`.
@@ -107,23 +54,11 @@ pub const ADD_SEC_CONTACT: &str = "add a [sec] section with a contact line";
 /// `$XDG_CONFIG_HOME/mistermanager/config.toml`, or `~/.config` when it is
 /// unset or empty.
 pub fn default_path() -> Result<PathBuf> {
-    let dir = match std::env::var("XDG_CONFIG_HOME") {
-        Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => {
-            let home = std::env::var("HOME").context("HOME is not set")?;
-            PathBuf::from(home).join(".config")
-        }
-    };
-    Ok(dir.join("mistermanager").join("config.toml"))
+    shared::default_path(APP)
 }
 
 pub fn load(path: &Path) -> Result<Config> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-    };
-    toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+    shared::load(path)
 }
 
 #[cfg(test)]
@@ -143,46 +78,6 @@ mod tests {
         path
     }
 
-    #[test]
-    fn a_fully_specified_backup_section_parses() {
-        let path = fixture(
-            "full",
-            r#"
-            [backup]
-            bucket = "a-bucket"
-            profile = "a-profile"
-            interval_days = 3
-            "#,
-        );
-        let cfg = load(&path).unwrap();
-        let backup = cfg.backup.unwrap();
-        assert_eq!(backup.bucket, "a-bucket");
-        assert_eq!(backup.profile, "a-profile");
-        assert_eq!(backup.interval_days, 3);
-    }
-
-    /// Only the bucket has no sensible default, so a one-line section is a
-    /// complete configuration.
-    #[test]
-    fn a_backup_section_naming_only_a_bucket_takes_every_default() {
-        let path = fixture("minimal", "[backup]\nbucket = \"a-bucket\"\n");
-        let backup = load(&path).unwrap().backup.unwrap();
-        assert_eq!(backup.profile, "mistermanager");
-        assert_eq!(backup.interval_days, 7);
-    }
-
-    /// There is no prefix: a backup is an object at the root of a bucket this
-    /// application owns outright. A file asking for one is a line that does
-    /// nothing, and the rest of the file still loads.
-    #[test]
-    fn a_prefix_key_is_ignored_rather_than_refusing_the_file() {
-        let path = fixture(
-            "prefix",
-            "[backup]\nbucket = \"a-bucket\"\nprefix = \"a-prefix\"\n",
-        );
-        assert_eq!(load(&path).unwrap().backup.unwrap().bucket, "a-bucket");
-    }
-
     /// A section a later build might add, or an earlier one has dropped.
     /// Deliberately not `[report]`, which this build reads: the example has
     /// to name a section nothing here has a field for.
@@ -193,94 +88,6 @@ mod tests {
             "[charts]\nstyle = \"wide\"\n\n[backup]\nbucket = \"a-bucket\"\n",
         );
         assert_eq!(load(&path).unwrap().backup.unwrap().bucket, "a-bucket");
-    }
-
-    /// An unset feature is an off feature -- the rule the `setting` keys
-    /// already follow. A machine the owner has not configured does nothing.
-    #[test]
-    fn a_config_file_with_no_backup_section_leaves_backups_off() {
-        let path = fixture("empty", "");
-        assert_eq!(load(&path).unwrap(), Config::default());
-    }
-
-    #[test]
-    fn a_missing_config_file_leaves_backups_off() {
-        let path = std::env::temp_dir().join(format!(
-            "mistermanager_config_absent_never_written_{}.toml",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&path);
-        assert_eq!(load(&path).unwrap(), Config::default());
-    }
-
-    /// The one failure mode "unset means off" cannot absorb, and the reason
-    /// `bucket` has no default: a typo in *it* must not leave the section
-    /// parsing and the feature silently switched off, because a backup that
-    /// stops running is a backup nothing downstream notices. An unknown key
-    /// is ignored; a required one missing is still an error.
-    #[test]
-    fn a_misspelled_bucket_is_an_error_rather_than_a_silently_disabled_backup() {
-        let path = fixture("typo", "[backup]\nbucketname = \"a-bucket\"\n");
-        // `{:#}` rather than `to_string()`: anyhow's plain Display prints
-        // only the outermost context, which is "parsing <path>". The field
-        // name is in the `toml` error it wraps.
-        let err = format!("{:#}", load(&path).unwrap_err());
-        assert!(err.contains("bucket"), "unhelpful error: {err}");
-    }
-
-    #[test]
-    fn a_wrongly_typed_value_is_an_error_naming_the_file() {
-        let path = fixture("type", "[backup]\nbucket = 7\n");
-        let err = format!("{:#}", load(&path).unwrap_err());
-        assert!(
-            err.contains("mistermanager_config_type"),
-            "unhelpful error: {err}"
-        );
-    }
-
-    /// `dir` is the only key, so a one-line section is a complete
-    /// configuration -- the shape `[backup]` already has.
-    #[test]
-    fn a_report_section_naming_only_a_dir_is_a_complete_configuration() {
-        let path = fixture("report", "[report]\ndir = \"/tmp/reports\"\n");
-        let report = load(&path).unwrap().report.unwrap();
-        assert_eq!(report.dir().unwrap(), PathBuf::from("/tmp/reports"));
-    }
-
-    /// The same rule the backup section follows, and it holds for the same
-    /// reason: `dir` has no default, so the typo that would leave the report
-    /// silently switched off is a missing required field rather than an
-    /// unknown key.
-    #[test]
-    fn a_misspelled_dir_is_an_error_rather_than_a_silently_disabled_report() {
-        let path = fixture("report_typo", "[report]\ndirectory = \"/tmp/other\"\n");
-        let err = format!("{:#}", load(&path).unwrap_err());
-        assert!(err.contains("dir"), "unhelpful error: {err}");
-    }
-
-    #[test]
-    fn a_config_file_with_no_report_section_leaves_reports_off() {
-        let path = fixture("no_report", "[backup]\nbucket = \"a-bucket\"\n");
-        assert!(load(&path).unwrap().report.is_none());
-    }
-
-    /// TOML does not expand it, and a literal `~` directory in the home
-    /// directory is a directory nothing would ever look in.
-    #[test]
-    fn a_leading_tilde_in_the_report_dir_expands_against_home() {
-        let path = fixture("report_tilde", "[report]\ndir = \"~/reports\"\n");
-        let report = load(&path).unwrap().report.unwrap();
-        let home = PathBuf::from(std::env::var("HOME").unwrap());
-        assert_eq!(report.dir().unwrap(), home.join("reports"));
-    }
-
-    /// Only a *leading* `~` is a home directory. One in the middle of a path
-    /// is an ordinary character in an ordinary directory name.
-    #[test]
-    fn a_tilde_that_is_not_the_first_component_is_left_alone() {
-        let path = fixture("report_mid_tilde", "[report]\ndir = \"/tmp/a~b\"\n");
-        let report = load(&path).unwrap().report.unwrap();
-        assert_eq!(report.dir().unwrap(), PathBuf::from("/tmp/a~b"));
     }
 
     #[test]

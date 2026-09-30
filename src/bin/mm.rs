@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
-use chrono::{Local, NaiveDate, Utc};
+use chrono::{Local, NaiveDate};
 use clap::{Parser, Subcommand};
+use jluszcz_finance_utils::backup::cli::{self as backup, BackupArgs};
 #[cfg(feature = "import")]
 use mistermanager::import;
-use mistermanager::{backup, config, db, mix, report, tui};
-use std::path::{Path, PathBuf};
+use mistermanager::{BACKUP, config, db, mix, report, tui};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "mm", about = "MisterManager")]
@@ -82,16 +83,7 @@ enum Command {
         ticker: Option<String>,
     },
     /// Back the database up to S3, if the schedule says one is due.
-    Backup {
-        /// Upload even if the last backup is recent enough.
-        #[arg(long)]
-        force: bool,
-        /// Print when the last backup ran and when the next is due, then exit.
-        /// Refuses `--force`: this arm prints and exits without uploading, so
-        /// accepting the flag would be accepting an instruction it drops.
-        #[arg(long, conflicts_with = "force")]
-        status: bool,
-    },
+    Backup(BackupArgs),
 }
 
 fn default_db() -> Result<PathBuf> {
@@ -113,7 +105,6 @@ fn main() -> Result<()> {
         Some(p) => p,
         None => default_db()?,
     };
-    let db = db::open(&path)?;
     let today = cli.today.unwrap_or_else(|| Local::now().date_naive());
 
     let config_path = match cli.config {
@@ -123,19 +114,19 @@ fn main() -> Result<()> {
     // Before the TUI opens: a config file that does not parse should say so
     // on a terminal that is still in its normal mode.
     let cfg = config::load(&config_path)?;
-    let state_path = backup::state::default_path()?;
 
-    let is_explicit_backup = matches!(cli.command, Some(Command::Backup { .. }));
+    let is_explicit_backup = matches!(cli.command, Some(Command::Backup(_)));
     match cli.command {
         // No subcommand launches the application. `--db` and `--today` are
         // global, so the TUI honors them exactly as the importer does.
         None => {
             let sec_contact = cfg.sec.as_ref().map(|s| s.contact.clone());
-            let db = tui::run(db, today, demo, sec_contact)?;
+            let db = tui::run(db::open(&path)?, today, demo, sec_contact)?;
             write_report(&db, &cfg, today, demo);
         }
         #[cfg(feature = "import")]
         Some(Command::Import { workbook, replace }) => {
+            let db = db::open(&path)?;
             match import::import_all(&db, &workbook, today, replace)? {
                 // The Savings sheet names its two blocks by position and
                 // carries no account code, so the first import against an
@@ -162,6 +153,7 @@ fn main() -> Result<()> {
                      flag, or quit the app with --demo, which writes no report at all"
                 );
             }
+            let db = db::open(&path)?;
             // Never the config's "off": an unset `[report]` section means the
             // owner does not want a page written behind every quit, which is
             // a different question from the one `mm report` asks.
@@ -183,6 +175,7 @@ fn main() -> Result<()> {
             print_written(&report::write(&db, &dir, today)?);
         }
         Some(Command::Mixes { ticker }) => {
+            let db = db::open(&path)?;
             // Named rather than defaulted: SEC refuses a request declaring no
             // contact, and the repository may hold no real address, so the
             // contact is configuration a run must supply.
@@ -222,15 +215,10 @@ fn main() -> Result<()> {
                 );
             }
         }
-        Some(Command::Backup { force, status }) => {
-            if status {
-                print_backup_status(&cfg, &state_path)?;
-            } else {
-                // Explicitly asked for, so a failure is an error exit rather
-                // than a line on stderr.
-                let outcome = backup::run_if_due(&path, &cfg, &state_path, Utc::now(), force)?;
-                print_backup(&outcome);
-            }
+        // Never opens the database: opening creates and seeds a missing
+        // file, and a mistyped `--db` would then be uploaded as a backup.
+        Some(Command::Backup(args)) => {
+            backup::command(&BACKUP, &path, cfg.backup.as_ref(), &args, db::snapshot)?
         }
     }
 
@@ -244,23 +232,9 @@ fn main() -> Result<()> {
     // next upload for a whole interval. An explicit `mm backup` still uploads
     // whatever it was pointed at, because it was asked to.
     if !is_explicit_backup && is_default_db {
-        scheduled_backup(&path, &cfg, &state_path);
+        backup::scheduled(&BACKUP, &path, cfg.backup.as_ref(), db::snapshot);
     }
     Ok(())
-}
-
-/// Never fatal. Someone who has already quit the application should not be
-/// told it broke because the wifi did -- and the schedule stays due, so the
-/// next run tries again.
-fn scheduled_backup(db_path: &Path, cfg: &config::Config, state_path: &Path) {
-    match backup::run_if_due(db_path, cfg, state_path, Utc::now(), false) {
-        Ok(backup::Outcome::BackedUp { key, bytes }) => {
-            println!("backed up {} to {key}", backup::human_bytes(bytes));
-        }
-        // Silent: nothing happened, and this runs after every single quit.
-        Ok(_) => {}
-        Err(e) => eprintln!("backup failed: {e:#}"),
-    }
 }
 
 /// Never fatal, for the reason a scheduled backup is not: someone who has
@@ -278,61 +252,9 @@ fn write_report(db: &db::Db, cfg: &config::Config, today: NaiveDate, demo: bool)
 fn print_written(written: &report::Written) {
     println!(
         "wrote {} to {}",
-        backup::human_bytes(written.bytes),
+        jluszcz_finance_utils::human_bytes(written.bytes),
         written.path.display()
     );
-}
-
-fn print_backup(outcome: &backup::Outcome) {
-    match outcome {
-        backup::Outcome::Disabled => {
-            println!("backups are not configured: no [backup] section in the config file");
-        }
-        backup::Outcome::NotDue { next } => {
-            println!("not due until {}", next.format("%Y-%m-%d %H:%M UTC"));
-        }
-        backup::Outcome::BackedUp { key, bytes } => {
-            println!("backed up {} to {key}", backup::human_bytes(*bytes));
-        }
-    }
-}
-
-fn print_backup_status(cfg: &config::Config, state_path: &Path) -> Result<()> {
-    let Some(backup_cfg) = cfg.backup.as_ref() else {
-        println!("backups are not configured: no [backup] section in the config file");
-        return Ok(());
-    };
-    println!(
-        "bucket {}, profile {}, every {} days",
-        backup_cfg.bucket, backup_cfg.profile, backup_cfg.interval_days
-    );
-    // Matches `run_if_due`: the state file is advisory where a `setting` key is
-    // binding, so an unreadable one is a warning and "never backed up" rather than
-    // an error exit -- `--status` must not fail more strictly than the scheduled
-    // check it is reporting on.
-    let state = match backup::state::read(state_path) {
-        Ok(state) => state,
-        Err(e) => {
-            eprintln!("ignoring unreadable backup state: {e:#}");
-            None
-        }
-    };
-    match state {
-        None => println!("never backed up"),
-        Some(state) => {
-            println!(
-                "last {} ({})",
-                state.last_backup_at.format("%Y-%m-%d %H:%M UTC"),
-                state.last_key
-            );
-            println!(
-                "next {}",
-                backup::next_due(state.last_backup_at, backup_cfg.interval_days)
-                    .format("%Y-%m-%d %H:%M UTC")
-            );
-        }
-    }
-    Ok(())
 }
 
 fn print_refreshed(refreshed: &mix::Refreshed) {

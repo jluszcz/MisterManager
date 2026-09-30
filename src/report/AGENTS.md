@@ -2,8 +2,9 @@
 
 `Snapshot` reads the Overview, both ledgers, Savings, Planning and the allocation in one pass; `html`
 renders them as one self-contained page, one module per tab, the way `tui` keeps one per screen;
-`write` minifies that page and puts it on the disk atomically; `write_if_enabled` is the quit
-path's gate over it. `minify_html` is named only in `mod.rs`.
+`write` hands that page to `finance-utils`' `report::write`, which minifies it and puts it on the
+disk atomically; `write_if_enabled` is the quit path's gate over it, and delegates to the crate's.
+`minify_html` is named in `finance-utils`, not here.
 
 The page carries **no script**, by rule, and is read offline on a phone. Almost everything below
 follows from those two facts: what a control is allowed to be, what a column may do with its
@@ -43,8 +44,9 @@ about a figure, one of them is wrong.
   to keep off the page.
 - **A quit that changed nothing does not rewrite the day's page.** The gate is there
   because `dir` names a synced folder: a rename onto the name is an upload and then a
-  download on a phone, spent on bytes that come out the same. `is_due` is that gate --
-  a run that wrote a row is owed a page, and so is a run whose directory holds none
+  download on a phone, spent on bytes that come out the same. `finance-utils`'
+  `report::is_due` is that gate -- a run that wrote a row is owed a page, and so is a
+  run whose directory holds none
   written on the day it is quoting -- and it is where both halves' blind spots are set
   out, since `db::Db::wrote_rows` counts one connection and an mtime is the day a page
   was *written* rather than the day it quotes. **`mm report` is not gated**, for the
@@ -166,8 +168,8 @@ about a figure, one of them is wrong.
   dependency on; but `html::page` is what every test in
   `src/report/html/` asserts exact markup against, and a module whose output no
   longer matched what it was checked for would be testing the minifier instead.
-  So `report::minify` sits in `write`, the one seam both writers already pass
-  through, and `Written::bytes` reports what actually landed. `minify_css` is on
+  So the minifier sits in `finance-utils`' `report::write`, the one seam both
+  writers already pass through, and `Written::bytes` reports what actually landed. `minify_css` is on
   because the page's whole layout is one inline `<style>`; `minify_js` is off
   because the page carries no script by rule. What comes out is aggressive —
   a lowercased doctype, unquoted attributes, no `<head>`, no closing tag that

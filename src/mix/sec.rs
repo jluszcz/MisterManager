@@ -1,6 +1,5 @@
-//! The network client for a fund's SEC filing -- the second seam beside
-//! `src/backup/s3.rs` allowed to name `reqwest`, `tokio` and
-//! `jluszcz_rust_utils`.
+//! The network client for a fund's SEC filing -- the only place in the crate
+//! allowed to name `reqwest`, `tokio` and `jluszcz_rust_utils`.
 //!
 //! Three hops turn a ticker into a filing's holdings. [`resolve_series`]
 //! reads `company_tickers_mf.json` for the series a ticker belongs to;
@@ -11,9 +10,8 @@
 //! by approaching it.
 //!
 //! Each public function opens a current-thread runtime for the span of its
-//! own call and drops it, exactly as `backup::s3::upload` does and for the
-//! same reason: nothing else in the crate is async, so there is no reason
-//! for a runtime to outlive one call.
+//! own call and drops it: nothing else in the crate is async, so there is no
+//! reason for a runtime to outlive one call.
 //!
 //! `jluszcz_rust_utils::query::http_get`/`http_get_json` are not used here --
 //! both force `Accept: application/json`, and two of the three hops answer

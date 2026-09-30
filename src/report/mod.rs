@@ -23,11 +23,10 @@ use crate::projection;
 use crate::reading::Reading;
 use crate::savings;
 use crate::transfer;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDate};
-use minify_html::Cfg;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// One container's goals and its unallocated remainder.
 pub struct Container {
@@ -400,135 +399,19 @@ impl Snapshot {
 /// changed would be a bookmark nobody could keep.
 pub const FILE_NAME: &str = "Money.html";
 
-/// Written beside the report and renamed onto it, never uploaded: a partial
-/// file under the real name is what this exists to prevent.
-///
-/// The pid is in the name because two writers can share a directory -- an
-/// `mm report --dir` run overlapping the quit path of an open app -- and one
-/// fixed name would have both writing the same bytes over each other before
-/// either got as far as its rename.
-fn temp_name() -> String {
-    format!(".{FILE_NAME}.{}.tmp", std::process::id())
-}
+pub use jluszcz_finance_utils::report::{Outcome, Written};
 
-/// The page as it goes to the disk, rather than as `html::page` writes it.
-///
-/// The whole file travels to a phone through a sync folder and is read there
-/// offline, so the bytes are worth shrinking; `html::page` stays readable
-/// because that is what its own tests assert against, and this is the one
-/// place between it and the disk that both writers pass through.
-///
-/// `minify_css` because the page's entire layout is one inline `<style>`.
-/// Not `minify_js`: the page carries no script by rule -- that is what
-/// `the_page_makes_no_external_request_and_carries_no_script` holds up -- so
-/// a JS minifier here would only ever run over nothing.
-fn minify(page: &str) -> Vec<u8> {
-    let cfg = Cfg {
-        minify_css: true,
-        ..Cfg::new()
-    };
-    minify_html::minify(page.as_bytes(), &cfg)
-}
-
-/// A page that reached the disk: where it landed, and how big it is.
-#[derive(Debug)]
-pub struct Written {
-    pub path: PathBuf,
-    pub bytes: u64,
-}
-
-#[derive(Debug)]
-pub enum Outcome {
-    /// No `[report]` section.
-    Disabled,
-    /// A `--demo` run.
-    Skipped,
-    /// A page is already there, written on the day this run quotes, over a
-    /// database this run did not touch. See [`is_due`].
-    Unchanged,
-    Written(Written),
-}
-
-/// Whether the page is owed a rewrite: this run changed something, or the
-/// page on the disk is not this day's.
-///
-/// The shape [`crate::backup::is_due`] has, and for the reason that one has
-/// it -- the decision is arithmetic over three values, so it is answerable
-/// without a filesystem or a clock.
-///
-/// `last_written` is the day the existing page was written, as its mtime, and
-/// `None` covers every reason there is no such day: no page there, or a
-/// directory that will not answer. Both are due, because a page that is not
-/// there cannot be the one this run would have written.
-///
-/// The two halves are the two things a page depends on that this crate can
-/// see. `wrote_rows` is the database, through [`crate::db::Db::wrote_rows`]
-/// -- and only as far back as this run, which is what leaves an out-of-band
-/// change able to strand a page until the next run writes a row. The day is
-/// the rest: every figure on the page is quoted at a date derived from
-/// `today`, and the footer's stamp is the freshness a reader checks on the
-/// way out, so a page from yesterday is rewritten even when every figure on
-/// it would come out the same.
-///
-/// **The mtime is the day the page was written, not the day it quotes**, and
-/// the two part company whenever the run that wrote it was not quoting its own
-/// wall-clock day. Two runs are not. `today` is read once in `main`, before
-/// the screens open, so a session held across local midnight quotes the day it
-/// started and lands its page on the next one -- and every quit that day then
-/// finds an mtime matching and leaves a page quoting yesterday standing. A
-/// `--today` run quotes whatever it was told, so the simulated page it writes
-/// carries the real day's mtime and suppresses the next ordinary quit in the
-/// same way. Both need the quoted day recorded somewhere the next run can read
-/// it, which is a second file beside `backup.toml` and deliberately not part
-/// of this gate. What is left is bounded by the other half: the next run that
-/// writes a row rewrites the page whatever its date says.
-pub fn is_due(last_written: Option<NaiveDate>, today: NaiveDate, wrote_rows: bool) -> bool {
-    wrote_rows || last_written != Some(today)
-}
-
-/// The local day `path` was last written, or `None` for every reason it
-/// cannot be read -- absent, unreadable, or a platform with no mtime. All of
-/// those mean the same thing to [`is_due`], which is that this run cannot
-/// claim the page already on the disk is its own.
-fn written_on(path: &Path) -> Option<NaiveDate> {
-    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
-    Some(DateTime::<Local>::from(modified).date_naive())
-}
-
-/// The two steps that can fail with a temporary file on the disk, so the one
-/// caller has a single error path to clean up after.
-fn write_then_rename(temp: &Path, path: &Path, page: &[u8]) -> Result<()> {
-    std::fs::write(temp, page).with_context(|| format!("writing {}", temp.display()))?;
-    std::fs::rename(temp, path).with_context(|| format!("renaming onto {}", path.display()))
+/// The page as `html::page` writes it, for the day `today` quotes.
+fn render(db: &Db, today: NaiveDate) -> Result<String> {
+    Ok(html::page(&Snapshot::load(db, today, Local::now())?))
 }
 
 /// Write the report into `dir`, whatever the config says.
 ///
 /// The half `mm report` calls: being asked for is what the `[report]` section
-/// is for the quit path, so this one has no "off" to return. Every caller
-/// reaches the disk through here, which is what keeps the atomic rename from
-/// having a second, sloppier implementation the day a second caller appears.
+/// is for the quit path, so this one has no "off" to return.
 pub fn write(db: &Db, dir: &Path, today: NaiveDate) -> Result<Written> {
-    let snapshot = Snapshot::load(db, today, Local::now())?;
-    let page = minify(&html::page(&snapshot));
-
-    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-    // The temp file sits in the same directory so the rename stays atomic
-    // rather than crossing a filesystem, and a sync client never sees the
-    // report half-written.
-    let temp = dir.join(temp_name());
-    let path = dir.join(FILE_NAME);
-    // A rename that cannot happen -- a read-only directory, a sync client
-    // holding the target open -- would otherwise leave a partial page in the
-    // synced folder under a name nothing ever cleans up.
-    write_then_rename(&temp, &path, &page).inspect_err(|_| {
-        let _ = std::fs::remove_file(&temp);
-    })?;
-
-    Ok(Written {
-        path,
-        bytes: page.len() as u64,
-    })
+    jluszcz_finance_utils::report::write(dir, FILE_NAME, &render(db, today)?)
 }
 
 /// Write the report on quit, if this run is one that should.
@@ -552,27 +435,21 @@ pub fn write_if_enabled(
     today: NaiveDate,
     demo: bool,
 ) -> Result<Outcome> {
-    let Some(report) = cfg.report.as_ref() else {
-        return Ok(Outcome::Disabled);
-    };
-    if demo {
-        return Ok(Outcome::Skipped);
-    }
-    let dir = report.dir()?;
-    // The page this run would write is the page already there, so the rename
-    // is not worth making: the directory is a synced one, and a rename onto
-    // the name is what a sync client uploads and a phone downloads again.
-    if !is_due(written_on(&dir.join(FILE_NAME)), today, db.wrote_rows()) {
-        return Ok(Outcome::Unchanged);
-    }
-    Ok(Outcome::Written(write(db, &dir, today)?))
+    jluszcz_finance_utils::report::write_if_enabled(
+        cfg.report.as_ref(),
+        demo,
+        FILE_NAME,
+        today,
+        db.wrote_rows(),
+        || render(db, today),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     fn scratch(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -906,15 +783,6 @@ mod tests {
         );
     }
 
-    /// An unset feature is an off feature -- the rule the `setting` keys and
-    /// the `[backup]` section already follow.
-    #[test]
-    fn no_report_section_writes_nothing() {
-        let outcome =
-            write_if_enabled(&seeded(), &config::Config::default(), today(), false).unwrap();
-        assert!(matches!(outcome, Outcome::Disabled));
-    }
-
     /// The mask is process-global and still installed when `main` regains
     /// control, so a report written under it would be a page of scrambled
     /// figures over the one file that cannot be regenerated without quitting
@@ -930,34 +798,6 @@ mod tests {
 
         assert!(matches!(outcome, Outcome::Skipped));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "the real figures");
-    }
-
-    /// A page that is not there yet is always owed, whatever the run did.
-    #[test]
-    fn a_directory_with_no_page_in_it_is_due() {
-        assert!(is_due(None, today(), false));
-    }
-
-    /// The case this gate exists for: a second quit on the same day over a
-    /// database nothing touched would rename an identical page onto the one
-    /// already there, and a sync client would upload it.
-    #[test]
-    fn todays_page_over_an_untouched_database_is_not_due() {
-        assert!(!is_due(Some(today()), today(), false));
-    }
-
-    #[test]
-    fn a_run_that_wrote_a_row_is_due_however_fresh_the_page_is() {
-        assert!(is_due(Some(today()), today(), true));
-    }
-
-    /// The stamp in the footer is what a reader checks on the way out, so a
-    /// page carrying yesterday's date is rewritten even though every figure
-    /// on it would come out the same.
-    #[test]
-    fn yesterdays_page_is_due_though_nothing_changed() {
-        let yesterday = today().pred_opt().unwrap();
-        assert!(is_due(Some(yesterday), today(), false));
     }
 
     /// The whole gate, over a real database rather than three arguments: a
@@ -987,7 +827,7 @@ mod tests {
         // Read back off the page rather than taken from the clock again: a run
         // that crossed local midnight between the write above and here would
         // otherwise be due, and this test would go red once a year.
-        let day = written_on(&dir.join(FILE_NAME)).unwrap();
+        let day = DateTime::<Local>::from(before).date_naive();
 
         // A fresh connection over a database already at this version, with
         // nothing written through it -- the shape of a quit that changed
@@ -1001,82 +841,6 @@ mod tests {
             .modified()
             .unwrap();
         assert_eq!(before, after, "the page was rewritten");
-    }
-
-    /// `default_db` creates its own directory; a feature that silently does
-    /// nothing is the failure nothing downstream notices.
-    #[test]
-    fn a_missing_report_directory_is_created() {
-        let dir = scratch("missing");
-        let outcome = write_if_enabled(&seeded(), &configured(&dir), today(), false).unwrap();
-        assert!(matches!(outcome, Outcome::Written { .. }));
-        assert!(dir.join(FILE_NAME).exists());
-    }
-
-    /// A sync client watching the directory will happily upload a half-written
-    /// page, so the write is a rename onto the name rather than a write to it.
-    #[test]
-    fn an_existing_report_is_overwritten_and_no_temporary_file_survives() {
-        let dir = scratch("overwrite");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(FILE_NAME), "stale").unwrap();
-
-        write_if_enabled(&seeded(), &configured(&dir), today(), false).unwrap();
-
-        let page = std::fs::read_to_string(dir.join(FILE_NAME)).unwrap();
-        assert!(is_the_page(&page), "the stale page survived");
-        let leftovers: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
-            .filter(|n| n != FILE_NAME)
-            .collect();
-        assert!(leftovers.is_empty(), "left behind {leftovers:?}");
-    }
-
-    /// The half-written page must not outlive the failure either: a directory
-    /// something is syncing is exactly where a stray `.Money.html.<pid>.tmp`
-    /// would be uploaded and then sit forever, since nothing ever looks for
-    /// one by that name again.
-    #[test]
-    fn a_rename_that_cannot_happen_leaves_no_temporary_file_behind() {
-        let dir = scratch("failed-rename");
-        // A directory under the report's own name: the rename onto it fails,
-        // where the write of the temporary file beside it succeeds.
-        std::fs::create_dir_all(dir.join(FILE_NAME)).unwrap();
-
-        write(&seeded(), &dir, today()).expect_err("renaming onto a directory should fail");
-
-        let leftovers: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
-            .filter(|n| n != FILE_NAME)
-            .collect();
-        assert!(leftovers.is_empty(), "left behind {leftovers:?}");
-    }
-
-    /// A `Cfg` that quietly did nothing would leave the page exactly as
-    /// `html::page` wrote it, and nothing else on the way to the disk would
-    /// notice.
-    #[test]
-    fn the_page_reaches_the_disk_smaller_than_it_was_written() {
-        let dir = scratch("minified");
-        let db = seeded();
-        let source = html::page(&Snapshot::load(&db, today(), Local::now()).unwrap());
-
-        let written = write(&db, &dir, today()).unwrap();
-
-        let page = std::fs::read_to_string(&written.path).unwrap();
-        assert!(
-            page.len() < source.len(),
-            "the page was not minified: {} bytes in, {} out",
-            source.len(),
-            page.len()
-        );
-        assert_eq!(
-            written.bytes,
-            page.len() as u64,
-            "the reported size is not the size that landed"
-        );
     }
 
     /// The bar is a row of empty `<span>`s whose whole content is an inline
@@ -1140,31 +904,5 @@ mod tests {
                 "nothing switches the {id} panel on"
             );
         }
-    }
-
-    #[test]
-    fn a_written_report_reports_the_path_it_landed_at() {
-        let dir = scratch("path");
-        let outcome = write_if_enabled(&seeded(), &configured(&dir), today(), false).unwrap();
-        match outcome {
-            Outcome::Written(w) => {
-                assert_eq!(w.path, dir.join(FILE_NAME));
-                assert!(w.bytes > 0);
-            }
-            other => panic!("expected a written report, got {other:?}"),
-        }
-    }
-
-    /// `mm report` was asked for the page, so the section that switches the
-    /// quit-time write on has no say: an owner who wants one copy, once,
-    /// should not have to configure a standing report to get it.
-    #[test]
-    fn write_needs_no_report_section_because_being_asked_is_the_switch() {
-        let dir = scratch("explicit");
-        let written = write(&seeded(), &dir, today()).unwrap();
-        assert_eq!(written.path, dir.join(FILE_NAME));
-        assert!(is_the_page(
-            &std::fs::read_to_string(&written.path).unwrap()
-        ));
     }
 }
