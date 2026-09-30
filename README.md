@@ -391,7 +391,7 @@ Off until a config file switches it on:
 ```toml
 # ~/.config/mistermanager/config.toml
 [report]
-dir = "~/Dropbox/money"   # required
+dir = "~/Dropbox/money"   # required; absolute, or under ~
 ```
 
 `mm` writes a self-contained HTML page of the screens to `<dir>/Money.html`
