@@ -33,7 +33,6 @@ serde_json = "1.0"
 tokio = { version = "1.53", features = ["rt", "net", "time"] }
 
 [dev-dependencies]
-jluszcz_finance_utils = { git = "https://github.com/jluszcz/finance-utils", features = ["test-support"] }
 toml = "1.1"
 
 [features]
