@@ -483,9 +483,9 @@ still takes effect. What that cannot hide is a misspelled `bucket`, or a misspel
 `[report]`, because neither has a default: the one typo that would leave a feature silently
 switched off is still an error.
 
-There is no key prefix. A backup is `money-<timestamp>.db` at the root of the bucket, which the
-application owns outright and which holds nothing else — a prefix would name the only thing in
-there, while being a string the key and the IAM policy would each spell separately, with
+There is no key prefix. A backup is `money-<timestamp>.db.zst`, a zstd-compressed copy of the
+database, at the root of the bucket, which the application owns outright and which holds nothing
+else — a prefix would name the only thing in there, while being a string the key and the IAM policy would each spell separately, with
 `AccessDenied` as the way they announce having come apart. A `prefix` line in the config file is one
 of those unread keys, and does nothing.
 
@@ -524,19 +524,21 @@ regardless of the schedule. `mm backup` uploads whatever database it is given, `
 never opens it first: a `--db` naming no file is an error, rather than a new empty database
 uploaded as a backup.
 
-To restore, quit `mm` first, then list the bucket and copy the object you want over the database:
+To restore, quit `mm` first, then list the bucket, download the object you want and decompress it over the database (`zstd` must be installed):
 
 ```bash
 aws s3 ls s3://<bucket>/
 rm -f ~/.local/share/mistermanager/money.db-wal ~/.local/share/mistermanager/money.db-shm
-aws s3 cp s3://<bucket>/money-20260820T140305Z.db ~/.local/share/mistermanager/money.db
+aws s3 cp s3://<bucket>/money-20260820T140305Z.db.zst .
+zstd -d -f money-20260820T140305Z.db.zst -o ~/.local/share/mistermanager/money.db
 ```
 
 Backups written before the prefix was dropped are still under `mistermanager/`, where `aws s3 ls`
 shows them as a single `PRE mistermanager/` line rather than as objects — so until the last of them
 expires at 365 days, the newest backup may be in there rather than at the root, and
 `aws s3 ls s3://<bucket>/mistermanager/` is what lists it. `mm backup --status` names the object it
-last wrote, prefix and all.
+last wrote, prefix and all. A backup named `.db` rather than `.db.zst` is an uncompressed copy and
+is restored with a plain `aws s3 cp`.
 
 The database runs in WAL mode, so a `-wal` file left over from a crash holds writes of its own; if
 it is still there, SQLite replays it into the restored file the next time `mm` opens it, which is

@@ -31,7 +31,7 @@ pub mod savings_block;
 pub mod transfer;
 pub mod tui;
 
-/// MisterManager's backups: named `money-<timestamp>.db`, as the
+/// MisterManager's backups: named `money-<timestamp>.db.zst` (zstd-compressed), as the
 /// `mistermanager` profile, with the state at `$XDG_STATE_HOME/mistermanager/`.
 pub const BACKUP: jluszcz_finance_utils::backup::Spec = jluszcz_finance_utils::backup::Spec {
     app: config::APP,
@@ -52,6 +52,6 @@ mod tests {
     #[test]
     fn backup_key_is_the_money_stem_and_a_utc_timestamp() {
         let now = Utc.with_ymd_and_hms(2026, 8, 20, 14, 3, 5).unwrap();
-        assert_eq!(BACKUP.key_for(now), "money-20260820T140305Z.db");
+        assert_eq!(BACKUP.key_for(now), "money-20260820T140305Z.db.zst");
     }
 }

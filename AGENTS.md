@@ -912,6 +912,9 @@ identity may do, since none of that is reachable from Rust. What is MisterManage
   object nothing distinguishes from a real backup. An explicit `mm backup` uploads whatever it is
   pointed at, and never opens the database first, so a mistyped `--db` is an error rather than a
   freshly seeded file uploaded as a restore point.
+- **A backup is `money-<timestamp>.db.zst`**, compressed by the crate's upload; `BACKUP.stem` is
+  the part before the timestamp and the crate owns the rest of the name. Restoring needs `zstd -d`,
+  which the README spells out.
 - **The backup state file is advisory where a `setting` key is binding.** An unreadable
   `~/.local/state/mistermanager/backup.toml` warns and reads as "never backed up", where a dangling
   `setting` key refuses. The asymmetry is in the consequence: a dangling setting key moves real
