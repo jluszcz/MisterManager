@@ -401,13 +401,17 @@ pub const FILE_NAME: &str = "Money.html";
 
 pub use jluszcz_finance_utils::report::{Outcome, Written};
 
+/// The page as `html::page` writes it, for the day `today` quotes.
+fn render(db: &Db, today: NaiveDate) -> Result<String> {
+    Ok(html::page(&Snapshot::load(db, today, Local::now())?))
+}
+
 /// Write the report into `dir`, whatever the config says.
 ///
 /// The half `mm report` calls: being asked for is what the `[report]` section
 /// is for the quit path, so this one has no "off" to return.
 pub fn write(db: &Db, dir: &Path, today: NaiveDate) -> Result<Written> {
-    let snapshot = Snapshot::load(db, today, Local::now())?;
-    jluszcz_finance_utils::report::write(dir, FILE_NAME, &html::page(&snapshot))
+    jluszcz_finance_utils::report::write(dir, FILE_NAME, &render(db, today)?)
 }
 
 /// Write the report on quit, if this run is one that should.
@@ -437,7 +441,7 @@ pub fn write_if_enabled(
         FILE_NAME,
         today,
         db.wrote_rows(),
-        || Ok(html::page(&Snapshot::load(db, today, Local::now())?)),
+        || render(db, today),
     )
 }
 

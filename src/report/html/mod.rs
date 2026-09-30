@@ -26,11 +26,12 @@ use crate::palette;
 
 // Every interpolation of owner-typed text goes through `escape`: a goal named
 // with an angle bracket would otherwise truncate the page at its own row. It
-// leaves `'` alone, and the page's only double-quoted attributes carrying
-// interpolated data are `money_in`'s, `account`'s and `savings::percent`'s
-// `style="color:{hex}"`, whose hex always comes from `palette::hex` -- never
-// owner text. A call site that puts escaped text inside a single-quoted
-// attribute reopens the injection it exists to close.
+// escapes `&`, `<`, `>` and `"` but never `'`, because the page's only
+// attributes carrying interpolated data are double-quoted -- `money_in`'s,
+// `account`'s and `savings::percent`'s `style="color:{hex}"`, whose hex always
+// comes from `palette::hex`, never owner text. A call site that puts escaped
+// text inside a single-quoted attribute reopens the injection it exists to
+// close.
 use jluszcz_finance_utils::report::escape;
 
 /// A money cell in a naturally signed column -- every one on the page but
