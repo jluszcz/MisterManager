@@ -1,5 +1,5 @@
-//! The configuration file, and the only place outside a test that names `serde`
-//! and `toml`.
+//! The configuration file. `serde` is named here and in `src/mix/sec.rs`;
+//! `toml` only in tests, here and in `src/report/mod.rs`.
 //!
 //! An absent file, or one missing a section, means that section's feature is
 //! off -- the same rule an unset `setting` key follows, and what makes a clean

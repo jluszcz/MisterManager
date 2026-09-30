@@ -175,7 +175,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/reading.rs` | `Reading` — whether a reader refuses a row it cannot resolve or draws past it. One parameter rather than a strict function and a tolerant twin, so the two readings differ in nothing but the thing they name. Taken by `goal::all_with_balances` and by the `transfer` readers built on it. |
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the setting key naming its container account. |
 | `src/default_source.rs` | `Source` — the two money forms, `t` and `p`, each owning the setting key naming the account its `From` opens on. |
-| `src/config.rs` | The TOML config file. `serde` and `toml` are named here, and `toml` again only in `src/report/mod.rs`'s tests. |
+| `src/config.rs` | The TOML config file. `serde` is named here and in `src/mix/sec.rs`; `toml` only in tests (`src/config.rs`, `src/report/mod.rs`). |
 | `src/plan_line.rs` | Every Planning line: its label, the amount it moves, and the setting key that says where it lands. |
 | `src/plan_rows.rs` | The Planning waterfall as an ordered list of rows, in neither medium -- a peer of `overview` and `savings`. The order, the labels, the grouping, the two footers outside the transfers block, and `Target`, the constant a row *is*. The Planning screen and the report's Planning tab both read it, and each spends `Row::depth` in its own units. |
 | `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `per_paycheck_over_years`, `period_days`, `pro_rata`, the Planning waterfall, `fund` (the age-based allocation target), `schedule` (when a recurring thing happens). No database. |
