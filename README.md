@@ -20,7 +20,7 @@ for inspection. A scratch run skips the scheduled backup and the quit path's rep
 would be indistinguishable from the real database's.
 
 Screens are `1` Overview, `2` Cash, `3` Credit, `4` Savings, `5` Planning, `6` Funds,
-`7` Recurring Goals, `8` Recurring Txns, `9` Accounts; `q` quits. **`?` opens the key reference for
+`7` Recurring Goals, `8` Recurring Txns, `9` Accounts, `0` Retirement; `q` quits. **`?` opens the key reference for
 whichever screen you are on**, and it is where every key is spelled out — what follows is the part
 of the app a list of keys cannot tell you. The screens are laid out for a terminal at least 120
 columns wide. Accounts read by the name and color you gave them on screen `9`, everywhere but
@@ -195,6 +195,16 @@ claims what the workbook already held instead of duplicating it. A row it owns o
 schedule no longer produces — the mortgage moved by hand from the 1st to the 5th — is *released*
 back to the ledger rather than deleted, and so are every one of a rule's rows when `d` deletes it. A
 delete never moves a balance.
+
+### `0` Retirement
+
+Retirement savings against an age rule: 3× salary and 10% of it tax-free by 35, 5–6× and 15–20% by
+45, and every other age read off straight lines through those two, extended past both. What counts
+is the holdings under investment accounts marked `Retirement` on screen `9`; `e` sets the salary
+they are a multiple of and the birth date the age comes from. The top box says where you stand
+today — `Short` by how much, `On track` inside the range, or `Ahead` — and the table below runs
+from your age to 55, leaving out the milestones already behind you. A `~` marks a row past 45,
+where the lines are a guess. The report carries the same page as its last tab.
 
 ### Typing
 

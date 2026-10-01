@@ -136,6 +136,10 @@ about a figure, one of them is wrong.
   trade runs the other way for `As of`, which this table keeps and the screen no longer has: the
   date a composition was read from matters to the reader who is away from the app and cannot press
   `g` to move it.
+- **The Retirement tab is a spelling of screen 0**, and is last for the reason the screen is: the
+  tabs run in key order, and `0` comes after `9`. It reads `crate::retirement` and decides only
+  what this medium has to — a status's color as an inline style off `palette::standing`, and a `$`
+  on the figures written into prose, where a cell's column header cannot say they are dollars.
 - **A cell says what it may do with its width, and a table never widens past the
   phone.** Three classes carry it: `n` is a figure and `d` a date, and neither
   wraps — a comma and a hyphen are both break opportunities, and a column narrow

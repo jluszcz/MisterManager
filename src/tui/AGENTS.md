@@ -87,7 +87,7 @@ for. The scroll keys are absent from both, for the same reason and one better:
 `cursor::scroll_key` answers them identically on every list in the app.
 
 **The chrome is one string for the whole app, and it is drawn against the right edge.**
-`help::chrome` states `1-9 screens · q quit` once — no screen has a say in it, because `1-9` and `q`
+`help::chrome` states `0-9 screens · q quit` once — no screen has a say in it, because `0-9` and `q`
 are answered in `App::dispatch` above every screen handler — and `App::render` splits the footer row
 in two, a screen's own keys filling the left and the chrome holding exactly its own width on the
 right. The two keys every screen answers are therefore found in the same place whatever the screen in
@@ -95,10 +95,10 @@ front of them costs, and the half ratatui truncates when a terminal is narrower 
 the screen's own, not `q quit`.
 
 Who *shows* it is a separate question, and the rule is that the chrome appears only where `dispatch`
-actually answers those two keys. `Topic::answers_app_wide_keys` states it — the eight screens, and
+actually answers those two keys. `Topic::answers_app_wide_keys` states it — the nine screen topics, and
 nothing else — and `App::footer_chrome` asks it through `App::topic`, so one question covers every
 modal and all six search boxes rather than a list of screens re-derived at the call site. That
-`dispatch` returns into `modal_key` *above* its `q` and `1-9` arms is what makes the answer false
+`dispatch` returns into `modal_key` *above* its `q` and `0-9` arms is what makes the answer false
 under a modal: a digit typed into a worksheet's `/` box is part of the needle, a `q` under a confirm
 dialog is one of the "any key" that cancels it, and naming a key that does nothing is worse than
 naming none. The open Help panel is the one context outside that match — it is not a `Topic`, and
@@ -115,7 +115,7 @@ writes is the `detail`: `Esc` genuinely clears to different places — All and t
 ledgers, All on Savings and Recurring Goals, the derived Paycheck-Eve on the Overview — and the panel is where that difference belongs, which is why
 the shared word is `clear` rather than one screen's answer imposed on the others. Two tests hold it
 up: `every_filter_key_is_labelled_with_its_shared_word` over every topic there is, and
-`the_shared_filters_lead_every_screen_footer_in_one_order` over the eight with footers, less the
+`the_shared_filters_lead_every_screen_footer_in_one_order` over the nine with footers, less the
 Overview's `Esc`, which clears a scrub rather than a filter and follows the arrows it undoes.
 
 **A footer must fit `MIN_WIDTH`, and the budget is what decides how a key is labelled.** ratatui
@@ -204,7 +204,11 @@ portfolio, so beside one account's `Δ` the figure would be on another denominat
 `Funds::recommendation` is where that gate is. `recurring_goal` is the seventh screen and
 `recurring_txn` the eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
 smallest: `a`, which creates an account the workbook does not name, and `e`, over everything the
-workbook does not say about one.
+workbook does not say about one. `retirement` is screen `0`, drawn last in the bar because that is
+where the key sits on the keyboard: retirement savings against the age rule, read from
+`crate::retirement` and drawn with no cursor. Its one key, `e`, edits the salary and the birth
+date — the first editor the birth date has, pressed here rather than on Funds, whose target the
+same date sets, because this is the first screen that needs both.
 
 `history` is the modal `Enter` opens on a Savings row: one goal's allocation rows, oldest first,
 and the two writes that correct one. It is the only reader of an `allocation` row in the crate —
@@ -455,13 +459,16 @@ deferred to nothing.
       scrambled, and `resolved_share` puts the answer beside it scrambled — so `/12` and `/2` would
       read the same right up to Enter.
   - **The net is one test per screen and two sweeps, and both sweeps assert something *arrived*.**
-    `a_demo_leaves_no_figure_on_any_screen` walks all nine screens with the mask on and asserts none
+    `a_demo_leaves_no_figure_on_any_screen` walks all ten screens with the mask on and asserts none
     of the fixture's own figures reach the buffer; `a_demo_leaves_no_figure_on_any_form_a_row_opens`
     presses every key that opens a form or a worksheet over a row carrying a figure and asserts the
     same of the modal. The second is not redundant: a screen sweep draws only screens, and a form
     prefills from the row it opens on, so a form is where a real figure is *most* likely to reach
     the screen. `BillField::Amount` was the one amount field this feature first missed, and only the
     form sweep sees it.
+    A fixture figure directly before a `%` is not a leak — it spells a share, which the mask
+    leaves, as screen 0's one-account `100.00%` does — and `draws_figure` is where the screen
+    sweep skips it.
     - **An absence check over an empty table passes for free**, which is the failure mode both
       sweeps are built against. The screen sweep runs on `app_with_two_rows_on_every_list` rather
       than `app` — which has no funds, no recurring goals and no recurring transactions — and
@@ -475,7 +482,7 @@ deferred to nothing.
     pseudonym `Enter` would commit. `App::open_goal_edit` is the example: it hands `GoalForm` the
     selected row's own name, and the mask is applied only in `display(GoalField::Name)`, never to
     what the row handed the form. The same two-sweep shape the figures use holds this shut:
-    `a_demo_leaves_no_name_on_any_screen` walks all nine screens with the mask on and asserts none
+    `a_demo_leaves_no_name_on_any_screen` walks all ten screens with the mask on and asserts none
     of the fixture's own names reach the buffer, and `a_demo_leaves_no_name_on_any_form_a_row_opens`
     presses every key that opens a form or a worksheet over a row carrying a name and asserts the
     same of the modal. `a_demo_draws_a_pseudonym_in_a_name_field_and_commits_the_name` pins the two

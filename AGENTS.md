@@ -200,7 +200,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. `spread_asks` prices the plug's set, and `unmet_asks` says when the plug falls short of it. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
-| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning and the allocation in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` hands that page to `finance-utils`, which minifies it and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own, and its Funds tab of `allocation`, with one stacked section per account where the screen cycles them with `Tab`. |
+| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning, the allocation and Retirement in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` hands that page to `finance-utils`, which minifies it and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own, and its Funds tab of `allocation`, with one stacked section per account where the screen cycles them with `Tab`, and its Retirement tab of `retirement`. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/lib.rs` | `BACKUP`, the `finance-utils` `backup::Spec` naming the app and the key stem. The schedule, the upload, the state file and `mm backup`'s behavior are all the crate's; `db::snapshot` makes the copy, so `rusqlite` stays in `src/db/`. See [Backup](#backup). |
 | `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/AGENTS.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `tui/mod.rs` rather than in whichever screen needed it first. `app` is a directory, one module per screen over one `App`. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/AGENTS.md`. |
@@ -380,6 +380,15 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   paired `CHECK` is the backstop for and the Accounts screen's conditional field is the guard.
   `account::set_tax_treatment` is its one writer, for the reason `set_interest_policy` is its
   column's.
+- **`account.retirement` is the owner's, investment-only, and the whole of what "retirement
+  savings" means.** Only an investment account can carry it — the schema's `CHECK` is the backstop
+  and `account::set_retirement` the one writer, for `set_tax_treatment`'s reason — and `account`
+  being in `PRESERVED_TABLES` keeps it across a `--replace`. `crate::retirement` counts the
+  holdings under marked accounts and nothing else; a taxable brokerage the owner does not mean to
+  retire on stays out by being unmarked. `key::ANNUAL_SALARY` beside it is in `setting`, which a
+  `--replace` clears, so `mm import` carries it across beside `INVESTMENT_ACCOUNT`. Passed
+  milestones are not drawn: with no balance history there is no saying whether one was met *at*
+  that age.
 - **`holding` and `fund_mix` are in `PRESERVED_TABLES`**, and the reason is uniform: the workbook
   carries neither, so a `--replace` has nothing to say about them.
 - **`holding.sort` is the order the holdings were entered in, and the Funds screen binds no key
