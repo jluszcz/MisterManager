@@ -691,6 +691,7 @@ mod tests {
             group: Group::Credit,
             color: None,
             tax_treatment: None,
+            retirement: false,
         });
         all.push(account::Account {
             id: AccountId(4),
@@ -701,6 +702,7 @@ mod tests {
             group: Group::Credit,
             color: None,
             tax_treatment: None,
+            retirement: false,
         });
         all
     }

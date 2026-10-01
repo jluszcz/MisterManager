@@ -840,6 +840,7 @@ mod tests {
             group,
             color: None,
             tax_treatment: None,
+            retirement: false,
         }];
         Row {
             account: super::super::Account::named(&accounts, AccountId(id)),
@@ -877,6 +878,7 @@ mod tests {
             group,
             color: None,
             tax_treatment: None,
+            retirement: false,
         }
     }
 
@@ -1767,6 +1769,7 @@ mod savings_block_tests {
             group,
             color: None,
             tax_treatment: None,
+            retirement: false,
         }
     }
 

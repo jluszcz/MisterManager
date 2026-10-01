@@ -399,6 +399,9 @@ pub struct Account {
     /// account and `None` for every other kind, which the schema's paired
     /// `CHECK` is what holds true.
     pub tax_treatment: Option<TaxTreatment>,
+    /// Whether the Retirement screen counts this account. Only ever `true` on
+    /// an investment account, which the schema's `CHECK` holds.
+    pub retirement: bool,
 }
 
 fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
@@ -423,6 +426,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
             t.parse()
                 .expect("schema CHECK guarantees a valid tax treatment")
         }),
+        retirement: row.get(8)?,
     })
 }
 
@@ -431,7 +435,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
 macro_rules! select_account {
     ($tail:literal) => {
         concat!(
-            "SELECT id, code, name, kind, sort, grp, color, tax_treatment FROM account ",
+            "SELECT id, code, name, kind, sort, grp, color, tax_treatment, retirement FROM account ",
             $tail
         )
     };
@@ -741,6 +745,25 @@ pub fn set_tax_treatment(db: &Db, id: AccountId, treatment: TaxTreatment) -> Res
     db.conn.execute(
         "UPDATE account SET tax_treatment = ?2 WHERE id = ?1",
         params![id, treatment.as_str()],
+    )?;
+    Ok(())
+}
+
+/// The one writer of `account.retirement`, separate for `set_tax_treatment`'s
+/// reason. The wrong kind is refused here rather than left to the `CHECK`, so
+/// the status line names the account instead of a constraint.
+pub fn set_retirement(db: &Db, id: AccountId, retirement: bool) -> Result<()> {
+    let account = get(db, id)?;
+    ensure!(
+        account.kind == Kind::Investment,
+        "{} is not an investment account, so it holds nothing to retire on",
+        // Prose the status line puts up verbatim, for `set_tax_treatment`'s
+        // reason.
+        crate::demo::text(account.name.as_str())
+    );
+    db.conn.execute(
+        "UPDATE account SET retirement = ?2 WHERE id = ?1",
+        params![id, retirement],
     )?;
     Ok(())
 }
@@ -1244,6 +1267,47 @@ mod tests {
         let err = set_tax_treatment(&db, everyday, TaxTreatment::Taxable).unwrap_err();
         assert!(err.to_string().contains("Everyday"), "{err}");
         assert_eq!(get(&db, everyday).unwrap().tax_treatment, None);
+    }
+
+    #[test]
+    fn an_investment_account_can_be_marked_and_unmarked_as_retirement() {
+        let db = db::open_in_memory().unwrap();
+        let id = insert(
+            &db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxDeferred),
+        )
+        .unwrap();
+        assert!(
+            !get(&db, id).unwrap().retirement,
+            "a new account is not retirement"
+        );
+        set_retirement(&db, id, true).unwrap();
+        assert!(get(&db, id).unwrap().retirement);
+        set_retirement(&db, id, false).unwrap();
+        assert!(!get(&db, id).unwrap().retirement);
+    }
+
+    /// The writer is the guard an owner meets; the schema's `CHECK` is the
+    /// backstop under it, which is why the raw write is tried too.
+    #[test]
+    fn set_retirement_refuses_an_account_of_another_kind() {
+        let db = db::open_in_memory().unwrap();
+        let everyday = insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let err = set_retirement(&db, everyday, true).unwrap_err();
+        assert!(err.to_string().contains("Everyday"), "{err}");
+        assert!(
+            db.conn
+                .execute(
+                    "UPDATE account SET retirement = 1 WHERE id = ?1",
+                    params![everyday]
+                )
+                .is_err(),
+            "the schema let a cash account be marked retirement"
+        );
     }
 
     #[test]

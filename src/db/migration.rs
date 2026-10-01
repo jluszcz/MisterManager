@@ -349,6 +349,17 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         sql: "ALTER TABLE fund_mix ADD COLUMN name TEXT;",
         data: None,
     },
+    Migration {
+        version: 15,
+        // Whether the Retirement screen counts this account's holdings. The
+        // owner's own mark, so `NOT NULL DEFAULT 0` for `favorite`'s reason,
+        // and investment-only for `tax_treatment`'s: it describes holdings,
+        // and only an investment account has any.
+        sql: "ALTER TABLE account ADD COLUMN retirement INTEGER NOT NULL DEFAULT 0 \
+              CHECK (retirement IN (0, 1) AND (retirement = 0 OR kind = 'investment'))",
+        // Nothing to move: no account is retirement until the owner says so.
+        data: None,
+    },
 ];
 
 /// The last thing to tell an owner whose database this build will not open.
