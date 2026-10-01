@@ -25,6 +25,7 @@ use super::modal::{self, Confirm, Modal, ValueTarget};
 use super::planning::{self as planning_screen, Planning};
 use super::recurring_goal::{self as recurring_goal_screen, RecurringGoals};
 use super::recurring_txn::{self as recurring_txn_screen, RecurringTxns};
+use super::retirement as retirement_screen;
 use super::savings::{self as savings_screen, Savings};
 use super::search::{self, Search};
 use super::text::{self, Edit};
@@ -50,6 +51,7 @@ mod history;
 mod ledger;
 mod planning;
 mod recurring;
+mod retirement;
 mod savings;
 #[cfg(test)]
 mod test_support;
@@ -66,6 +68,7 @@ enum Screen {
     RecurringGoals = 6,
     RecurringTxns = 7,
     Accounts = 8,
+    Retirement = 9,
 }
 
 impl Screen {
@@ -74,7 +77,7 @@ impl Screen {
     /// That order is the discriminants', because the bar selects the current
     /// tab by `self.screen as usize` -- a list in any other order would
     /// highlight the wrong label.
-    const ALL: [Screen; 9] = [
+    const ALL: [Screen; 10] = [
         Screen::Overview,
         Screen::Cash,
         Screen::Credit,
@@ -84,6 +87,7 @@ impl Screen {
         Screen::RecurringGoals,
         Screen::RecurringTxns,
         Screen::Accounts,
+        Screen::Retirement,
     ];
 
     /// What the tab bar calls this screen, digit included.
@@ -107,6 +111,7 @@ impl Screen {
             Screen::RecurringGoals => "7 Goals",
             Screen::RecurringTxns => "8 Txns",
             Screen::Accounts => "9 Accounts",
+            Screen::Retirement => "0 Retirement",
         }
     }
 
@@ -117,7 +122,8 @@ impl Screen {
     /// with the digit that reaches it, so the digit and the discriminant have
     /// to agree. Written out rather than derived from the digit's value so
     /// that a screen inserted in the middle is one edit here and not an
-    /// arithmetic puzzle.
+    /// arithmetic puzzle -- and so `0` can come last, where it sits on the
+    /// keyboard.
     fn from_key(c: char) -> Option<Screen> {
         Some(match c {
             '1' => Screen::Overview,
@@ -129,6 +135,7 @@ impl Screen {
             '7' => Screen::RecurringGoals,
             '8' => Screen::RecurringTxns,
             '9' => Screen::Accounts,
+            '0' => Screen::Retirement,
             _ => return None,
         })
     }
@@ -279,6 +286,7 @@ pub struct App {
     recurring_txn: RecurringTxns,
     recurring_goal: RecurringGoals,
     accounts: Accounts,
+    retirement: crate::retirement::Retirement,
     /// The `[sec] contact` line from the config file, or `None` when the
     /// section is absent. Carried rather than read per press because it is a
     /// fact about the run, the same standing as `today` -- and because
@@ -406,6 +414,7 @@ impl App {
             recurring_txn: RecurringTxns::new(account::list(&db)?),
             recurring_goal: RecurringGoals::new(i64::from(today.month())),
             accounts: Accounts::new(),
+            retirement: crate::retirement::Retirement::default(),
             sec_contact,
             db,
             today,
@@ -608,6 +617,7 @@ impl App {
             Screen::RecurringTxns => self.recurring_txn_key(key),
             Screen::RecurringGoals => self.recurring_goal_key(key),
             Screen::Accounts => self.accounts_key(key),
+            Screen::Retirement => self.retirement_key(key),
             _ => self.ledger_key(key),
         }
     }
@@ -718,6 +728,9 @@ impl App {
         self.reload_savings()?;
         self.reload_planning()?;
         self.reload_funds()?;
+        // Today rather than `self.adhoc`: a holding's balance carries no
+        // date, so there is nothing for a scrub to move.
+        self.retirement = crate::retirement::load(&self.db, self.today)?;
         self.reload_recurring_txns()?;
         self.reload_recurring_goals()?;
         Ok(())
@@ -812,6 +825,7 @@ impl App {
             }
             Screen::RecurringGoals => TextLine::from(Topic::RecurringGoals.footer()),
             Screen::Accounts => TextLine::from(Topic::Accounts.footer()),
+            Screen::Retirement => TextLine::from(Topic::Retirement.footer()),
         }
     }
 
@@ -871,6 +885,7 @@ impl App {
             }
             Screen::RecurringGoals => Topic::RecurringGoals,
             Screen::Accounts => Topic::Accounts,
+            Screen::Retirement => Topic::Retirement,
         }
     }
 
@@ -1152,6 +1167,7 @@ impl App {
                 let viewport = accounts_screen::render(frame, body, &self.accounts);
                 self.accounts.record_viewport(viewport);
             }
+            Screen::Retirement => retirement_screen::render(frame, body, &self.retirement),
         }
 
         // Two paragraphs rather than one string: the app-wide keys sit
@@ -1489,11 +1505,12 @@ mod tests {
                 | Screen::Funds
                 | Screen::RecurringGoals
                 | Screen::RecurringTxns
-                | Screen::Accounts => {}
+                | Screen::Accounts
+                | Screen::Retirement => {}
             }
             assert_eq!(screen as usize, i, "{screen:?} is out of order in ALL");
         }
-        assert_eq!(Screen::ALL.len(), 9);
+        assert_eq!(Screen::ALL.len(), 10);
     }
 
     /// The net under the whole application: every screen, drawn in a demo,
@@ -1521,7 +1538,7 @@ mod tests {
         // salt between draws of it.
         crate::demo::install(false);
         let mut real_app = app_with_two_rows_on_every_list();
-        let reals: Vec<String> = "123456789"
+        let reals: Vec<String> = "1234567890"
             .chars()
             .map(|screen| {
                 press(&mut real_app, KeyCode::Char(screen));
@@ -1531,28 +1548,39 @@ mod tests {
 
         crate::demo::install_with_salt(7);
         let mut app = app_with_two_rows_on_every_list();
-        for (screen, real) in "123456789".chars().zip(reals) {
+        for (screen, real) in "1234567890".chars().zip(reals) {
             press(&mut app, KeyCode::Char(screen));
             let scrambled = drawn(&mut app);
             for figure in DEMO_FIXTURE_FIGURES {
                 assert!(
-                    !scrambled.contains(figure),
+                    !draws_figure(&scrambled, figure),
                     "{figure} survived on screen {screen}:\n{scrambled}"
                 );
             }
             assert!(
-                screen == '9' || DEMO_FIXTURE_FIGURES.iter().any(|f| real.contains(f)),
+                screen == '9' || DEMO_FIXTURE_FIGURES.iter().any(|f| draws_figure(&real, f)),
                 "screen {screen} drew none of the fixture's figures, so the check above passed for free:\n{real}"
             );
         }
+    }
+
+    /// Whether `figure` is drawn as an amount -- anywhere but directly before
+    /// a `%`. A share is a shape rather than a sum and the mask leaves it be,
+    /// so a fixture figure that happens to spell a share -- `100.00` beside
+    /// the one retirement account's `100.00%` -- is not a leak.
+    #[cfg(feature = "demo")]
+    fn draws_figure(drawn: &str, figure: &str) -> bool {
+        drawn
+            .match_indices(figure)
+            .any(|(at, _)| !drawn[at + figure.len()..].starts_with('%'))
     }
 
     /// Every figure `app_with_two_rows_on_every_list` puts in the database, as
     /// the screens would print it unscrambled. One list rather than one per
     /// sweep, so a row added to that fixture is covered by both.
     #[cfg(feature = "demo")]
-    const DEMO_FIXTURE_FIGURES: [&str; 9] = [
-        "1,000", "1,200", "14.99", "25.99", "15,000", "10,000", "100.00", "128", "9,000",
+    const DEMO_FIXTURE_FIGURES: [&str; 10] = [
+        "1,000", "1,200", "14.99", "25.99", "15,000", "10,000", "100.00", "128", "9,000", "50,000",
     ];
 
     /// Every name and description `app_with_two_rows_on_every_list` puts in the
@@ -1594,7 +1622,7 @@ mod tests {
     fn a_demo_leaves_no_name_on_any_screen() {
         crate::demo::install_with_salt(7);
         let mut app = app_with_two_rows_on_every_list();
-        for screen in "123456789".chars() {
+        for screen in "1234567890".chars() {
             press(&mut app, KeyCode::Char(screen));
             let drawn = drawn(&mut app);
             for name in DEMO_FIXTURE_NAMES {
@@ -2046,23 +2074,23 @@ mod tests {
         (0..MIN_WIDTH).map(|x| buffer[(x, 23)].symbol()).collect()
     }
 
-    /// `1-9 screens · q quit` ends the line rather than following the last key
+    /// `0-9 screens · q quit` ends the line rather than following the last key
     /// the screen names, so the two keys every screen answers are found in one
     /// place whatever the screen in front of them costs.
     #[test]
     fn the_app_wide_keys_sit_against_the_right_edge_of_every_screen() {
         let mut app = app();
-        for screen in ['1', '2', '3', '4', '5', '6', '7', '8'] {
+        for screen in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'] {
             press(&mut app, KeyCode::Char(screen));
             // A screen key can leave a status message, which takes the line.
             press(&mut app, KeyCode::Down);
             let row = footer_row(&mut app);
             assert!(
-                row.ends_with("1-9 screens · q quit"),
+                row.ends_with("0-9 screens · q quit"),
                 "screen {screen}: {row:?}"
             );
             assert!(
-                row.contains("  1-9 screens"),
+                row.contains("  0-9 screens"),
                 "screen {screen} has no gap before the chrome: {row:?}"
             );
         }
@@ -2080,7 +2108,7 @@ mod tests {
             press(&mut app, KeyCode::Char('/'));
             assert_eq!(app.footer_chrome(), "", "screen {screen}");
             let row = footer_row(&mut app);
-            assert!(!row.contains("1-9 screens"), "screen {screen}: {row:?}");
+            assert!(!row.contains("0-9 screens"), "screen {screen}: {row:?}");
             press(&mut app, KeyCode::Esc);
             assert_eq!(app.footer_chrome(), help::chrome(), "screen {screen}");
         }
@@ -2099,7 +2127,7 @@ mod tests {
         press(&mut app, KeyCode::Char('A'));
         assert!(app.modal.is_some());
         assert_eq!(app.footer_chrome(), "");
-        assert!(!footer_row(&mut app).contains("1-9 screens"));
+        assert!(!footer_row(&mut app).contains("0-9 screens"));
     }
 
     /// The worksheet and the destination chooser host the app's other two
@@ -2117,7 +2145,7 @@ mod tests {
         press(&mut app, KeyCode::Char('C'));
         assert!(worksheet(&app).is_searching());
         assert_eq!(app.footer_chrome(), "");
-        assert!(!footer_row(&mut app).contains("1-9 screens"));
+        assert!(!footer_row(&mut app).contains("0-9 screens"));
     }
 
     /// The panel is the third context whose keys `dispatch` answers ahead of
@@ -2130,7 +2158,7 @@ mod tests {
         press(&mut app, KeyCode::Char('?'));
         assert!(app.help.is_some());
         assert_eq!(app.footer_chrome(), "");
-        assert!(!footer_row(&mut app).contains("1-9 screens"));
+        assert!(!footer_row(&mut app).contains("0-9 screens"));
     }
 
     /// A status message borrows the whole line for `STATUS_TTL` and gives it
@@ -2143,7 +2171,7 @@ mod tests {
         press(&mut app, KeyCode::Char('p'));
         assert!(!app.status.is_empty());
         assert_eq!(app.footer_chrome(), "");
-        assert!(!footer_row(&mut app).contains("1-9 screens"));
+        assert!(!footer_row(&mut app).contains("0-9 screens"));
 
         // The next key clears the message, and the keys come back with it.
         press(&mut app, KeyCode::Down);
@@ -2751,12 +2779,12 @@ mod tests {
     }
 
     /// `q` and `1`-`9` are app-wide chrome: `dispatch` matches them above every
-    /// screen handler, so they reach the same effect from all nine screens and
+    /// screen handler, so they reach the same effect from all ten screens and
     /// no table repeats them. Delete either arm and the keys do nothing while
     /// nine footers still offer them -- which is what this catches.
     #[test]
     fn the_app_wide_keys_work_from_every_screen() {
-        let screens: [(char, Screen); 9] = [
+        let screens: [(char, Screen); 10] = [
             ('1', Screen::Overview),
             ('2', Screen::Cash),
             ('3', Screen::Credit),
@@ -2766,6 +2794,7 @@ mod tests {
             ('7', Screen::RecurringGoals),
             ('8', Screen::RecurringTxns),
             ('9', Screen::Accounts),
+            ('0', Screen::Retirement),
         ];
         let mut roaming = app();
         for (from, _) in screens {
@@ -2790,11 +2819,10 @@ mod tests {
     /// half highlights the wrong tab, which nothing else here would catch.
     #[test]
     fn each_screen_key_selects_the_tab_the_bar_labels_with_it() {
-        for (index, digit) in ('1'..='9').enumerate() {
+        for (index, digit) in "1234567890".chars().enumerate() {
             let screen = Screen::from_key(digit).expect("no screen for a tab-bar digit");
             assert_eq!(screen as usize, index, "key {digit}");
         }
-        assert_eq!(Screen::from_key('0'), None);
         assert_eq!(Screen::from_key('a'), None);
     }
 
@@ -3005,6 +3033,8 @@ mod tests {
         .unwrap();
         holding::insert(&app.db, broker, "USM", Cents::from_dollars(9_000)).unwrap();
         holding::insert(&app.db, broker, "USB", Cents::from_dollars(4_000)).unwrap();
+        account::set_retirement(&app.db, broker, true).unwrap();
+        setting::set(&app.db, key::ANNUAL_SALARY, Cents::from_dollars(50_000)).unwrap();
         let checking = account::list(&app.db).unwrap()[0].id;
         for (name, day_of_month) in [("Utilities", 1), ("Gym", 15)] {
             recurring_txn::insert(

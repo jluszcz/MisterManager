@@ -30,6 +30,7 @@ pub mod picker;
 pub mod planning;
 pub mod recurring_goal;
 pub mod recurring_txn;
+pub mod retirement;
 pub mod savings;
 mod search;
 pub mod style;

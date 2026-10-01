@@ -75,7 +75,7 @@ struct Chrome {
 }
 
 const SCREEN_KEYS: Chrome = Chrome {
-    key: "1-9",
+    key: "0-9",
     word: "screens",
 };
 
@@ -173,6 +173,7 @@ pub(super) enum Topic {
     RecurringTxns,
     RecurringGoals,
     Accounts,
+    Retirement,
     /// `/` on either ledger.
     LedgerSearch,
     /// `/` on the Savings screen.
@@ -486,6 +487,12 @@ const ACCOUNTS: [Entry; 3] = [
         detail: "Move the selected account one place among the accounts of its kind -- the order the Overview and the ledgers list them in.",
     },
 ];
+
+const RETIREMENT: [Entry; 1] = [Entry {
+    key: "e",
+    label: Label::Own("edit"),
+    detail: "Edit the salary the savings are a multiple of, and the birth date the age comes from. The birth date is also what the Funds screen's target is set by.",
+}];
 
 const RECURRING_TXNS: [Entry; 7] = [
     Entry {
@@ -957,6 +964,7 @@ impl Topic {
             Topic::RecurringTxns => &RECURRING_TXNS,
             Topic::RecurringGoals => &RECURRING_GOALS,
             Topic::Accounts => &ACCOUNTS,
+            Topic::Retirement => &RETIREMENT,
             Topic::LedgerSearch
             | Topic::SavingsSearch
             | Topic::FundsSearch
@@ -986,6 +994,7 @@ impl Topic {
             Topic::RecurringTxns => "Recurring Transactions",
             Topic::RecurringGoals => "Recurring Goals",
             Topic::Accounts => "Accounts",
+            Topic::Retirement => "Retirement",
             Topic::LedgerSearch => "Ledger search",
             Topic::SavingsSearch => "Savings search",
             Topic::FundsSearch => "Funds search",
@@ -1028,7 +1037,8 @@ impl Topic {
             | Topic::Funds
             | Topic::RecurringTxns
             | Topic::RecurringGoals
-            | Topic::Accounts => true,
+            | Topic::Accounts
+            | Topic::Retirement => true,
             Topic::LedgerSearch
             | Topic::SavingsSearch
             | Topic::FundsSearch
@@ -1074,6 +1084,7 @@ impl Topic {
             | Topic::RecurringTxns
             | Topic::RecurringGoals
             | Topic::Accounts
+            | Topic::Retirement
             | Topic::Worksheet
             | Topic::Picker
             | Topic::Destination
@@ -1116,6 +1127,7 @@ impl Topic {
             | Topic::RecurringTxns
             | Topic::RecurringGoals
             | Topic::Accounts
+            | Topic::Retirement
             | Topic::Picker
             | Topic::Destination
             | Topic::Details
@@ -1355,9 +1367,9 @@ mod tests {
         footer_items(entries).join(SEPARATOR)
     }
 
-    /// Every topic there is. `SCREENS` stays separate because only those eight
+    /// Every topic there is. `SCREENS` stays separate because only those nine
     /// join a footer.
-    const ALL: [Topic; 23] = [
+    const ALL: [Topic; 24] = [
         Topic::Overview,
         Topic::Ledger,
         Topic::Savings,
@@ -1366,6 +1378,7 @@ mod tests {
         Topic::RecurringTxns,
         Topic::RecurringGoals,
         Topic::Accounts,
+        Topic::Retirement,
         Topic::LedgerSearch,
         Topic::SavingsSearch,
         Topic::FundsSearch,
@@ -1508,7 +1521,7 @@ mod tests {
 
     /// Every screen topic, so a new one must be added to the footer
     /// assertions below.
-    const SCREENS: [Topic; 8] = [
+    const SCREENS: [Topic; 9] = [
         Topic::Overview,
         Topic::Ledger,
         Topic::Savings,
@@ -1517,6 +1530,7 @@ mod tests {
         Topic::RecurringTxns,
         Topic::RecurringGoals,
         Topic::Accounts,
+        Topic::Retirement,
     ];
 
     /// Every footer as it reads, with Planning's leading `↑/↓ constant`
@@ -1550,6 +1564,7 @@ mod tests {
             "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings"
         );
         assert_eq!(Topic::Accounts.footer(), "a add · e edit · ⇧↑↓ move");
+        assert_eq!(Topic::Retirement.footer(), "e edit");
     }
 
     /// The Credit ledger shares the Ledger topic with Cash but has no `t`:
