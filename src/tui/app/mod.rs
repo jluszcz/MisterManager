@@ -972,6 +972,7 @@ impl App {
             Some(Modal::RecurringGoalEntry(_)) => self.form_key(key, App::commit_recurring_goal),
             Some(Modal::Account(_)) => self.form_key(key, App::commit_account),
             Some(Modal::Holding(_)) => self.form_key(key, App::commit_holding_form),
+            Some(Modal::Retirement(_)) => self.form_key(key, App::commit_retirement_form),
             // Three modes over one modal, so the dispatch is one arm with two
             // guards rather than three variants: `Esc` then peels one layer at
             // a time with no flag on `App` saying what to return to.

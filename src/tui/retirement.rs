@@ -2,10 +2,15 @@
 //! here are only a terminal's -- glyphs, widths, and which figure wears a
 //! color.
 
+use super::Label;
+use super::form::{DateField, Field, Focused, FormFields, next_in, parse_whole_amount};
 use super::style;
+use super::widget::{field_stack, render_fields};
 use crate::calc::retirement::{Band, Status};
 use crate::money::Cents;
 use crate::retirement::Retirement;
+use anyhow::{Result, ensure};
+use chrono::NaiveDate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -188,4 +193,99 @@ pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement) {
     if !r.held.is_empty() {
         frame.render_widget(account_table(r), accounts_area);
     }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RetirementField {
+    Salary,
+    BirthDate,
+}
+
+impl RetirementField {
+    /// Tab order, and the order the fields render in.
+    pub const ORDER: [RetirementField; 2] = [RetirementField::Salary, RetirementField::BirthDate];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RetirementField::Salary => "Salary",
+            RetirementField::BirthDate => "Birth date",
+        }
+    }
+}
+
+/// `e` on Retirement: the two facts about the owner the screen needs and no
+/// account carries. Either may be left blank, which clears it -- unset is a
+/// state each reader already draws.
+#[derive(Debug)]
+pub struct RetirementForm {
+    pub focus: RetirementField,
+    salary: Field,
+    birth: DateField,
+}
+
+impl RetirementForm {
+    pub fn new(
+        today: NaiveDate,
+        salary: Option<Cents>,
+        birth: Option<NaiveDate>,
+    ) -> RetirementForm {
+        RetirementForm {
+            focus: RetirementField::Salary,
+            // Whole dollars by construction, so the prefill round-trips
+            // through `parse_whole_amount`.
+            salary: Field::given(salary.map(|s| s.dollars().to_string()).unwrap_or_default()),
+            birth: DateField::given(today, birth),
+        }
+    }
+
+    pub fn display(&self, field: RetirementField) -> Label {
+        match field {
+            RetirementField::Salary => Label::from(crate::demo::typed(self.salary.value())),
+            RetirementField::BirthDate => Label::from(self.birth.display(self.focus == field)),
+        }
+    }
+
+    /// A salary of nothing is refused rather than stored: every multiple is a
+    /// divide by it.
+    pub fn commit(&self) -> Result<(Option<Cents>, Option<NaiveDate>)> {
+        let salary = match self.salary.value().trim() {
+            "" => None,
+            raw => {
+                let cents = parse_whole_amount(raw)?;
+                ensure!(cents.0 > 0, "salary must be more than nothing");
+                Some(cents)
+            }
+        };
+        Ok((salary, self.birth.parse_opt()?))
+    }
+}
+
+impl FormFields for RetirementForm {
+    fn move_focus(&mut self, step: isize) {
+        self.focus = next_in(&RetirementField::ORDER, self.focus, step);
+    }
+
+    fn focused(&mut self) -> Focused<'_> {
+        match self.focus {
+            RetirementField::Salary => Focused::Text(&mut self.salary),
+            RetirementField::BirthDate => Focused::Date(&mut self.birth),
+        }
+    }
+}
+
+pub(super) fn render_form(frame: &mut Frame, form: &mut RetirementForm) {
+    let caret = form.caret();
+    let lines = field_stack(
+        &RetirementField::ORDER,
+        form.focus,
+        caret,
+        RetirementField::label,
+        |f| form.display(f),
+        &[],
+    );
+    render_fields(
+        frame,
+        "Edit retirement — Tab field · Enter save · Esc cancel",
+        lines,
+    );
 }
