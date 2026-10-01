@@ -11,7 +11,7 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 clap = { version = "4.6", features = ["derive"] }
 jluszcz_finance_utils = { git = "https://github.com/jluszcz/finance-utils", features = ["backup", "money", "report", "tui"] }
 jluszcz_rust_utils = { git = "https://github.com/jluszcz/rust-utils", features = ["query"] }
-quick-xml = "0.38"
+quick-xml = "0.41"
 ratatui = "0.30"
 # `jluszcz_rust_utils::query` builds and returns the client; this crate only
 # ever names request/response types, and this declaration turns on no TLS or
