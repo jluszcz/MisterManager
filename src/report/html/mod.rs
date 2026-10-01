@@ -15,6 +15,7 @@ mod funds;
 mod ledger;
 mod overview;
 mod planning;
+mod retirement;
 mod savings;
 
 #[cfg(test)]
@@ -95,20 +96,21 @@ fn full_width_row(class: &str, columns: usize, html: String) -> String {
 }
 
 /// The tabs, in the order the screens are numbered: `1` Overview, `2` Cash,
-/// `3` Credit, `4` Savings, `5` Planning, `6` Funds. An owner who reaches for
+/// `3` Credit, `4` Savings, `5` Planning, `6` Funds, `0` Retirement. An owner who reaches for
 /// `4` on the keyboard should not find Planning under it here.
 ///
 /// The id doubles as the panel's and as the CSS selector's, so a tab added
 /// here is a tab wired everywhere -- including in `report`'s own check that
 /// the minifier left the switch working, which reads this list rather than
 /// restating it.
-pub(super) const TABS: [(&str, &str); 6] = [
+pub(super) const TABS: [(&str, &str); 7] = [
     ("overview", "Overview"),
     ("cash", "Cash"),
     ("credit", "Credit"),
     ("savings", "Savings"),
     ("planning", "Planning"),
     ("funds", "Funds"),
+    ("retirement", "Retirement"),
 ];
 
 /// The tab bar, and the radios that drive it.
@@ -258,6 +260,7 @@ pub fn page(snapshot: &Snapshot) -> String {
         savings::sections(&snapshot.containers),
         planning::block(&snapshot.planning),
         funds::sections(&snapshot.allocation),
+        retirement::panel(&snapshot.retirement),
     ];
     let body: String = TABS
         .iter()
@@ -309,7 +312,7 @@ mod tests {
         assert!(!page.contains("<script"), "the page carries script");
     }
 
-    /// Six tabs, six panels, and the switch wired between them. A tab whose
+    /// Seven tabs, seven panels, and the switch wired between them. A tab whose
     /// panel or rule went missing would render as a label that does nothing.
     #[test]
     fn every_tab_has_a_panel_and_the_page_opens_on_the_overview() {

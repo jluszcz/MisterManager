@@ -160,6 +160,7 @@ pub struct Snapshot {
     pub containers: Vec<Container>,
     pub planning: Planning,
     pub allocation: Allocation,
+    pub retirement: crate::retirement::Retirement,
 }
 
 /// One ledger, every row of it, grouped by month.
@@ -391,6 +392,7 @@ impl Snapshot {
                 Err(e) => Planning::Unresolvable(format!("{e:#}")),
             },
             allocation: allocation_view(db, today, &accounts)?,
+            retirement: crate::retirement::load(db, today)?,
         })
     }
 }
