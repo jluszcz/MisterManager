@@ -169,6 +169,9 @@ pub enum AccountField {
     /// unrepresentable rather than blank wherever the row it would be saved
     /// to could not hold it.
     TaxTreatment,
+    /// Edit only, and only for an investment account, for `TaxTreatment`'s
+    /// reason: whether the Retirement screen counts this account.
+    Retirement,
     Name,
     Color,
     Band,
@@ -186,6 +189,7 @@ impl AccountField {
             AccountField::Code => "Code",
             AccountField::Kind => "Kind",
             AccountField::TaxTreatment => "Tax Treatment",
+            AccountField::Retirement => "Retirement",
             AccountField::Name => "Name",
             AccountField::Color => "Color",
             AccountField::Band => "Band",
@@ -304,6 +308,9 @@ pub struct AccountEdit {
     /// so this is what tells `App::commit_account` whether to call it at
     /// all.
     pub tax_treatment: Option<TaxTreatment>,
+    /// `Some` for an investment account, `None` for every other kind, for
+    /// `tax_treatment`'s reason: `account::set_retirement` refuses any other.
+    pub retirement: Option<bool>,
 }
 
 /// What `a` commits: an account the workbook has not named.
@@ -368,6 +375,9 @@ pub struct AccountForm {
     /// The investment account's `Default`: a yes or no rather than a subset,
     /// since one key names one account and there is one thing to answer for.
     invests: bool,
+    /// Read only where [`AccountForm::shows_tax_treatment`] says this is an
+    /// investment account, the one kind the column means anything for.
+    retirement: bool,
 }
 
 impl AccountForm {
@@ -397,6 +407,7 @@ impl AccountForm {
             block: 0,
             defaults: 0,
             invests: false,
+            retirement: false,
         }
     }
 
@@ -471,6 +482,7 @@ impl AccountForm {
                 .position(|d| d.len() == defaults.len() && d.iter().all(|s| defaults.contains(s)))
                 .unwrap_or(0),
             invests,
+            retirement: account.retirement,
         }
     }
 
@@ -528,6 +540,7 @@ impl AccountForm {
         }
         if self.shows_tax_treatment() {
             fields.push(AccountField::TaxTreatment);
+            fields.push(AccountField::Retirement);
             // The investment account's own default: whether the Planning
             // `Investment` line buys into it.
             fields.push(AccountField::Default);
@@ -557,6 +570,10 @@ impl AccountForm {
             AccountField::Code => crate::demo::text(self.code.value()).into_owned(),
             AccountField::Kind => self.kind().label().to_string(),
             AccountField::TaxTreatment => TaxTreatment::ALL[self.tax_treatment].label().to_string(),
+            AccountField::Retirement => match self.retirement {
+                true => "Yes".to_string(),
+                false => "—".to_string(),
+            },
             AccountField::Name => crate::demo::text(self.name.value()).into_owned(),
             AccountField::Color => match color_choices()[self.color] {
                 None => "—".to_string(),
@@ -627,6 +644,7 @@ impl AccountForm {
             tax_treatment: self
                 .shows_tax_treatment()
                 .then(|| TaxTreatment::ALL[self.tax_treatment]),
+            retirement: self.shows_tax_treatment().then_some(self.retirement),
         })
     }
 }
@@ -649,6 +667,7 @@ impl FormFields for AccountForm {
             AccountField::Name => Focused::Text(&mut self.name),
             AccountField::Kind
             | AccountField::TaxTreatment
+            | AccountField::Retirement
             | AccountField::Color
             | AccountField::Band
             | AccountField::Interest
@@ -667,6 +686,9 @@ impl AccountForm {
             }
             AccountField::TaxTreatment => {
                 self.tax_treatment = step_index(self.tax_treatment, TaxTreatment::ALL.len(), step);
+            }
+            AccountField::Retirement => {
+                self.retirement = !self.retirement;
             }
             AccountField::Color => {
                 self.color = step_index(self.color, color_choices().len(), step);
@@ -946,9 +968,37 @@ mod tests {
                 AccountField::Name,
                 AccountField::Color,
                 AccountField::TaxTreatment,
+                AccountField::Retirement,
                 AccountField::Default,
             ]
         );
+    }
+
+    /// An edit form opens on what the account already holds, the same rule
+    /// `an_edit_form_opens_on_the_accounts_current_tax_treatment` pins:
+    /// pressing Enter straight away must not unmark an account.
+    #[test]
+    fn the_retirement_mark_opens_on_the_accounts_own_and_toggles() {
+        let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
+        investment.tax_treatment = Some(TaxTreatment::TaxDeferred);
+        investment.retirement = true;
+        let mut form = AccountForm::edit(&investment, InterestPolicy::Manual, None, &[], false);
+        assert_eq!(form.commit().unwrap().retirement, Some(true));
+        form.next_choice_on(AccountField::Retirement);
+        assert_eq!(form.commit().unwrap().retirement, Some(false));
+    }
+
+    #[test]
+    fn a_cash_account_commits_no_retirement_mark_at_all() {
+        let cash = AccountForm::edit(
+            &account(1, "Everyday", Kind::Cash, Group::Checking),
+            InterestPolicy::Manual,
+            None,
+            &[],
+            false,
+        );
+        assert!(!cash.fields().contains(&AccountField::Retirement));
+        assert_eq!(cash.commit().unwrap().retirement, None);
     }
 
     /// An investment account's `Default` is a yes or no -- whether the

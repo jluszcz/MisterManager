@@ -252,6 +252,9 @@ impl App {
         if let Some(treatment) = edit.tax_treatment {
             account::set_tax_treatment(&self.db, id, treatment)?;
         }
+        if let Some(retirement) = edit.retirement {
+            account::set_retirement(&self.db, id, retirement)?;
+        }
         self.status = format!("{} saved", crate::demo::text(edit.name.as_str()));
         self.close_modal();
         self.reload()
@@ -585,6 +588,36 @@ mod tests {
             account::get(&app.db, id).unwrap().tax_treatment,
             Some(TaxTreatment::TaxDeferred)
         );
+    }
+
+    #[test]
+    fn editing_an_investment_account_marks_it_as_retirement() {
+        let mut app = app();
+        let id = account::insert(
+            &app.db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxDeferred),
+        )
+        .unwrap();
+        app.reload().unwrap();
+
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.accounts.selected().unwrap().account.id(), id);
+        press(&mut app, KeyCode::Char('e'));
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Account(f))
+                if f.focus == accounts_screen::AccountField::Retirement),
+            press(&mut app, KeyCode::Tab)
+        );
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        assert!(account::get(&app.db, id).unwrap().retirement);
     }
 
     /// The selector has to open on the account's own treatment rather than
