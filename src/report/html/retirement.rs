@@ -81,7 +81,8 @@ fn milestones(r: &Retirement) -> String {
         .iter()
         .map(|row| {
             let label = match (row.now, row.extrapolated) {
-                (true, _) => format!("Now ({})", row.age),
+                (true, false) => format!("Now ({})", row.age),
+                (true, true) => format!("Now ({}) ~", row.age),
                 (false, true) => format!("By {} ~", row.age),
                 (false, false) => format!("By {}", row.age),
             };
@@ -102,8 +103,8 @@ fn milestones(r: &Retirement) -> String {
             )
         })
         .collect();
-    let note = match r.rows.iter().any(|row| row.extrapolated && !row.now) {
-        true => "<p class=\"stamp\">~ extrapolated past 45</p>",
+    let note = match r.rows.iter().any(|row| row.extrapolated) {
+        true => "<p class=\"stamp\">~ extrapolated outside 35–45</p>",
         false => "",
     };
     format!(
@@ -209,5 +210,17 @@ mod tests {
             html.contains("Mark investment accounts as Retirement"),
             "{html}"
         );
+    }
+
+    #[test]
+    fn a_now_row_outside_the_anchors_is_marked_extrapolated() {
+        let r = Retirement {
+            age: Some(28),
+            rows: rows(Some(28), None),
+            ..retirement()
+        };
+        let html = panel(&r);
+        assert!(html.contains("Now (28) ~"), "{html}");
+        assert!(html.contains("~ extrapolated outside 35–45"), "{html}");
     }
 }

@@ -1580,8 +1580,11 @@ mod tests {
     /// the screens would print it unscrambled. One list rather than one per
     /// sweep, so a row added to that fixture is covered by both.
     #[cfg(feature = "demo")]
-    const DEMO_FIXTURE_FIGURES: [&str; 10] = [
+    const DEMO_FIXTURE_FIGURES: [&str; 13] = [
         "1,000", "1,200", "14.99", "25.99", "15,000", "10,000", "100.00", "128", "9,000", "50,000",
+        // Screen 0 at 37 on a $50,000 salary: $13,000 saved against a band
+        // of $170,000-$180,000, so $157,000 short.
+        "13,000", "170,000", "157,000",
     ];
 
     /// Every name and description `app_with_two_rows_on_every_list` puts in the
@@ -1813,6 +1816,7 @@ mod tests {
             ('7', KeyCode::Char('s')),
             ('8', KeyCode::Char('a')),
             ('9', KeyCode::Char('e')),
+            ('0', KeyCode::Char('e')),
         ] {
             // `s` on screen 7 draws off `recurring_goal`, which `planning_app`
             // fills neither of; screen 6 needs a holding under the cursor,
@@ -1820,7 +1824,9 @@ mod tests {
             // Every other screen here has its rows on the fixture that
             // carries the bills screen 5 needs.
             let mut app = match (screen, key) {
-                ('7', KeyCode::Char('s')) | ('6', _) => app_with_two_rows_on_every_list(),
+                ('7', KeyCode::Char('s')) | ('6', _) | ('0', _) => {
+                    app_with_two_rows_on_every_list()
+                }
                 _ => planning_app(),
             };
             press(&mut app, KeyCode::Char(screen));
@@ -1856,12 +1862,12 @@ mod tests {
             );
             let drawn = drawn(&mut app);
             let figures: &[&str] = match (screen, key) {
-                ('7', KeyCode::Char('s')) | ('6', _) => &DEMO_FIXTURE_FIGURES,
+                ('7', KeyCode::Char('s')) | ('6', _) | ('0', _) => &DEMO_FIXTURE_FIGURES,
                 _ => &["1,200", "300.00", "1,000", "50,000", "5,000"],
             };
             for figure in figures {
                 assert!(
-                    !drawn.contains(figure),
+                    !draws_figure(&drawn, figure),
                     "{figure} survived {key:?} on screen {screen}:\n{drawn}"
                 );
             }
@@ -1944,12 +1950,15 @@ mod tests {
             ('7', KeyCode::Char('s')),
             ('8', KeyCode::Char('a')),
             ('9', KeyCode::Char('e')),
+            ('0', KeyCode::Char('e')),
         ] {
             // `s` on screen 7 draws off `recurring_goal`, which `planning_app`
             // fills neither of; screen 6 needs a holding under the cursor,
             // which `planning_app` carries no investment account to hold.
             let mut app = match (screen, key) {
-                ('7', KeyCode::Char('s')) | ('6', _) => app_with_two_rows_on_every_list(),
+                ('7', KeyCode::Char('s')) | ('6', _) | ('0', _) => {
+                    app_with_two_rows_on_every_list()
+                }
                 _ => planning_app(),
             };
             press(&mut app, KeyCode::Char(screen));
@@ -3036,6 +3045,11 @@ mod tests {
         holding::insert(&app.db, broker, "USB", Cents::from_dollars(4_000)).unwrap();
         account::set_retirement(&app.db, broker, true).unwrap();
         setting::set(&app.db, key::ANNUAL_SALARY, Cents::from_dollars(50_000)).unwrap();
+        // Derived from the fixture's day, for `app_with_mixes`' reason. An age
+        // is what puts screen 0's Saved, its targets and its shortfall on the
+        // screen for the sweeps to check, beside the salary.
+        let birth = today().with_year(today().year() - 37).unwrap();
+        setting::set(&app.db, key::BIRTH_DATE, birth).unwrap();
         let checking = account::list(&app.db).unwrap()[0].id;
         for (name, day_of_month) in [("Utilities", 1), ("Gym", 15)] {
             recurring_txn::insert(

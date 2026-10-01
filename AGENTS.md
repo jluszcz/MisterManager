@@ -386,7 +386,9 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   being in `PRESERVED_TABLES` keeps it across a `--replace`. `crate::retirement` counts the
   holdings under marked accounts and nothing else; a taxable brokerage the owner does not mean to
   retire on stays out by being unmarked. `key::ANNUAL_SALARY` beside it is in `setting`, which a
-  `--replace` clears, so `mm import` carries it across beside `INVESTMENT_ACCOUNT`. Passed
+  `--replace` clears, so `mm import` carries it across beside `INVESTMENT_ACCOUNT`. The birth
+  date on the same form is not carried: it is `Constants!K2`, so a `--replace` takes it back from
+  the workbook, which is what `e`'s panel entry says. Passed
   milestones are not drawn: with no balance history there is no saying whether one was met *at*
   that age.
 - **`holding` and `fund_mix` are in `PRESERVED_TABLES`**, and the reason is uniform: the workbook

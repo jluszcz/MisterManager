@@ -97,7 +97,8 @@ fn milestone_table(r: &Retirement) -> Table<'static> {
         .style(Style::default().add_modifier(Modifier::BOLD));
     let rows = r.rows.iter().map(|row| {
         let label = match (row.now, row.extrapolated) {
-            (true, _) => format!("▸ Now ({})", row.age),
+            (true, false) => format!("▸ Now ({})", row.age),
+            (true, true) => format!("▸ Now ({}) ~", row.age),
             (false, true) => format!("  By {} ~", row.age),
             (false, false) => format!("  By {}", row.age),
         };
@@ -162,7 +163,7 @@ fn account_table(r: &Retirement) -> Table<'static> {
 
 pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement) {
     let standing = standing_lines(r);
-    let footnote = r.rows.iter().any(|row| row.extrapolated && !row.now);
+    let footnote = r.rows.iter().any(|row| row.extrapolated);
     let [
         title_area,
         box_area,
@@ -188,7 +189,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement) {
     );
     frame.render_widget(milestone_table(r), table_area);
     if footnote {
-        frame.render_widget(Paragraph::new("  ~ extrapolated past 45"), note_area);
+        frame.render_widget(Paragraph::new("  ~ extrapolated outside 35–45"), note_area);
     }
     if !r.held.is_empty() {
         frame.render_widget(account_table(r), accounts_area);

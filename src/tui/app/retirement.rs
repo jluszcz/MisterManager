@@ -189,4 +189,18 @@ mod tests {
         assert_eq!(setting::get(&app.db, key::BIRTH_DATE).unwrap(), Some(birth));
         assert!(drawn(&mut app).contains("age 41"));
     }
+
+    /// Under 35 the target is the lines run backwards -- as much a guess as
+    /// past 45, so the Now row is marked like any other extrapolated row.
+    #[test]
+    fn a_now_row_outside_the_anchors_is_marked_extrapolated() {
+        let mut app = retirement_app();
+        let birth = today().with_year(today().year() - 28).unwrap();
+        setting::set(&app.db, key::BIRTH_DATE, birth).unwrap();
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('0'));
+        let screen = drawn(&mut app);
+        assert!(screen.contains("Now (28) ~"), "{screen}");
+        assert!(screen.contains("~ extrapolated outside 35–45"), "{screen}");
+    }
 }

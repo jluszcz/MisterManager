@@ -203,7 +203,7 @@ Retirement savings against an age rule: 3× salary and 10% of it tax-free by 35,
 is the holdings under investment accounts marked `Retirement` on screen `9`; `e` sets the salary
 they are a multiple of and the birth date the age comes from. The top box says where you stand
 today — `Short` by how much, `On track` inside the range, or `Ahead` — and the table below runs
-from your age to 55, leaving out the milestones already behind you. A `~` marks a row past 45,
+from your age to 55, leaving out the milestones already behind you. A `~` marks a row outside 35–45,
 where the lines are a guess. The report carries the same page as its last tab.
 
 ### Typing

@@ -488,10 +488,18 @@ const ACCOUNTS: [Entry; 3] = [
     },
 ];
 
+/// What `e` on Retirement edits -- and, on a build with an importer, which of
+/// the two an `mm import --replace` takes back: the birth date is `Constants!K2`,
+/// where the salary is on no sheet and is carried across.
+#[cfg(feature = "import")]
+const RETIREMENT_EDIT: &str = "Edit the salary the savings are a multiple of, and the birth date the age comes from. The birth date also sets the Funds screen's target, and mm import --replace takes it back from the workbook; the salary survives.";
+#[cfg(not(feature = "import"))]
+const RETIREMENT_EDIT: &str = "Edit the salary the savings are a multiple of, and the birth date the age comes from. The birth date is also what the Funds screen's target is set by.";
+
 const RETIREMENT: [Entry; 1] = [Entry {
     key: "e",
     label: Label::Own("edit"),
-    detail: "Edit the salary the savings are a multiple of, and the birth date the age comes from. The birth date is also what the Funds screen's target is set by.",
+    detail: RETIREMENT_EDIT,
 }];
 
 const RECURRING_TXNS: [Entry; 7] = [
