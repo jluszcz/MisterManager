@@ -96,6 +96,8 @@ pub fn import_all(db: &Db, path: &Path, today: NaiveDate, replace: bool) -> Resu
         // The Accounts screen's third such setting, carried across for the
         // same reason and with the same tolerance: a stale id reads as unset.
         let investment = setting::get(db, key::INVESTMENT_ACCOUNT)?;
+        // Carried for the same reason again: no sheet has a salary in it.
+        let salary = setting::get(db, key::ANNUAL_SALARY)?;
 
         if db::has_imported_data(db)? {
             if !replace {
@@ -113,6 +115,9 @@ pub fn import_all(db: &Db, path: &Path, today: NaiveDate, replace: bool) -> Resu
         set_default_sources(db, &defaults)?;
         if let Some(id) = investment {
             setting::set(db, key::INVESTMENT_ACCOUNT, id)?;
+        }
+        if let Some(salary) = salary {
+            setting::set(db, key::ANNUAL_SALARY, salary)?;
         }
 
         let Some(containers) = containers else {
