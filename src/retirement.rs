@@ -275,7 +275,7 @@ mod tests {
         holding::insert(&db, pot, "USM", Cents::from_dollars(30_000)).unwrap();
         setting::set(&db, key::BIRTH_DATE, born_37_years_ago()).unwrap();
         let r = load(&db, today()).unwrap();
-        // 37's band starts at 11.00%; 11% of 400,000 is 44,000, and 30,000
+        // 37's band starts at 11.0%; 11% of 400,000 is 44,000, and 30,000
         // of it is held.
         assert_eq!(r.now().unwrap().tax_free.low, BasisPoints(1_100));
         assert_eq!(

@@ -85,6 +85,20 @@ impl BasisPoints {
         let abs = self.0.unsigned_abs();
         format!("{sign}{}", (abs + 50) / 100)
     }
+
+    /// The same share to the nearest tenth of a percent, rounded half away
+    /// from zero: `BasisPoints(1_176)` is `11.8`, `BasisPoints(1_000)` is
+    /// `10.0`.
+    ///
+    /// The third question: a share read against a target band drawn from a
+    /// rule of thumb, where a hundredth is precision the rule never had and a
+    /// whole point hides a gap of most of one. The Retirement standings and
+    /// milestones are what ask it.
+    pub fn tenth_percent(self) -> String {
+        let sign = if self.0 < 0 { "-" } else { "" };
+        let tenths = (self.0.unsigned_abs() + 5) / 10;
+        format!("{sign}{}.{}", tenths / 10, tenths % 10)
+    }
 }
 
 impl Add for BasisPoints {
@@ -212,5 +226,15 @@ mod tests {
         assert_eq!(Percent(35) + Percent(15), Percent(50));
         let total: Percent = [Percent(35), Percent(15), Percent(15)].into_iter().sum();
         assert_eq!(total, Percent(65));
+    }
+
+    #[test]
+    fn a_tenth_percent_rounds_half_away_from_zero() {
+        assert_eq!(BasisPoints(1_176).tenth_percent(), "11.8");
+        assert_eq!(BasisPoints(1_000).tenth_percent(), "10.0");
+        assert_eq!(BasisPoints(1_245).tenth_percent(), "12.5");
+        assert_eq!(BasisPoints(1_244).tenth_percent(), "12.4");
+        assert_eq!(BasisPoints(-1_245).tenth_percent(), "-12.5");
+        assert_eq!(BasisPoints(0).tenth_percent(), "0.0");
     }
 }

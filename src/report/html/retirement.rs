@@ -63,8 +63,9 @@ fn standing(r: &Retirement) -> String {
     };
     let tax_free = match (r.tax_free_share(), r.tax_free_status()) {
         (Some(share), Some((s, gap))) => format!(
-            "<tr><td>Tax-free</td>{}<td class=\"n\">{share}%</td><td>{}</td>{}</tr>",
+            "<tr><td>Tax-free</td>{}<td class=\"n\">{}%</td><td>{}</td>{}</tr>",
             whole_money(r.tax_free),
+            share.tenth_percent(),
             escape(&now.tax_free.to_string()),
             status(s, gap)
         ),
@@ -213,7 +214,7 @@ mod tests {
         );
     }
 
-    /// Nothing held tax-free against 37's 11.00% of $330,000.
+    /// Nothing held tax-free against 37's 11.0% of $330,000.
     #[test]
     fn a_short_tax_free_share_names_the_dollars_to_move_across() {
         let html = panel(&retirement());

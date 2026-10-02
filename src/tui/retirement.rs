@@ -86,7 +86,7 @@ fn standing_lines(r: &Retirement) -> Vec<Line<'static>> {
             Span::raw(format!(
                 "Tax-free  {:>12}   {:>7}   target now {:<16}",
                 dollars(r.tax_free),
-                format!("{share}%"),
+                format!("{}%", share.tenth_percent()),
                 now.tax_free.to_string()
             )),
             status_span(status, short_by),

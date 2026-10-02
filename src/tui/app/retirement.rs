@@ -196,7 +196,7 @@ mod tests {
         assert!(drawn(&mut app).contains("age 41"));
     }
 
-    /// 37's tax-free band starts at 11.00%, and nothing here is held
+    /// 37's tax-free band starts at 11.0%, and nothing here is held
     /// tax-free: 11% of $330,000.
     #[test]
     fn a_short_tax_free_share_names_the_dollars_to_move_across() {
@@ -205,5 +205,10 @@ mod tests {
         let screen = drawn(&mut app);
         assert!(screen.contains("Short $36,300"), "{screen}");
         assert!(screen.contains("$400K – $450K"), "{screen}");
+        // Tenths in the standing and the milestones, hundredths in Accounts.
+        assert!(screen.contains("0.0%"), "{screen}");
+        assert!(screen.contains("11.0 – 12.0%"), "{screen}");
+        assert!(screen.contains("12.5 – 15.0%"), "{screen}");
+        assert!(screen.contains("100.00%"), "{screen}");
     }
 }

@@ -101,8 +101,13 @@ impl fmt::Display for Band<Multiple> {
 impl fmt::Display for Band<BasisPoints> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.low == self.high {
-            true => write!(f, "{}%", self.low),
-            false => write!(f, "{}{BAND_DASH}{}%", self.low, self.high),
+            true => write!(f, "{}%", self.low.tenth_percent()),
+            false => write!(
+                f,
+                "{}{BAND_DASH}{}%",
+                self.low.tenth_percent(),
+                self.high.tenth_percent()
+            ),
         }
     }
 }
@@ -308,8 +313,8 @@ mod tests {
     fn a_band_prints_one_figure_when_it_has_no_width_and_a_range_otherwise() {
         assert_eq!(saved_band(35).to_string(), "3.00×");
         assert_eq!(saved_band(40).to_string(), "4.00 – 4.50×");
-        assert_eq!(tax_free_band(35).to_string(), "10.00%");
-        assert_eq!(tax_free_band(40).to_string(), "12.50 – 15.00%");
+        assert_eq!(tax_free_band(35).to_string(), "10.0%");
+        assert_eq!(tax_free_band(40).to_string(), "12.5 – 15.0%");
     }
 
     #[test]
