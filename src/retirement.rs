@@ -83,23 +83,43 @@ impl Retirement {
     /// Compared in cents rather than as a floored multiple, so a balance a
     /// fraction of a hundredth under the band is not called on track.
     pub fn saved_status(&self) -> Option<(Status, Option<Cents>)> {
-        let band = self.now()?.saved_dollars?;
-        let status = calc::retirement::status(self.saved, band);
-        let short_by = (status == Status::Short).then(|| band.low - self.saved);
+        let now = self.now()?;
+        let status = calc::retirement::status(self.saved, now.saved_dollars?);
+        let short_by = (status == Status::Short)
+            .then(|| self.saved_short(now))
+            .flatten();
         Some((status, short_by))
     }
 
-    /// Short by the tax-free dollars today's total would hold at the band's
-    /// low end -- what would have to move across, not what new money would
-    /// have to be added, which grows the total it is a share of. Rounded up
-    /// to the cent, so moving it is enough; a share exists only over a
-    /// positive total, so the numerator is never negative.
     pub fn tax_free_status(&self) -> Option<(Status, Option<Cents>)> {
-        let low = self.now()?.tax_free.low;
-        let status = calc::retirement::status(self.tax_free_share()?, self.now()?.tax_free);
+        let now = self.now()?;
+        let status = calc::retirement::status(self.tax_free_share()?, now.tax_free);
         let short_by = (status == Status::Short)
-            .then(|| Cents((self.saved.0 * low.0 + 9_999) / 10_000) - self.tax_free);
+            .then(|| self.tax_free_short(now))
+            .flatten();
         Some((status, short_by))
+    }
+
+    /// What today's savings fall short of `row`'s low end by, in today's
+    /// dollars: no growth and no contributions assumed, so a milestone years
+    /// off reads as the whole of what is still to be saved for it. Nothing
+    /// when it is already met, and `None` with no salary to state the target
+    /// in.
+    pub fn saved_short(&self, row: &Row) -> Option<Cents> {
+        let low = row.saved_dollars?.low;
+        Some((low - self.saved).max(Cents::ZERO))
+    }
+
+    /// The tax-free dollars today's total would hold at `row`'s low end,
+    /// less what it does -- what would have to move across, not what new
+    /// money would have to be added, which grows the total it is a share of.
+    /// Rounded up to the cent, so moving it is enough. Nothing when met, and
+    /// `None` over a total of nothing, which has no share to fall short in.
+    pub fn tax_free_short(&self, row: &Row) -> Option<Cents> {
+        (self.saved.0 > 0).then(|| {
+            let target = Cents((self.saved.0 * row.tax_free.low.0 + 9_999) / 10_000);
+            (target - self.tax_free).max(Cents::ZERO)
+        })
     }
 }
 
@@ -353,6 +373,36 @@ mod tests {
             r.saved_status(),
             Some((Status::Short, Some(Cents::from_dollars(10_000))))
         );
+    }
+
+    /// Every milestone is measured against today's balance, so a later one
+    /// is short by more, and one already met is short by nothing.
+    #[test]
+    fn each_milestone_is_short_by_what_todays_savings_lack_of_it() {
+        let db = db::open_in_memory().unwrap();
+        let ret = retirement_account(&db, "RET", "Long Haul", TaxTreatment::TaxDeferred);
+        let pot = retirement_account(&db, "ROTH", "Untaxed Pot", TaxTreatment::TaxFree);
+        holding::insert(&db, ret, "TDF45", Cents::from_dollars(370_000)).unwrap();
+        holding::insert(&db, pot, "USM", Cents::from_dollars(30_000)).unwrap();
+        setting::set(&db, key::BIRTH_DATE, born_37_years_ago()).unwrap();
+        setting::set(&db, key::ANNUAL_SALARY, Cents::from_dollars(100_000)).unwrap();
+        let r = load(&db, today()).unwrap();
+        let by = |age| r.rows.iter().find(|row| row.age == age).unwrap();
+
+        // 37 asks 3.40× of 100,000, which 400,000 already meets; 40 asks
+        // 4.00×, exactly met; 45 asks 5.00×, 100,000 more.
+        assert_eq!(r.saved_short(by(37)), Some(Cents::ZERO));
+        assert_eq!(r.saved_short(by(40)), Some(Cents::ZERO));
+        assert_eq!(r.saved_short(by(45)), Some(Cents::from_dollars(100_000)));
+        // 45 asks 15% of today's 400,000 tax-free, 60,000, and 30,000 is.
+        assert_eq!(r.tax_free_short(by(45)), Some(Cents::from_dollars(30_000)));
+
+        let no_salary = Retirement {
+            salary: None,
+            rows: rows(Some(37), None),
+            ..r.clone()
+        };
+        assert_eq!(no_salary.saved_short(&no_salary.rows[0]), None);
     }
 
     #[test]

@@ -96,9 +96,29 @@ fn standing_lines(r: &Retirement) -> Vec<Line<'static>> {
     vec![saved, tax_free]
 }
 
+/// A milestone's shortfall in today's dollars, in the color a short
+/// standing wears; blank once met, and absent where there is no saying.
+fn short_cell(short: Option<Cents>) -> Cell<'static> {
+    match short {
+        None => Cell::from(ABSENT),
+        Some(gap) if gap.0 <= 0 => Cell::from(""),
+        Some(gap) => Cell::from(Span::styled(
+            dollars(gap),
+            Style::default().fg(style::standing_color(Status::Short)),
+        )),
+    }
+}
+
 fn milestone_table(r: &Retirement) -> Table<'static> {
-    let header = Row::new(vec!["  Milestone", "Saved × salary", "Saved $", "Tax-free"])
-        .style(Style::default().add_modifier(Modifier::BOLD));
+    let header = Row::new(vec![
+        "  Milestone",
+        "Saved × salary",
+        "Saved $",
+        "Short",
+        "Tax-free",
+        "Short",
+    ])
+    .style(Style::default().add_modifier(Modifier::BOLD));
     let rows = r.rows.iter().map(|row| {
         let label = match row.now {
             true => format!("▸ Now ({})", row.age),
@@ -116,7 +136,9 @@ fn milestone_table(r: &Retirement) -> Table<'static> {
             Cell::from(label),
             Cell::from(multiple),
             Cell::from(target),
+            short_cell(r.saved_short(row)),
             Cell::from(row.tax_free.to_string()),
+            short_cell(r.tax_free_short(row)),
         ])
     });
     Table::new(
@@ -126,7 +148,11 @@ fn milestone_table(r: &Retirement) -> Table<'static> {
             Constraint::Length(16),
             // `$6.5MM – $9.5MM` and a gap.
             Constraint::Length(18),
-            Constraint::Min(14),
+            // `$10,000,000` and a gap.
+            Constraint::Length(13),
+            // `17.5 – 25.0%` and a gap.
+            Constraint::Length(14),
+            Constraint::Min(13),
         ],
     )
     .header(header)
