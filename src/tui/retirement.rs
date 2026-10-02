@@ -124,7 +124,8 @@ fn milestone_table(r: &Retirement) -> Table<'static> {
         [
             Constraint::Length(14),
             Constraint::Length(16),
-            Constraint::Length(26),
+            // `$6.5MM – $9.5MM` and a gap.
+            Constraint::Length(18),
             Constraint::Min(14),
         ],
     )
@@ -165,13 +166,19 @@ fn account_table(r: &Retirement) -> Table<'static> {
 
 pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement) {
     let standing = standing_lines(r);
-    let [title_area, box_area, _, table_area, _, accounts_area] = Layout::vertical([
+    // Each box is its content plus a border above and below, the table ones
+    // a header row too. No account box at all until one is marked: the
+    // standing box already says where to mark one.
+    let accounts = match r.held.is_empty() {
+        true => 0,
+        false => r.held.len() as u16 + 3,
+    };
+    let [title_area, box_area, table_area, accounts_area, _] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(standing.len() as u16 + 2),
-        Constraint::Length(1),
-        Constraint::Length(r.rows.len() as u16 + 1),
-        Constraint::Length(1),
-        Constraint::Min(1),
+        Constraint::Length(r.rows.len() as u16 + 3),
+        Constraint::Length(accounts),
+        Constraint::Min(0),
     ])
     .areas(area);
     frame.render_widget(Paragraph::new(title(r)), title_area);
@@ -179,9 +186,15 @@ pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement) {
         Paragraph::new(standing).block(Block::bordered().title("Where you stand")),
         box_area,
     );
-    frame.render_widget(milestone_table(r), table_area);
+    frame.render_widget(
+        milestone_table(r).block(Block::bordered().title("Milestones")),
+        table_area,
+    );
     if !r.held.is_empty() {
-        frame.render_widget(account_table(r), accounts_area);
+        frame.render_widget(
+            account_table(r).block(Block::bordered().title("Accounts")),
+            accounts_area,
+        );
     }
 }
 

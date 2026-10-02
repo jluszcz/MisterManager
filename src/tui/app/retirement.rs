@@ -93,6 +93,12 @@ mod tests {
             "a passed milestone is drawn:\n{screen}"
         );
         assert!(screen.contains("Long Haul"), "{screen}");
+        for title in ["Where you stand", "Milestones", "Accounts"] {
+            assert!(
+                screen.lines().any(|l| l.contains('┌') && l.contains(title)),
+                "no {title} box:\n{screen}"
+            );
+        }
     }
 
     #[test]
