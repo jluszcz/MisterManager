@@ -16,8 +16,9 @@ mm --scratch  # run against a throwaway copy of the default database
 `--scratch` snapshots the default database into a fresh directory under the system temp dir,
 readable only by you, and runs against that, so a new migration can be tried on real data before it touches the real file.
 It combines with any subcommand but `backup`, prints the copy's path, and leaves the copy behind
-for inspection. A scratch run skips the scheduled backup and the quit path's report, since either
-would be indistinguishable from the real database's.
+for inspection. A scratch run skips the scheduled backup, since it would be indistinguishable from
+the real database's, and writes its report into the scratch directory beside the copy -- on quit
+and from `mm --scratch report` -- so it can be compared with the real one.
 
 Screens are `1` Overview, `2` Cash, `3` Credit, `4` Savings, `5` Planning, `6` Recurring Goals,
 `7` Funds, `8` Retirement, `9` Recurring Txns, `0` Accounts; `q` quits. **`?` opens the key reference for

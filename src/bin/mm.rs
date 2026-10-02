@@ -16,7 +16,8 @@ struct Cli {
     /// Run against a copy of the default database in a fresh temporary
     /// directory, leaving the real one untouched -- for trying a migration
     /// before it reaches the file that matters. The copy is left behind and
-    /// its path printed, so it can be inspected afterwards.
+    /// its path printed, so it can be inspected afterwards, and the report is
+    /// written beside it rather than into the configured directory.
     #[arg(long, global = true, conflicts_with = "db")]
     scratch: bool,
     /// Treat this date as today. Defaults to the system date.
@@ -129,6 +130,9 @@ fn main() -> Result<()> {
         }
         None => default_db()?,
     };
+    // The copy's own directory: a scratch run's page goes there, beside the
+    // database it was rendered from, never over the real one.
+    let scratch_dir = path.parent().filter(|_| scratch).map(PathBuf::from);
     let today = cli.today.unwrap_or_else(|| Local::now().date_naive());
 
     let config_path = match cli.config {
@@ -145,10 +149,11 @@ fn main() -> Result<()> {
         None => {
             let sec_contact = cfg.sec.as_ref().map(|s| s.contact.clone());
             let db = tui::run(db::open(&path)?, today, demo, sec_contact)?;
-            // The page lives at one path whichever database wrote it, so a
-            // scratch run would overwrite the real report with its own.
-            if !scratch {
-                write_report(&db, &cfg, today, demo);
+            // The configured page belongs to the real database, so a scratch
+            // run writes its own into the scratch directory instead.
+            match &scratch_dir {
+                Some(dir) => write_scratch_report(&db, dir, today, demo),
+                None => write_report(&db, &cfg, today, demo),
             }
         }
         #[cfg(feature = "import")]
@@ -184,7 +189,7 @@ fn main() -> Result<()> {
             // Never the config's "off": an unset `[report]` section means the
             // owner does not want a page written behind every quit, which is
             // a different question from the one `mm report` asks.
-            let dir = match dir {
+            let dir = match dir.or(scratch_dir) {
                 Some(dir) => dir,
                 None => cfg
                     .report
@@ -272,6 +277,20 @@ fn write_report(db: &db::Db, cfg: &config::Config, today: NaiveDate, demo: bool)
         Ok(report::Outcome::Written(written)) => print_written(&written),
         // Silent: nothing happened, and this runs after every single quit.
         Ok(_) => {}
+        Err(e) => eprintln!("report failed: {e:#}"),
+    }
+}
+
+/// The scratch run's page, written whether or not it is due and whatever the
+/// config says: the directory is fresh, and the page is there to be compared
+/// with the real one. Skipped under `--demo` for the reason
+/// `report::write_if_enabled` gives.
+fn write_scratch_report(db: &db::Db, dir: &std::path::Path, today: NaiveDate, demo: bool) {
+    if demo {
+        return;
+    }
+    match report::write(db, dir, today) {
+        Ok(written) => print_written(&written),
         Err(e) => eprintln!("report failed: {e:#}"),
     }
 }
