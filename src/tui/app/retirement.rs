@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn zero_opens_the_retirement_screen_and_it_draws_where_the_owner_stands() {
         let mut app = retirement_app();
-        press(&mut app, KeyCode::Char('0'));
+        press(&mut app, KeyCode::Char('8'));
         let screen = drawn(&mut app);
         assert!(screen.contains("age 37"), "{screen}");
         assert!(screen.contains("3.30×"), "{screen}");
@@ -104,10 +104,10 @@ mod tests {
     #[test]
     fn with_nothing_configured_the_screen_says_what_to_mark() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('0'));
+        press(&mut app, KeyCode::Char('8'));
         let screen = drawn(&mut app);
         assert!(
-            screen.contains("Mark investment accounts as Retirement on Accounts (9)"),
+            screen.contains("Mark investment accounts as Retirement on Accounts (0)"),
             "{screen}"
         );
     }
@@ -117,7 +117,7 @@ mod tests {
         let mut app = retirement_app();
         setting::clear(&app.db, key::BIRTH_DATE).unwrap();
         app.reload().unwrap();
-        press(&mut app, KeyCode::Char('0'));
+        press(&mut app, KeyCode::Char('8'));
         let screen = drawn(&mut app);
         assert!(screen.contains("Press e to set a birth date"), "{screen}");
         assert!(
@@ -131,7 +131,7 @@ mod tests {
         let mut app = retirement_app();
         setting::clear(&app.db, key::ANNUAL_SALARY).unwrap();
         app.reload().unwrap();
-        press(&mut app, KeyCode::Char('0'));
+        press(&mut app, KeyCode::Char('8'));
         let screen = drawn(&mut app);
         assert!(screen.contains("Press e to set a salary"), "{screen}");
         assert!(!screen.contains("3.30×"), "{screen}");
@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn e_saves_a_salary_and_the_multiple_moves_with_it() {
         let mut app = retirement_app();
-        press(&mut app, KeyCode::Char('0'));
+        press(&mut app, KeyCode::Char('8'));
         press(&mut app, KeyCode::Char('e'));
         ctrl_press(&mut app, 'u');
         type_str(&mut app, "110000");
@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn an_emptied_salary_clears_the_setting() {
         let mut app = retirement_app();
-        press(&mut app, KeyCode::Char('0'));
+        press(&mut app, KeyCode::Char('8'));
         press(&mut app, KeyCode::Char('e'));
         ctrl_press(&mut app, 'u');
         press(&mut app, KeyCode::Enter);
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn a_salary_of_nothing_is_refused_and_the_form_stays_open() {
         let mut app = retirement_app();
-        press(&mut app, KeyCode::Char('0'));
+        press(&mut app, KeyCode::Char('8'));
         press(&mut app, KeyCode::Char('e'));
         ctrl_press(&mut app, 'u');
         type_str(&mut app, "0");
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn e_saves_a_birth_date_and_the_age_moves_with_it() {
         let mut app = retirement_app();
-        press(&mut app, KeyCode::Char('0'));
+        press(&mut app, KeyCode::Char('8'));
         press(&mut app, KeyCode::Char('e'));
         press(&mut app, KeyCode::Tab);
         ctrl_press(&mut app, 'u');
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn a_short_tax_free_share_names_the_dollars_to_move_across() {
         let mut app = retirement_app();
-        press(&mut app, KeyCode::Char('0'));
+        press(&mut app, KeyCode::Char('8'));
         let screen = drawn(&mut app);
         assert!(screen.contains("Short $36,300"), "{screen}");
         assert!(screen.contains("$400K – $450K"), "{screen}");

@@ -62,7 +62,7 @@ entry that outgrows eight wrapped lines has started answering the second questio
 
 **A `detail` quotes a single-character key it names** — `'a'`, `'s'`, `'y'` — because a bare one
 reads as the word it also is ("opening on the same date a does") or as a stray letter where it is
-not ("are s on screen 7"). `Tab`, `Esc` and `Enter` are unambiguous already and stay bare. Nothing
+not ("are s on screen 6"). `Tab`, `Esc` and `Enter` are unambiguous already and stay bare. Nothing
 enforces this: the article "a" and the key `a` are the same character, so no test can tell them
 apart.
 
@@ -181,7 +181,7 @@ one type, and `ledger_form` holds the two forms they open — `a`/`e`'s `TxnForm
 are the fourth screen and its forms, the goal form serving `e` and `n` alike and
 `GoalTransferForm` backing `t` — named apart from `ledger_form::TransferForm`, the cash transfer
 the ledgers open, since one moves money between accounts and the other moves none at all;
-`worksheet` backs `A`/`i`, and `picker` backs `s` on the seventh screen. `planning` is the fifth
+`worksheet` backs `A`/`i`, and `picker` backs `s` on the sixth screen. `planning` is the fifth
 screen, and the one screen that is a directory rather than a file: `planning/mod.rs` is the screen
 state and the cursor that walks it, `planning/view.rs` the waterfall as rows, `planning/target.rs`
 what a constant may be edited to and where it lands, and `planning/bill.rs` and
@@ -190,7 +190,7 @@ will not resolve, and `t`, which confirms a computed plan, writes its payday thr
 `transfer::execute`, and opens the allocation worksheets prefilled. `planning/test_support.rs` is
 the one plan and wiring the other four test against, for the reason `app/test_support.rs` is one
 fixture rather than nine. `destination` is the list `e` opens on one of its destination rows. `fund`
-is the sixth screen and its form: one row per holding, filtered by investment account and by a
+is the seventh screen and its form: one row per holding, filtered by investment account and by a
 search over ticker and account, with `a`/`e`/`d` adding, editing and deleting one and `g`/`G`
 refreshing what a fund is made of. **No move key**, deliberately: a fund's place in the list is the
 order it was entered in rather than an arrangement worth making, which is why `db::holding` has no
@@ -201,14 +201,16 @@ spelling the same ones. The panel also names where this payday's `Investment` li
 spent — `invest $N in TICKER, $M in TICKER` in its title and a `Δ After` column beside the `Δ` —
 and draws both only while no filter narrows the rows: the purchases are judged against the whole
 portfolio, so beside one account's `Δ` the figure would be on another denominator.
-`Funds::recommendation` is where that gate is. `recurring_goal` is the seventh screen and
-`recurring_txn` the eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
-smallest: `a`, which creates an account the workbook does not name, and `e`, over everything the
-workbook does not say about one. `retirement` is screen `0`, drawn last in the bar because that is
-where the key sits on the keyboard: retirement savings against the age rule, read from
+`Funds::recommendation` is where that gate is. `recurring_goal` is the sixth screen, before Funds
+so that the screens a payday is worked from sit together. `retirement` is the eighth, beside Funds
+because both read the investment accounts: retirement savings against the age rule, read from
 `crate::retirement` and drawn with no cursor. Its one key, `e`, edits the salary and the birth
 date — the first editor the birth date has, pressed here rather than on Funds, whose target the
-same date sets, because this is the first screen that needs both.
+same date sets, because this is the first screen that needs both. `recurring_txn` is the ninth,
+closing out the app's CRUD coverage, and `accounts` is screen `0`, last in the bar because that is
+where the key sits on the keyboard and because it is the screen visited least: `a`, which creates
+an account the workbook does not name, and `e`, over everything the workbook does not say about
+one.
 
 `history` is the modal `Enter` opens on a Savings row: one goal's allocation rows, oldest first,
 and the two writes that correct one. It is the only reader of an `allocation` row in the crate —
@@ -252,7 +254,7 @@ fields, which `Topic` each is showing, how each one draws, and what a `Confirm` 
 keys — every arm of it is a call into a handler `app` owns, so that one match stays with them.
 Everything else about adding a modal is one file.
 
-The tab bar abbreviates screens seven and eight as `7 Goals` and `8 Txns`. It is a row of shortcuts
+The tab bar abbreviates screens six and nine as `6 Goals` and `9 Txns`. It is a row of shortcuts
 rather than a set of headings, and the screens title themselves in full the moment they are opened.
 
 ## How wide a screen is
@@ -468,7 +470,7 @@ deferred to nothing.
     the screen. `BillField::Amount` was the one amount field this feature first missed, and only the
     form sweep sees it.
     A fixture figure directly before a `%` is not a leak — it spells a share, which the mask
-    leaves, as screen 0's one-account `100.00%` does — and `draws_figure` is where the screen
+    leaves, as screen 8's one-account `100.00%` does — and `draws_figure` is where the screen
     sweep skips it.
     - **An absence check over an empty table passes for free**, which is the failure mode both
       sweeps are built against. The screen sweep runs on `app_with_two_rows_on_every_list` rather
@@ -693,7 +695,7 @@ deferred to nothing.
     rather than a day to open on. What goes wrong with two adjacent `NaiveDate` parameters is
     `TxnForm::add`'s to say.
 
-- **`t` and `p` open their `From` on the account the owner named on screen 9, and `t` opens its
+- **`t` and `p` open their `From` on the account the owner named on screen 0, and `t` opens its
   `To` off it.** `default_source::Source` is the pair of `setting` keys; `App::open_transfer` and
   `open_payment` read one each. Two keys rather than one, because paying a card and moving savings
   are separate decisions — and separate keys are also what lets one account answer for both.
@@ -1123,7 +1125,7 @@ deferred to nothing.
   title is a chain of filter terms, and the code is the tighter one. Widening a name column is
   still paid for out of another column on the same screen, so the width tests are the guard — see
   *How wide a screen is* above.
-  - **Which is why screen 8's `Acct` column is the one column in the app whose width is derived
+  - **Which is why screen 9's `Acct` column is the one column in the app whose width is derived
     from its own content.** A code is not the only thing it holds: this is the one list that mixes
     both kinds, so a code both kinds hold falls back to `Everyday — Cash`, and a width chosen for
     a code would truncate exactly the label that exists to say more than one. `RecurringTxns::acct_width`
@@ -1166,13 +1168,13 @@ deferred to nothing.
     point.** A transfer writes both its legs from one description, and a pair of unnamed rows in two
     different accounts is the one shape that cannot be read back out of the ledger later; a
     recurring rule's description is copied onto every row it generates and is that rule's only
-    identity on screen 8. Both arrive prefilled, so refusing costs nothing that was typed.
+    identity on screen 9. Both arrive prefilled, so refusing costs nothing that was typed.
 - **A right-aligned column takes a right-aligned header**, through `tui::right_header` — one
   decision in `mod.rs` rather than each screen deciding for itself. Left over right, a
   header sits at the far side of its column from every figure in it and reads as a label for the
   column beside it. Which columns are right-aligned is not guessable from the header list, so each
   screen's `the_right_aligned_headers_end_where_their_own_columns_do` measures the drawn header
-  against a drawn data row. `Last` on screen 8 is the standing exception: its cells go through that
+  against a drawn data row. `Last` on screen 9 is the standing exception: its cells go through that
   screen's own `optional`, which does not right-align, so its header does not either.
 - **Some screens drop the cents, all through `Cents::to_whole_dollars`.** Savings, Planning, and
   Funds render whole dollars; the digits are dropped rather than rounded, truncating toward zero, so
@@ -1440,7 +1442,7 @@ deferred to nothing.
   screens.** `n` on Savings is a goal typed from scratch — `a` there is the allocation the screen is
   mostly used for, so the add takes another letter. `s` on Recurring Goals opens the picker: goals
   created *from* the entries that screen lists. Both land in the container the Savings screen's
-  `Tab` names, which is the app's one answer to "which container" — screen 7's entries carry none.
+  `Tab` names, which is the app's one answer to "which container" — screen 6's entries carry none.
   A goal's container is chosen once and never again, so `n`'s border names the one it is about to
   use, the way `Picker` and `Worksheet` name theirs: under the `Tab` filter's All the screen's own
   title says only `Savings · All`, and `default_container` has quietly picked the first. The form

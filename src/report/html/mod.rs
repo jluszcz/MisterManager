@@ -96,7 +96,7 @@ fn full_width_row(class: &str, columns: usize, html: String) -> String {
 }
 
 /// The tabs, in the order the screens are numbered: `1` Overview, `2` Cash,
-/// `3` Credit, `4` Savings, `5` Planning, `6` Funds, `0` Retirement. An owner who reaches for
+/// `3` Credit, `4` Savings, `5` Planning, `7` Funds, `8` Retirement. An owner who reaches for
 /// `4` on the keyboard should not find Planning under it here.
 ///
 /// The id doubles as the panel's and as the CSS selector's, so a tab added

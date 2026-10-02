@@ -315,7 +315,7 @@ mod tests {
         let id = account::list_by_kind(&app.db, Kind::Cash).unwrap()[1].id;
         assert_eq!(account::get(&app.db, id).unwrap().name, "Rainy Day");
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Char('e'));
         assert!(matches!(app.modal, Some(Modal::Account(_))));
@@ -369,7 +369,7 @@ mod tests {
         assert!(before.len() > 1, "the fixture needs two cash accounts");
         let cards = ids(&app, Kind::Credit);
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         for _ in 1..before.len() {
             press(&mut app, KeyCode::Down);
         }
@@ -397,7 +397,7 @@ mod tests {
         let mut app = app();
         let before = ids(&app, Kind::Cash);
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         for _ in 1..before.len() {
             press(&mut app, KeyCode::Down);
         }
@@ -419,7 +419,7 @@ mod tests {
         let mut app = app();
         let before = account::list_by_kind(&app.db, Kind::Cash).unwrap().len();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "NST");
         press(&mut app, KeyCode::Tab);
@@ -445,7 +445,7 @@ mod tests {
         let mut app = app();
         let before = account::list_by_kind(&app.db, Kind::Credit).unwrap().len();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "CC3");
         press(&mut app, KeyCode::Tab);
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn creating_an_investment_account_shows_a_tax_treatment_field() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         press(&mut app, KeyCode::Tab);
         walk_until!(
@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn the_tax_treatment_field_is_hidden_on_a_cash_account() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
 
         assert_eq!(
@@ -533,7 +533,7 @@ mod tests {
             .unwrap()
             .len();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "RET");
         press(&mut app, KeyCode::Tab);
@@ -577,7 +577,7 @@ mod tests {
         .unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::End);
         assert_eq!(app.accounts.selected().unwrap().account.id(), id);
         press(&mut app, KeyCode::Char('e'));
@@ -610,7 +610,7 @@ mod tests {
         .unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::End);
         assert_eq!(app.accounts.selected().unwrap().account.id(), id);
         press(&mut app, KeyCode::Char('e'));
@@ -644,7 +644,7 @@ mod tests {
         .unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::End);
         assert_eq!(app.accounts.selected().unwrap().account.id(), id);
         press(&mut app, KeyCode::Char('e'));
@@ -680,7 +680,7 @@ mod tests {
         .unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::End);
         press(&mut app, KeyCode::Char('e'));
         press(&mut app, KeyCode::Enter);
@@ -746,7 +746,7 @@ mod tests {
         let mut app = app();
         let before = account::list_by_kind(&app.db, Kind::Cash).unwrap().len();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "SAV");
         press(&mut app, KeyCode::Tab);
@@ -769,7 +769,7 @@ mod tests {
     fn a_accepts_a_code_that_only_the_other_kind_holds() {
         let mut app = app();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "SAV");
         press(&mut app, KeyCode::Tab);
@@ -795,7 +795,7 @@ mod tests {
     fn an_added_account_reaches_the_screens_that_cache_the_account_list() {
         let mut app = app();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "NST");
         press(&mut app, KeyCode::Tab);
@@ -824,7 +824,7 @@ mod tests {
             account::InterestPolicy::Manual
         );
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('e'));
         walk_until!(
             matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Interest),
@@ -852,7 +852,7 @@ mod tests {
     #[test]
     fn e_on_the_accounts_screen_writes_the_color_it_was_left_on() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         let before = app.accounts.selected().unwrap().clone();
         assert_eq!(
             account::get(&app.db, before.account.id()).unwrap().color,
@@ -897,7 +897,7 @@ mod tests {
     #[test]
     fn enter_on_an_untouched_account_form_pins_the_derived_color() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         let id = app.accounts.selected().unwrap().account.id();
         assert_eq!(account::get(&app.db, id).unwrap().color, None);
 
@@ -920,7 +920,7 @@ mod tests {
     #[test]
     fn a_color_can_be_cleared_from_the_accounts_screen() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         let id = app.accounts.selected().unwrap().account.id();
         account::set_color(&app.db, id, Some(account::AccountColor::Rose)).unwrap();
         app.reload().unwrap();
@@ -954,7 +954,7 @@ mod tests {
     #[test]
     fn a_card_gets_a_shorter_account_form() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         walk_until!(
             app.accounts.selected().unwrap().kind == Kind::Credit,
             press(&mut app, KeyCode::Down)
@@ -992,7 +992,7 @@ mod tests {
         );
 
         let pick_block = |app: &mut App, steps: usize| {
-            press(app, KeyCode::Char('9'));
+            press(app, KeyCode::Char('0'));
             press(app, KeyCode::Char('e'));
             walk_until!(
                 matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Savings),
@@ -1093,7 +1093,7 @@ mod tests {
         setting::set(&app.db, Source::Transfer.key(), cash[0].id).unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Down);
         edit_default(&mut app, 1);
 
@@ -1114,7 +1114,7 @@ mod tests {
         setting::set(&app.db, Source::Payment.key(), cash[1].id).unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('e'));
         press(&mut app, KeyCode::Enter);
 
@@ -1145,7 +1145,7 @@ mod tests {
 
     /// The same, from whichever screen the test is on, on the first account.
     fn pick_default(app: &mut App, steps: usize) {
-        press(app, KeyCode::Char('9'));
+        press(app, KeyCode::Char('0'));
         edit_default(app, steps);
     }
 
@@ -1159,7 +1159,7 @@ mod tests {
         setting::set(&app.db, SavingsBlock::Buckets.key(), cash[1].id).unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('e'));
         press(&mut app, KeyCode::Enter);
 
@@ -1178,7 +1178,7 @@ mod tests {
         let mut app = app_with_holdings();
         let investment = account::list_by_kind(&app.db, Kind::Investment).unwrap();
         let (first, second) = (investment[0].id, investment[1].id);
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
 
         let mark = |app: &mut crate::tui::app::App, id: AccountId| {
             walk_until!(

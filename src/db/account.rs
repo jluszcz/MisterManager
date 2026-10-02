@@ -721,12 +721,12 @@ pub fn checking(db: &Db) -> Result<Account> {
         .collect();
     ensure!(
         !found.is_empty(),
-        "no account is in the Checking band -- press 9 and put the current account there"
+        "no account is in the Checking band -- press 0 and put the current account there"
     );
     ensure!(
         found.len() == 1,
         "{} accounts are in the Checking band ({}), and a transfer leaves from one -- \
-         press 9 and move all but one to Savings",
+         press 0 and move all but one to Savings",
         found.len(),
         found
             .iter()

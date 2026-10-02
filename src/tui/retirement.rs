@@ -60,7 +60,7 @@ fn title(r: &Retirement) -> Line<'static> {
 fn standing_lines(r: &Retirement) -> Vec<Line<'static>> {
     if r.held.is_empty() {
         return vec![Line::from(
-            "Mark investment accounts as Retirement on Accounts (9)",
+            "Mark investment accounts as Retirement on Accounts (0)",
         )];
     }
     let Some(now) = r.now() else {

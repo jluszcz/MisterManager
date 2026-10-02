@@ -163,7 +163,7 @@ fn main() -> Result<()> {
                 import::Report::AccountsOnly { accounts } => {
                     println!("imported {accounts} accounts");
                     println!(
-                        "next: open the app, press 9, and set which Savings block each \
+                        "next: open the app, press 0, and set which Savings block each \
                          container account holds -- then re-run this same command, with no flag"
                     );
                 }

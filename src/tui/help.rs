@@ -11,7 +11,7 @@
 //! **A single-character key is quoted where a `detail` names it** -- `'a'`,
 //! `'s'`, `'y'`. Bare, it reads as the word it also is ("opening on the same
 //! date a does"), or as a stray letter where it is not a word at all ("are s
-//! on screen 7"), and either way the sentence has to be read twice. The
+//! on screen 6"), and either way the sentence has to be read twice. The
 //! multi-character names -- `Tab`, `Esc`, `Enter`, `Shift` -- are already
 //! unambiguous and take no quotes.
 //!
@@ -263,12 +263,12 @@ const LEDGER: [Entry; 11] = [
     Entry {
         key: "t",
         label: Label::Shared("money"),
-        detail: "Move money out of a cash account and into any other account, opening on the same date 'a' does, and on the default transfer account if screen 9 names one. Cash ledger only.",
+        detail: "Move money out of a cash account and into any other account, opening on the same date 'a' does, and on the default transfer account if screen 0 names one. Cash ledger only.",
     },
     Entry {
         key: "p",
         label: Label::Shared("money"),
-        detail: "Pay a credit card from a cash account, writing both sides. Opens on the same date 'a' does, and on the default payment account if screen 9 names one.",
+        detail: "Pay a credit card from a cash account, writing both sides. Opens on the same date 'a' does, and on the default payment account if screen 0 names one.",
     },
     Entry {
         key: "e",
@@ -327,7 +327,7 @@ const SAVINGS: [Entry; 16] = [
     Entry {
         key: "n",
         label: Label::Shared("goal"),
-        detail: "Create a goal from scratch -- a name, a target and a date -- in the container Tab names. Goals created from recurring goal entries are 's' on screen 7.",
+        detail: "Create a goal from scratch -- a name, a target and a date -- in the container Tab names. Goals created from recurring goal entries are 's' on screen 6.",
     },
     Entry {
         key: "e",
