@@ -447,7 +447,7 @@ mod tests {
         )
         .unwrap();
         app.reload().unwrap();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('s'));
         press(&mut app, KeyCode::Enter);
 
@@ -538,7 +538,7 @@ mod tests {
         .unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('s'));
         // It has an open goal, so it opens unticked -- Space is the deliberate
         // second round the picker never refuses.
@@ -578,7 +578,7 @@ mod tests {
             .unwrap();
         }
         app.reload().unwrap();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('s'));
         press(&mut app, KeyCode::Enter);
 
@@ -632,7 +632,7 @@ mod tests {
         )
         .unwrap();
         app.reload().unwrap();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('s'));
         press(&mut app, KeyCode::Enter);
 
@@ -666,7 +666,7 @@ mod tests {
         )
         .unwrap();
         app.reload().unwrap();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('s'));
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Char('s'));
@@ -696,7 +696,7 @@ mod tests {
     }
 
     fn add_mortgage_rule(app: &mut App) {
-        press(app, KeyCode::Char('8'));
+        press(app, KeyCode::Char('9'));
         press(app, KeyCode::Char('a'));
         type_str(app, "Mortgage");
         press(app, KeyCode::Esc); // dismiss the suggestion popup, keep the form
@@ -857,7 +857,7 @@ mod tests {
         let mut app = recurring_txns_app();
         assert_eq!(app.dates.adhoc, today(), "no paycheck transaction yet");
 
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('9'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "Salary");
         press(&mut app, KeyCode::Esc);
@@ -903,7 +903,7 @@ mod tests {
         press(&mut app, KeyCode::Right);
         assert_eq!(app.scrubbed_days(), 2, "scrubbed two days off today");
 
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('9'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "Salary");
         press(&mut app, KeyCode::Esc);
@@ -955,7 +955,7 @@ mod tests {
     #[test]
     fn d_on_an_empty_rules_screen_says_nothing_is_selected() {
         let mut app = recurring_txns_app();
-        press(&mut app, KeyCode::Char('8'));
+        press(&mut app, KeyCode::Char('9'));
         press(&mut app, KeyCode::Char('d'));
         assert!(app.modal.is_none());
         assert!(app.status.contains("nothing selected"), "{}", app.status);
@@ -1093,7 +1093,7 @@ mod tests {
     #[test]
     fn seven_opens_the_catalog_and_a_adds_an_entry() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "Dropbox");
         press(&mut app, KeyCode::Tab);
@@ -1109,7 +1109,7 @@ mod tests {
     }
 
     fn add_dropbox_entry(app: &mut App) {
-        press(app, KeyCode::Char('7'));
+        press(app, KeyCode::Char('6'));
         press(app, KeyCode::Char('a'));
         type_str(app, "Dropbox");
         press(app, KeyCode::Tab);
@@ -1203,7 +1203,7 @@ mod tests {
     #[test]
     fn e_on_an_empty_catalog_says_nothing_is_selected() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('e'));
         assert!(app.modal.is_none());
         assert!(app.status.contains("nothing selected"), "{}", app.status);
@@ -1212,7 +1212,7 @@ mod tests {
     #[test]
     fn d_on_a_catalog_entry_with_goals_against_it_is_refused_and_says_why() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "Dropbox");
         press(&mut app, KeyCode::Tab);
@@ -1243,7 +1243,7 @@ mod tests {
     #[test]
     fn d_on_a_catalog_entry_whose_only_goal_is_closed_still_confirms_a_nonzero_count() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "Dropbox");
         press(&mut app, KeyCode::Tab);
@@ -1270,7 +1270,7 @@ mod tests {
         // up -- the same as any other out-of-band change would.
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         assert_eq!(
             app.recurring_goal.rows()[0].open_goals,
             0,
@@ -1320,7 +1320,7 @@ mod tests {
             )
             .unwrap();
         }
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('s'));
 
         press(&mut app, KeyCode::End);
@@ -1348,7 +1348,7 @@ mod tests {
     #[test]
     fn slash_on_the_goals_screen_narrows_the_entries_as_they_are_typed() {
         let mut app = app_with_recurring_goals();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('/'));
         type_str(&mut app, "ro");
 
@@ -1361,7 +1361,7 @@ mod tests {
     #[test]
     fn the_goals_month_filter_narrows_within_a_kept_search() {
         let mut app = app_with_recurring_goals();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('/'));
         type_str(&mut app, "ro");
         press(&mut app, KeyCode::Enter);
@@ -1378,7 +1378,7 @@ mod tests {
     #[test]
     fn esc_in_the_goals_search_box_clears_the_search_not_the_month() {
         let mut app = app_with_recurring_goals();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char(']'));
         press(&mut app, KeyCode::Char('/'));
         type_str(&mut app, "rol");
@@ -1394,7 +1394,7 @@ mod tests {
     #[test]
     fn esc_outside_the_goals_box_clears_a_kept_search_before_the_month() {
         let mut app = app_with_recurring_goals();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char(']'));
         press(&mut app, KeyCode::Char(']'));
         press(&mut app, KeyCode::Char('/'));
@@ -1419,7 +1419,7 @@ mod tests {
     #[test]
     fn q_while_searching_the_goals_screen_types_into_the_box() {
         let mut app = app_with_recurring_goals();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('/'));
         type_str(&mut app, "q");
 
@@ -1433,7 +1433,7 @@ mod tests {
     #[test]
     fn a_kept_search_is_what_the_goals_row_keys_act_on() {
         let mut app = app_with_recurring_goals();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::End);
         assert_eq!(app.recurring_goal.selected().unwrap().name, "Rolex");
 
@@ -1494,7 +1494,7 @@ mod tests {
     /// `[`/`]` from All enter at today's month, so a second step reaches
     /// September.
     fn open_september_picker(app: &mut App) {
-        press(app, KeyCode::Char('7'));
+        press(app, KeyCode::Char('6'));
         press(app, KeyCode::Char(']'));
         press(app, KeyCode::Char(']'));
         assert_eq!(app.recurring_goal.selected_month(), Some(9));
@@ -1514,7 +1514,7 @@ mod tests {
     #[test]
     fn s_preselects_the_entries_a_kept_search_is_showing() {
         let mut app = app_with_recurring_goals();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('/'));
         type_str(&mut app, "ro");
         press(&mut app, KeyCode::Enter);
@@ -1561,7 +1561,7 @@ mod tests {
     #[test]
     fn s_sorts_the_unopened_entries_above_the_rest_under_the_all_filter() {
         let mut app = app_with_recurring_goals();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('s'));
 
         assert_eq!(entries(&app), ["Lego", "Rolex", "Dropbox"]);
@@ -1570,7 +1570,7 @@ mod tests {
     #[test]
     fn s_under_the_all_filter_preselects_every_unopened_entry() {
         let mut app = app_with_recurring_goals();
-        press(&mut app, KeyCode::Char('7'));
+        press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('s'));
 
         assert_eq!(chosen(&app), ["Lego", "Rolex"]);

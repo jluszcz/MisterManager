@@ -15,13 +15,19 @@
 //! and no `Db` on the type. `App` runs the queries and hands the results in.
 
 use super::cursor::{Cursor, Viewport, impl_scroll};
-use super::form::{Field, Focused, FormFields, Step, next_in, step_index};
-use super::{Label, label_width, tax_treatment_cell};
+use super::form::{Field, Focused, FormFields, Step, next_in, parse_whole_amount, step_index};
+use super::text::Edit;
+use super::{Label, label_width, tax_labels, tax_treatment_cell};
 use crate::db::AccountId;
-use crate::db::account::{Account, AccountColor, Group, InterestPolicy, Kind, TaxTreatment};
+use crate::db::account::{
+    self, Account, AccountColor, Group, InterestPolicy, Kind, TaxFreePart, TaxTreatment,
+};
 use crate::default_source::Source;
+use crate::money::Cents;
+use crate::rate::{BasisPoints, Percent};
 use crate::savings_block::Block as SavingsBlock;
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
+use ratatui::crossterm::event::KeyEvent;
 
 /// How wide a code may be: the `Code` column's width, and the bound `a` holds
 /// a typed one to.
@@ -70,6 +76,9 @@ pub struct Row {
     /// paired `CHECK` read back, which refuses the column on any kind but
     /// that one.
     pub tax: Option<TaxTreatment>,
+    /// The share held tax-free inside `tax`, against what the account's
+    /// holdings come to, for the column that draws it.
+    pub tax_free: BasisPoints,
     /// Which block of the `Savings` sheet this account is the container for,
     /// if either. The one thing on this screen that the import *reads* rather
     /// than merely leaves alone: without both blocks pointed somewhere,
@@ -169,6 +178,15 @@ pub enum AccountField {
     /// unrepresentable rather than blank wherever the row it would be saved
     /// to could not hold it.
     TaxTreatment,
+    /// Edit only, and only for an investment account whose treatment is not
+    /// already wholly tax-free: its tax-free part as a whole percentage.
+    /// Typing here rewrites `TaxFreeAmount` from it, against the balance.
+    TaxFreePercent,
+    /// The same part as whole dollars, and the same the other way round.
+    TaxFreeAmount,
+    /// Edit only, and only for an investment account, for `TaxTreatment`'s
+    /// reason: whether the Retirement screen counts this account.
+    Retirement,
     Name,
     Color,
     Band,
@@ -186,6 +204,9 @@ impl AccountField {
             AccountField::Code => "Code",
             AccountField::Kind => "Kind",
             AccountField::TaxTreatment => "Tax Treatment",
+            AccountField::TaxFreePercent => "Tax-free %",
+            AccountField::TaxFreeAmount => "Tax-free $",
+            AccountField::Retirement => "Retirement",
             AccountField::Name => "Name",
             AccountField::Color => "Color",
             AccountField::Band => "Band",
@@ -304,6 +325,13 @@ pub struct AccountEdit {
     /// so this is what tells `App::commit_account` whether to call it at
     /// all.
     pub tax_treatment: Option<TaxTreatment>,
+    /// `Some` for an investment account, `None` for every other kind, for
+    /// `tax_treatment`'s reason: `account::set_retirement` refuses any other.
+    pub retirement: Option<bool>,
+    /// `Some` for an investment account, for `tax_treatment`'s reason; inside
+    /// it, `None` is no tax-free part -- which is also what a treatment
+    /// switched to Tax-free commits, the fields having been taken away.
+    pub tax_free: Option<Option<TaxFreePart>>,
 }
 
 /// What `a` commits: an account the workbook has not named.
@@ -368,6 +396,54 @@ pub struct AccountForm {
     /// The investment account's `Default`: a yes or no rather than a subset,
     /// since one key names one account and there is one thing to answer for.
     invests: bool,
+    /// Read only where [`AccountForm::shows_tax_treatment`] says this is an
+    /// investment account, the one kind the column means anything for.
+    retirement: bool,
+    /// Which of the two tax-free fields was typed into last, and so is what
+    /// [`AccountForm::commit`] stores -- the other holds what that came to.
+    /// Both are read only where [`AccountForm::shows_tax_free`] says so.
+    tax_free_in: TaxFreeIn,
+    tax_free_percent: Field,
+    tax_free_amount: Field,
+    /// What the account's holdings come to, which is what derives one
+    /// tax-free field from the other. Nothing until [`AccountForm::holding`]
+    /// says otherwise.
+    balance: Cents,
+}
+
+/// How the owner last stated an account's tax-free part.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum TaxFreeIn {
+    Percent,
+    Amount,
+}
+
+/// Whole dollars, `$` and commas optional; blank and 0 are both none. More
+/// than the account holds is allowed, a balance being free to move under it.
+fn parse_tax_free_amount(raw: &str) -> Result<Option<Cents>> {
+    let text = raw.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let cents = parse_whole_amount(text.trim_start_matches('$'))?;
+    ensure!(cents.0 >= 0, "the tax-free amount cannot be negative");
+    Ok((cents.0 > 0).then_some(cents))
+}
+
+/// A whole percentage under 100, `%` optional; blank and 0 are both none.
+fn parse_tax_free(raw: &str) -> Result<Option<Percent>> {
+    let text = raw.trim().trim_end_matches('%').trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let value: i64 = text
+        .parse()
+        .with_context(|| format!("not a whole percentage: {text:?}"))?;
+    ensure!(
+        (0..100).contains(&value),
+        "the tax-free part must be from 0 to 99% -- for all of it, set the treatment to Tax-free"
+    );
+    Ok((value > 0).then_some(Percent(value)))
 }
 
 impl AccountForm {
@@ -397,6 +473,11 @@ impl AccountForm {
             block: 0,
             defaults: 0,
             invests: false,
+            retirement: false,
+            tax_free_in: TaxFreeIn::Percent,
+            tax_free_percent: Field::default(),
+            tax_free_amount: Field::default(),
+            balance: Cents::ZERO,
         }
     }
 
@@ -471,6 +552,66 @@ impl AccountForm {
                 .position(|d| d.len() == defaults.len() && d.iter().all(|s| defaults.contains(s)))
                 .unwrap_or(0),
             invests,
+            retirement: account.retirement,
+            tax_free_in: match account.tax_free {
+                Some(TaxFreePart::Amount(_)) => TaxFreeIn::Amount,
+                Some(TaxFreePart::Percent(_)) | None => TaxFreeIn::Percent,
+            },
+            tax_free_percent: Field::given(match account.tax_free {
+                Some(TaxFreePart::Percent(p)) => p.0.to_string(),
+                _ => String::new(),
+            }),
+            tax_free_amount: Field::given(match account.tax_free {
+                Some(TaxFreePart::Amount(a)) => a.to_whole_dollars(),
+                _ => String::new(),
+            }),
+            balance: Cents::ZERO,
+        }
+    }
+
+    /// What the account's holdings come to, which the tax-free field not
+    /// stored is then worked out against.
+    pub fn holding(mut self, balance: Cents) -> AccountForm {
+        self.balance = balance;
+        self.rederive_tax_free();
+        self
+    }
+
+    /// The typed field's part, as far as it parses.
+    fn typed_tax_free(&self) -> Result<Option<TaxFreePart>> {
+        Ok(match self.tax_free_in {
+            TaxFreeIn::Percent => {
+                parse_tax_free(self.tax_free_percent.value())?.map(TaxFreePart::Percent)
+            }
+            TaxFreeIn::Amount => {
+                parse_tax_free_amount(self.tax_free_amount.value())?.map(TaxFreePart::Amount)
+            }
+        })
+    }
+
+    /// Rewrite the tax-free field not last typed into from the one that
+    /// was. Blank while the typed one says nothing or does not parse, and
+    /// for a percentage of an account holding nothing. A share is rounded to
+    /// the whole percent the field takes: it is what the amount came to, not
+    /// what is stored, unless the owner then types into it.
+    fn rederive_tax_free(&mut self) {
+        let part = self.typed_tax_free().ok().flatten();
+        match self.tax_free_in {
+            TaxFreeIn::Percent => {
+                let amount = part
+                    .map(|p| p.amount_of(self.balance).trunc_to_dollar())
+                    .filter(|a| a.0 > 0);
+                self.tax_free_amount =
+                    Field::given(amount.map(Cents::to_whole_dollars).unwrap_or_default());
+            }
+            TaxFreeIn::Amount => {
+                let percent = part
+                    .filter(|_| self.balance.0 > 0)
+                    .map(|p| account::tax_free_share(None, Some(p), self.balance))
+                    .map(|share| (share.0 + 50) / 100);
+                self.tax_free_percent =
+                    Field::given(percent.map(|p| p.to_string()).unwrap_or_default());
+            }
         }
     }
 
@@ -491,6 +632,12 @@ impl AccountForm {
     /// never disagree about which kind this is.
     pub fn shows_tax_treatment(&self) -> bool {
         self.kind() == Kind::Investment
+    }
+
+    /// Whether the `Tax-free %` field belongs on this form right now: an
+    /// investment account whose selected treatment is not already all of it.
+    pub fn shows_tax_free(&self) -> bool {
+        self.shows_tax_treatment() && TaxTreatment::ALL[self.tax_treatment] != TaxTreatment::TaxFree
     }
 
     /// The fields this form shows, which is also its tab order.
@@ -528,6 +675,11 @@ impl AccountForm {
         }
         if self.shows_tax_treatment() {
             fields.push(AccountField::TaxTreatment);
+            if self.shows_tax_free() {
+                fields.push(AccountField::TaxFreePercent);
+                fields.push(AccountField::TaxFreeAmount);
+            }
+            fields.push(AccountField::Retirement);
             // The investment account's own default: whether the Planning
             // `Investment` line buys into it.
             fields.push(AccountField::Default);
@@ -557,6 +709,12 @@ impl AccountForm {
             AccountField::Code => crate::demo::text(self.code.value()).into_owned(),
             AccountField::Kind => self.kind().label().to_string(),
             AccountField::TaxTreatment => TaxTreatment::ALL[self.tax_treatment].label().to_string(),
+            AccountField::TaxFreePercent => crate::demo::typed(self.tax_free_percent.value()),
+            AccountField::TaxFreeAmount => crate::demo::typed(self.tax_free_amount.value()),
+            AccountField::Retirement => match self.retirement {
+                true => "Yes".to_string(),
+                false => "—".to_string(),
+            },
             AccountField::Name => crate::demo::text(self.name.value()).into_owned(),
             AccountField::Color => match color_choices()[self.color] {
                 None => "—".to_string(),
@@ -627,6 +785,11 @@ impl AccountForm {
             tax_treatment: self
                 .shows_tax_treatment()
                 .then(|| TaxTreatment::ALL[self.tax_treatment]),
+            retirement: self.shows_tax_treatment().then_some(self.retirement),
+            tax_free: match self.shows_tax_free() {
+                true => Some(self.typed_tax_free()?),
+                false => self.shows_tax_treatment().then_some(None),
+            },
         })
     }
 }
@@ -640,6 +803,31 @@ impl FormFields for AccountForm {
         self.step_choice(step.direction());
     }
 
+    /// The default's dispatch, plus: a change to either tax-free field makes
+    /// it the one stored and rewrites the other from it.
+    fn edit(&mut self, key: KeyEvent) -> Edit {
+        let edit = match self.focused() {
+            Focused::Text(field) => field.edit(key),
+            Focused::Date(date) => date.edit(key),
+            Focused::Selector => Edit::Ignored,
+        };
+        if edit == Edit::Changed {
+            let typed = match self.focus {
+                AccountField::TaxFreePercent => Some(TaxFreeIn::Percent),
+                AccountField::TaxFreeAmount => Some(TaxFreeIn::Amount),
+                _ => None,
+            };
+            if self.focus == AccountField::TaxFreeAmount {
+                self.tax_free_amount.group_thousands();
+            }
+            if let Some(typed) = typed {
+                self.tax_free_in = typed;
+                self.rederive_tax_free();
+            }
+        }
+        edit
+    }
+
     // Selectors take no keystroke of their own, the same as the goal form's
     // Interest field: a choice spelled out one letter at a time can sit at
     // something that means nothing in between.
@@ -647,8 +835,11 @@ impl FormFields for AccountForm {
         match self.focus {
             AccountField::Code => Focused::Text(&mut self.code),
             AccountField::Name => Focused::Text(&mut self.name),
+            AccountField::TaxFreePercent => Focused::Text(&mut self.tax_free_percent),
+            AccountField::TaxFreeAmount => Focused::Text(&mut self.tax_free_amount),
             AccountField::Kind
             | AccountField::TaxTreatment
+            | AccountField::Retirement
             | AccountField::Color
             | AccountField::Band
             | AccountField::Interest
@@ -661,12 +852,18 @@ impl FormFields for AccountForm {
 impl AccountForm {
     fn step_choice(&mut self, step: isize) {
         match self.focus {
-            AccountField::Code | AccountField::Name => {}
+            AccountField::Code
+            | AccountField::Name
+            | AccountField::TaxFreePercent
+            | AccountField::TaxFreeAmount => {}
             AccountField::Kind => {
                 self.kind = step_index(self.kind, Kind::ALL.len(), step);
             }
             AccountField::TaxTreatment => {
                 self.tax_treatment = step_index(self.tax_treatment, TaxTreatment::ALL.len(), step);
+            }
+            AccountField::Retirement => {
+                self.retirement = !self.retirement;
             }
             AccountField::Color => {
                 self.color = step_index(self.color, color_choices().len(), step);
@@ -752,7 +949,7 @@ fn widths() -> [Constraint; 7] {
         label_width("Band", Group::ALL.iter().map(|g| g.label())),
         label_width("Interest", InterestPolicy::ALL.iter().map(|p| p.label())),
         label_width("Savings", SavingsBlock::ALL.iter().map(|b| b.label())),
-        label_width("Tax", TaxTreatment::ALL.iter().map(|t| t.label())),
+        label_width("Tax", tax_labels()),
         label_width(
             "Default",
             [defaults_label(&Source::ALL), INVESTMENT_DEFAULT.to_string()],
@@ -781,7 +978,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, accounts: &Accounts) -> View
                     Some(block) => block.label(),
                     None => "—",
                 }),
-                tax_treatment_cell(r.tax),
+                tax_treatment_cell(r.tax, r.tax_free),
                 Cell::from(match r.kind {
                     Kind::Investment => invests_label(r.invests).to_string(),
                     Kind::Cash | Kind::Credit => defaults_label(&r.defaults),
@@ -840,6 +1037,8 @@ mod tests {
             group,
             color: None,
             tax_treatment: None,
+            retirement: false,
+            tax_free: None,
         }];
         Row {
             account: super::super::Account::named(&accounts, AccountId(id)),
@@ -848,6 +1047,7 @@ mod tests {
             group,
             policy: InterestPolicy::Manual,
             tax: None,
+            tax_free: BasisPoints::ZERO,
             block: None,
             defaults: Vec::new(),
             invests: false,
@@ -877,6 +1077,8 @@ mod tests {
             group,
             color: None,
             tax_treatment: None,
+            retirement: false,
+            tax_free: None,
         }
     }
 
@@ -944,9 +1146,139 @@ mod tests {
                 AccountField::Name,
                 AccountField::Color,
                 AccountField::TaxTreatment,
+                AccountField::TaxFreePercent,
+                AccountField::TaxFreeAmount,
+                AccountField::Retirement,
                 AccountField::Default,
             ]
         );
+    }
+
+    /// An edit form opens on what the account already holds, the same rule
+    /// `an_edit_form_opens_on_the_accounts_current_tax_treatment` pins:
+    /// pressing Enter straight away must not unmark an account.
+    #[test]
+    fn the_retirement_mark_opens_on_the_accounts_own_and_toggles() {
+        let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
+        investment.tax_treatment = Some(TaxTreatment::TaxDeferred);
+        investment.retirement = true;
+        let mut form = AccountForm::edit(&investment, InterestPolicy::Manual, None, &[], false);
+        assert_eq!(form.commit().unwrap().retirement, Some(true));
+        form.next_choice_on(AccountField::Retirement);
+        assert_eq!(form.commit().unwrap().retirement, Some(false));
+    }
+
+    #[test]
+    fn a_tax_free_part_opens_on_the_accounts_own_and_goes_with_a_tax_free_treatment() {
+        let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
+        investment.tax_treatment = Some(TaxTreatment::TaxDeferred);
+        investment.tax_free = Some(TaxFreePart::Percent(Percent(20)));
+        let mut form = AccountForm::edit(&investment, InterestPolicy::Manual, None, &[], false);
+        assert!(form.fields().contains(&AccountField::TaxFreePercent));
+        assert_eq!(
+            form.commit().unwrap().tax_free,
+            Some(Some(TaxFreePart::Percent(Percent(20))))
+        );
+        walk_until!(
+            TaxTreatment::ALL[form.tax_treatment] == TaxTreatment::TaxFree,
+            form.next_choice_on(AccountField::TaxTreatment)
+        );
+        assert!(!form.fields().contains(&AccountField::TaxFreePercent));
+        assert!(!form.fields().contains(&AccountField::TaxFreeAmount));
+        assert_eq!(form.commit().unwrap().tax_free, Some(None));
+    }
+
+    /// Both fields are typed into, each rewriting the other against the
+    /// balance, and the one typed last is what is stored.
+    #[test]
+    fn typing_either_tax_free_field_rewrites_the_other_and_is_what_is_stored() {
+        let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
+        investment.tax_treatment = Some(TaxTreatment::TaxDeferred);
+        investment.tax_free = Some(TaxFreePart::Percent(Percent(20)));
+        let mut form = AccountForm::edit(&investment, InterestPolicy::Manual, None, &[], false)
+            .holding(Cents::from_dollars(300_000));
+        let typed = |form: &mut AccountForm, field, text: &str| {
+            form.focus = field;
+            use ratatui::crossterm::event::KeyCode;
+            for key in [KeyCode::End]
+                .into_iter()
+                .chain(std::iter::repeat_n(KeyCode::Backspace, 12))
+                .chain(text.chars().map(KeyCode::Char))
+            {
+                form.edit(KeyEvent::from(key));
+            }
+        };
+
+        assert_eq!(
+            form.display(AccountField::TaxFreeAmount).plain_text(),
+            "60,000",
+            "the amount opens on what the stored percentage comes to"
+        );
+
+        typed(&mut form, AccountField::TaxFreeAmount, "75000");
+        assert_eq!(
+            form.display(AccountField::TaxFreeAmount).plain_text(),
+            "75,000",
+            "the amount is grouped as it is typed"
+        );
+        assert_eq!(
+            form.display(AccountField::TaxFreePercent).plain_text(),
+            "25"
+        );
+        assert_eq!(
+            form.commit().unwrap().tax_free,
+            Some(Some(TaxFreePart::Amount(Cents::from_dollars(75_000))))
+        );
+
+        typed(&mut form, AccountField::TaxFreePercent, "10");
+        assert_eq!(
+            form.display(AccountField::TaxFreeAmount).plain_text(),
+            "30,000"
+        );
+        assert_eq!(
+            form.commit().unwrap().tax_free,
+            Some(Some(TaxFreePart::Percent(Percent(10))))
+        );
+
+        typed(&mut form, AccountField::TaxFreePercent, "");
+        assert_eq!(form.display(AccountField::TaxFreeAmount).plain_text(), "");
+        assert_eq!(form.commit().unwrap().tax_free, Some(None));
+    }
+
+    #[test]
+    fn a_tax_free_amount_reads_blank_and_zero_as_none_and_refuses_a_negative() {
+        assert_eq!(parse_tax_free_amount("").unwrap(), None);
+        assert_eq!(parse_tax_free_amount("0").unwrap(), None);
+        assert_eq!(
+            parse_tax_free_amount("$60,000").unwrap(),
+            Some(Cents::from_dollars(60_000))
+        );
+        assert!(parse_tax_free_amount("-5").is_err());
+        assert!(parse_tax_free_amount("12.50").is_err());
+    }
+
+    #[test]
+    fn a_tax_free_part_reads_blank_and_zero_as_none_and_refuses_all_of_it() {
+        assert_eq!(parse_tax_free("").unwrap(), None);
+        assert_eq!(parse_tax_free("0").unwrap(), None);
+        assert_eq!(parse_tax_free(" 25% ").unwrap(), Some(Percent(25)));
+        assert!(parse_tax_free("100").is_err());
+        assert!(parse_tax_free("-5").is_err());
+        assert!(parse_tax_free("a fifth").is_err());
+    }
+
+    #[test]
+    fn a_cash_account_commits_no_retirement_mark_at_all() {
+        let cash = AccountForm::edit(
+            &account(1, "Everyday", Kind::Cash, Group::Checking),
+            InterestPolicy::Manual,
+            None,
+            &[],
+            false,
+        );
+        assert!(!cash.fields().contains(&AccountField::Retirement));
+        assert_eq!(cash.commit().unwrap().retirement, None);
+        assert_eq!(cash.commit().unwrap().tax_free, None);
     }
 
     /// An investment account's `Default` is a yes or no -- whether the
@@ -1767,6 +2099,8 @@ mod savings_block_tests {
             group,
             color: None,
             tax_treatment: None,
+            retirement: false,
+            tax_free: None,
         }
     }
 

@@ -23,6 +23,7 @@ use super::picker::{self, Picker};
 use super::planning::{self, BillForm, Target, TransferConfirm};
 use super::recurring_goal::{self as recurring_goal_screen, RecurringGoalForm};
 use super::recurring_txn::{self as recurring_txn_screen, RecurringTxnForm};
+use super::retirement::{self as retirement_screen, RetirementForm};
 use super::search::Search;
 use super::widget;
 use super::worksheet::{self, Worksheet};
@@ -84,6 +85,8 @@ pub(super) enum Modal {
     History(History),
     /// `a`/`e` on Funds: a holding's account, ticker and balance.
     Holding(HoldingForm),
+    /// `e` on Retirement: the salary and the birth date.
+    Retirement(RetirementForm),
 }
 
 impl Modal {
@@ -116,6 +119,7 @@ impl Modal {
                 HistoryMode::List | HistoryMode::Confirming { .. } => None,
             },
             Modal::Holding(form) => Some(form),
+            Modal::Retirement(form) => Some(form),
         }
     }
 
@@ -145,7 +149,8 @@ impl Modal {
             | Modal::Value(..)
             | Modal::Bill(_)
             | Modal::RecurringGoalEntry(_)
-            | Modal::Holding(_) => Topic::Form,
+            | Modal::Holding(_)
+            | Modal::Retirement(_) => Topic::Form,
             // Under match guards, the construction `Modal::Worksheet` above
             // already uses for its search box: the footer follows the mode
             // without any screen asking it to.
@@ -381,6 +386,10 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
         }
         Some(Modal::Holding(f)) => {
             fund_screen::render_holding(frame, f);
+            0
+        }
+        Some(Modal::Retirement(f)) => {
+            retirement_screen::render_form(frame, f);
             0
         }
         // Each mode draws where the app already draws that shape: the form

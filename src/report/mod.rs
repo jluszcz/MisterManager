@@ -160,6 +160,7 @@ pub struct Snapshot {
     pub containers: Vec<Container>,
     pub planning: Planning,
     pub allocation: Allocation,
+    pub retirement: crate::retirement::Retirement,
 }
 
 /// One ledger, every row of it, grouped by month.
@@ -257,11 +258,13 @@ fn allocation_view(db: &Db, today: NaiveDate, accounts: &[account::Account]) -> 
         if holdings.is_empty() {
             continue;
         }
+        let balance = holdings.iter().map(|h| h.balance).sum();
         let held: Vec<Held<'_>> = holdings
             .iter()
             .map(|h| Held {
                 balance: h.balance,
                 treatment: account.tax_treatment,
+                tax_free: account.tax_free_share(balance),
                 mix: mixes.get(&h.ticker).map(|m| m.slices.as_slice()),
             })
             .collect();
@@ -391,6 +394,7 @@ impl Snapshot {
                 Err(e) => Planning::Unresolvable(format!("{e:#}")),
             },
             allocation: allocation_view(db, today, &accounts)?,
+            retirement: crate::retirement::load(db, today)?,
         })
     }
 }

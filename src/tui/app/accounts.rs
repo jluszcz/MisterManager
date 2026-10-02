@@ -6,7 +6,7 @@
 use super::{App, Move};
 use crate::db::account::{self, Kind};
 use crate::db::setting::{Key, key};
-use crate::db::{AccountId, setting};
+use crate::db::{AccountId, holding, setting};
 use crate::default_source::Source;
 use crate::savings_block::Block as SavingsBlock;
 use crate::tui::accounts::{self as accounts_screen, AccountForm};
@@ -73,6 +73,7 @@ impl App {
                 group: account.group,
                 policy: account::interest_policy(&self.db, account.id)?,
                 tax: account.tax_treatment,
+                tax_free: account.tax_free_share(holding::balance_of(&self.db, account.id)?),
                 block: block_of(&containers, account.id),
                 defaults: sources_of(&defaults, account.id),
                 invests: investment == Some(account.id),
@@ -156,9 +157,10 @@ impl App {
         let block = block_of(&self.savings_containers()?, id);
         let defaults = sources_of(&self.default_sources()?, id);
         let invests = setting::get(&self.db, key::INVESTMENT_ACCOUNT)? == Some(id);
-        self.modal = Some(Modal::Account(AccountForm::edit(
-            &account, policy, block, &defaults, invests,
-        )));
+        let balance = holding::balance_of(&self.db, id)?;
+        self.modal = Some(Modal::Account(
+            AccountForm::edit(&account, policy, block, &defaults, invests).holding(balance),
+        ));
         Ok(())
     }
 
@@ -252,6 +254,13 @@ impl App {
         if let Some(treatment) = edit.tax_treatment {
             account::set_tax_treatment(&self.db, id, treatment)?;
         }
+        // After the treatment, which decides whether a part is allowed.
+        if let Some(part) = edit.tax_free {
+            account::set_tax_free(&self.db, id, part)?;
+        }
+        if let Some(retirement) = edit.retirement {
+            account::set_retirement(&self.db, id, retirement)?;
+        }
         self.status = format!("{} saved", crate::demo::text(edit.name.as_str()));
         self.close_modal();
         self.reload()
@@ -294,7 +303,7 @@ mod tests {
     use crate::tui::modal::Modal;
     use ratatui::crossterm::event::KeyCode;
 
-    /// Everything on screen 9 is the owner's rather than the workbook's, and
+    /// Everything on screen 0 is the owner's rather than the workbook's, and
     /// `e` is the one key that writes any of it.
     ///
     /// The account renamed is the goals' container, so the Savings rows -- which
@@ -306,7 +315,7 @@ mod tests {
         let id = account::list_by_kind(&app.db, Kind::Cash).unwrap()[1].id;
         assert_eq!(account::get(&app.db, id).unwrap().name, "Rainy Day");
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Char('e'));
         assert!(matches!(app.modal, Some(Modal::Account(_))));
@@ -360,7 +369,7 @@ mod tests {
         assert!(before.len() > 1, "the fixture needs two cash accounts");
         let cards = ids(&app, Kind::Credit);
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         for _ in 1..before.len() {
             press(&mut app, KeyCode::Down);
         }
@@ -388,7 +397,7 @@ mod tests {
         let mut app = app();
         let before = ids(&app, Kind::Cash);
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         for _ in 1..before.len() {
             press(&mut app, KeyCode::Down);
         }
@@ -410,7 +419,7 @@ mod tests {
         let mut app = app();
         let before = account::list_by_kind(&app.db, Kind::Cash).unwrap().len();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "NST");
         press(&mut app, KeyCode::Tab);
@@ -436,7 +445,7 @@ mod tests {
         let mut app = app();
         let before = account::list_by_kind(&app.db, Kind::Credit).unwrap().len();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "CC3");
         press(&mut app, KeyCode::Tab);
@@ -468,7 +477,7 @@ mod tests {
     #[test]
     fn creating_an_investment_account_shows_a_tax_treatment_field() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         press(&mut app, KeyCode::Tab);
         walk_until!(
@@ -495,7 +504,7 @@ mod tests {
     #[test]
     fn the_tax_treatment_field_is_hidden_on_a_cash_account() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
 
         assert_eq!(
@@ -524,7 +533,7 @@ mod tests {
             .unwrap()
             .len();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "RET");
         press(&mut app, KeyCode::Tab);
@@ -568,7 +577,7 @@ mod tests {
         .unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::End);
         assert_eq!(app.accounts.selected().unwrap().account.id(), id);
         press(&mut app, KeyCode::Char('e'));
@@ -585,6 +594,70 @@ mod tests {
             account::get(&app.db, id).unwrap().tax_treatment,
             Some(TaxTreatment::TaxDeferred)
         );
+    }
+
+    #[test]
+    fn editing_an_investment_account_saves_its_tax_free_part() {
+        let mut app = app();
+        let id = account::insert(
+            &app.db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxDeferred),
+        )
+        .unwrap();
+        app.reload().unwrap();
+
+        press(&mut app, KeyCode::Char('0'));
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.accounts.selected().unwrap().account.id(), id);
+        press(&mut app, KeyCode::Char('e'));
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Account(f))
+                if f.focus == accounts_screen::AccountField::TaxFreePercent),
+            press(&mut app, KeyCode::Tab)
+        );
+        type_str(&mut app, "20");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        assert_eq!(
+            account::get(&app.db, id).unwrap().tax_free,
+            Some(account::TaxFreePart::Percent(crate::rate::Percent(20)))
+        );
+        assert!(drawn(&mut app).contains("20% tax-free"));
+    }
+
+    #[test]
+    fn editing_an_investment_account_marks_it_as_retirement() {
+        let mut app = app();
+        let id = account::insert(
+            &app.db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxDeferred),
+        )
+        .unwrap();
+        app.reload().unwrap();
+
+        press(&mut app, KeyCode::Char('0'));
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.accounts.selected().unwrap().account.id(), id);
+        press(&mut app, KeyCode::Char('e'));
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Account(f))
+                if f.focus == accounts_screen::AccountField::Retirement),
+            press(&mut app, KeyCode::Tab)
+        );
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        assert!(account::get(&app.db, id).unwrap().retirement);
     }
 
     /// The selector has to open on the account's own treatment rather than
@@ -607,7 +680,7 @@ mod tests {
         .unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::End);
         press(&mut app, KeyCode::Char('e'));
         press(&mut app, KeyCode::Enter);
@@ -673,7 +746,7 @@ mod tests {
         let mut app = app();
         let before = account::list_by_kind(&app.db, Kind::Cash).unwrap().len();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "SAV");
         press(&mut app, KeyCode::Tab);
@@ -696,7 +769,7 @@ mod tests {
     fn a_accepts_a_code_that_only_the_other_kind_holds() {
         let mut app = app();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "SAV");
         press(&mut app, KeyCode::Tab);
@@ -722,7 +795,7 @@ mod tests {
     fn an_added_account_reaches_the_screens_that_cache_the_account_list() {
         let mut app = app();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "NST");
         press(&mut app, KeyCode::Tab);
@@ -751,7 +824,7 @@ mod tests {
             account::InterestPolicy::Manual
         );
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('e'));
         walk_until!(
             matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Interest),
@@ -779,7 +852,7 @@ mod tests {
     #[test]
     fn e_on_the_accounts_screen_writes_the_color_it_was_left_on() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         let before = app.accounts.selected().unwrap().clone();
         assert_eq!(
             account::get(&app.db, before.account.id()).unwrap().color,
@@ -824,7 +897,7 @@ mod tests {
     #[test]
     fn enter_on_an_untouched_account_form_pins_the_derived_color() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         let id = app.accounts.selected().unwrap().account.id();
         assert_eq!(account::get(&app.db, id).unwrap().color, None);
 
@@ -847,7 +920,7 @@ mod tests {
     #[test]
     fn a_color_can_be_cleared_from_the_accounts_screen() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         let id = app.accounts.selected().unwrap().account.id();
         account::set_color(&app.db, id, Some(account::AccountColor::Rose)).unwrap();
         app.reload().unwrap();
@@ -881,7 +954,7 @@ mod tests {
     #[test]
     fn a_card_gets_a_shorter_account_form() {
         let mut app = app();
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         walk_until!(
             app.accounts.selected().unwrap().kind == Kind::Credit,
             press(&mut app, KeyCode::Down)
@@ -903,7 +976,7 @@ mod tests {
         );
     }
 
-    /// The block mapping is what `mm import` waits on, and screen 9 is the
+    /// The block mapping is what `mm import` waits on, and screen 0 is the
     /// only place it can be set. One selector per account, so an account
     /// cannot claim both blocks -- and moving it off a block clears that
     /// block's key rather than leaving it naming an account that no longer
@@ -919,7 +992,7 @@ mod tests {
         );
 
         let pick_block = |app: &mut App, steps: usize| {
-            press(app, KeyCode::Char('9'));
+            press(app, KeyCode::Char('0'));
             press(app, KeyCode::Char('e'));
             walk_until!(
                 matches!(&app.modal, Some(Modal::Account(f)) if f.focus == accounts_screen::AccountField::Savings),
@@ -954,7 +1027,7 @@ mod tests {
         assert_eq!(app.accounts.rows()[0].block, None);
     }
 
-    /// Screen 9 is where the two money forms are told where to open, and the
+    /// Screen 0 is where the two money forms are told where to open, and the
     /// set is what the account answers for: a source dropped from it clears
     /// that key rather than leaving it naming an account the owner has just
     /// taken it off.
@@ -1020,7 +1093,7 @@ mod tests {
         setting::set(&app.db, Source::Transfer.key(), cash[0].id).unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Down);
         edit_default(&mut app, 1);
 
@@ -1041,7 +1114,7 @@ mod tests {
         setting::set(&app.db, Source::Payment.key(), cash[1].id).unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('e'));
         press(&mut app, KeyCode::Enter);
 
@@ -1072,7 +1145,7 @@ mod tests {
 
     /// The same, from whichever screen the test is on, on the first account.
     fn pick_default(app: &mut App, steps: usize) {
-        press(app, KeyCode::Char('9'));
+        press(app, KeyCode::Char('0'));
         edit_default(app, steps);
     }
 
@@ -1086,7 +1159,7 @@ mod tests {
         setting::set(&app.db, SavingsBlock::Buckets.key(), cash[1].id).unwrap();
         app.reload().unwrap();
 
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
         press(&mut app, KeyCode::Char('e'));
         press(&mut app, KeyCode::Enter);
 
@@ -1105,7 +1178,7 @@ mod tests {
         let mut app = app_with_holdings();
         let investment = account::list_by_kind(&app.db, Kind::Investment).unwrap();
         let (first, second) = (investment[0].id, investment[1].id);
-        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::Char('0'));
 
         let mark = |app: &mut crate::tui::app::App, id: AccountId| {
             walk_until!(

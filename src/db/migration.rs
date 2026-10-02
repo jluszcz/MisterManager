@@ -349,6 +349,50 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         sql: "ALTER TABLE fund_mix ADD COLUMN name TEXT;",
         data: None,
     },
+    Migration {
+        version: 15,
+        // Whether the Retirement screen counts this account's holdings. The
+        // owner's own mark, so `NOT NULL DEFAULT 0` for `favorite`'s reason,
+        // and investment-only for `tax_treatment`'s: it describes holdings,
+        // and only an investment account has any.
+        sql: "ALTER TABLE account ADD COLUMN retirement INTEGER NOT NULL DEFAULT 0 \
+              CHECK (retirement IN (0, 1) AND (retirement = 0 OR kind = 'investment'))",
+        // Nothing to move: no account is retirement until the owner says so.
+        data: None,
+    },
+    Migration {
+        version: 16,
+        // The part of an investment account held tax-free inside a treatment
+        // that is otherwise not -- a workplace plan with a Roth side. A typed
+        // whole percentage rather than a figure, because the owner reads it
+        // off a statement and nothing here records the two sides' balances.
+        // Strictly between the ends: 0 is no tax-free part, which is `NULL`,
+        // and 100 is the `tax_free` treatment itself.
+        //
+        // Not paired with `tax_treatment` in the `CHECK`: a treatment changed
+        // to `tax_free` under a percentage would then have to clear it in the
+        // same write, and every reader already takes `tax_free` as the whole
+        // balance whatever this says.
+        sql: "ALTER TABLE account ADD COLUMN tax_free_percent INTEGER \
+              CHECK (tax_free_percent IS NULL OR \
+                     (kind = 'investment' AND tax_free_percent BETWEEN 1 AND 99))",
+        // Nothing to move: no account is part tax-free until the owner says so.
+        data: None,
+    },
+    Migration {
+        version: 17,
+        // The same tax-free part as a fixed amount, for an owner whose
+        // statement states the Roth side in dollars. One or the other, never
+        // both: the `CHECK` here is what makes the pair one fact, and the
+        // one writer sets both columns in one statement so it never meets it.
+        // An amount over the balance is allowed -- balances move -- and a
+        // reader caps it at the balance.
+        sql: "ALTER TABLE account ADD COLUMN tax_free_cents INTEGER \
+              CHECK (tax_free_cents IS NULL OR \
+                     (kind = 'investment' AND tax_free_cents > 0 AND tax_free_percent IS NULL))",
+        // Nothing to move: no amount is stored until the owner types one.
+        data: None,
+    },
 ];
 
 /// The last thing to tell an owner whose database this build will not open.

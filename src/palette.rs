@@ -169,6 +169,17 @@ pub fn percent(percent: Percent) -> Rgb {
     }
 }
 
+/// Where a retirement figure stands against its band, as a color: the
+/// funding ramp's three stops, so Short reads as the shortfall it is.
+pub fn standing(status: crate::calc::retirement::Status) -> Rgb {
+    use crate::calc::retirement::Status;
+    match status {
+        Status::Short => NEGATIVE,
+        Status::OnTrack => RAMP_MID,
+        Status::Ahead => POSITIVE,
+    }
+}
+
 /// The four classes, in [`crate::allocation::Class::ALL`]'s order -- the index
 /// every reader looks one up by.
 ///
@@ -316,6 +327,17 @@ mod tests {
             assert!(!seen.contains(&rgb), "{class:?} repeats a triple");
             seen.push(rgb);
         }
+    }
+
+    /// Short is the warning the rest of the app already reads as one, and
+    /// the three are the funding ramp's stops, so a standing reads the way a
+    /// goal's percentage does.
+    #[test]
+    fn a_standing_wears_the_ramps_colors() {
+        use crate::calc::retirement::Status;
+        assert_eq!(standing(Status::Short), NEGATIVE);
+        assert_eq!(standing(Status::OnTrack), percent(Percent(50)));
+        assert_eq!(standing(Status::Ahead), POSITIVE);
     }
 
     /// A channel below 16 needs its leading zero, or the string is five

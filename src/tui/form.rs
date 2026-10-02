@@ -105,6 +105,44 @@ impl Field {
         self.touched = true;
     }
 
+    /// Rewrite a whole-dollar amount with its thousands separators, keeping
+    /// the caret beside the same digit -- so typing `75000` reads `75,000`
+    /// as it goes. Text that is not one, a sign or cents or a letter in it,
+    /// is left as typed for the commit to refuse in its own words.
+    pub(super) fn group_thousands(&mut self) {
+        let raw = self.text.value();
+        if raw.is_empty() || !raw.chars().all(|c| c.is_ascii_digit() || c == ',') {
+            return;
+        }
+        let right = raw
+            .chars()
+            .skip(self.text.caret())
+            .filter(char::is_ascii_digit)
+            .count();
+        let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
+        // Past this, a dollar figure no longer fits in cents.
+        let Some(dollars) = digits.parse::<i64>().ok().filter(|d| *d < i64::MAX / 100) else {
+            return;
+        };
+        let grouped: Vec<char> = Cents::from_dollars(dollars)
+            .to_whole_dollars()
+            .chars()
+            .collect();
+        let mut at = grouped.len();
+        let mut passed = 0;
+        while passed < right && at > 0 {
+            at -= 1;
+            if grouped[at].is_ascii_digit() {
+                passed += 1;
+            }
+        }
+        let back = grouped.len() - at;
+        self.text.set(grouped.into_iter().collect::<String>());
+        for _ in 0..back {
+            self.text.step(-1);
+        }
+    }
+
     /// Whether the user has typed into this field. An empty field is not the
     /// same thing: an amount typed and then deleted is still the user's.
     pub(super) fn is_touched(&self) -> bool {
@@ -1335,6 +1373,34 @@ mod tests {
             form.value(),
             "2026-08-15",
             "a figure that happens to read as a date must not step"
+        );
+    }
+
+    /// The caret stays beside the digit it was beside, whatever commas
+    /// arrive or leave around it.
+    #[test]
+    fn grouping_an_amount_keeps_the_caret_beside_its_digit() {
+        let mut field = Field::given("1234567");
+        field.group_thousands();
+        assert_eq!(field.value(), "1,234,567");
+        assert_eq!(field.text.caret(), 9);
+
+        // Caret between `1,2` and `34,567`: a `9` typed there.
+        let mut field = Field::given("1,234,567");
+        for _ in 0..6 {
+            field.step_caret(Step::PREVIOUS);
+        }
+        field.push('9');
+        field.group_thousands();
+        assert_eq!(field.value(), "12,934,567");
+        assert_eq!(&field.value()[field.text.caret()..], "34,567");
+
+        let mut field = Field::given("12.50");
+        field.group_thousands();
+        assert_eq!(
+            field.value(),
+            "12.50",
+            "cents are left for the commit to refuse"
         );
     }
 }

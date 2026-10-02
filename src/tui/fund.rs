@@ -1,4 +1,4 @@
-//! Screen 6: the funds held across the owner's investment accounts.
+//! Screen 7: the funds held across the owner's investment accounts.
 //!
 //! One row per holding -- the account it sits in, the ticker, the balance
 //! the owner typed -- filtered by account and by a search over ticker and
@@ -77,6 +77,9 @@ pub struct Row {
     /// `Option` is the shape `db::account` hands over rather than a state
     /// this screen can reach.
     pub tax_treatment: Option<TaxTreatment>,
+    /// The account's share held tax-free inside `tax_treatment`, against
+    /// what all its holdings come to -- not this row's balance alone.
+    pub tax_free: BasisPoints,
 }
 
 /// The Funds screen's view state: every holding, which account the `Tab`
@@ -227,6 +230,7 @@ impl Funds {
                 .map(|row| Held {
                     balance: row.balance,
                     treatment: row.tax_treatment,
+                    tax_free: row.tax_free,
                     mix: self.mixes.get(&row.ticker).map(Vec::as_slice),
                 })
                 .collect();
@@ -250,6 +254,7 @@ impl Funds {
                 .map(|row| Held {
                     balance: row.balance,
                     treatment: row.tax_treatment,
+                    tax_free: row.tax_free,
                     mix: self.mixes.get(&row.ticker).map(Vec::as_slice),
                 })
                 .collect();
@@ -976,7 +981,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
                 fund_name_cell(row.name.as_deref()),
                 whole_amount(row.balance),
                 stock_percent_cell(row.stock_percent),
-                super::tax_treatment_cell(row.tax_treatment),
+                super::tax_treatment_cell(row.tax_treatment, row.tax_free),
             ])
         })
         .collect();
@@ -997,7 +1002,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
         Constraint::Length(FUND_NAME_WIDTH),
         Constraint::Length(14),
         Constraint::Length(7),
-        super::label_width("Tax", TaxTreatment::ALL.iter().map(|t| t.label())),
+        super::label_width("Tax", super::tax_labels()),
     ];
 
     render_table(
@@ -1180,6 +1185,7 @@ mod tests {
             stock_percent: None,
             as_of: None,
             tax_treatment: Some(TaxTreatment::Taxable),
+            tax_free: BasisPoints::ZERO,
         }
     }
 
@@ -1915,10 +1921,13 @@ mod tests {
     #[test]
     fn the_widest_tax_treatment_is_drawn_whole_at_the_minimum_width() {
         let all = accounts();
-        let widest = TaxTreatment::ALL
-            .iter()
-            .max_by_key(|t| t.label().chars().count())
-            .expect("a treatment");
+        let widest = account::tax_label(TaxTreatment::TaxDeferred, BasisPoints(9_999));
+        assert!(
+            TaxTreatment::ALL
+                .iter()
+                .all(|t| t.label().chars().count() <= widest.chars().count()),
+            "a bare treatment outgrew the mixed label"
+        );
         let account = all
             .iter()
             .find(|a| a.tax_treatment.is_some())
@@ -1928,7 +1937,8 @@ mod tests {
         let mut funds = Funds::new();
         funds.set_accounts(all.clone());
         funds.set_rows(vec![Row {
-            tax_treatment: Some(*widest),
+            tax_treatment: Some(TaxTreatment::TaxDeferred),
+            tax_free: BasisPoints(9_999),
             ..fixture_row(1, account, &all, "USM", 10_000)
         }]);
 
@@ -1936,10 +1946,7 @@ mod tests {
             .into_iter()
             .find(|l| l.contains("USM"))
             .expect("the row is drawn");
-        assert!(
-            row.contains(widest.label()),
-            "the treatment is cut: {row:?}"
-        );
+        assert!(row.contains(&widest), "the treatment is cut: {row:?}");
     }
 
     /// The width claim, made against a drawn row rather than arithmetic: a

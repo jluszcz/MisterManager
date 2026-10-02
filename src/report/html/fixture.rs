@@ -254,6 +254,7 @@ pub(super) fn funds(targets: Targets) -> Allocation {
             .map(|h| crate::allocation::Held {
                 balance: Cents::from_dollars(h.dollars),
                 treatment: treatment(h.account),
+                tax_free: BasisPoints::ZERO,
                 mix: h.filed.map(|(mix, _)| mix),
             })
             .collect();
@@ -327,6 +328,7 @@ pub(super) fn snapshot(rows: Vec<crate::savings::Row>, net: i64) -> Snapshot {
         }],
         planning: Planning::Resolved(Box::new(plan_view())),
         allocation: funds(targets()),
+        retirement: crate::retirement::Retirement::default(),
     }
 }
 

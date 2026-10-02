@@ -3,6 +3,7 @@ pub mod fund;
 mod interest;
 mod paycheck;
 pub mod planning;
+pub mod retirement;
 pub mod schedule;
 mod tax;
 

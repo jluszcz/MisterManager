@@ -88,6 +88,8 @@ fn account(id: i64, code: &str, kind: Kind) -> Account {
         // different treatment overrides it with struct-update syntax, the
         // way it already overrides the color and the group.
         tax_treatment: (kind == Kind::Investment).then_some(TaxTreatment::Taxable),
+        retirement: false,
+        tax_free: None,
     }
 }
 

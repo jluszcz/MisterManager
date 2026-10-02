@@ -62,7 +62,7 @@ entry that outgrows eight wrapped lines has started answering the second questio
 
 **A `detail` quotes a single-character key it names** — `'a'`, `'s'`, `'y'` — because a bare one
 reads as the word it also is ("opening on the same date a does") or as a stray letter where it is
-not ("are s on screen 7"). `Tab`, `Esc` and `Enter` are unambiguous already and stay bare. Nothing
+not ("are s on screen 6"). `Tab`, `Esc` and `Enter` are unambiguous already and stay bare. Nothing
 enforces this: the article "a" and the key `a` are the same character, so no test can tell them
 apart.
 
@@ -87,7 +87,7 @@ for. The scroll keys are absent from both, for the same reason and one better:
 `cursor::scroll_key` answers them identically on every list in the app.
 
 **The chrome is one string for the whole app, and it is drawn against the right edge.**
-`help::chrome` states `1-9 screens · q quit` once — no screen has a say in it, because `1-9` and `q`
+`help::chrome` states `0-9 screens · q quit` once — no screen has a say in it, because `0-9` and `q`
 are answered in `App::dispatch` above every screen handler — and `App::render` splits the footer row
 in two, a screen's own keys filling the left and the chrome holding exactly its own width on the
 right. The two keys every screen answers are therefore found in the same place whatever the screen in
@@ -95,10 +95,10 @@ front of them costs, and the half ratatui truncates when a terminal is narrower 
 the screen's own, not `q quit`.
 
 Who *shows* it is a separate question, and the rule is that the chrome appears only where `dispatch`
-actually answers those two keys. `Topic::answers_app_wide_keys` states it — the eight screens, and
+actually answers those two keys. `Topic::answers_app_wide_keys` states it — the nine screen topics, and
 nothing else — and `App::footer_chrome` asks it through `App::topic`, so one question covers every
 modal and all six search boxes rather than a list of screens re-derived at the call site. That
-`dispatch` returns into `modal_key` *above* its `q` and `1-9` arms is what makes the answer false
+`dispatch` returns into `modal_key` *above* its `q` and `0-9` arms is what makes the answer false
 under a modal: a digit typed into a worksheet's `/` box is part of the needle, a `q` under a confirm
 dialog is one of the "any key" that cancels it, and naming a key that does nothing is worse than
 naming none. The open Help panel is the one context outside that match — it is not a `Topic`, and
@@ -115,7 +115,7 @@ writes is the `detail`: `Esc` genuinely clears to different places — All and t
 ledgers, All on Savings and Recurring Goals, the derived Paycheck-Eve on the Overview — and the panel is where that difference belongs, which is why
 the shared word is `clear` rather than one screen's answer imposed on the others. Two tests hold it
 up: `every_filter_key_is_labelled_with_its_shared_word` over every topic there is, and
-`the_shared_filters_lead_every_screen_footer_in_one_order` over the eight with footers, less the
+`the_shared_filters_lead_every_screen_footer_in_one_order` over the nine with footers, less the
 Overview's `Esc`, which clears a scrub rather than a filter and follows the arrows it undoes.
 
 **A footer must fit `MIN_WIDTH`, and the budget is what decides how a key is labelled.** ratatui
@@ -181,7 +181,7 @@ one type, and `ledger_form` holds the two forms they open — `a`/`e`'s `TxnForm
 are the fourth screen and its forms, the goal form serving `e` and `n` alike and
 `GoalTransferForm` backing `t` — named apart from `ledger_form::TransferForm`, the cash transfer
 the ledgers open, since one moves money between accounts and the other moves none at all;
-`worksheet` backs `A`/`i`, and `picker` backs `s` on the seventh screen. `planning` is the fifth
+`worksheet` backs `A`/`i`, and `picker` backs `s` on the sixth screen. `planning` is the fifth
 screen, and the one screen that is a directory rather than a file: `planning/mod.rs` is the screen
 state and the cursor that walks it, `planning/view.rs` the waterfall as rows, `planning/target.rs`
 what a constant may be edited to and where it lands, and `planning/bill.rs` and
@@ -190,7 +190,7 @@ will not resolve, and `t`, which confirms a computed plan, writes its payday thr
 `transfer::execute`, and opens the allocation worksheets prefilled. `planning/test_support.rs` is
 the one plan and wiring the other four test against, for the reason `app/test_support.rs` is one
 fixture rather than nine. `destination` is the list `e` opens on one of its destination rows. `fund`
-is the sixth screen and its form: one row per holding, filtered by investment account and by a
+is the seventh screen and its form: one row per holding, filtered by investment account and by a
 search over ticker and account, with `a`/`e`/`d` adding, editing and deleting one and `g`/`G`
 refreshing what a fund is made of. **No move key**, deliberately: a fund's place in the list is the
 order it was entered in rather than an arrangement worth making, which is why `db::holding` has no
@@ -201,10 +201,16 @@ spelling the same ones. The panel also names where this payday's `Investment` li
 spent — `invest $N in TICKER, $M in TICKER` in its title and a `Δ After` column beside the `Δ` —
 and draws both only while no filter narrows the rows: the purchases are judged against the whole
 portfolio, so beside one account's `Δ` the figure would be on another denominator.
-`Funds::recommendation` is where that gate is. `recurring_goal` is the seventh screen and
-`recurring_txn` the eighth, closing out the app's CRUD coverage. `accounts` is the ninth and the
-smallest: `a`, which creates an account the workbook does not name, and `e`, over everything the
-workbook does not say about one.
+`Funds::recommendation` is where that gate is. `recurring_goal` is the sixth screen, before Funds
+so that the screens a payday is worked from sit together. `retirement` is the eighth, beside Funds
+because both read the investment accounts: retirement savings against the age rule, read from
+`crate::retirement` and drawn with no cursor. Its one key, `e`, edits the salary and the birth
+date — the first editor the birth date has, pressed here rather than on Funds, whose target the
+same date sets, because this is the first screen that needs both. `recurring_txn` is the ninth,
+closing out the app's CRUD coverage, and `accounts` is screen `0`, last in the bar because that is
+where the key sits on the keyboard and because it is the screen visited least: `a`, which creates
+an account the workbook does not name, and `e`, over everything the workbook does not say about
+one.
 
 `history` is the modal `Enter` opens on a Savings row: one goal's allocation rows, oldest first,
 and the two writes that correct one. It is the only reader of an `allocation` row in the crate —
@@ -248,7 +254,7 @@ fields, which `Topic` each is showing, how each one draws, and what a `Confirm` 
 keys — every arm of it is a call into a handler `app` owns, so that one match stays with them.
 Everything else about adding a modal is one file.
 
-The tab bar abbreviates screens seven and eight as `7 Goals` and `8 Txns`. It is a row of shortcuts
+The tab bar abbreviates screens six and nine as `6 Goals` and `9 Txns`. It is a row of shortcuts
 rather than a set of headings, and the screens title themselves in full the moment they are opened.
 
 ## How wide a screen is
@@ -353,7 +359,8 @@ every label it can hold.
 
 `label_width` sits in `tui/mod.rs` rather than on the screen that first needed it, for
 `right_header`'s reason and one better: **the Accounts and Funds screens both draw a column off
-`TaxTreatment::ALL`**, and a number on one of them is a width the other's list can outgrow in
+`tui::tax_labels`** — every treatment, and the widest `NN% tax-free` a part-tax-free account
+draws in its place — and a number on one of them is a width the other's list can outgrow in
 silence. That is not hypothetical — the Funds column was a hardcoded `13` against a longest label
 of twelve, with the only test over it naming `Taxable`, seven: one character of slack, unmeasured.
 `fund::the_widest_tax_treatment_is_drawn_whole_at_the_minimum_width` is what asks after the widest
@@ -455,13 +462,16 @@ deferred to nothing.
       scrambled, and `resolved_share` puts the answer beside it scrambled — so `/12` and `/2` would
       read the same right up to Enter.
   - **The net is one test per screen and two sweeps, and both sweeps assert something *arrived*.**
-    `a_demo_leaves_no_figure_on_any_screen` walks all nine screens with the mask on and asserts none
+    `a_demo_leaves_no_figure_on_any_screen` walks all ten screens with the mask on and asserts none
     of the fixture's own figures reach the buffer; `a_demo_leaves_no_figure_on_any_form_a_row_opens`
     presses every key that opens a form or a worksheet over a row carrying a figure and asserts the
     same of the modal. The second is not redundant: a screen sweep draws only screens, and a form
     prefills from the row it opens on, so a form is where a real figure is *most* likely to reach
     the screen. `BillField::Amount` was the one amount field this feature first missed, and only the
     form sweep sees it.
+    A fixture figure directly before a `%` is not a leak — it spells a share, which the mask
+    leaves, as screen 8's one-account `100.00%` does — and `draws_figure` is where the screen
+    sweep skips it.
     - **An absence check over an empty table passes for free**, which is the failure mode both
       sweeps are built against. The screen sweep runs on `app_with_two_rows_on_every_list` rather
       than `app` — which has no funds, no recurring goals and no recurring transactions — and
@@ -475,7 +485,7 @@ deferred to nothing.
     pseudonym `Enter` would commit. `App::open_goal_edit` is the example: it hands `GoalForm` the
     selected row's own name, and the mask is applied only in `display(GoalField::Name)`, never to
     what the row handed the form. The same two-sweep shape the figures use holds this shut:
-    `a_demo_leaves_no_name_on_any_screen` walks all nine screens with the mask on and asserts none
+    `a_demo_leaves_no_name_on_any_screen` walks all ten screens with the mask on and asserts none
     of the fixture's own names reach the buffer, and `a_demo_leaves_no_name_on_any_form_a_row_opens`
     presses every key that opens a form or a worksheet over a row carrying a name and asserts the
     same of the modal. `a_demo_draws_a_pseudonym_in_a_name_field_and_commits_the_name` pins the two
@@ -685,7 +695,7 @@ deferred to nothing.
     rather than a day to open on. What goes wrong with two adjacent `NaiveDate` parameters is
     `TxnForm::add`'s to say.
 
-- **`t` and `p` open their `From` on the account the owner named on screen 9, and `t` opens its
+- **`t` and `p` open their `From` on the account the owner named on screen 0, and `t` opens its
   `To` off it.** `default_source::Source` is the pair of `setting` keys; `App::open_transfer` and
   `open_payment` read one each. Two keys rather than one, because paying a card and moving savings
   are separate decisions — and separate keys are also what lets one account answer for both.
@@ -1108,14 +1118,14 @@ deferred to nothing.
 
 - **Only Recurring Transactions' row and a filtered ledger's title show an account code.** Every
   other account display — Overview, both ledgers' rows, Savings, and the worksheet and picker
-  titles — shows `account.name`, through `Account::named`. Screen 8's `Acct` column goes through
+  titles — shows `account.name`, through `Account::named`. Screen 9's `Acct` column goes through
   `Account::coded` because its other columns already pin a row down exactly, so the code alone is
   enough to say which account it belongs to, and that much detail reads better tight than padded;
   the ledger title goes through `Account::coded` too, for the other reason a code beats a name — a
   title is a chain of filter terms, and the code is the tighter one. Widening a name column is
   still paid for out of another column on the same screen, so the width tests are the guard — see
   *How wide a screen is* above.
-  - **Which is why screen 8's `Acct` column is the one column in the app whose width is derived
+  - **Which is why screen 9's `Acct` column is the one column in the app whose width is derived
     from its own content.** A code is not the only thing it holds: this is the one list that mixes
     both kinds, so a code both kinds hold falls back to `Everyday — Cash`, and a width chosen for
     a code would truncate exactly the label that exists to say more than one. `RecurringTxns::acct_width`
@@ -1158,13 +1168,13 @@ deferred to nothing.
     point.** A transfer writes both its legs from one description, and a pair of unnamed rows in two
     different accounts is the one shape that cannot be read back out of the ledger later; a
     recurring rule's description is copied onto every row it generates and is that rule's only
-    identity on screen 8. Both arrive prefilled, so refusing costs nothing that was typed.
+    identity on screen 9. Both arrive prefilled, so refusing costs nothing that was typed.
 - **A right-aligned column takes a right-aligned header**, through `tui::right_header` — one
   decision in `mod.rs` rather than each screen deciding for itself. Left over right, a
   header sits at the far side of its column from every figure in it and reads as a label for the
   column beside it. Which columns are right-aligned is not guessable from the header list, so each
   screen's `the_right_aligned_headers_end_where_their_own_columns_do` measures the drawn header
-  against a drawn data row. `Last` on screen 8 is the standing exception: its cells go through that
+  against a drawn data row. `Last` on screen 9 is the standing exception: its cells go through that
   screen's own `optional`, which does not right-align, so its header does not either.
 - **Some screens drop the cents, all through `Cents::to_whole_dollars`.** Savings, Planning, and
   Funds render whole dollars; the digits are dropped rather than rounded, truncating toward zero, so
@@ -1432,7 +1442,7 @@ deferred to nothing.
   screens.** `n` on Savings is a goal typed from scratch — `a` there is the allocation the screen is
   mostly used for, so the add takes another letter. `s` on Recurring Goals opens the picker: goals
   created *from* the entries that screen lists. Both land in the container the Savings screen's
-  `Tab` names, which is the app's one answer to "which container" — screen 7's entries carry none.
+  `Tab` names, which is the app's one answer to "which container" — screen 6's entries carry none.
   A goal's container is chosen once and never again, so `n`'s border names the one it is about to
   use, the way `Picker` and `Worksheet` name theirs: under the `Tab` filter's All the screen's own
   title says only `Savings · All`, and `default_container` has quietly picked the first. The form
@@ -1689,7 +1699,7 @@ deferred to nothing.
   to a handler means adding it to its `Topic`'s table, which
   `every_key_a_screen_handler_matches_appears_in_its_table` and
   `every_key_a_modal_handler_matches_appears_in_its_table` enforce.
-- **Screen 8 shows the last date a recurring transaction reaches, not the horizon it may reach.**
+- **Screen 9 shows the last date a recurring transaction reaches, not the horizon it may reach.**
   `recurring_txn::last_owned_dates` is `MAX(txn.date)` over the rows it owns, beside the `Rows`
   count from the same source — so the column is `—` until the first `g`, and it is the number `x`
   moves. The end date stays editable in the `e` form: a cap the owner sets belongs with the rest of

@@ -482,6 +482,7 @@ mod tests {
         short.allocation.lookthrough = allocation::apportion(&[Held {
             balance: Cents::from_dollars(1_000),
             treatment: Some(TaxTreatment::Taxable),
+            tax_free: BasisPoints::ZERO,
             mix: Some(placed.as_slice()),
         }]);
         short.allocation.summary = Class::ALL
@@ -518,6 +519,7 @@ mod tests {
         over.allocation.lookthrough = allocation::apportion(&[Held {
             balance: Cents::from_dollars(1_000),
             treatment: Some(TaxTreatment::Taxable),
+            tax_free: BasisPoints::ZERO,
             mix: Some(claimed.as_slice()),
         }]);
         over.allocation.summary = Class::ALL
@@ -626,6 +628,7 @@ mod tests {
                     .map(|h| Held {
                         balance: h.balance,
                         treatment: Some(TaxTreatment::Taxable),
+                        tax_free: BasisPoints::ZERO,
                         mix: None,
                     })
                     .collect::<Vec<_>>(),

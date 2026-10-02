@@ -463,3 +463,25 @@ fn a_replace_keeps_the_accounts_the_money_forms_open_on() {
         "the investment account did not survive a --replace"
     );
 }
+
+/// No sheet carries a salary, so it is the owner's the way the settings
+/// above are -- and `setting` being cleared by a `--replace` would take it
+/// with nothing to put it back.
+#[test]
+fn a_replace_keeps_the_salary() {
+    let Some((db, mut sheets)) = loaded() else {
+        return;
+    };
+    let path = workbook().expect("loaded already found it");
+    let today = workbook_today(&mut sheets);
+    let salary = Cents::from_dollars(100_000);
+    setting::set(&db, key::ANNUAL_SALARY, salary).unwrap();
+
+    import::import_all(&db, &path, today, true).unwrap();
+
+    assert_eq!(
+        setting::get(&db, key::ANNUAL_SALARY).unwrap(),
+        Some(salary),
+        "the salary did not survive a --replace"
+    );
+}

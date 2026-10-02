@@ -26,6 +26,7 @@ pub mod rate;
 pub mod reading;
 pub mod recurring_txn;
 pub mod report;
+pub mod retirement;
 pub mod savings;
 pub mod savings_block;
 pub mod transfer;

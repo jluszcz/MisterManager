@@ -1,4 +1,4 @@
-//! Screen 6's key handling: adding, editing and deleting a holding, the
+//! Screen 7's key handling: adding, editing and deleting a holding, the
 //! account filter and the search over the list, and `g`/`G`, which refresh a
 //! fund's composition from SEC.
 //!
@@ -10,8 +10,9 @@ use crate::allocation::Class;
 use crate::config::ADD_SEC_CONTACT;
 use crate::db::account::{self, Kind};
 use crate::db::fund_mix;
-use crate::db::holding;
+use crate::db::{AccountId, holding};
 use crate::mix::{self, Refreshed};
+use crate::money::Cents;
 use crate::rate::BasisPoints;
 use crate::tui::cursor;
 use crate::tui::fund::{HoldingForm, Row};
@@ -204,6 +205,12 @@ impl App {
                 .collect(),
         );
 
+        // Per account rather than per row: a part is a share of what the
+        // whole account holds.
+        let mut balances: HashMap<AccountId, Cents> = HashMap::new();
+        for h in &holdings {
+            *balances.entry(h.account_id).or_default() += h.balance;
+        }
         let rows = holdings
             .into_iter()
             .map(|h| {
@@ -226,6 +233,12 @@ impl App {
                         .iter()
                         .find(|a| a.id == h.account_id)
                         .and_then(|a| a.tax_treatment),
+                    tax_free: accounts
+                        .iter()
+                        .find(|a| a.id == h.account_id)
+                        .map_or(BasisPoints::ZERO, |a| {
+                            a.tax_free_share(balances[&h.account_id])
+                        }),
                 }
             })
             .collect();
@@ -381,7 +394,7 @@ mod tests {
     #[test]
     fn the_account_filter_narrows_the_list_to_one_account() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         let all = app.funds.rows().len();
 
         test_support::press(&mut app, KeyCode::Tab);
@@ -400,7 +413,7 @@ mod tests {
     #[test]
     fn back_tab_narrows_the_list_from_the_other_direction() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         let all = app.funds.rows().len();
 
         test_support::press(&mut app, KeyCode::BackTab);
@@ -420,7 +433,7 @@ mod tests {
     #[test]
     fn esc_clears_a_kept_search_before_the_account_filter() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         test_support::press(&mut app, KeyCode::Tab);
         assert_eq!(app.funds.rows().len(), 2, "BRK holds USM and USB");
 
@@ -454,7 +467,7 @@ mod tests {
     #[test]
     fn pressing_a_adds_a_holding_to_the_list() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         test_support::press(&mut app, KeyCode::Tab);
         let filtered_account = app.funds.filter_account().unwrap();
 
@@ -484,7 +497,7 @@ mod tests {
     #[test]
     fn typing_a_lowercase_ticker_stores_it_uppercase() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
 
         test_support::press(&mut app, KeyCode::Char('a'));
         test_support::type_str(&mut app, "unc");
@@ -511,7 +524,7 @@ mod tests {
     #[test]
     fn a_lowercase_re_entry_of_a_held_ticker_is_refused_as_a_duplicate() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         test_support::press(&mut app, KeyCode::Tab);
         let account = app.funds.filter_account().unwrap();
         let before = app.funds.rows().len();
@@ -549,7 +562,7 @@ mod tests {
     #[test]
     fn pressing_e_edits_the_selected_holdings_balance() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         let before = app.funds.rows()[0].ticker.clone();
 
         test_support::press(&mut app, KeyCode::Char('e'));
@@ -573,7 +586,7 @@ mod tests {
     #[test]
     fn pressing_e_can_move_a_holding_to_another_account() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         let moving = app.funds.rows()[0].clone();
 
         test_support::press(&mut app, KeyCode::Char('e'));
@@ -593,7 +606,7 @@ mod tests {
     #[test]
     fn pressing_d_deletes_the_selected_holding_after_confirming() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         let before = app.funds.rows().len();
         let deleting = app.funds.rows()[0].ticker.clone();
 
@@ -615,7 +628,7 @@ mod tests {
     #[test]
     fn cancelling_a_delete_confirmation_leaves_the_holding_in_place() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         let before = app.funds.rows().len();
 
         test_support::press(&mut app, KeyCode::Char('d'));
@@ -631,7 +644,7 @@ mod tests {
     #[test]
     fn e_and_d_with_nothing_selected_say_nothing_selected() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         test_support::press(&mut app, KeyCode::Char('/'));
         test_support::type_str(&mut app, "zzz");
         test_support::press(&mut app, KeyCode::Enter);
@@ -684,7 +697,7 @@ mod tests {
     #[test]
     fn refreshing_with_no_sec_contact_configured_says_what_to_set() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
 
         test_support::press(&mut app, KeyCode::Char('G'));
 
@@ -707,7 +720,7 @@ mod tests {
     fn a_refresh_announces_itself_and_leaves_the_fetch_for_the_loop() {
         let mut app = test_support::app_with_holdings();
         app.sec_contact = Some("someone@example.com".to_string());
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
 
         test_support::press(&mut app, KeyCode::Char('G'));
 
@@ -740,7 +753,7 @@ mod tests {
     #[test]
     fn a_refresh_with_nothing_to_fetch_defers_no_work() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
 
         test_support::press(&mut app, KeyCode::Char('G'));
         assert!(app.status.contains("contact"), "{}", app.status);
@@ -753,7 +766,7 @@ mod tests {
     #[test]
     fn refreshing_the_selected_row_with_no_sec_contact_configured_says_what_to_set() {
         let mut app = test_support::app_with_holdings();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
 
         test_support::press(&mut app, KeyCode::Char('g'));
 
@@ -800,7 +813,7 @@ mod tests {
     #[test]
     fn the_summary_totals_every_holding_weighted_by_its_mix() {
         let mut app = test_support::app_with_mixes();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
 
         let summary = app.funds.summary();
         let total: i64 = summary.iter().map(|s| s.weight.0).sum();
@@ -813,7 +826,7 @@ mod tests {
     #[test]
     fn the_residual_keeps_its_zero_when_nothing_is_unclassified() {
         let mut app = test_support::app_with_mixes();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
 
         let summary = app.funds.summary();
         assert!(
@@ -829,7 +842,7 @@ mod tests {
     #[test]
     fn the_account_filter_recomputes_the_summary_for_that_account_alone() {
         let mut app = test_support::app_with_mixes();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         let all = app.funds.summary();
 
         test_support::press(&mut app, KeyCode::Tab);
@@ -847,7 +860,7 @@ mod tests {
     #[test]
     fn the_bond_target_is_drawn_against_the_combined_bond_share() {
         let mut app = test_support::app_with_mixes();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
 
         let bonds = app.funds.summary_row(Class::Bonds).expect("a Bonds row");
         let summary = app.funds.summary();
@@ -869,7 +882,7 @@ mod tests {
     fn with_no_birth_date_on_record_the_bond_target_is_blank_rather_than_zero() {
         let mut app = test_support::app_with_mixes();
         setting::clear(&app.db, key::BIRTH_DATE).unwrap();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         app.reload().unwrap();
 
         let bonds = app.funds.summary_row(Class::Bonds).unwrap();
@@ -957,7 +970,7 @@ mod tests {
             plan.lines.investment.trunc_to_dollar()
         );
 
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         let screen = test_support::drawn(&mut app);
         assert!(
             screen.contains(&format!(
@@ -979,7 +992,7 @@ mod tests {
         app.reload().unwrap();
         assert!(app.funds.recommendation().is_none());
 
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         let screen = test_support::drawn(&mut app);
         assert!(!screen.contains("After"), "{screen}");
         assert!(!screen.contains("invest $"), "{screen}");
@@ -1000,7 +1013,7 @@ mod tests {
     #[test]
     fn narrowing_the_summary_to_one_account_withdraws_the_recommendation() {
         let mut app = app_recommending();
-        test_support::press(&mut app, KeyCode::Char('6'));
+        test_support::press(&mut app, KeyCode::Char('7'));
         assert!(app.funds.recommendation().is_some());
 
         test_support::press(&mut app, KeyCode::Tab);

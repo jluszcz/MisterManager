@@ -30,6 +30,7 @@ pub mod picker;
 pub mod planning;
 pub mod recurring_goal;
 pub mod recurring_txn;
+pub mod retirement;
 pub mod savings;
 mod search;
 pub mod style;
@@ -40,6 +41,7 @@ pub mod worksheet;
 use crate::account_label::{Account, Label};
 use crate::db::Db;
 use crate::db::account::TaxTreatment;
+use crate::rate::BasisPoints;
 use account_label::{account_cell, label_line};
 use anyhow::{Result, ensure};
 use app::App;
@@ -202,11 +204,23 @@ fn label_width(header: &str, labels: impl IntoIterator<Item = impl AsRef<str>>) 
 /// own column means nothing for. Shared so that the screen that *sets* a
 /// treatment and the screen that groups holdings by one cannot come to spell
 /// it two ways.
-fn tax_treatment_cell(treatment: Option<TaxTreatment>) -> Cell<'static> {
+fn tax_treatment_cell(treatment: Option<TaxTreatment>, tax_free: BasisPoints) -> Cell<'static> {
     Cell::from(match treatment {
-        Some(treatment) => treatment.label(),
-        None => "—",
+        Some(treatment) => crate::db::account::tax_label(treatment, tax_free),
+        None => "—".to_string(),
     })
+}
+
+/// Every label [`tax_treatment_cell`] can draw, widest included, for a
+/// column sized to them.
+fn tax_labels() -> impl Iterator<Item = String> {
+    TaxTreatment::ALL
+        .iter()
+        .map(|t| t.label().to_string())
+        .chain(std::iter::once(crate::db::account::tax_label(
+            TaxTreatment::TaxDeferred,
+            BasisPoints(9_999),
+        )))
 }
 
 fn money_cell(sense: style::Sense, cents: Cents, text: String) -> Cell<'static> {

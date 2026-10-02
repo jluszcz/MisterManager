@@ -19,11 +19,11 @@ It combines with any subcommand but `backup`, prints the copy's path, and leaves
 for inspection. A scratch run skips the scheduled backup and the quit path's report, since either
 would be indistinguishable from the real database's.
 
-Screens are `1` Overview, `2` Cash, `3` Credit, `4` Savings, `5` Planning, `6` Funds,
-`7` Recurring Goals, `8` Recurring Txns, `9` Accounts; `q` quits. **`?` opens the key reference for
+Screens are `1` Overview, `2` Cash, `3` Credit, `4` Savings, `5` Planning, `6` Recurring Goals,
+`7` Funds, `8` Retirement, `9` Recurring Txns, `0` Accounts; `q` quits. **`?` opens the key reference for
 whichever screen you are on**, and it is where every key is spelled out — what follows is the part
 of the app a list of keys cannot tell you. The screens are laid out for a terminal at least 120
-columns wide. Accounts read by the name and color you gave them on screen `9`, everywhere but
+columns wide. Accounts read by the name and color you gave them on screen `0`, everywhere but
 Recurring Txns, whose columns leave room only for the code.
 
 Three things hold across every screen that offers them. `t` moves money, wherever that is: one row
@@ -40,7 +40,7 @@ a total under each kind.
 
 `←`/`→` scrub the Paycheck-Eve column against the date derived from the paycheck transaction, which
 is always a day still ahead of today: on the eve itself the column names the eve of the paycheck
-*after* rather than naming today, and it reads today until a transaction is marked on screen `8`.
+*after* rather than naming today, and it reads today until a transaction is marked on screen `9`.
 `Shift` with them moves a week, as it does on every date in the app, and `Esc` puts the column back on
 the derived date in one press, however far it was moved. **The scrub reaches Planning**, whose
 excess is quoted at whatever the column is left at.
@@ -115,7 +115,23 @@ housing is paid first and the line that gave way carries the gap beside it. The 
 checking balance at Paycheck-Eve, so a scrubbed plan names its date beside `Excess (Actual)`, and
 `t` and `p` act on the figures shown rather than on the derived date.
 
-### `6` Funds
+### `6` Recurring Goals
+
+The table each round of goals is created from. `s` opens the picker, where `Space` toggles an entry
+and `Enter` creates every ticked one as a goal in the container the Savings screen's `Tab` names,
+all in one transaction.
+
+Whatever the month filter is showing opens already ticked and sorted to the top, since a tick alone
+is easy to miss in a list dozens long. Every entry is still listed below, so the filter is a
+starting point rather than a cage; an entry that already has an open goal opens unticked, and
+`Space` still adds it, because a second open goal against one entry is legitimate.
+
+**Each goal is dated for the year ahead**: a year past the next occurrence of the entry's month, so
+a September entry created in August 2026 is dated September 2027, and a March one — already past
+this year — is dated March 2028. A biennial entry that already has a goal dated this year steps two
+years instead, skipping the year between rather than filling it.
+
+### `7` Funds
 
 One row per fund you hold: the investment account it sits in, the ticker, the fund's own name, the
 balance you typed for it, how much of it is stock, and how the account it sits in is taxed. `a`,
@@ -154,7 +170,7 @@ reads; with none on record, the bond row's target reads `—` rather than claimi
 nothing.
 
 With an investment account marked as the one the Planning `Investment` line buys into (its
-`Default` on screen `9`), the summary's title also says how to spend this payday's line —
+`Default` on screen `0`), the summary's title also says how to spend this payday's line —
 `invest $2,460 in USM, $1,431 in ISM` — and a `Δ After` column shows each class's gap once those
 purchases are made. A class the portfolio is short of gets at least its target share, so it does
 not fall further behind as the portfolio grows — the one furthest short first, and only where the
@@ -164,23 +180,22 @@ purchase is whole dollars and at least $500, so a small payday goes to one fund.
 the Overview's scrub, as the Planning screen's does, and the recommendation is judged against the
 whole portfolio — so it is drawn only while no filter narrows the list.
 
-### `7` Recurring Goals
+### `8` Retirement
 
-The table each round of goals is created from. `s` opens the picker, where `Space` toggles an entry
-and `Enter` creates every ticked one as a goal in the container the Savings screen's `Tab` names,
-all in one transaction.
+Retirement savings against an age rule: 3× salary and 10% of it tax-free by 35, 5–6× and 15–20% by
+45, and every other age read off straight lines through those two, extended past both. What counts
+is the holdings under investment accounts marked `Retirement` on screen `0`; `e` sets the salary
+they are a multiple of and the birth date the age comes from. The top box says where you stand
+today — `Short` by how much, `On track` inside the range, or `Ahead` — and the table below runs
+from your age to 55, leaving out the milestones already behind you, each with what today's
+savings fall short of it — the dollar target, and the tax-free share of that target — with no
+growth assumed, so a later milestone reads as everything still to save for it. An account that is only partly
+tax-free, a workplace plan with a Roth side, takes its tax-free part on screen `0`, as a percentage
+or as a dollar amount — typing into either works out the other from what the account holds, and
+the one you typed last is what is kept. That part counts as tax-free here and in the Funds screen's tax columns. The report
+carries the same page as its last tab.
 
-Whatever the month filter is showing opens already ticked and sorted to the top, since a tick alone
-is easy to miss in a list dozens long. Every entry is still listed below, so the filter is a
-starting point rather than a cage; an entry that already has an open goal opens unticked, and
-`Space` still adds it, because a second open goal against one entry is legitimate.
-
-**Each goal is dated for the year ahead**: a year past the next occurrence of the entry's month, so
-a September entry created in August 2026 is dated September 2027, and a March one — already past
-this year — is dated March 2028. A biennial entry that already has a goal dated this year steps two
-years instead, skipping the year between rather than filling it.
-
-### `8` Recurring Transactions
+### `9` Recurring Transactions
 
 The rows whose amount and date are known in advance — the paycheck and the monthlies. `P` marks the
 transaction the Paycheck-Eve column is derived from. `g` regenerates the selected one and `G` every
@@ -246,16 +261,16 @@ describes that build.
 command.** The `Savings` sheet identifies its two blocks by position and
 carries no account code beside either, so nothing in the workbook says which
 account holds which block. The first run therefore imports the accounts and
-stops, printing what to do next: open the app, press `9`, and set the
+stops, printing what to do next: open the app, press `0`, and set the
 `Savings` field on the two container accounts. Re-run the identical command
 and the whole import completes in one pass. Only that first run is ever two
 steps — the mapping is read before anything is cleared and written back
 after, so `--replace` cannot reopen it.
 
 The accounts arrive named after their codes, in the kind's default band. The
-name, color, band, position, interest policy, tax treatment, `Savings` block
+name, color, band, position, interest policy, tax treatment and tax-free part, `Savings` block
 and which of the two money forms open on the account are all yours, set on
-screen `9`, and no import touches them again: `account` is deliberately outside the tables a
+screen `0`, and no import touches them again: `account` is deliberately outside the tables a
 `--replace` clears. Neither is `recurring_txn` — the rules you typed, and the
 paycheck flag among them, survive a re-import.
 

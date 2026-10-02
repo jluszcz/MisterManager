@@ -11,7 +11,7 @@
 //! **A single-character key is quoted where a `detail` names it** -- `'a'`,
 //! `'s'`, `'y'`. Bare, it reads as the word it also is ("opening on the same
 //! date a does"), or as a stray letter where it is not a word at all ("are s
-//! on screen 7"), and either way the sentence has to be read twice. The
+//! on screen 6"), and either way the sentence has to be read twice. The
 //! multi-character names -- `Tab`, `Esc`, `Enter`, `Shift` -- are already
 //! unambiguous and take no quotes.
 //!
@@ -75,7 +75,7 @@ struct Chrome {
 }
 
 const SCREEN_KEYS: Chrome = Chrome {
-    key: "1-9",
+    key: "0-9",
     word: "screens",
 };
 
@@ -173,6 +173,7 @@ pub(super) enum Topic {
     RecurringTxns,
     RecurringGoals,
     Accounts,
+    Retirement,
     /// `/` on either ledger.
     LedgerSearch,
     /// `/` on the Savings screen.
@@ -262,12 +263,12 @@ const LEDGER: [Entry; 11] = [
     Entry {
         key: "t",
         label: Label::Shared("money"),
-        detail: "Move money out of a cash account and into any other account, opening on the same date 'a' does, and on the default transfer account if screen 9 names one. Cash ledger only.",
+        detail: "Move money out of a cash account and into any other account, opening on the same date 'a' does, and on the default transfer account if screen 0 names one. Cash ledger only.",
     },
     Entry {
         key: "p",
         label: Label::Shared("money"),
-        detail: "Pay a credit card from a cash account, writing both sides. Opens on the same date 'a' does, and on the default payment account if screen 9 names one.",
+        detail: "Pay a credit card from a cash account, writing both sides. Opens on the same date 'a' does, and on the default payment account if screen 0 names one.",
     },
     Entry {
         key: "e",
@@ -326,7 +327,7 @@ const SAVINGS: [Entry; 16] = [
     Entry {
         key: "n",
         label: Label::Shared("goal"),
-        detail: "Create a goal from scratch -- a name, a target and a date -- in the container Tab names. Goals created from recurring goal entries are 's' on screen 7.",
+        detail: "Create a goal from scratch -- a name, a target and a date -- in the container Tab names. Goals created from recurring goal entries are 's' on screen 6.",
     },
     Entry {
         key: "e",
@@ -461,9 +462,9 @@ const FUNDS: [Entry; 9] = [
 /// run and what survives it would be answering a question that build cannot
 /// be asked. What is left is true of both, and is what the key does.
 #[cfg(feature = "import")]
-const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its color, its Overview band; for a cash account, how interest is divided, which Savings block it holds (what the first mm import waits on), and whether 't' and 'p' open on it; for an investment account, its tax treatment and whether the Investment line buys into it. The code and the kind are set by 'a'. All of it survives mm import --replace.";
+const ACCOUNT_EDIT: &str = "Edit the selected account: its name, color and band; for a cash account, how interest is divided, which Savings block it holds (what the first mm import waits on), and whether 't' and 'p' open on it; for an investment account, its tax treatment and tax-free part, whether it is retirement, and whether the Investment line buys into it. The code and the kind are set by 'a'. All of it survives a --replace.";
 #[cfg(not(feature = "import"))]
-const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its color, its Overview band, and -- for a cash account -- how an interest posting is divided, which block of the Savings sheet it is the container for, and whether 't' and 'p' open on it; for an investment account, its tax treatment and whether the Investment line buys into it. The code and the kind are set by 'a', not here.";
+const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its color, its Overview band, and -- for a cash account -- how an interest posting is divided, which block of the Savings sheet it is the container for, and whether 't' and 'p' open on it; for an investment account, its tax treatment and tax-free part, whether it is retirement, and whether the Investment line buys into it. The code and the kind are set by 'a', not here.";
 
 /// Three keys, and no `d`. An account is created here or by the workbook
 /// naming it, and deleting one would orphan every transaction, goal and
@@ -486,6 +487,20 @@ const ACCOUNTS: [Entry; 3] = [
         detail: "Move the selected account one place among the accounts of its kind -- the order the Overview and the ledgers list them in.",
     },
 ];
+
+/// What `e` on Retirement edits -- and, on a build with an importer, which of
+/// the two an `mm import --replace` takes back: the birth date is `Constants!K2`,
+/// where the salary is on no sheet and is carried across.
+#[cfg(feature = "import")]
+const RETIREMENT_EDIT: &str = "Edit the salary the savings are a multiple of, and the birth date the age comes from. The birth date also sets the Funds screen's target, and mm import --replace takes it back from the workbook; the salary survives.";
+#[cfg(not(feature = "import"))]
+const RETIREMENT_EDIT: &str = "Edit the salary the savings are a multiple of, and the birth date the age comes from. The birth date is also what the Funds screen's target is set by.";
+
+const RETIREMENT: [Entry; 1] = [Entry {
+    key: "e",
+    label: Label::Own("edit"),
+    detail: RETIREMENT_EDIT,
+}];
 
 const RECURRING_TXNS: [Entry; 7] = [
     Entry {
@@ -957,6 +972,7 @@ impl Topic {
             Topic::RecurringTxns => &RECURRING_TXNS,
             Topic::RecurringGoals => &RECURRING_GOALS,
             Topic::Accounts => &ACCOUNTS,
+            Topic::Retirement => &RETIREMENT,
             Topic::LedgerSearch
             | Topic::SavingsSearch
             | Topic::FundsSearch
@@ -986,6 +1002,7 @@ impl Topic {
             Topic::RecurringTxns => "Recurring Transactions",
             Topic::RecurringGoals => "Recurring Goals",
             Topic::Accounts => "Accounts",
+            Topic::Retirement => "Retirement",
             Topic::LedgerSearch => "Ledger search",
             Topic::SavingsSearch => "Savings search",
             Topic::FundsSearch => "Funds search",
@@ -1028,7 +1045,8 @@ impl Topic {
             | Topic::Funds
             | Topic::RecurringTxns
             | Topic::RecurringGoals
-            | Topic::Accounts => true,
+            | Topic::Accounts
+            | Topic::Retirement => true,
             Topic::LedgerSearch
             | Topic::SavingsSearch
             | Topic::FundsSearch
@@ -1074,6 +1092,7 @@ impl Topic {
             | Topic::RecurringTxns
             | Topic::RecurringGoals
             | Topic::Accounts
+            | Topic::Retirement
             | Topic::Worksheet
             | Topic::Picker
             | Topic::Destination
@@ -1116,6 +1135,7 @@ impl Topic {
             | Topic::RecurringTxns
             | Topic::RecurringGoals
             | Topic::Accounts
+            | Topic::Retirement
             | Topic::Picker
             | Topic::Destination
             | Topic::Details
@@ -1355,9 +1375,9 @@ mod tests {
         footer_items(entries).join(SEPARATOR)
     }
 
-    /// Every topic there is. `SCREENS` stays separate because only those eight
+    /// Every topic there is. `SCREENS` stays separate because only those nine
     /// join a footer.
-    const ALL: [Topic; 23] = [
+    const ALL: [Topic; 24] = [
         Topic::Overview,
         Topic::Ledger,
         Topic::Savings,
@@ -1366,6 +1386,7 @@ mod tests {
         Topic::RecurringTxns,
         Topic::RecurringGoals,
         Topic::Accounts,
+        Topic::Retirement,
         Topic::LedgerSearch,
         Topic::SavingsSearch,
         Topic::FundsSearch,
@@ -1508,7 +1529,7 @@ mod tests {
 
     /// Every screen topic, so a new one must be added to the footer
     /// assertions below.
-    const SCREENS: [Topic; 8] = [
+    const SCREENS: [Topic; 9] = [
         Topic::Overview,
         Topic::Ledger,
         Topic::Savings,
@@ -1517,6 +1538,7 @@ mod tests {
         Topic::RecurringTxns,
         Topic::RecurringGoals,
         Topic::Accounts,
+        Topic::Retirement,
     ];
 
     /// Every footer as it reads, with Planning's leading `↑/↓ constant`
@@ -1550,6 +1572,7 @@ mod tests {
             "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings"
         );
         assert_eq!(Topic::Accounts.footer(), "a add · e edit · ⇧↑↓ move");
+        assert_eq!(Topic::Retirement.footer(), "e edit");
     }
 
     /// The Credit ledger shares the Ledger topic with Cash but has no `t`:

@@ -234,6 +234,12 @@ pub fn percent_color(percent: Percent) -> Color {
     rgb(crate::palette::percent(percent))
 }
 
+/// Where a retirement figure stands, on a terminal -- a wrapper over
+/// [`crate::palette::standing`], for [`percent_color`]'s reason.
+pub fn standing_color(status: crate::calc::retirement::Status) -> Color {
+    rgb(crate::palette::standing(status))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

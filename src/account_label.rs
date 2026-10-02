@@ -379,6 +379,8 @@ mod tests {
             group: Group::Checking,
             color,
             tax_treatment: None,
+            retirement: false,
+            tax_free: None,
         }
     }
 

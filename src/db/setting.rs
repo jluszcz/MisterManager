@@ -282,6 +282,10 @@ pub mod key {
     pub const WORKBOOK_TODAY: Key<NaiveDate> = Key::new("dates.workbook_today");
     /// `Constants!K2`.
     pub const BIRTH_DATE: Key<NaiveDate> = Key::new("dates.birth_date");
+    /// Gross annual salary, what the Retirement screen states savings as a
+    /// multiple of. No sheet carries one, so `mm import` carries it across a
+    /// `--replace` rather than reading it.
+    pub const ANNUAL_SALARY: Key<Cents> = Key::new("retirement.annual_salary");
 
     /// The international share *of the equity remainder*, in basis points.
     ///
