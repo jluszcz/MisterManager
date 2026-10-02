@@ -12,7 +12,7 @@ use crate::db::account::{self, TaxTreatment};
 use crate::db::setting::{self, key};
 use crate::db::{Db, holding};
 use crate::money::Cents;
-use crate::rate::{BasisPoints, Percent};
+use crate::rate::BasisPoints;
 use anyhow::Result;
 use chrono::NaiveDate;
 
@@ -20,24 +20,19 @@ use chrono::NaiveDate;
 pub struct Held {
     pub account: Account,
     pub treatment: TaxTreatment,
-    /// The part of `balance` held tax-free, through
-    /// [`account::Account::tax_free`] -- all of it under the `tax_free`
-    /// treatment.
-    pub tax_free: Percent,
+    /// What of `balance` is held tax-free, through
+    /// [`account::Account::tax_free_amount`] -- all of it under the
+    /// `tax_free` treatment.
+    pub tax_free: Cents,
     pub balance: Cents,
 }
 
 impl Held {
-    /// What of `balance` counts as tax-free, truncated to the cent.
-    pub fn tax_free_balance(&self) -> Cents {
-        self.tax_free.of(self.balance)
-    }
-
     /// What a Tax column prints for this account.
     pub fn tax_label(&self) -> String {
         account::tax_label(
             self.treatment,
-            (self.tax_free != Percent::ZERO).then_some(self.tax_free),
+            share(self.tax_free, self.balance).unwrap_or(BasisPoints::ZERO),
         )
     }
 
@@ -145,20 +140,18 @@ pub fn load(db: &Db, today: NaiveDate) -> Result<Retirement> {
     let accounts = account::list(db)?;
     let mut held = Vec::new();
     for a in accounts.iter().filter(|a| a.retirement) {
+        let balance = holding::balance_of(db, a.id)?;
         held.push(Held {
             account: Account::named(&accounts, a.id),
             treatment: a.tax_treatment.expect(
                 "schema CHECK pairs retirement with an investment kind, which has a treatment",
             ),
-            tax_free: a.tax_free(),
-            balance: holding::list_for_account(db, a.id)?
-                .iter()
-                .map(|h| h.balance)
-                .sum(),
+            tax_free: a.tax_free_amount(balance),
+            balance,
         });
     }
     let saved = held.iter().map(|h| h.balance).sum();
-    let tax_free = held.iter().map(Held::tax_free_balance).sum();
+    let tax_free = held.iter().map(|h| h.tax_free).sum();
     Ok(Retirement {
         age,
         salary,
@@ -232,7 +225,12 @@ mod tests {
     fn a_tax_free_part_of_a_mixed_account_counts_toward_tax_free() {
         let db = db::open_in_memory().unwrap();
         let long_haul = retirement_account(&db, "RET", "Long Haul", TaxTreatment::TaxDeferred);
-        account::set_tax_free_percent(&db, long_haul, Some(Percent(20))).unwrap();
+        account::set_tax_free(
+            &db,
+            long_haul,
+            Some(account::TaxFreePart::Percent(crate::rate::Percent(20))),
+        )
+        .unwrap();
         holding::insert(&db, long_haul, "TDF45", Cents::from_dollars(300_000)).unwrap();
         let pot = retirement_account(&db, "ROTH", "Untaxed Pot", TaxTreatment::TaxFree);
         holding::insert(&db, pot, "USM", Cents::from_dollars(40_000)).unwrap();

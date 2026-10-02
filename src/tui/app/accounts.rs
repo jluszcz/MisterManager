@@ -6,7 +6,7 @@
 use super::{App, Move};
 use crate::db::account::{self, Kind};
 use crate::db::setting::{Key, key};
-use crate::db::{AccountId, setting};
+use crate::db::{AccountId, holding, setting};
 use crate::default_source::Source;
 use crate::savings_block::Block as SavingsBlock;
 use crate::tui::accounts::{self as accounts_screen, AccountForm};
@@ -73,7 +73,7 @@ impl App {
                 group: account.group,
                 policy: account::interest_policy(&self.db, account.id)?,
                 tax: account.tax_treatment,
-                tax_free: account.tax_free_percent,
+                tax_free: account.tax_free_share(holding::balance_of(&self.db, account.id)?),
                 block: block_of(&containers, account.id),
                 defaults: sources_of(&defaults, account.id),
                 invests: investment == Some(account.id),
@@ -157,9 +157,10 @@ impl App {
         let block = block_of(&self.savings_containers()?, id);
         let defaults = sources_of(&self.default_sources()?, id);
         let invests = setting::get(&self.db, key::INVESTMENT_ACCOUNT)? == Some(id);
-        self.modal = Some(Modal::Account(AccountForm::edit(
-            &account, policy, block, &defaults, invests,
-        )));
+        let balance = holding::balance_of(&self.db, id)?;
+        self.modal = Some(Modal::Account(
+            AccountForm::edit(&account, policy, block, &defaults, invests).holding(balance),
+        ));
         Ok(())
     }
 
@@ -254,8 +255,8 @@ impl App {
             account::set_tax_treatment(&self.db, id, treatment)?;
         }
         // After the treatment, which decides whether a part is allowed.
-        if let Some(percent) = edit.tax_free_percent {
-            account::set_tax_free_percent(&self.db, id, percent)?;
+        if let Some(part) = edit.tax_free {
+            account::set_tax_free(&self.db, id, part)?;
         }
         if let Some(retirement) = edit.retirement {
             account::set_retirement(&self.db, id, retirement)?;
@@ -615,7 +616,7 @@ mod tests {
         press(&mut app, KeyCode::Char('e'));
         walk_until!(
             matches!(&app.modal, Some(Modal::Account(f))
-                if f.focus == accounts_screen::AccountField::TaxFree),
+                if f.focus == accounts_screen::AccountField::TaxFreePercent),
             press(&mut app, KeyCode::Tab)
         );
         type_str(&mut app, "20");
@@ -623,8 +624,8 @@ mod tests {
 
         assert!(app.modal.is_none(), "{}", app.status);
         assert_eq!(
-            account::get(&app.db, id).unwrap().tax_free_percent,
-            Some(crate::rate::Percent(20))
+            account::get(&app.db, id).unwrap().tax_free,
+            Some(account::TaxFreePart::Percent(crate::rate::Percent(20)))
         );
         assert!(drawn(&mut app).contains("20% tax-free"));
     }

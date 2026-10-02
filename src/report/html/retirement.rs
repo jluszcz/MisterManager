@@ -6,8 +6,6 @@ use super::{account, escape, whole_money};
 use crate::calc::retirement::{self, BAND_DASH, Band, Status};
 use crate::money::Cents;
 use crate::palette;
-#[cfg(test)]
-use crate::rate::Percent;
 use crate::retirement::Retirement;
 
 /// What a figure that cannot be stated draws as -- the screen's word too.
@@ -179,7 +177,7 @@ mod tests {
             held: vec![Held {
                 account: crate::account_label::Account::named(&accounts, AccountId(3)),
                 treatment: TaxTreatment::TaxDeferred,
-                tax_free: Percent::ZERO,
+                tax_free: Cents::ZERO,
                 balance: saved,
             }],
             rows: rows(Some(37), Some(salary)),

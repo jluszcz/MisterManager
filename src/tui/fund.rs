@@ -40,7 +40,7 @@ use crate::db::account::TaxTreatment;
 use crate::db::fund_mix::Slice;
 use crate::db::{AccountId, HoldingId};
 use crate::money::Cents;
-use crate::rate::{BasisPoints, Percent};
+use crate::rate::BasisPoints;
 use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
 use ratatui::Frame;
@@ -77,8 +77,9 @@ pub struct Row {
     /// `Option` is the shape `db::account` hands over rather than a state
     /// this screen can reach.
     pub tax_treatment: Option<TaxTreatment>,
-    /// The part held tax-free inside `tax_treatment`, as the account says.
-    pub tax_free_percent: Option<Percent>,
+    /// The account's share held tax-free inside `tax_treatment`, against
+    /// what all its holdings come to -- not this row's balance alone.
+    pub tax_free: BasisPoints,
 }
 
 /// The Funds screen's view state: every holding, which account the `Tab`
@@ -229,7 +230,7 @@ impl Funds {
                 .map(|row| Held {
                     balance: row.balance,
                     treatment: row.tax_treatment,
-                    tax_free: account::tax_free(row.tax_treatment, row.tax_free_percent),
+                    tax_free: row.tax_free,
                     mix: self.mixes.get(&row.ticker).map(Vec::as_slice),
                 })
                 .collect();
@@ -253,7 +254,7 @@ impl Funds {
                 .map(|row| Held {
                     balance: row.balance,
                     treatment: row.tax_treatment,
-                    tax_free: account::tax_free(row.tax_treatment, row.tax_free_percent),
+                    tax_free: row.tax_free,
                     mix: self.mixes.get(&row.ticker).map(Vec::as_slice),
                 })
                 .collect();
@@ -980,7 +981,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, funds: &Funds) -> Viewport {
                 fund_name_cell(row.name.as_deref()),
                 whole_amount(row.balance),
                 stock_percent_cell(row.stock_percent),
-                super::tax_treatment_cell(row.tax_treatment, row.tax_free_percent),
+                super::tax_treatment_cell(row.tax_treatment, row.tax_free),
             ])
         })
         .collect();
@@ -1184,7 +1185,7 @@ mod tests {
             stock_percent: None,
             as_of: None,
             tax_treatment: Some(TaxTreatment::Taxable),
-            tax_free_percent: None,
+            tax_free: BasisPoints::ZERO,
         }
     }
 
@@ -1920,7 +1921,7 @@ mod tests {
     #[test]
     fn the_widest_tax_treatment_is_drawn_whole_at_the_minimum_width() {
         let all = accounts();
-        let widest = account::tax_label(TaxTreatment::TaxDeferred, Some(Percent(99)));
+        let widest = account::tax_label(TaxTreatment::TaxDeferred, BasisPoints(9_999));
         assert!(
             TaxTreatment::ALL
                 .iter()
@@ -1937,7 +1938,7 @@ mod tests {
         funds.set_accounts(all.clone());
         funds.set_rows(vec![Row {
             tax_treatment: Some(TaxTreatment::TaxDeferred),
-            tax_free_percent: Some(Percent(99)),
+            tax_free: BasisPoints(9_999),
             ..fixture_row(1, account, &all, "USM", 10_000)
         }]);
 

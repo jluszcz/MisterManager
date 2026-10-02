@@ -41,7 +41,7 @@ pub mod worksheet;
 use crate::account_label::{Account, Label};
 use crate::db::Db;
 use crate::db::account::TaxTreatment;
-use crate::rate::Percent;
+use crate::rate::BasisPoints;
 use account_label::{account_cell, label_line};
 use anyhow::{Result, ensure};
 use app::App;
@@ -204,7 +204,7 @@ fn label_width(header: &str, labels: impl IntoIterator<Item = impl AsRef<str>>) 
 /// own column means nothing for. Shared so that the screen that *sets* a
 /// treatment and the screen that groups holdings by one cannot come to spell
 /// it two ways.
-fn tax_treatment_cell(treatment: Option<TaxTreatment>, tax_free: Option<Percent>) -> Cell<'static> {
+fn tax_treatment_cell(treatment: Option<TaxTreatment>, tax_free: BasisPoints) -> Cell<'static> {
     Cell::from(match treatment {
         Some(treatment) => crate::db::account::tax_label(treatment, tax_free),
         None => "—".to_string(),
@@ -219,7 +219,7 @@ fn tax_labels() -> impl Iterator<Item = String> {
         .map(|t| t.label().to_string())
         .chain(std::iter::once(crate::db::account::tax_label(
             TaxTreatment::TaxDeferred,
-            Some(Percent(99)),
+            BasisPoints(9_999),
         )))
 }
 

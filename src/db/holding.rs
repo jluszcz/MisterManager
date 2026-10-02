@@ -136,6 +136,15 @@ pub fn list_for_account(db: &Db, account_id: AccountId) -> Result<Vec<Holding>> 
     super::collect_rows(rows)
 }
 
+/// What one account's holdings come to -- the balance a tax-free part is a
+/// share of. Nothing for an account holding nothing.
+pub fn balance_of(db: &Db, account_id: AccountId) -> Result<Cents> {
+    Ok(list_for_account(db, account_id)?
+        .iter()
+        .map(|h| h.balance)
+        .sum())
+}
+
 /// Every ticker held anywhere, once each -- what the fetcher's refresh reads
 /// to learn which funds to ask SEC about.
 pub fn tickers(db: &Db) -> Result<Vec<String>> {

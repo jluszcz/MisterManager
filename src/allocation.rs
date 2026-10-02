@@ -21,7 +21,7 @@ use crate::calc::fund::Targets;
 use crate::db::account::TaxTreatment;
 use crate::db::fund_mix::{AssetClass, Slice};
 use crate::money::Cents;
-use crate::rate::{BasisPoints, Percent};
+use crate::rate::BasisPoints;
 
 /// The four groups the summary draws, in the order it draws them: the share
 /// the age rule actually moves, the two equities it splits the rest between,
@@ -220,11 +220,11 @@ pub fn weight(slices: &[Slice], class: AssetClass) -> BasisPoints {
 pub struct Held<'a> {
     pub balance: Cents,
     pub treatment: Option<TaxTreatment>,
-    /// The part of `balance` held tax-free inside `treatment`, which
-    /// apportions to the tax-free column rather than to `treatment`'s. Read
-    /// off [`crate::db::account::tax_free`], so a `tax_free` treatment is
-    /// all of it.
-    pub tax_free: Percent,
+    /// The share of `balance` held tax-free inside `treatment`, which
+    /// apportions to the tax-free column rather than to `treatment`'s. The
+    /// account's share, off [`crate::db::account::tax_free_share`], so a
+    /// `tax_free` treatment is all of it.
+    pub tax_free: BasisPoints,
     pub mix: Option<&'a [Slice]>,
 }
 
@@ -292,19 +292,19 @@ pub fn apportion(holdings: &[Held<'_>]) -> Allocation {
     // rides in the same unit, being the same arithmetic about the same
     // balance.
     //
-    // Scaled by a hundred again, so a holding split between its treatment's
-    // column and the tax-free one by a whole percentage stays exact too.
+    // Scaled by a basis point again, so a holding split between its
+    // treatment's column and the tax-free one stays exact too.
     let mut scaled = [[0i128; COLUMNS]; AssetClass::ALL.len()];
     let mut basis = 0i128;
     for held in holdings {
         let Some(mix) = held.mix else { continue };
-        let free = i128::from(held.tax_free.0.clamp(0, 100));
+        let free = i128::from(held.tax_free.0).clamp(0, whole);
         let parts = [
-            (column(held.treatment), 100 - free),
+            (column(held.treatment), whole - free),
             (TaxTreatment::TaxFree.index(), free),
         ];
         let balance = i128::from(held.balance.0);
-        basis += balance * 100;
+        basis += balance * whole;
         let unplaced = whole - mix.iter().map(|s| i128::from(s.weight.0)).sum::<i128>();
         for (column, part) in parts {
             for slice in mix {
@@ -705,7 +705,7 @@ mod tests {
         Held {
             balance: Cents::from_dollars(dollars),
             treatment: Some(TaxTreatment::Taxable),
-            tax_free: Percent::ZERO,
+            tax_free: BasisPoints::ZERO,
             mix,
         }
     }
@@ -748,7 +748,7 @@ mod tests {
         let held = [Held {
             balance: Cents(100),
             treatment: Some(TaxTreatment::Taxable),
-            tax_free: Percent::ZERO,
+            tax_free: BasisPoints::ZERO,
             mix: Some(mix.as_slice()),
         }];
         let allocation = apportion(&held);
@@ -861,7 +861,7 @@ mod tests {
         let held = [Held {
             balance: Cents(10_001),
             treatment: Some(TaxTreatment::Taxable),
-            tax_free: Percent::ZERO,
+            tax_free: BasisPoints::ZERO,
             mix: Some(thirds.as_slice()),
         }];
         let allocation = apportion(&held);
@@ -937,13 +937,13 @@ mod tests {
             Held {
                 balance: Cents::from_dollars(5_000),
                 treatment: Some(TaxTreatment::Taxable),
-                tax_free: Percent::ZERO,
+                tax_free: BasisPoints::ZERO,
                 mix: Some(bond.as_slice()),
             },
             Held {
                 balance: Cents::from_dollars(3_000),
                 treatment: Some(TaxTreatment::TaxDeferred),
-                tax_free: Percent::ZERO,
+                tax_free: BasisPoints::ZERO,
                 mix: Some(intl.as_slice()),
             },
         ];
@@ -987,7 +987,7 @@ mod tests {
         let held = [Held {
             balance: Cents::from_dollars(10_000),
             treatment: Some(TaxTreatment::TaxDeferred),
-            tax_free: Percent(20),
+            tax_free: BasisPoints(2_000),
             mix: Some(bond.as_slice()),
         }];
         let allocation = apportion(&held);
@@ -1015,13 +1015,13 @@ mod tests {
             Held {
                 balance: Cents::from_dollars(5_000),
                 treatment: Some(TaxTreatment::Taxable),
-                tax_free: Percent::ZERO,
+                tax_free: BasisPoints::ZERO,
                 mix: Some(bond.as_slice()),
             },
             Held {
                 balance: Cents::from_dollars(5_000),
                 treatment: None,
-                tax_free: Percent::ZERO,
+                tax_free: BasisPoints::ZERO,
                 mix: Some(bond.as_slice()),
             },
         ];

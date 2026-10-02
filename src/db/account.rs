@@ -1,5 +1,6 @@
 use super::{AccountId, Db};
-use crate::rate::Percent;
+use crate::money::Cents;
+use crate::rate::{BasisPoints, Percent};
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::{OptionalExtension, Result as SqlResult, Row, ToSql, params};
@@ -404,36 +405,93 @@ pub struct Account {
     /// an investment account, which the schema's `CHECK` holds.
     pub retirement: bool,
     /// The part of the balance held tax-free inside a treatment that is
-    /// otherwise not; `None` is none of it. Read through [`Account::tax_free`]
-    /// rather than directly, which is where a `tax_free` treatment overrides
-    /// it.
-    pub tax_free_percent: Option<Percent>,
+    /// otherwise not; `None` is none of it. Read through
+    /// [`Account::tax_free_amount`] or [`tax_free_share`] rather than
+    /// directly, which is where a `tax_free` treatment overrides it.
+    pub tax_free: Option<TaxFreePart>,
+}
+
+/// A tax-free part as the owner stated it: a share of whatever the account
+/// holds, or a fixed amount of it. Whichever was typed is what is stored, and
+/// the other is derived against the balance on every read -- so a share
+/// stays a share as the account grows, and an amount stays an amount.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TaxFreePart {
+    /// Strictly between 0 and 100.
+    Percent(Percent),
+    /// More than nothing; capped at the balance when read.
+    Amount(Cents),
+}
+
+impl TaxFreePart {
+    /// What of `balance` this part is, truncated to the cent.
+    pub fn amount_of(self, balance: Cents) -> Cents {
+        match self {
+            TaxFreePart::Percent(p) => p.of(balance),
+            TaxFreePart::Amount(a) => a.min(balance).max(Cents::ZERO),
+        }
+    }
 }
 
 impl Account {
-    /// How much of this account is held tax-free: all of it under the
-    /// `tax_free` treatment, whatever a percentage left from an earlier
-    /// treatment says, and otherwise the typed part of it.
-    pub fn tax_free(&self) -> Percent {
-        tax_free(self.tax_treatment, self.tax_free_percent)
+    /// How much of `balance` -- what this account's holdings come to -- is
+    /// held tax-free.
+    pub fn tax_free_amount(&self, balance: Cents) -> Cents {
+        tax_free_amount(self.tax_treatment, self.tax_free, balance)
+    }
+
+    /// The same as a share of `balance`.
+    pub fn tax_free_share(&self, balance: Cents) -> BasisPoints {
+        tax_free_share(self.tax_treatment, self.tax_free, balance)
     }
 }
 
-/// [`Account::tax_free`] for a caller holding the two columns rather than
-/// the row.
-pub fn tax_free(treatment: Option<TaxTreatment>, percent: Option<Percent>) -> Percent {
+/// All of `balance` under the `tax_free` treatment, whatever a part left from
+/// an earlier treatment says, and otherwise the stated part of it.
+pub fn tax_free_amount(
+    treatment: Option<TaxTreatment>,
+    part: Option<TaxFreePart>,
+    balance: Cents,
+) -> Cents {
     match treatment {
-        Some(TaxTreatment::TaxFree) => Percent::ONE_HUNDRED,
-        _ => percent.unwrap_or(Percent::ZERO),
+        Some(TaxTreatment::TaxFree) => balance,
+        _ => part.map_or(Cents::ZERO, |p| p.amount_of(balance)),
     }
 }
 
-/// What a sink prints in a Tax column: the treatment, or `20% tax-free`
-/// for one with a tax-free part.
-pub fn tax_label(treatment: TaxTreatment, percent: Option<Percent>) -> String {
-    match (treatment, percent) {
-        (TaxTreatment::TaxFree, _) | (_, None) => treatment.label().to_string(),
-        (_, Some(p)) => format!("{}% tax-free", p.0),
+/// [`tax_free_amount`] as a share of `balance`, floored to the basis point.
+/// Over a balance of nothing an amount is no share at all, and a percentage
+/// is still itself.
+pub fn tax_free_share(
+    treatment: Option<TaxTreatment>,
+    part: Option<TaxFreePart>,
+    balance: Cents,
+) -> BasisPoints {
+    if balance.0 <= 0 {
+        return match (treatment, part) {
+            (Some(TaxTreatment::TaxFree), _) => BasisPoints::ONE,
+            (_, Some(TaxFreePart::Percent(p))) => BasisPoints(p.0 * 100),
+            _ => BasisPoints::ZERO,
+        };
+    }
+    let amount = tax_free_amount(treatment, part, balance);
+    BasisPoints((i128::from(amount.0) * 10_000 / i128::from(balance.0)) as i64)
+}
+
+/// What a sink prints in a Tax column: the treatment, or `20% tax-free` for
+/// one with a tax-free part, floored so it never claims a point it does not
+/// hold. A part come to the whole balance reads as the `Tax-free` it is, and
+/// one under a point as `<1%` rather than as the `0%` that would say none.
+pub fn tax_label(treatment: TaxTreatment, share: BasisPoints) -> String {
+    if treatment == TaxTreatment::TaxFree || share.0 <= 0 {
+        return treatment.label().to_string();
+    }
+    if share >= BasisPoints::ONE {
+        return TaxTreatment::TaxFree.label().to_string();
+    }
+    match share.0 / 100 {
+        0 => "<1% tax-free".to_string(),
+        whole => format!("{whole}% tax-free"),
     }
 }
 
@@ -460,7 +518,14 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
                 .expect("schema CHECK guarantees a valid tax treatment")
         }),
         retirement: row.get(8)?,
-        tax_free_percent: row.get::<_, Option<i64>>(9)?.map(Percent),
+        tax_free: match (
+            row.get::<_, Option<i64>>(9)?,
+            row.get::<_, Option<i64>>(10)?,
+        ) {
+            (Some(p), _) => Some(TaxFreePart::Percent(Percent(p))),
+            (None, Some(c)) => Some(TaxFreePart::Amount(Cents(c))),
+            (None, None) => None,
+        },
     })
 }
 
@@ -470,7 +535,7 @@ macro_rules! select_account {
     ($tail:literal) => {
         concat!(
             "SELECT id, code, name, kind, sort, grp, color, tax_treatment, retirement, \
-             tax_free_percent FROM account ",
+             tax_free_percent, tax_free_cents FROM account ",
             $tail
         )
     };
@@ -784,31 +849,47 @@ pub fn set_tax_treatment(db: &Db, id: AccountId, treatment: TaxTreatment) -> Res
     Ok(())
 }
 
-/// The one writer of `account.tax_free_percent`, separate for
-/// `set_tax_treatment`'s reason. `None` and 0% are one state, stored as
-/// `NULL`; 100% is refused rather than stored, being the `tax_free` treatment
-/// under another name, and so is any part on an account that already has it.
-pub fn set_tax_free_percent(db: &Db, id: AccountId, percent: Option<Percent>) -> Result<()> {
+/// The one writer of `account.tax_free_percent` and `tax_free_cents`, which
+/// are one fact stored two ways -- both are written in one statement, so the
+/// schema's either-or `CHECK` never sees them both set. Separate for
+/// `set_tax_treatment`'s reason. A part of nothing is no part, stored as two
+/// `NULL`s; 100% is refused rather than stored, being the `tax_free`
+/// treatment under another name, and so is any part on an account that
+/// already has it.
+pub fn set_tax_free(db: &Db, id: AccountId, part: Option<TaxFreePart>) -> Result<()> {
     let account = get(db, id)?;
     let name = crate::demo::text(account.name.as_str());
     ensure!(
         account.kind == Kind::Investment,
         "{name} is not an investment account, so none of it is tax-free"
     );
-    let percent = percent.filter(|p| *p != Percent::ZERO);
-    if let Some(p) = percent {
+    let part = part.filter(|p| match p {
+        TaxFreePart::Percent(p) => p.0 != 0,
+        TaxFreePart::Amount(a) => a.0 != 0,
+    });
+    if let Some(p) = part {
         ensure!(
             account.tax_treatment != Some(TaxTreatment::TaxFree),
             "{name} is already wholly tax-free"
         );
-        ensure!(
-            (1..=99).contains(&p.0),
-            "the tax-free part must be under 100% -- for all of it, set the treatment to Tax-free"
-        );
+        match p {
+            TaxFreePart::Percent(p) => ensure!(
+                (1..=99).contains(&p.0),
+                "the tax-free part must be under 100% -- for all of it, set the treatment to Tax-free"
+            ),
+            TaxFreePart::Amount(a) => {
+                ensure!(a.0 > 0, "the tax-free amount must be more than nothing")
+            }
+        }
     }
+    let (percent, cents) = match part {
+        Some(TaxFreePart::Percent(p)) => (Some(p.0), None),
+        Some(TaxFreePart::Amount(a)) => (None, Some(a.0)),
+        None => (None, None),
+    };
     db.conn.execute(
-        "UPDATE account SET tax_free_percent = ?2 WHERE id = ?1",
-        params![id, percent.map(|p| p.0)],
+        "UPDATE account SET tax_free_percent = ?2, tax_free_cents = ?3 WHERE id = ?1",
+        params![id, percent, cents],
     )?;
     Ok(())
 }
@@ -1345,20 +1426,67 @@ mod tests {
             Some(TaxTreatment::TaxDeferred),
         )
         .unwrap();
-        assert_eq!(get(&db, id).unwrap().tax_free(), Percent::ZERO);
-        set_tax_free_percent(&db, id, Some(Percent(20))).unwrap();
-        assert_eq!(get(&db, id).unwrap().tax_free_percent, Some(Percent(20)));
-        assert_eq!(get(&db, id).unwrap().tax_free(), Percent(20));
+        let balance = Cents::from_dollars(1_000);
+        assert_eq!(get(&db, id).unwrap().tax_free_amount(balance), Cents::ZERO);
+        let part = TaxFreePart::Percent(Percent(20));
+        set_tax_free(&db, id, Some(part)).unwrap();
+        assert_eq!(get(&db, id).unwrap().tax_free, Some(part));
+        assert_eq!(
+            get(&db, id).unwrap().tax_free_amount(balance),
+            Cents::from_dollars(200)
+        );
 
         set_tax_treatment(&db, id, TaxTreatment::TaxFree).unwrap();
-        assert_eq!(get(&db, id).unwrap().tax_free(), Percent::ONE_HUNDRED);
+        assert_eq!(get(&db, id).unwrap().tax_free_amount(balance), balance);
 
-        set_tax_free_percent(&db, id, Some(Percent::ZERO)).unwrap();
-        assert_eq!(get(&db, id).unwrap().tax_free_percent, None);
+        set_tax_free(&db, id, Some(TaxFreePart::Percent(Percent::ZERO))).unwrap();
+        assert_eq!(get(&db, id).unwrap().tax_free, None);
+    }
+
+    /// An amount stays an amount as the balance moves, so its share is what
+    /// moves -- and it can never claim more than the balance holds.
+    #[test]
+    fn a_tax_free_amount_replaces_a_percentage_and_is_capped_at_the_balance() {
+        let db = db::open_in_memory().unwrap();
+        let id = insert(
+            &db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxDeferred),
+        )
+        .unwrap();
+        set_tax_free(&db, id, Some(TaxFreePart::Percent(Percent(20)))).unwrap();
+        let part = TaxFreePart::Amount(Cents::from_dollars(300));
+        set_tax_free(&db, id, Some(part)).unwrap();
+        let account = get(&db, id).unwrap();
+        assert_eq!(
+            account.tax_free,
+            Some(part),
+            "the percentage was left behind"
+        );
+        assert_eq!(
+            account.tax_free_share(Cents::from_dollars(1_000)),
+            BasisPoints(3_000)
+        );
+        assert_eq!(
+            account.tax_free_amount(Cents::from_dollars(200)),
+            Cents::from_dollars(200)
+        );
+        assert!(
+            db.conn
+                .execute(
+                    "UPDATE account SET tax_free_percent = 20 WHERE id = ?1",
+                    params![id]
+                )
+                .is_err(),
+            "the schema let a part be stored both ways"
+        );
     }
 
     #[test]
-    fn set_tax_free_percent_refuses_all_of_it_another_kind_and_a_tax_free_account() {
+    fn set_tax_free_refuses_all_of_it_another_kind_and_a_tax_free_account() {
         let db = db::open_in_memory().unwrap();
         let ret = insert(
             &db,
@@ -1369,7 +1497,10 @@ mod tests {
             Some(TaxTreatment::TaxDeferred),
         )
         .unwrap();
-        assert!(set_tax_free_percent(&db, ret, Some(Percent(100))).is_err());
+        assert!(set_tax_free(&db, ret, Some(TaxFreePart::Percent(Percent(100)))).is_err());
+        assert!(
+            set_tax_free(&db, ret, Some(TaxFreePart::Amount(Cents::from_dollars(-5)))).is_err()
+        );
         let pot = insert(
             &db,
             "ROTH",
@@ -1379,10 +1510,10 @@ mod tests {
             Some(TaxTreatment::TaxFree),
         )
         .unwrap();
-        let err = set_tax_free_percent(&db, pot, Some(Percent(20))).unwrap_err();
+        let err = set_tax_free(&db, pot, Some(TaxFreePart::Percent(Percent(20)))).unwrap_err();
         assert!(err.to_string().contains("Untaxed Pot"), "{err}");
         let everyday = insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
-        assert!(set_tax_free_percent(&db, everyday, Some(Percent(20))).is_err());
+        assert!(set_tax_free(&db, everyday, Some(TaxFreePart::Percent(Percent(20)))).is_err());
         assert!(
             db.conn
                 .execute(
@@ -1396,15 +1527,12 @@ mod tests {
 
     #[test]
     fn a_tax_label_names_a_mixed_account_by_its_tax_free_part() {
-        assert_eq!(tax_label(TaxTreatment::TaxDeferred, None), "Tax-deferred");
-        assert_eq!(
-            tax_label(TaxTreatment::TaxDeferred, Some(Percent(20))),
-            "20% tax-free"
-        );
-        assert_eq!(
-            tax_label(TaxTreatment::TaxFree, Some(Percent(20))),
-            "Tax-free"
-        );
+        let label = |t, bp| tax_label(t, BasisPoints(bp));
+        assert_eq!(label(TaxTreatment::TaxDeferred, 0), "Tax-deferred");
+        assert_eq!(label(TaxTreatment::TaxDeferred, 2_099), "20% tax-free");
+        assert_eq!(label(TaxTreatment::TaxDeferred, 40), "<1% tax-free");
+        assert_eq!(label(TaxTreatment::TaxDeferred, 10_000), "Tax-free");
+        assert_eq!(label(TaxTreatment::TaxFree, 2_000), "Tax-free");
     }
 
     #[test]

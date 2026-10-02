@@ -258,12 +258,13 @@ fn allocation_view(db: &Db, today: NaiveDate, accounts: &[account::Account]) -> 
         if holdings.is_empty() {
             continue;
         }
+        let balance = holdings.iter().map(|h| h.balance).sum();
         let held: Vec<Held<'_>> = holdings
             .iter()
             .map(|h| Held {
                 balance: h.balance,
                 treatment: account.tax_treatment,
-                tax_free: account.tax_free(),
+                tax_free: account.tax_free_share(balance),
                 mix: mixes.get(&h.ticker).map(|m| m.slices.as_slice()),
             })
             .collect();

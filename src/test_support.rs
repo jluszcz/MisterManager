@@ -89,7 +89,7 @@ fn account(id: i64, code: &str, kind: Kind) -> Account {
         // way it already overrides the color and the group.
         tax_treatment: (kind == Kind::Investment).then_some(TaxTreatment::Taxable),
         retirement: false,
-        tax_free_percent: None,
+        tax_free: None,
     }
 }
 

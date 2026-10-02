@@ -379,6 +379,20 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // Nothing to move: no account is part tax-free until the owner says so.
         data: None,
     },
+    Migration {
+        version: 17,
+        // The same tax-free part as a fixed amount, for an owner whose
+        // statement states the Roth side in dollars. One or the other, never
+        // both: the `CHECK` here is what makes the pair one fact, and the
+        // one writer sets both columns in one statement so it never meets it.
+        // An amount over the balance is allowed -- balances move -- and a
+        // reader caps it at the balance.
+        sql: "ALTER TABLE account ADD COLUMN tax_free_cents INTEGER \
+              CHECK (tax_free_cents IS NULL OR \
+                     (kind = 'investment' AND tax_free_cents > 0 AND tax_free_percent IS NULL))",
+        // Nothing to move: no amount is stored until the owner types one.
+        data: None,
+    },
 ];
 
 /// The last thing to tell an owner whose database this build will not open.

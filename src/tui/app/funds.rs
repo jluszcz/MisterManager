@@ -10,8 +10,9 @@ use crate::allocation::Class;
 use crate::config::ADD_SEC_CONTACT;
 use crate::db::account::{self, Kind};
 use crate::db::fund_mix;
-use crate::db::holding;
+use crate::db::{AccountId, holding};
 use crate::mix::{self, Refreshed};
+use crate::money::Cents;
 use crate::rate::BasisPoints;
 use crate::tui::cursor;
 use crate::tui::fund::{HoldingForm, Row};
@@ -204,6 +205,12 @@ impl App {
                 .collect(),
         );
 
+        // Per account rather than per row: a part is a share of what the
+        // whole account holds.
+        let mut balances: HashMap<AccountId, Cents> = HashMap::new();
+        for h in &holdings {
+            *balances.entry(h.account_id).or_default() += h.balance;
+        }
         let rows = holdings
             .into_iter()
             .map(|h| {
@@ -226,10 +233,12 @@ impl App {
                         .iter()
                         .find(|a| a.id == h.account_id)
                         .and_then(|a| a.tax_treatment),
-                    tax_free_percent: accounts
+                    tax_free: accounts
                         .iter()
                         .find(|a| a.id == h.account_id)
-                        .and_then(|a| a.tax_free_percent),
+                        .map_or(BasisPoints::ZERO, |a| {
+                            a.tax_free_share(balances[&h.account_id])
+                        }),
                 }
             })
             .collect();
