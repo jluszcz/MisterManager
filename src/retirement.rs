@@ -91,12 +91,20 @@ impl Retirement {
         Some((status, short_by))
     }
 
+    /// Short by the tax-free dollars today's total would hold at the band's
+    /// low end -- what would have to move across for the *share* to be on
+    /// target, not what new money would have to be added, which grows the
+    /// total it is a share of. Rounded up to the cent, so moving it is
+    /// enough. A different question from [`Retirement::tax_free_short`]'s,
+    /// which measures against a milestone's whole target rather than against
+    /// what is saved today.
     pub fn tax_free_status(&self) -> Option<(Status, Option<Cents>)> {
         let now = self.now()?;
         let status = calc::retirement::status(self.tax_free_share()?, now.tax_free);
-        let short_by = (status == Status::Short)
-            .then(|| self.tax_free_short(now))
-            .flatten();
+        let short_by = (status == Status::Short).then(|| {
+            let target = Cents((self.saved.0 * now.tax_free.low.0 + 9_999) / 10_000);
+            target - self.tax_free
+        });
         Some((status, short_by))
     }
 
@@ -110,16 +118,15 @@ impl Retirement {
         Some((low - self.saved).max(Cents::ZERO))
     }
 
-    /// The tax-free dollars today's total would hold at `row`'s low end,
-    /// less what it does -- what would have to move across, not what new
-    /// money would have to be added, which grows the total it is a share of.
-    /// Rounded up to the cent, so moving it is enough. Nothing when met, and
-    /// `None` over a total of nothing, which has no share to fall short in.
+    /// What today's tax-free savings fall short of `row`'s tax-free target
+    /// by: the low end of its tax-free share, of the low end of its dollar
+    /// target -- what that milestone asks to be held tax-free, less what is
+    /// today. Rounded up to the cent. Nothing when met, and `None` with no
+    /// salary to state the dollar target in.
     pub fn tax_free_short(&self, row: &Row) -> Option<Cents> {
-        (self.saved.0 > 0).then(|| {
-            let target = Cents((self.saved.0 * row.tax_free.low.0 + 9_999) / 10_000);
-            (target - self.tax_free).max(Cents::ZERO)
-        })
+        let low = row.saved_dollars?.low;
+        let target = Cents((low.0 * row.tax_free.low.0 + 9_999) / 10_000);
+        Some((target - self.tax_free).max(Cents::ZERO))
     }
 }
 
@@ -394,15 +401,20 @@ mod tests {
         assert_eq!(r.saved_short(by(37)), Some(Cents::ZERO));
         assert_eq!(r.saved_short(by(40)), Some(Cents::ZERO));
         assert_eq!(r.saved_short(by(45)), Some(Cents::from_dollars(100_000)));
-        // 45 asks 15% of today's 400,000 tax-free, 60,000, and 30,000 is.
-        assert_eq!(r.tax_free_short(by(45)), Some(Cents::from_dollars(30_000)));
+        // 45 asks 15% of its own 500,000 tax-free, 75,000, and 30,000 is --
+        // measured against the milestone's target, not today's total.
+        assert_eq!(r.tax_free_short(by(45)), Some(Cents::from_dollars(45_000)));
+        assert_eq!(no_salary_short(&r), None);
+    }
 
+    fn no_salary_short(r: &Retirement) -> Option<Cents> {
         let no_salary = Retirement {
             salary: None,
             rows: rows(Some(37), None),
             ..r.clone()
         };
         assert_eq!(no_salary.saved_short(&no_salary.rows[0]), None);
+        no_salary.tax_free_short(&no_salary.rows[0])
     }
 
     #[test]

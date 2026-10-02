@@ -188,8 +188,8 @@ is the holdings under investment accounts marked `Retirement` on screen `0`; `e`
 they are a multiple of and the birth date the age comes from. The top box says where you stand
 today — `Short` by how much, `On track` inside the range, or `Ahead` — and the table below runs
 from your age to 55, leaving out the milestones already behind you, each with what today's
-savings fall short of it — no growth assumed, so a later milestone reads as everything still to
-save for it. An account that is only partly
+savings fall short of it — the dollar target, and the tax-free share of that target — with no
+growth assumed, so a later milestone reads as everything still to save for it. An account that is only partly
 tax-free, a workplace plan with a Roth side, takes its tax-free part on screen `0`, as a percentage
 or as a dollar amount — typing into either works out the other from what the account holds, and
 the one you typed last is what is kept. That part counts as tax-free here and in the Funds screen's tax columns. The report

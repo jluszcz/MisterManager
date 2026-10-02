@@ -212,9 +212,9 @@ mod tests {
         assert!(screen.contains("100.00%"), "{screen}");
 
         // Each milestone's shortfall against today's $330,000 -- 45 asks
-        // $500,000 and 15% of today's total, $49,500 tax-free.
+        // $500,000, and 15% of that, $75,000, tax-free.
         let by_45 = screen.lines().find(|l| l.contains("By 45")).unwrap();
         assert!(by_45.contains("$170,000"), "{by_45}");
-        assert!(by_45.contains("$49,500"), "{by_45}");
+        assert!(by_45.contains("$75,000"), "{by_45}");
     }
 }
