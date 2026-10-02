@@ -10,7 +10,14 @@ mm --demo     # the same, with figures and names disguised (needs --features dem
 mm report     # write the HTML report without opening the application
 mm mixes      # refresh what each fund you hold is made of, from SEC
 mm import ... # load a Money.xlsx workbook (needs --features import)
+mm --scratch  # run against a throwaway copy of the default database
 ```
+
+`--scratch` snapshots the default database into a fresh directory under the system temp dir,
+readable only by you, and runs against that, so a new migration can be tried on real data before it touches the real file.
+It combines with any subcommand but `backup`, prints the copy's path, and leaves the copy behind
+for inspection. A scratch run skips the scheduled backup and the quit path's report, since either
+would be indistinguishable from the real database's.
 
 Screens are `1` Overview, `2` Cash, `3` Credit, `4` Savings, `5` Planning, `6` Funds,
 `7` Recurring Goals, `8` Recurring Txns, `9` Accounts; `q` quits. **`?` opens the key reference for
