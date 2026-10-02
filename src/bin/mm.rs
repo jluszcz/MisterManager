@@ -13,6 +13,12 @@ struct Cli {
     /// Database file. Defaults to ~/.local/share/mistermanager/money.db
     #[arg(long, global = true)]
     db: Option<PathBuf>,
+    /// Run against a copy of the default database in a fresh temporary
+    /// directory, leaving the real one untouched -- for trying a migration
+    /// before it reaches the file that matters. The copy is left behind and
+    /// its path printed, so it can be inspected afterwards.
+    #[arg(long, global = true, conflicts_with = "db")]
+    scratch: bool,
     /// Treat this date as today. Defaults to the system date.
     #[arg(long, global = true)]
     today: Option<NaiveDate>,
@@ -98,11 +104,29 @@ fn main() -> Result<()> {
     // Read before `cli.db` and `cli.config` are moved out below, which a
     // method call on `&cli` cannot follow -- a field read can.
     let demo = cli.demo();
+    let scratch = cli.scratch;
+    let is_explicit_backup = matches!(cli.command, Some(Command::Backup(_)));
+    // Refused before the copy is made: a throwaway copy has nothing worth
+    // restoring, and an upload of one would sit in the bucket beside the
+    // real backups looking like one.
+    if scratch && is_explicit_backup {
+        anyhow::bail!("--scratch cannot be backed up: drop the flag to back up the real database");
+    }
     // Whether the schedule applies is a question about *which* database this
-    // is, so it is asked before the option is collapsed into a path.
-    let is_default_db = cli.db.is_none();
+    // is, so it is asked before the option is collapsed into a path. A
+    // scratch copy is no more the default database than a `--db` is.
+    let is_default_db = cli.db.is_none() && !scratch;
     let path = match cli.db {
         Some(p) => p,
+        // `db::snapshot` opens nothing through `db::open`, so the copy keeps
+        // the schema version the original has and this run is the one that
+        // migrates it.
+        None if scratch => {
+            let copy =
+                jluszcz_finance_utils::scratch::copy(BACKUP.app, &default_db()?, db::snapshot)?;
+            eprintln!("scratch database: {}", copy.display());
+            copy
+        }
         None => default_db()?,
     };
     let today = cli.today.unwrap_or_else(|| Local::now().date_naive());
@@ -115,14 +139,17 @@ fn main() -> Result<()> {
     // on a terminal that is still in its normal mode.
     let cfg = config::load(&config_path)?;
 
-    let is_explicit_backup = matches!(cli.command, Some(Command::Backup(_)));
     match cli.command {
         // No subcommand launches the application. `--db` and `--today` are
         // global, so the TUI honors them exactly as the importer does.
         None => {
             let sec_contact = cfg.sec.as_ref().map(|s| s.contact.clone());
             let db = tui::run(db::open(&path)?, today, demo, sec_contact)?;
-            write_report(&db, &cfg, today, demo);
+            // The page lives at one path whichever database wrote it, so a
+            // scratch run would overwrite the real report with its own.
+            if !scratch {
+                write_report(&db, &cfg, today, demo);
+            }
         }
         #[cfg(feature = "import")]
         Some(Command::Import { workbook, replace }) => {
