@@ -360,6 +360,25 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // Nothing to move: no account is retirement until the owner says so.
         data: None,
     },
+    Migration {
+        version: 16,
+        // The part of an investment account held tax-free inside a treatment
+        // that is otherwise not -- a workplace plan with a Roth side. A typed
+        // whole percentage rather than a figure, because the owner reads it
+        // off a statement and nothing here records the two sides' balances.
+        // Strictly between the ends: 0 is no tax-free part, which is `NULL`,
+        // and 100 is the `tax_free` treatment itself.
+        //
+        // Not paired with `tax_treatment` in the `CHECK`: a treatment changed
+        // to `tax_free` under a percentage would then have to clear it in the
+        // same write, and every reader already takes `tax_free` as the whole
+        // balance whatever this says.
+        sql: "ALTER TABLE account ADD COLUMN tax_free_percent INTEGER \
+              CHECK (tax_free_percent IS NULL OR \
+                     (kind = 'investment' AND tax_free_percent BETWEEN 1 AND 99))",
+        // Nothing to move: no account is part tax-free until the owner says so.
+        data: None,
+    },
 ];
 
 /// The last thing to tell an owner whose database this build will not open.

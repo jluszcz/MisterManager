@@ -73,6 +73,7 @@ impl App {
                 group: account.group,
                 policy: account::interest_policy(&self.db, account.id)?,
                 tax: account.tax_treatment,
+                tax_free: account.tax_free_percent,
                 block: block_of(&containers, account.id),
                 defaults: sources_of(&defaults, account.id),
                 invests: investment == Some(account.id),
@@ -251,6 +252,10 @@ impl App {
         // reaches the call.
         if let Some(treatment) = edit.tax_treatment {
             account::set_tax_treatment(&self.db, id, treatment)?;
+        }
+        // After the treatment, which decides whether a part is allowed.
+        if let Some(percent) = edit.tax_free_percent {
+            account::set_tax_free_percent(&self.db, id, percent)?;
         }
         if let Some(retirement) = edit.retirement {
             account::set_retirement(&self.db, id, retirement)?;
@@ -588,6 +593,40 @@ mod tests {
             account::get(&app.db, id).unwrap().tax_treatment,
             Some(TaxTreatment::TaxDeferred)
         );
+    }
+
+    #[test]
+    fn editing_an_investment_account_saves_its_tax_free_part() {
+        let mut app = app();
+        let id = account::insert(
+            &app.db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxDeferred),
+        )
+        .unwrap();
+        app.reload().unwrap();
+
+        press(&mut app, KeyCode::Char('9'));
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.accounts.selected().unwrap().account.id(), id);
+        press(&mut app, KeyCode::Char('e'));
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Account(f))
+                if f.focus == accounts_screen::AccountField::TaxFree),
+            press(&mut app, KeyCode::Tab)
+        );
+        type_str(&mut app, "20");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        assert_eq!(
+            account::get(&app.db, id).unwrap().tax_free_percent,
+            Some(crate::rate::Percent(20))
+        );
+        assert!(drawn(&mut app).contains("20% tax-free"));
     }
 
     #[test]

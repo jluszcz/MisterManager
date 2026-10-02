@@ -12,7 +12,7 @@ use crate::db::account::{self, TaxTreatment};
 use crate::db::setting::{self, key};
 use crate::db::{Db, holding};
 use crate::money::Cents;
-use crate::rate::BasisPoints;
+use crate::rate::{BasisPoints, Percent};
 use anyhow::Result;
 use chrono::NaiveDate;
 
@@ -20,10 +20,27 @@ use chrono::NaiveDate;
 pub struct Held {
     pub account: Account,
     pub treatment: TaxTreatment,
+    /// The part of `balance` held tax-free, through
+    /// [`account::Account::tax_free`] -- all of it under the `tax_free`
+    /// treatment.
+    pub tax_free: Percent,
     pub balance: Cents,
 }
 
 impl Held {
+    /// What of `balance` counts as tax-free, truncated to the cent.
+    pub fn tax_free_balance(&self) -> Cents {
+        self.tax_free.of(self.balance)
+    }
+
+    /// What a Tax column prints for this account.
+    pub fn tax_label(&self) -> String {
+        account::tax_label(
+            self.treatment,
+            (self.tax_free != Percent::ZERO).then_some(self.tax_free),
+        )
+    }
+
     /// Floored to the basis point, so a column of these may sum a hundredth
     /// short of 100.00 -- drawn beside the balances it came from, which do
     /// foot.
@@ -133,6 +150,7 @@ pub fn load(db: &Db, today: NaiveDate) -> Result<Retirement> {
             treatment: a.tax_treatment.expect(
                 "schema CHECK pairs retirement with an investment kind, which has a treatment",
             ),
+            tax_free: a.tax_free(),
             balance: holding::list_for_account(db, a.id)?
                 .iter()
                 .map(|h| h.balance)
@@ -140,11 +158,7 @@ pub fn load(db: &Db, today: NaiveDate) -> Result<Retirement> {
         });
     }
     let saved = held.iter().map(|h| h.balance).sum();
-    let tax_free = held
-        .iter()
-        .filter(|h| h.treatment == TaxTreatment::TaxFree)
-        .map(|h| h.balance)
-        .sum();
+    let tax_free = held.iter().map(Held::tax_free_balance).sum();
     Ok(Retirement {
         age,
         salary,
@@ -212,6 +226,22 @@ mod tests {
         assert_eq!(r.held.len(), 2, "the unmarked brokerage is not listed");
         // 40,000 / 340,000 = 11.76...%, floored to the basis point.
         assert_eq!(r.tax_free_share(), Some(BasisPoints(1_176)));
+    }
+
+    #[test]
+    fn a_tax_free_part_of_a_mixed_account_counts_toward_tax_free() {
+        let db = db::open_in_memory().unwrap();
+        let long_haul = retirement_account(&db, "RET", "Long Haul", TaxTreatment::TaxDeferred);
+        account::set_tax_free_percent(&db, long_haul, Some(Percent(20))).unwrap();
+        holding::insert(&db, long_haul, "TDF45", Cents::from_dollars(300_000)).unwrap();
+        let pot = retirement_account(&db, "ROTH", "Untaxed Pot", TaxTreatment::TaxFree);
+        holding::insert(&db, pot, "USM", Cents::from_dollars(40_000)).unwrap();
+
+        let r = load(&db, today()).unwrap();
+        // 20% of 300,000, and all of 40,000.
+        assert_eq!(r.tax_free, Cents::from_dollars(100_000));
+        assert_eq!(r.held[0].tax_label(), "20% tax-free");
+        assert_eq!(r.held[1].tax_label(), "Tax-free");
     }
 
     /// No `fund_mix` row is written anywhere in this file: a balance needs

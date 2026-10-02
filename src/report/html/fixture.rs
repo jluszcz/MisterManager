@@ -254,6 +254,7 @@ pub(super) fn funds(targets: Targets) -> Allocation {
             .map(|h| crate::allocation::Held {
                 balance: Cents::from_dollars(h.dollars),
                 treatment: treatment(h.account),
+                tax_free: Percent::ZERO,
                 mix: h.filed.map(|(mix, _)| mix),
             })
             .collect();

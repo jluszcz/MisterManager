@@ -380,6 +380,7 @@ mod tests {
             color,
             tax_treatment: None,
             retirement: false,
+            tax_free_percent: None,
         }
     }
 

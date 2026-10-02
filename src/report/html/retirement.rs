@@ -6,6 +6,8 @@ use super::{account, escape, whole_money};
 use crate::calc::retirement::{self, BAND_DASH, Band, Status};
 use crate::money::Cents;
 use crate::palette;
+#[cfg(test)]
+use crate::rate::Percent;
 use crate::retirement::Retirement;
 
 /// What a figure that cannot be stated draws as -- the screen's word too.
@@ -122,7 +124,7 @@ fn accounts(r: &Retirement) -> String {
             format!(
                 "<tr><td>{}</td><td>{}</td>{}<td class=\"n\">{share}</td></tr>",
                 account(&h.account),
-                escape(h.treatment.label()),
+                escape(&h.tax_label()),
                 whole_money(h.balance)
             )
         })
@@ -177,6 +179,7 @@ mod tests {
             held: vec![Held {
                 account: crate::account_label::Account::named(&accounts, AccountId(3)),
                 treatment: TaxTreatment::TaxDeferred,
+                tax_free: Percent::ZERO,
                 balance: saved,
             }],
             rows: rows(Some(37), Some(salary)),

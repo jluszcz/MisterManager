@@ -692,6 +692,7 @@ mod tests {
             color: None,
             tax_treatment: None,
             retirement: false,
+            tax_free_percent: None,
         });
         all.push(account::Account {
             id: AccountId(4),
@@ -703,6 +704,7 @@ mod tests {
             color: None,
             tax_treatment: None,
             retirement: false,
+            tax_free_percent: None,
         });
         all
     }

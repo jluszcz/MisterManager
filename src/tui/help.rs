@@ -462,9 +462,9 @@ const FUNDS: [Entry; 9] = [
 /// run and what survives it would be answering a question that build cannot
 /// be asked. What is left is true of both, and is what the key does.
 #[cfg(feature = "import")]
-const ACCOUNT_EDIT: &str = "Edit the selected account: its name, color and Overview band; for a cash account, how interest is divided, which Savings block it holds (what the first mm import waits on), and whether 't' and 'p' open on it; for an investment account, its tax treatment, whether it counts as retirement, and whether the Investment line buys into it. The code and the kind are set by 'a'. All of it survives a --replace.";
+const ACCOUNT_EDIT: &str = "Edit the selected account: its name, color and band; for a cash account, how interest is divided, which Savings block it holds (what the first mm import waits on), and whether 't' and 'p' open on it; for an investment account, its tax treatment and tax-free part, whether it is retirement, and whether the Investment line buys into it. The code and the kind are set by 'a'. All of it survives a --replace.";
 #[cfg(not(feature = "import"))]
-const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its color, its Overview band, and -- for a cash account -- how an interest posting is divided, which block of the Savings sheet it is the container for, and whether 't' and 'p' open on it; for an investment account, its tax treatment, whether it counts as retirement, and whether the Investment line buys into it. The code and the kind are set by 'a', not here.";
+const ACCOUNT_EDIT: &str = "Edit the selected account: its name, its color, its Overview band, and -- for a cash account -- how an interest posting is divided, which block of the Savings sheet it is the container for, and whether 't' and 'p' open on it; for an investment account, its tax treatment and tax-free part, whether it is retirement, and whether the Investment line buys into it. The code and the kind are set by 'a', not here.";
 
 /// Three keys, and no `d`. An account is created here or by the workbook
 /// naming it, and deleting one would orphan every transaction, goal and

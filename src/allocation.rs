@@ -21,7 +21,7 @@ use crate::calc::fund::Targets;
 use crate::db::account::TaxTreatment;
 use crate::db::fund_mix::{AssetClass, Slice};
 use crate::money::Cents;
-use crate::rate::BasisPoints;
+use crate::rate::{BasisPoints, Percent};
 
 /// The four groups the summary draws, in the order it draws them: the share
 /// the age rule actually moves, the two equities it splits the rest between,
@@ -220,6 +220,11 @@ pub fn weight(slices: &[Slice], class: AssetClass) -> BasisPoints {
 pub struct Held<'a> {
     pub balance: Cents,
     pub treatment: Option<TaxTreatment>,
+    /// The part of `balance` held tax-free inside `treatment`, which
+    /// apportions to the tax-free column rather than to `treatment`'s. Read
+    /// off [`crate::db::account::tax_free`], so a `tax_free` treatment is
+    /// all of it.
+    pub tax_free: Percent,
     pub mix: Option<&'a [Slice]>,
 }
 
@@ -286,18 +291,27 @@ pub fn apportion(holdings: &[Held<'_>]) -> Allocation {
     // leftover inside what the method can divide. The gap a mix itself left
     // rides in the same unit, being the same arithmetic about the same
     // balance.
+    //
+    // Scaled by a hundred again, so a holding split between its treatment's
+    // column and the tax-free one by a whole percentage stays exact too.
     let mut scaled = [[0i128; COLUMNS]; AssetClass::ALL.len()];
     let mut basis = 0i128;
     for held in holdings {
         let Some(mix) = held.mix else { continue };
-        let column = column(held.treatment);
-        basis += i128::from(held.balance.0);
-        for slice in mix {
-            scaled[slice.class.index()][column] +=
-                i128::from(held.balance.0) * i128::from(slice.weight.0);
-        }
+        let free = i128::from(held.tax_free.0.clamp(0, 100));
+        let parts = [
+            (column(held.treatment), 100 - free),
+            (TaxTreatment::TaxFree.index(), free),
+        ];
+        let balance = i128::from(held.balance.0);
+        basis += balance * 100;
         let unplaced = whole - mix.iter().map(|s| i128::from(s.weight.0)).sum::<i128>();
-        scaled[AssetClass::Unclassified.index()][column] += i128::from(held.balance.0) * unplaced;
+        for (column, part) in parts {
+            for slice in mix {
+                scaled[slice.class.index()][column] += balance * i128::from(slice.weight.0) * part;
+            }
+            scaled[AssetClass::Unclassified.index()][column] += balance * unplaced * part;
+        }
     }
 
     let mut allocation = Allocation {
@@ -691,6 +705,7 @@ mod tests {
         Held {
             balance: Cents::from_dollars(dollars),
             treatment: Some(TaxTreatment::Taxable),
+            tax_free: Percent::ZERO,
             mix,
         }
     }
@@ -733,6 +748,7 @@ mod tests {
         let held = [Held {
             balance: Cents(100),
             treatment: Some(TaxTreatment::Taxable),
+            tax_free: Percent::ZERO,
             mix: Some(mix.as_slice()),
         }];
         let allocation = apportion(&held);
@@ -845,6 +861,7 @@ mod tests {
         let held = [Held {
             balance: Cents(10_001),
             treatment: Some(TaxTreatment::Taxable),
+            tax_free: Percent::ZERO,
             mix: Some(thirds.as_slice()),
         }];
         let allocation = apportion(&held);
@@ -920,11 +937,13 @@ mod tests {
             Held {
                 balance: Cents::from_dollars(5_000),
                 treatment: Some(TaxTreatment::Taxable),
+                tax_free: Percent::ZERO,
                 mix: Some(bond.as_slice()),
             },
             Held {
                 balance: Cents::from_dollars(3_000),
                 treatment: Some(TaxTreatment::TaxDeferred),
+                tax_free: Percent::ZERO,
                 mix: Some(intl.as_slice()),
             },
         ];
@@ -960,6 +979,32 @@ mod tests {
         );
     }
 
+    /// A mixed account's tax-free part lands in the tax-free column and the
+    /// rest in its own treatment's, and the grid still foots.
+    #[test]
+    fn a_tax_free_part_splits_a_holding_across_two_columns() {
+        let (bond, _) = portfolio();
+        let held = [Held {
+            balance: Cents::from_dollars(10_000),
+            treatment: Some(TaxTreatment::TaxDeferred),
+            tax_free: Percent(20),
+            mix: Some(bond.as_slice()),
+        }];
+        let allocation = apportion(&held);
+        assert_eq!(
+            allocation.treatment_total(TaxTreatment::TaxFree),
+            BasisPoints(2_000)
+        );
+        assert_eq!(
+            allocation.treatment_total(TaxTreatment::TaxDeferred),
+            BasisPoints(8_000)
+        );
+        assert_eq!(
+            allocation.treatment_total(TaxTreatment::Taxable),
+            BasisPoints::ZERO
+        );
+    }
+
     /// A holding whose account states no treatment is in the portfolio and
     /// in none of the columns, so the three visibly sum short rather than
     /// landing somewhere the database never said.
@@ -970,11 +1015,13 @@ mod tests {
             Held {
                 balance: Cents::from_dollars(5_000),
                 treatment: Some(TaxTreatment::Taxable),
+                tax_free: Percent::ZERO,
                 mix: Some(bond.as_slice()),
             },
             Held {
                 balance: Cents::from_dollars(5_000),
                 treatment: None,
+                tax_free: Percent::ZERO,
                 mix: Some(bond.as_slice()),
             },
         ];

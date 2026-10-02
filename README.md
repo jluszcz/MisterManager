@@ -203,8 +203,10 @@ Retirement savings against an age rule: 3× salary and 10% of it tax-free by 35,
 is the holdings under investment accounts marked `Retirement` on screen `9`; `e` sets the salary
 they are a multiple of and the birth date the age comes from. The top box says where you stand
 today — `Short` by how much, `On track` inside the range, or `Ahead` — and the table below runs
-from your age to 55, leaving out the milestones already behind you. A `~` marks a row outside 35–45,
-where the lines are a guess. The report carries the same page as its last tab.
+from your age to 55, leaving out the milestones already behind you. An account that is only partly
+tax-free, a workplace plan with a Roth side, takes its tax-free part as a percentage on screen `9`:
+that share of its balance counts as tax-free here and in the Funds screen's tax columns. The report
+carries the same page as its last tab.
 
 ### Typing
 
@@ -263,7 +265,7 @@ steps — the mapping is read before anything is cleared and written back
 after, so `--replace` cannot reopen it.
 
 The accounts arrive named after their codes, in the kind's default band. The
-name, color, band, position, interest policy, tax treatment, `Savings` block
+name, color, band, position, interest policy, tax treatment and tax-free part, `Savings` block
 and which of the two money forms open on the account are all yours, set on
 screen `9`, and no import touches them again: `account` is deliberately outside the tables a
 `--replace` clears. Neither is `recurring_txn` — the rules you typed, and the

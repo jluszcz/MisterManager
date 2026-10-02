@@ -263,6 +263,7 @@ fn allocation_view(db: &Db, today: NaiveDate, accounts: &[account::Account]) -> 
             .map(|h| Held {
                 balance: h.balance,
                 treatment: account.tax_treatment,
+                tax_free: account.tax_free(),
                 mix: mixes.get(&h.ticker).map(|m| m.slices.as_slice()),
             })
             .collect();

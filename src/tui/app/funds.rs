@@ -226,6 +226,10 @@ impl App {
                         .iter()
                         .find(|a| a.id == h.account_id)
                         .and_then(|a| a.tax_treatment),
+                    tax_free_percent: accounts
+                        .iter()
+                        .find(|a| a.id == h.account_id)
+                        .and_then(|a| a.tax_free_percent),
                 }
             })
             .collect();

@@ -380,6 +380,16 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   paired `CHECK` is the backstop for and the Accounts screen's conditional field is the guard.
   `account::set_tax_treatment` is its one writer, for the reason `set_interest_policy` is its
   column's.
+- **`account.tax_free_percent` is the tax-free part of an account taxed otherwise, and is read
+  through `Account::tax_free`, never directly.** A whole percentage strictly between 0 and 100 —
+  none is `NULL` and all of it is the `tax_free` treatment — typed by the owner off a statement, so
+  it goes stale as the two sides grow apart and nothing here can notice. It is deliberately not
+  paired with `tax_treatment` in the `CHECK`: a treatment switched to `tax_free` under a percentage
+  leaves the column standing, and `tax_free` reads that as all of it whatever the column says.
+  Both readers of a tax split take it — `crate::retirement`'s tax-free total and
+  `allocation::apportion`'s grid, which puts that part of each holding in the tax-free column — so
+  one account is never tax-free on one screen and not on the other. `set_tax_free_percent` is the
+  one writer.
 - **`account.retirement` is the owner's, investment-only, and the whole of what "retirement
   savings" means.** Only an investment account can carry it — the schema's `CHECK` is the backstop
   and `account::set_retirement` the one writer, for `set_tax_treatment`'s reason — and `account`

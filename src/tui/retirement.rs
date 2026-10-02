@@ -146,7 +146,7 @@ fn account_table(r: &Retirement) -> Table<'static> {
             .unwrap_or_else(|| ABSENT.to_string());
         Row::new(vec![
             super::account_cell(&h.account),
-            super::tax_treatment_cell(Some(h.treatment)),
+            Cell::from(h.tax_label()),
             super::whole_amount(h.balance),
             Cell::from(Line::from(share).right_aligned()),
         ])
@@ -155,7 +155,7 @@ fn account_table(r: &Retirement) -> Table<'static> {
         rows,
         [
             Constraint::Min(20),
-            Constraint::Length(14),
+            super::label_width("Tax", super::tax_labels()),
             Constraint::Length(14),
             Constraint::Length(9),
         ],

@@ -1,4 +1,5 @@
 use super::{AccountId, Db};
+use crate::rate::Percent;
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::{OptionalExtension, Result as SqlResult, Row, ToSql, params};
@@ -402,6 +403,38 @@ pub struct Account {
     /// Whether the Retirement screen counts this account. Only ever `true` on
     /// an investment account, which the schema's `CHECK` holds.
     pub retirement: bool,
+    /// The part of the balance held tax-free inside a treatment that is
+    /// otherwise not; `None` is none of it. Read through [`Account::tax_free`]
+    /// rather than directly, which is where a `tax_free` treatment overrides
+    /// it.
+    pub tax_free_percent: Option<Percent>,
+}
+
+impl Account {
+    /// How much of this account is held tax-free: all of it under the
+    /// `tax_free` treatment, whatever a percentage left from an earlier
+    /// treatment says, and otherwise the typed part of it.
+    pub fn tax_free(&self) -> Percent {
+        tax_free(self.tax_treatment, self.tax_free_percent)
+    }
+}
+
+/// [`Account::tax_free`] for a caller holding the two columns rather than
+/// the row.
+pub fn tax_free(treatment: Option<TaxTreatment>, percent: Option<Percent>) -> Percent {
+    match treatment {
+        Some(TaxTreatment::TaxFree) => Percent::ONE_HUNDRED,
+        _ => percent.unwrap_or(Percent::ZERO),
+    }
+}
+
+/// What a sink prints in a Tax column: the treatment, or `20% tax-free`
+/// for one with a tax-free part.
+pub fn tax_label(treatment: TaxTreatment, percent: Option<Percent>) -> String {
+    match (treatment, percent) {
+        (TaxTreatment::TaxFree, _) | (_, None) => treatment.label().to_string(),
+        (_, Some(p)) => format!("{}% tax-free", p.0),
+    }
 }
 
 fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
@@ -427,6 +460,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
                 .expect("schema CHECK guarantees a valid tax treatment")
         }),
         retirement: row.get(8)?,
+        tax_free_percent: row.get::<_, Option<i64>>(9)?.map(Percent),
     })
 }
 
@@ -435,7 +469,8 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Account> {
 macro_rules! select_account {
     ($tail:literal) => {
         concat!(
-            "SELECT id, code, name, kind, sort, grp, color, tax_treatment, retirement FROM account ",
+            "SELECT id, code, name, kind, sort, grp, color, tax_treatment, retirement, \
+             tax_free_percent FROM account ",
             $tail
         )
     };
@@ -745,6 +780,35 @@ pub fn set_tax_treatment(db: &Db, id: AccountId, treatment: TaxTreatment) -> Res
     db.conn.execute(
         "UPDATE account SET tax_treatment = ?2 WHERE id = ?1",
         params![id, treatment.as_str()],
+    )?;
+    Ok(())
+}
+
+/// The one writer of `account.tax_free_percent`, separate for
+/// `set_tax_treatment`'s reason. `None` and 0% are one state, stored as
+/// `NULL`; 100% is refused rather than stored, being the `tax_free` treatment
+/// under another name, and so is any part on an account that already has it.
+pub fn set_tax_free_percent(db: &Db, id: AccountId, percent: Option<Percent>) -> Result<()> {
+    let account = get(db, id)?;
+    let name = crate::demo::text(account.name.as_str());
+    ensure!(
+        account.kind == Kind::Investment,
+        "{name} is not an investment account, so none of it is tax-free"
+    );
+    let percent = percent.filter(|p| *p != Percent::ZERO);
+    if let Some(p) = percent {
+        ensure!(
+            account.tax_treatment != Some(TaxTreatment::TaxFree),
+            "{name} is already wholly tax-free"
+        );
+        ensure!(
+            (1..=99).contains(&p.0),
+            "the tax-free part must be under 100% -- for all of it, set the treatment to Tax-free"
+        );
+    }
+    db.conn.execute(
+        "UPDATE account SET tax_free_percent = ?2 WHERE id = ?1",
+        params![id, percent.map(|p| p.0)],
     )?;
     Ok(())
 }
@@ -1267,6 +1331,80 @@ mod tests {
         let err = set_tax_treatment(&db, everyday, TaxTreatment::Taxable).unwrap_err();
         assert!(err.to_string().contains("Everyday"), "{err}");
         assert_eq!(get(&db, everyday).unwrap().tax_treatment, None);
+    }
+
+    #[test]
+    fn a_tax_free_part_is_stored_cleared_by_zero_and_overridden_by_the_tax_free_treatment() {
+        let db = db::open_in_memory().unwrap();
+        let id = insert(
+            &db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxDeferred),
+        )
+        .unwrap();
+        assert_eq!(get(&db, id).unwrap().tax_free(), Percent::ZERO);
+        set_tax_free_percent(&db, id, Some(Percent(20))).unwrap();
+        assert_eq!(get(&db, id).unwrap().tax_free_percent, Some(Percent(20)));
+        assert_eq!(get(&db, id).unwrap().tax_free(), Percent(20));
+
+        set_tax_treatment(&db, id, TaxTreatment::TaxFree).unwrap();
+        assert_eq!(get(&db, id).unwrap().tax_free(), Percent::ONE_HUNDRED);
+
+        set_tax_free_percent(&db, id, Some(Percent::ZERO)).unwrap();
+        assert_eq!(get(&db, id).unwrap().tax_free_percent, None);
+    }
+
+    #[test]
+    fn set_tax_free_percent_refuses_all_of_it_another_kind_and_a_tax_free_account() {
+        let db = db::open_in_memory().unwrap();
+        let ret = insert(
+            &db,
+            "RET",
+            "Long Haul",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxDeferred),
+        )
+        .unwrap();
+        assert!(set_tax_free_percent(&db, ret, Some(Percent(100))).is_err());
+        let pot = insert(
+            &db,
+            "ROTH",
+            "Untaxed Pot",
+            Kind::Investment,
+            0,
+            Some(TaxTreatment::TaxFree),
+        )
+        .unwrap();
+        let err = set_tax_free_percent(&db, pot, Some(Percent(20))).unwrap_err();
+        assert!(err.to_string().contains("Untaxed Pot"), "{err}");
+        let everyday = insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        assert!(set_tax_free_percent(&db, everyday, Some(Percent(20))).is_err());
+        assert!(
+            db.conn
+                .execute(
+                    "UPDATE account SET tax_free_percent = 20 WHERE id = ?1",
+                    params![everyday]
+                )
+                .is_err(),
+            "the schema let a cash account carry a tax-free part"
+        );
+    }
+
+    #[test]
+    fn a_tax_label_names_a_mixed_account_by_its_tax_free_part() {
+        assert_eq!(tax_label(TaxTreatment::TaxDeferred, None), "Tax-deferred");
+        assert_eq!(
+            tax_label(TaxTreatment::TaxDeferred, Some(Percent(20))),
+            "20% tax-free"
+        );
+        assert_eq!(
+            tax_label(TaxTreatment::TaxFree, Some(Percent(20))),
+            "Tax-free"
+        );
     }
 
     #[test]
