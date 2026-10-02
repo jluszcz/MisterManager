@@ -63,6 +63,11 @@ about a figure, one of them is wrong.
   it addresses, since the sibling combinator only looks forward. A control
   whose rules are generated -- the months, whose set is a fact about the
   database -- generates them from the same list that generates its markup.
+  **Below `html::NARROW` the tab bar becomes a menu**, since seven labels no
+  longer fit one line. The menu is a radio in the tabs' own group rather than a
+  checkbox: choosing a tab unchecks it by being in the same group, which is the
+  only way a page with no script can close a menu once something is picked.
+  While it is open no tab is checked, so the open menu is the whole page.
 - **The Cash and Credit tabs carry every transaction, where the screens carry
   a window.** `tui::ledger::Window` exists because a terminal shows one screen
   at a time and `[`/`]` move it; a page is scrolled and filtered instead, and a
@@ -125,6 +130,10 @@ about a figure, one of them is wrong.
   `html::money` makes from a `Cents`. **The class labels stay plain and the legend stays**, where
   the screen tints its labels and drops its legend: this page has the width for a legend under the
   bar and a terminal does not. Either way a class is named in its own color exactly once.
+- **Two tabs leave off columns their screens carry, because a phone cannot fit them.** Funds draws
+  the summary's Class, Target, Actual and Δ and not the three tax columns; Savings draws no
+  `$/Pay`. Each is a figure spent at the screen -- where a holding sits, what a payday prefills --
+  rather than one read off the page, and it is the dropped column the screen still answers.
 - **The page has no `Tab`, so the accounts are stacked sections instead.** The screen narrows its
   summary and its holdings together with one key; a page has no key, and a reader scrolls. Each
   section carries both halves for that reason, and its summary is absent where the account has no
@@ -139,7 +148,10 @@ about a figure, one of them is wrong.
 - **The Retirement tab is a spelling of screen 8**, and is last because the tabs run in key order
   and the report carries none of the screens numbered after it. It reads `crate::retirement` and decides only
   what this medium has to — a status's color as an inline style off `palette::standing`, and a `$`
-  on the figures written into prose, where a cell's column header cannot say they are dollars.
+  on every dollar figure, cells included, because its tables set balances beside multiples and
+  shares and a bare `1,253,067` under `Balance` is one header away from reading as either. Its
+  milestone table is four columns of bands, which refuse to wrap — a band broken at its dash reads
+  as two figures — so below the narrow breakpoint that table alone takes a smaller face and tighter padding.
 - **A cell says what it may do with its width, and a table never widens past the
   phone.** Three classes carry it: `n` is a figure and `d` a date, and neither
   wraps — a comma and a hyphen are both break opportunities, and a column narrow
@@ -156,8 +168,8 @@ about a figure, one of them is wrong.
   and not on a wrapper around each table because the month filter reaches its
   rows as `#month:checked~table.ledger`, and a `<div>` between those two would
   leave the dropdown showing nothing. The table face and its
-  padding are set by the widest tab rather than by the prettiest: Savings is six
-  columns, one dated and three of them money, inside the 361px a phone leaves.
+  padding are set by the widest tab rather than by the prettiest: Savings is five
+  columns, one dated and two of them money, inside the 361px a phone leaves.
 - **The report is renamed onto its name, never written to it.** A sync client
   watching the directory will upload a half-written page, and a phone would then
   show a report that ends mid-table with no sign that it had. The temporary file

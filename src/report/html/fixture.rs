@@ -422,3 +422,42 @@ pub(super) fn row_column_counts(table: &str) -> Vec<usize> {
     }
     out
 }
+
+/// The headers in one table set differently from the column under them: a
+/// header that is not `n` over a column whose every body cell is, or the
+/// reverse. A spanning cell is in no single column, so a row carrying one is
+/// left out of the reading; an empty header labels nothing to align.
+pub(super) fn misaligned_headers(table: &str) -> Vec<String> {
+    let is_n = |attrs: &str| attrs.contains("class=\"n\"");
+    let mut rows = Vec::new();
+    let mut rest = table;
+    while let Some(start) = rest.find("<tr") {
+        let after = &rest[start..];
+        let end = after.find("</tr>").expect("a <tr> with no </tr>");
+        if !after[..end].contains("colspan") {
+            rows.push(cells(&after[..end]));
+        }
+        rest = &after[end + "</tr>".len()..];
+    }
+    let Some((header, body)) = rows.split_first() else {
+        return Vec::new();
+    };
+    if body.is_empty() {
+        return Vec::new();
+    }
+    header
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, text))| !text.is_empty())
+        .filter(|(i, (attrs, _))| {
+            let column_n = body
+                .iter()
+                .all(|row| row.get(*i).is_some_and(|(a, _)| is_n(a)));
+            let column_left = body
+                .iter()
+                .all(|row| row.get(*i).is_some_and(|(a, _)| !is_n(a)));
+            (column_n && !is_n(attrs)) || (column_left && is_n(attrs))
+        })
+        .map(|(_, (_, text))| text.to_string())
+        .collect()
+}

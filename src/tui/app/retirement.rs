@@ -84,7 +84,7 @@ mod tests {
         let mut app = retirement_app();
         press(&mut app, KeyCode::Char('8'));
         let screen = drawn(&mut app);
-        assert!(screen.contains("age 37"), "{screen}");
+        assert!(screen.contains("Age 37"), "{screen}");
         assert!(screen.contains("3.30×"), "{screen}");
         assert!(screen.contains("Short $10,000"), "{screen}");
         assert!(screen.contains("Now (37)"), "{screen}");
@@ -193,7 +193,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         assert!(app.modal.is_none(), "the form stayed open: {}", app.status);
         assert_eq!(setting::get(&app.db, key::BIRTH_DATE).unwrap(), Some(birth));
-        assert!(drawn(&mut app).contains("age 41"));
+        assert!(drawn(&mut app).contains("Age 41"));
     }
 
     /// 37's target is $340,000 and its tax-free band starts at 11.0%, and
