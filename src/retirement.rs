@@ -91,20 +91,25 @@ impl Retirement {
         Some((status, short_by))
     }
 
-    /// Short by the tax-free dollars today's total would hold at the band's
-    /// low end -- what would have to move across for the *share* to be on
-    /// target, not what new money would have to be added, which grows the
-    /// total it is a share of. Rounded up to the cent, so moving it is
-    /// enough. A different question from [`Retirement::tax_free_short`]'s,
-    /// which measures against a milestone's whole target rather than against
-    /// what is saved today.
+    /// Judged in dollars, the way [`Retirement::saved_status`] is: what is
+    /// held tax-free against the tax-free part of today's dollar target, the
+    /// band's low share of its low end up to its high share of its high end.
+    /// So the shortfall it names is [`Retirement::tax_free_short`]'s for the
+    /// Now row, and the box and the table quote one figure. With no salary
+    /// there is no dollar target, and the share alone is judged against the
+    /// share band, with no figure to be short by.
     pub fn tax_free_status(&self) -> Option<(Status, Option<Cents>)> {
         let now = self.now()?;
-        let status = calc::retirement::status(self.tax_free_share()?, now.tax_free);
-        let short_by = (status == Status::Short).then(|| {
-            let target = Cents((self.saved.0 * now.tax_free.low.0 + 9_999) / 10_000);
-            target - self.tax_free
-        });
+        let Some(dollars) = now.saved_dollars else {
+            let status = calc::retirement::status(self.tax_free_share()?, now.tax_free);
+            return Some((status, None));
+        };
+        let target = Band {
+            low: part(dollars.low, now.tax_free.low),
+            high: part(dollars.high, now.tax_free.high),
+        };
+        let status = calc::retirement::status(self.tax_free, target);
+        let short_by = (status == Status::Short).then(|| target.low - self.tax_free);
         Some((status, short_by))
     }
 
@@ -124,10 +129,15 @@ impl Retirement {
     /// today. Rounded up to the cent. Nothing when met, and `None` with no
     /// salary to state the dollar target in.
     pub fn tax_free_short(&self, row: &Row) -> Option<Cents> {
-        let low = row.saved_dollars?.low;
-        let target = Cents((low.0 * row.tax_free.low.0 + 9_999) / 10_000);
+        let target = part(row.saved_dollars?.low, row.tax_free.low);
         Some((target - self.tax_free).max(Cents::ZERO))
     }
+}
+
+/// `share` of `whole`, rounded up to the cent: a tax-free target, which
+/// holding exactly this much meets.
+fn part(whole: Cents, share: BasisPoints) -> Cents {
+    Cents((whole.0 * share.0 + 9_999) / 10_000)
 }
 
 /// `None` over nothing, never a divide by zero.
@@ -294,21 +304,51 @@ mod tests {
     }
 
     #[test]
-    fn short_of_the_tax_free_band_states_the_dollars_to_move_across_at_todays_total() {
+    fn short_of_the_tax_free_target_states_the_same_dollars_as_the_now_row() {
         let db = db::open_in_memory().unwrap();
         let ret = retirement_account(&db, "RET", "Long Haul", TaxTreatment::TaxDeferred);
         let pot = retirement_account(&db, "ROTH", "Untaxed Pot", TaxTreatment::TaxFree);
         holding::insert(&db, ret, "TDF45", Cents::from_dollars(370_000)).unwrap();
         holding::insert(&db, pot, "USM", Cents::from_dollars(30_000)).unwrap();
         setting::set(&db, key::BIRTH_DATE, born_37_years_ago()).unwrap();
+        setting::set(&db, key::ANNUAL_SALARY, Cents::from_dollars(100_000)).unwrap();
         let r = load(&db, today()).unwrap();
-        // 37's band starts at 11.0%; 11% of 400,000 is 44,000, and 30,000
-        // of it is held.
+        // 37 asks 3.40× of 100,000, 340,000, and 11.0% of that tax-free:
+        // 37,400, of which 30,000 is held -- though 30,000 is already 7.5%
+        // of today's 400,000, which a share gap would have called nearer.
         assert_eq!(r.now().unwrap().tax_free.low, BasisPoints(1_100));
-        assert_eq!(
-            r.tax_free_status(),
-            Some((Status::Short, Some(Cents::from_dollars(14_000))))
-        );
+        let short = Some(Cents::from_dollars(7_400));
+        assert_eq!(r.tax_free_status(), Some((Status::Short, short)));
+        assert_eq!(r.tax_free_short(r.now().unwrap()), short);
+    }
+
+    /// Past the low end in dollars is on track even with a share under the
+    /// band, which is exactly a total ahead of its target.
+    #[test]
+    fn a_tax_free_status_is_judged_in_dollars_not_in_share() {
+        let db = db::open_in_memory().unwrap();
+        let ret = retirement_account(&db, "RET", "Long Haul", TaxTreatment::TaxDeferred);
+        let pot = retirement_account(&db, "ROTH", "Untaxed Pot", TaxTreatment::TaxFree);
+        holding::insert(&db, ret, "TDF45", Cents::from_dollars(560_000)).unwrap();
+        holding::insert(&db, pot, "USM", Cents::from_dollars(40_000)).unwrap();
+        setting::set(&db, key::BIRTH_DATE, born_37_years_ago()).unwrap();
+        setting::set(&db, key::ANNUAL_SALARY, Cents::from_dollars(100_000)).unwrap();
+        let r = load(&db, today()).unwrap();
+        // 40,000 is 6.6% of 600,000, under 11.0%, but over 11% of 340,000
+        // and under 12% of 360,000.
+        assert_eq!(r.tax_free_status(), Some((Status::OnTrack, None)));
+    }
+
+    #[test]
+    fn with_no_salary_the_tax_free_share_is_judged_alone_with_no_figure() {
+        let db = db::open_in_memory().unwrap();
+        let pot = retirement_account(&db, "ROTH", "Untaxed Pot", TaxTreatment::TaxFree);
+        let ret = retirement_account(&db, "RET", "Long Haul", TaxTreatment::TaxDeferred);
+        holding::insert(&db, ret, "TDF45", Cents::from_dollars(370_000)).unwrap();
+        holding::insert(&db, pot, "USM", Cents::from_dollars(30_000)).unwrap();
+        setting::set(&db, key::BIRTH_DATE, born_37_years_ago()).unwrap();
+        let r = load(&db, today()).unwrap();
+        assert_eq!(r.tax_free_status(), Some((Status::Short, None)));
     }
 
     #[test]

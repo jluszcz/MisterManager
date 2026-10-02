@@ -214,10 +214,10 @@ mod tests {
         );
     }
 
-    /// Nothing held tax-free against 37's 11.0% of $330,000.
+    /// Nothing held tax-free against 11.0% of 37's $340,000 target.
     #[test]
-    fn a_short_tax_free_share_names_the_dollars_to_move_across() {
+    fn a_short_tax_free_standing_names_the_dollars_of_the_target() {
         let html = panel(&retirement());
-        assert!(html.contains("Short $36,300"), "{html}");
+        assert!(html.contains("Short $37,400"), "{html}");
     }
 }
