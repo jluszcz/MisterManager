@@ -392,7 +392,8 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   the part says. Both readers of a tax split go through them — `crate::retirement`'s tax-free total
   and `allocation::apportion`'s grid, which puts the account's share of each holding in the
   tax-free column — so one account is never tax-free on one screen and not on the other. The
-  Accounts form types one and draws the other beside it, derived, outside the tab order.
+  Accounts form offers both as editable fields: typing into either rewrites the other, and the one
+  typed last is what is stored.
 - **`account.retirement` is the owner's, investment-only, and the whole of what "retirement
   savings" means.** Only an investment account can carry it — the schema's `CHECK` is the backstop
   and `account::set_retirement` the one writer, for `set_tax_treatment`'s reason — and `account`

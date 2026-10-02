@@ -205,8 +205,8 @@ they are a multiple of and the birth date the age comes from. The top box says w
 today — `Short` by how much, `On track` inside the range, or `Ahead` — and the table below runs
 from your age to 55, leaving out the milestones already behind you. An account that is only partly
 tax-free, a workplace plan with a Roth side, takes its tax-free part on screen `9`, as a percentage
-or as a dollar amount — whichever you type, the form shows the other worked out from what the
-account holds. That part counts as tax-free here and in the Funds screen's tax columns. The report
+or as a dollar amount — typing into either works out the other from what the account holds, and
+the one you typed last is what is kept. That part counts as tax-free here and in the Funds screen's tax columns. The report
 carries the same page as its last tab.
 
 ### Typing
