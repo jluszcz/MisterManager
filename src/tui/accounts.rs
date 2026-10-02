@@ -562,7 +562,7 @@ impl AccountForm {
                 _ => String::new(),
             }),
             tax_free_amount: Field::given(match account.tax_free {
-                Some(TaxFreePart::Amount(a)) => a.dollars().to_string(),
+                Some(TaxFreePart::Amount(a)) => a.to_whole_dollars(),
                 _ => String::new(),
             }),
             balance: Cents::ZERO,
@@ -598,11 +598,11 @@ impl AccountForm {
         let part = self.typed_tax_free().ok().flatten();
         match self.tax_free_in {
             TaxFreeIn::Percent => {
-                let dollars = part
-                    .map(|p| p.amount_of(self.balance).dollars())
-                    .filter(|d| *d > 0);
+                let amount = part
+                    .map(|p| p.amount_of(self.balance).trunc_to_dollar())
+                    .filter(|a| a.0 > 0);
                 self.tax_free_amount =
-                    Field::given(dollars.map(|d| d.to_string()).unwrap_or_default());
+                    Field::given(amount.map(Cents::to_whole_dollars).unwrap_or_default());
             }
             TaxFreeIn::Amount => {
                 let percent = part
@@ -817,6 +817,9 @@ impl FormFields for AccountForm {
                 AccountField::TaxFreeAmount => Some(TaxFreeIn::Amount),
                 _ => None,
             };
+            if self.focus == AccountField::TaxFreeAmount {
+                self.tax_free_amount.group_thousands();
+            }
             if let Some(typed) = typed {
                 self.tax_free_in = typed;
                 self.rederive_tax_free();
@@ -1208,11 +1211,16 @@ mod tests {
 
         assert_eq!(
             form.display(AccountField::TaxFreeAmount).plain_text(),
-            "60000",
+            "60,000",
             "the amount opens on what the stored percentage comes to"
         );
 
         typed(&mut form, AccountField::TaxFreeAmount, "75000");
+        assert_eq!(
+            form.display(AccountField::TaxFreeAmount).plain_text(),
+            "75,000",
+            "the amount is grouped as it is typed"
+        );
         assert_eq!(
             form.display(AccountField::TaxFreePercent).plain_text(),
             "25"
@@ -1225,7 +1233,7 @@ mod tests {
         typed(&mut form, AccountField::TaxFreePercent, "10");
         assert_eq!(
             form.display(AccountField::TaxFreeAmount).plain_text(),
-            "30000"
+            "30,000"
         );
         assert_eq!(
             form.commit().unwrap().tax_free,
