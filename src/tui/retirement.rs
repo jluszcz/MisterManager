@@ -6,7 +6,7 @@ use super::Label;
 use super::form::{DateField, Field, Focused, FormFields, next_in, parse_whole_amount};
 use super::style;
 use super::widget::{field_stack, render_fields};
-use crate::calc::retirement::{Band, Status};
+use crate::calc::retirement::{BAND_DASH, Band, Status};
 use crate::money::Cents;
 use crate::retirement::Retirement;
 use anyhow::{Result, ensure};
@@ -25,10 +25,14 @@ fn dollars(cents: Cents) -> String {
     super::dollar(crate::demo::whole_figure(cents))
 }
 
+fn compact(cents: Cents) -> String {
+    super::dollar(crate::demo::compact_figure(cents))
+}
+
 fn dollar_band(band: Band<Cents>) -> String {
     match band.low == band.high {
-        true => dollars(band.low),
-        false => format!("{}–{}", dollars(band.low), dollars(band.high)),
+        true => compact(band.low),
+        false => format!("{}{BAND_DASH}{}", compact(band.low), compact(band.high)),
     }
 }
 
@@ -78,14 +82,14 @@ fn standing_lines(r: &Retirement) -> Vec<Line<'static>> {
         )),
     };
     let tax_free = match (r.tax_free_share(), r.tax_free_status()) {
-        (Some(share), Some(status)) => Line::from(vec![
+        (Some(share), Some((status, short_by))) => Line::from(vec![
             Span::raw(format!(
                 "Tax-free  {:>12}   {:>7}   target now {:<16}",
                 dollars(r.tax_free),
                 format!("{share}%"),
                 now.tax_free.to_string()
             )),
-            status_span(status, None),
+            status_span(status, short_by),
         ]),
         _ => Line::from(format!("Tax-free  {:>12}   {ABSENT}", dollars(r.tax_free))),
     };
@@ -96,11 +100,9 @@ fn milestone_table(r: &Retirement) -> Table<'static> {
     let header = Row::new(vec!["  Milestone", "Saved × salary", "Saved $", "Tax-free"])
         .style(Style::default().add_modifier(Modifier::BOLD));
     let rows = r.rows.iter().map(|row| {
-        let label = match (row.now, row.extrapolated) {
-            (true, false) => format!("▸ Now ({})", row.age),
-            (true, true) => format!("▸ Now ({}) ~", row.age),
-            (false, true) => format!("  By {} ~", row.age),
-            (false, false) => format!("  By {}", row.age),
+        let label = match row.now {
+            true => format!("▸ Now ({})", row.age),
+            false => format!("  By {}", row.age),
         };
         let multiple = match r.salary {
             Some(_) => row.saved.to_string(),
@@ -163,21 +165,11 @@ fn account_table(r: &Retirement) -> Table<'static> {
 
 pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement) {
     let standing = standing_lines(r);
-    let footnote = r.rows.iter().any(|row| row.extrapolated);
-    let [
-        title_area,
-        box_area,
-        _,
-        table_area,
-        note_area,
-        _,
-        accounts_area,
-    ] = Layout::vertical([
+    let [title_area, box_area, _, table_area, _, accounts_area] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(standing.len() as u16 + 2),
         Constraint::Length(1),
         Constraint::Length(r.rows.len() as u16 + 1),
-        Constraint::Length(u16::from(footnote)),
         Constraint::Length(1),
         Constraint::Min(1),
     ])
@@ -188,9 +180,6 @@ pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement) {
         box_area,
     );
     frame.render_widget(milestone_table(r), table_area);
-    if footnote {
-        frame.render_widget(Paragraph::new("  ~ extrapolated outside 35–45"), note_area);
-    }
     if !r.held.is_empty() {
         frame.render_widget(account_table(r), accounts_area);
     }

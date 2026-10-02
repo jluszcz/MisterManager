@@ -190,17 +190,14 @@ mod tests {
         assert!(drawn(&mut app).contains("age 41"));
     }
 
-    /// Under 35 the target is the lines run backwards -- as much a guess as
-    /// past 45, so the Now row is marked like any other extrapolated row.
+    /// 37's tax-free band starts at 11.00%, and nothing here is held
+    /// tax-free: 11% of $330,000.
     #[test]
-    fn a_now_row_outside_the_anchors_is_marked_extrapolated() {
+    fn a_short_tax_free_share_names_the_dollars_to_move_across() {
         let mut app = retirement_app();
-        let birth = today().with_year(today().year() - 28).unwrap();
-        setting::set(&app.db, key::BIRTH_DATE, birth).unwrap();
-        app.reload().unwrap();
         press(&mut app, KeyCode::Char('0'));
         let screen = drawn(&mut app);
-        assert!(screen.contains("Now (28) ~"), "{screen}");
-        assert!(screen.contains("~ extrapolated outside 35–45"), "{screen}");
+        assert!(screen.contains("Short $36,300"), "{screen}");
+        assert!(screen.contains("$400K – $450K"), "{screen}");
     }
 }

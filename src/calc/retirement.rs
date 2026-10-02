@@ -16,6 +16,34 @@ pub const MILESTONES: [i64; 5] = [35, 40, 45, 50, 55];
 const FIRST_AGE: i64 = 35;
 const SECOND_AGE: i64 = 45;
 
+/// What separates a band's two ends, in every band either medium prints.
+/// Spaced, because unspaced it reads as part of the figures beside it.
+pub const BAND_DASH: &str = " – ";
+
+/// A dollar target at the precision it is a target to: `5MM`, `6.5MM`,
+/// `340K`. Truncated toward zero to a tenth of a million or a whole thousand,
+/// with no `$` -- each medium adds its own, as it does to every figure.
+///
+/// Here rather than beside a screen, for the band [`fmt::Display`]s' reason.
+/// Not one of them because a demo keys its digits on the value, which a
+/// `Display` over the band would hand it as one string.
+pub fn compact(cents: Cents) -> String {
+    let dollars = cents.0 / 100;
+    let sign = if dollars < 0 { "-" } else { "" };
+    let dollars = dollars.abs();
+    if dollars >= 1_000_000 {
+        let tenths = dollars / 100_000;
+        match tenths % 10 {
+            0 => format!("{sign}{}MM", tenths / 10),
+            t => format!("{sign}{}.{t}MM", tenths / 10),
+        }
+    } else if dollars >= 1_000 {
+        format!("{sign}{}K", dollars / 1_000)
+    } else {
+        format!("{sign}{dollars}")
+    }
+}
+
 /// A multiple of salary in hundredths: `Multiple(340)` is 3.40×.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub struct Multiple(pub i64);
@@ -62,7 +90,7 @@ impl fmt::Display for Band<Multiple> {
             true => write!(f, "{}", self.low),
             false => write!(
                 f,
-                "{}–{}",
+                "{}{BAND_DASH}{}",
                 self.low.to_string().trim_end_matches('×'),
                 self.high
             ),
@@ -74,7 +102,7 @@ impl fmt::Display for Band<BasisPoints> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.low == self.high {
             true => write!(f, "{}%", self.low),
-            false => write!(f, "{}–{}%", self.low, self.high),
+            false => write!(f, "{}{BAND_DASH}{}%", self.low, self.high),
         }
     }
 }
@@ -106,11 +134,6 @@ pub fn status<T: Ord>(value: T, band: Band<T>) -> Status {
     } else {
         Status::OnTrack
     }
-}
-
-/// Whether `age` lies outside the two anchors, where the lines are a guess.
-pub fn extrapolated(age: i64) -> bool {
-    !(FIRST_AGE..=SECOND_AGE).contains(&age)
 }
 
 /// The value at `age` on the line through `(35, first)` and `(45, second)`,
@@ -209,9 +232,6 @@ mod tests {
                 high: BasisPoints(3_000)
             }
         );
-        assert!(extrapolated(50));
-        assert!(!extrapolated(40));
-        assert!(extrapolated(30));
     }
 
     /// Below 35 the steeper line is the lower one, so a band read straight
@@ -287,8 +307,20 @@ mod tests {
     #[test]
     fn a_band_prints_one_figure_when_it_has_no_width_and_a_range_otherwise() {
         assert_eq!(saved_band(35).to_string(), "3.00×");
-        assert_eq!(saved_band(40).to_string(), "4.00–4.50×");
+        assert_eq!(saved_band(40).to_string(), "4.00 – 4.50×");
         assert_eq!(tax_free_band(35).to_string(), "10.00%");
-        assert_eq!(tax_free_band(40).to_string(), "12.50–15.00%");
+        assert_eq!(tax_free_band(40).to_string(), "12.50 – 15.00%");
+    }
+
+    #[test]
+    fn a_compact_figure_truncates_to_a_tenth_of_a_million_or_a_whole_thousand() {
+        let compact_of = |d| compact(Cents::from_dollars(d));
+        assert_eq!(compact_of(5_075_000), "5MM");
+        assert_eq!(compact_of(6_525_000), "6.5MM");
+        assert_eq!(compact_of(1_000_000), "1MM");
+        assert_eq!(compact_of(999_999), "999K");
+        assert_eq!(compact_of(340_000), "340K");
+        assert_eq!(compact_of(950), "950");
+        assert_eq!(compact_of(-2_500_000), "-2.5MM");
     }
 }

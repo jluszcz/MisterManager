@@ -3,7 +3,7 @@
 //! [`palette::standing`], the way every other tab colors a figure.
 
 use super::{account, escape, whole_money};
-use crate::calc::retirement::{Band, Status};
+use crate::calc::retirement::{self, BAND_DASH, Band, Status};
 use crate::money::Cents;
 use crate::palette;
 use crate::retirement::Retirement;
@@ -17,10 +17,14 @@ fn dollars(cents: Cents) -> String {
     format!("${}", cents.trunc_to_dollar().to_whole_dollars())
 }
 
+fn compact(cents: Cents) -> String {
+    format!("${}", retirement::compact(cents))
+}
+
 fn dollar_band(band: Band<Cents>) -> String {
     match band.low == band.high {
-        true => dollars(band.low),
-        false => format!("{}–{}", dollars(band.low), dollars(band.high)),
+        true => compact(band.low),
+        false => format!("{}{BAND_DASH}{}", compact(band.low), compact(band.high)),
     }
 }
 
@@ -58,11 +62,11 @@ fn standing(r: &Retirement) -> String {
         ),
     };
     let tax_free = match (r.tax_free_share(), r.tax_free_status()) {
-        (Some(share), Some(s)) => format!(
+        (Some(share), Some((s, gap))) => format!(
             "<tr><td>Tax-free</td>{}<td class=\"n\">{share}%</td><td>{}</td>{}</tr>",
             whole_money(r.tax_free),
             escape(&now.tax_free.to_string()),
-            status(s, None)
+            status(s, gap)
         ),
         _ => format!(
             "<tr><td>Tax-free</td>{}<td colspan=\"3\">{ABSENT}</td></tr>",
@@ -80,11 +84,9 @@ fn milestones(r: &Retirement) -> String {
         .rows
         .iter()
         .map(|row| {
-            let label = match (row.now, row.extrapolated) {
-                (true, false) => format!("Now ({})", row.age),
-                (true, true) => format!("Now ({}) ~", row.age),
-                (false, true) => format!("By {} ~", row.age),
-                (false, false) => format!("By {}", row.age),
+            let label = match row.now {
+                true => format!("Now ({})", row.age),
+                false => format!("By {}", row.age),
             };
             let multiple = match r.salary {
                 Some(_) => row.saved.to_string(),
@@ -103,13 +105,9 @@ fn milestones(r: &Retirement) -> String {
             )
         })
         .collect();
-    let note = match r.rows.iter().any(|row| row.extrapolated) {
-        true => "<p class=\"stamp\">~ extrapolated outside 35–45</p>",
-        false => "",
-    };
     format!(
         "<table><thead><tr><th>Milestone</th><th>× salary</th><th>Saved $</th><th>Tax-free</th></tr></thead>\
-         <tbody>{rows}</tbody></table>{note}"
+         <tbody>{rows}</tbody></table>"
     )
 }
 
@@ -200,7 +198,9 @@ mod tests {
         let html = panel(&retirement());
         assert!(html.contains("Now (37)"), "{html}");
         assert!(!html.contains("By 35"), "{html}");
-        assert!(html.contains("4.00–4.50×"), "{html}");
+        assert!(html.contains("4.00 – 4.50×"), "{html}");
+        // 4.00–4.50× of $100,000.
+        assert!(html.contains("$400K – $450K"), "{html}");
     }
 
     #[test]
@@ -212,15 +212,10 @@ mod tests {
         );
     }
 
+    /// Nothing held tax-free against 37's 11.00% of $330,000.
     #[test]
-    fn a_now_row_outside_the_anchors_is_marked_extrapolated() {
-        let r = Retirement {
-            age: Some(28),
-            rows: rows(Some(28), None),
-            ..retirement()
-        };
-        let html = panel(&r);
-        assert!(html.contains("Now (28) ~"), "{html}");
-        assert!(html.contains("~ extrapolated outside 35–45"), "{html}");
+    fn a_short_tax_free_share_names_the_dollars_to_move_across() {
+        let html = panel(&retirement());
+        assert!(html.contains("Short $36,300"), "{html}");
     }
 }

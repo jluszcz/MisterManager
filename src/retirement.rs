@@ -37,7 +37,6 @@ pub struct Row {
     pub age: i64,
     /// The owner's own age -- the row the standing is measured against.
     pub now: bool,
-    pub extrapolated: bool,
     pub saved: Band<Multiple>,
     /// `saved` in dollars, which needs a salary.
     pub saved_dollars: Option<Band<Cents>>,
@@ -78,11 +77,17 @@ impl Retirement {
         Some((status, short_by))
     }
 
-    pub fn tax_free_status(&self) -> Option<Status> {
-        Some(calc::retirement::status(
-            self.tax_free_share()?,
-            self.now()?.tax_free,
-        ))
+    /// Short by the tax-free dollars today's total would hold at the band's
+    /// low end -- what would have to move across, not what new money would
+    /// have to be added, which grows the total it is a share of. Rounded up
+    /// to the cent, so moving it is enough; a share exists only over a
+    /// positive total, so the numerator is never negative.
+    pub fn tax_free_status(&self) -> Option<(Status, Option<Cents>)> {
+        let low = self.now()?.tax_free.low;
+        let status = calc::retirement::status(self.tax_free_share()?, self.now()?.tax_free);
+        let short_by = (status == Status::Short)
+            .then(|| Cents((self.saved.0 * low.0 + 9_999) / 10_000) - self.tax_free);
+        Some((status, short_by))
     }
 }
 
@@ -96,7 +101,6 @@ fn row(age: i64, now: bool, salary: Option<Cents>) -> Row {
     Row {
         age,
         now,
-        extrapolated: calc::retirement::extrapolated(age),
         saved,
         saved_dollars: salary.map(|s| saved.map(|m| m.of(s))),
         tax_free: calc::retirement::tax_free_band(age),
@@ -232,6 +236,24 @@ mod tests {
         assert_eq!(r.saved, Cents::ZERO);
         assert_eq!(r.tax_free_share(), None);
         assert_eq!(r.tax_free_status(), None);
+    }
+
+    #[test]
+    fn short_of_the_tax_free_band_states_the_dollars_to_move_across_at_todays_total() {
+        let db = db::open_in_memory().unwrap();
+        let ret = retirement_account(&db, "RET", "Long Haul", TaxTreatment::TaxDeferred);
+        let pot = retirement_account(&db, "ROTH", "Untaxed Pot", TaxTreatment::TaxFree);
+        holding::insert(&db, ret, "TDF45", Cents::from_dollars(370_000)).unwrap();
+        holding::insert(&db, pot, "USM", Cents::from_dollars(30_000)).unwrap();
+        setting::set(&db, key::BIRTH_DATE, born_37_years_ago()).unwrap();
+        let r = load(&db, today()).unwrap();
+        // 37's band starts at 11.00%; 11% of 400,000 is 44,000, and 30,000
+        // of it is held.
+        assert_eq!(r.now().unwrap().tax_free.low, BasisPoints(1_100));
+        assert_eq!(
+            r.tax_free_status(),
+            Some((Status::Short, Some(Cents::from_dollars(14_000))))
+        );
     }
 
     #[test]

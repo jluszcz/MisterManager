@@ -125,6 +125,16 @@ pub(crate) fn whole_figure(cents: Cents) -> String {
     cents.to_whole_dollars()
 }
 
+/// A target at its own precision -- see [`crate::calc::retirement::compact`].
+/// Keyed on the amount as it arrives, as every figure here is.
+pub(crate) fn compact_figure(cents: Cents) -> String {
+    #[cfg(feature = "demo")]
+    if let Some(salt) = salt() {
+        return mask::scramble(salt, cents.0, &crate::calc::retirement::compact(cents));
+    }
+    crate::calc::retirement::compact(cents)
+}
+
 /// The same again for a figure whose color is chosen from its own truncation
 /// -- see [`Cents::trunc_to_dollar`]. The cents come off the value rather
 /// than off the string, so a sub-dollar remainder reads as the nothing it is
