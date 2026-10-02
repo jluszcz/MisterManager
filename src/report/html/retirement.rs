@@ -1,5 +1,5 @@
 //! The Retirement tab: a spelling of [`crate::retirement`], the same model
-//! screen 0 draws. A status wears an inline color off
+//! screen 8 draws. A status wears an inline color off
 //! [`palette::standing`], the way every other tab colors a figure.
 
 use super::{account, escape, whole_money};
@@ -179,6 +179,7 @@ mod tests {
                 account: crate::account_label::Account::named(&accounts, AccountId(3)),
                 treatment: TaxTreatment::TaxDeferred,
                 tax_free: Cents::ZERO,
+                tax_free_share: crate::rate::BasisPoints::ZERO,
                 balance: saved,
             }],
             rows: rows(Some(37), Some(salary)),

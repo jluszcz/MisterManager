@@ -24,16 +24,17 @@ pub struct Held {
     /// [`account::Account::tax_free_amount`] -- all of it under the
     /// `tax_free` treatment.
     pub tax_free: Cents,
+    /// The same as a share, through [`account::Account::tax_free_share`] --
+    /// the rule the Accounts and Funds screens label their Tax column by, so
+    /// an account holding nothing still reads as its stated percentage.
+    pub tax_free_share: BasisPoints,
     pub balance: Cents,
 }
 
 impl Held {
     /// What a Tax column prints for this account.
     pub fn tax_label(&self) -> String {
-        account::tax_label(
-            self.treatment,
-            share(self.tax_free, self.balance).unwrap_or(BasisPoints::ZERO),
-        )
+        account::tax_label(self.treatment, self.tax_free_share)
     }
 
     /// Floored to the basis point, so a column of these may sum a hundredth
@@ -184,6 +185,7 @@ pub fn load(db: &Db, today: NaiveDate) -> Result<Retirement> {
                 "schema CHECK pairs retirement with an investment kind, which has a treatment",
             ),
             tax_free: a.tax_free_amount(balance),
+            tax_free_share: a.tax_free_share(balance),
             balance,
         });
     }
@@ -301,6 +303,22 @@ mod tests {
         assert_eq!(r.saved, Cents::ZERO);
         assert_eq!(r.tax_free_share(), None);
         assert_eq!(r.tax_free_status(), None);
+    }
+
+    /// The Accounts screen labels an empty account by its stated part, so
+    /// this screen must too, or one account reads two ways.
+    #[test]
+    fn an_empty_account_with_a_tax_free_percentage_is_labelled_by_it() {
+        let db = db::open_in_memory().unwrap();
+        let ret = retirement_account(&db, "RET", "Long Haul", TaxTreatment::TaxDeferred);
+        account::set_tax_free(
+            &db,
+            ret,
+            Some(account::TaxFreePart::Percent(crate::rate::Percent(20))),
+        )
+        .unwrap();
+        let r = load(&db, today()).unwrap();
+        assert_eq!(r.held[0].tax_label(), "20% tax-free");
     }
 
     #[test]
