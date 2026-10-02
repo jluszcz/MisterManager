@@ -1,4 +1,4 @@
-//! Screen 0's draw. What it draws is `crate::retirement`'s; the decisions
+//! Screen 8's draw. What it draws is `crate::retirement`'s; the decisions
 //! here are only a terminal's -- glyphs, widths, and which figure wears a
 //! color.
 

@@ -303,7 +303,7 @@ mod tests {
     use crate::tui::modal::Modal;
     use ratatui::crossterm::event::KeyCode;
 
-    /// Everything on screen 9 is the owner's rather than the workbook's, and
+    /// Everything on screen 0 is the owner's rather than the workbook's, and
     /// `e` is the one key that writes any of it.
     ///
     /// The account renamed is the goals' container, so the Savings rows -- which
@@ -976,7 +976,7 @@ mod tests {
         );
     }
 
-    /// The block mapping is what `mm import` waits on, and screen 9 is the
+    /// The block mapping is what `mm import` waits on, and screen 0 is the
     /// only place it can be set. One selector per account, so an account
     /// cannot claim both blocks -- and moving it off a block clears that
     /// block's key rather than leaving it naming an account that no longer
@@ -1027,7 +1027,7 @@ mod tests {
         assert_eq!(app.accounts.rows()[0].block, None);
     }
 
-    /// Screen 9 is where the two money forms are told where to open, and the
+    /// Screen 0 is where the two money forms are told where to open, and the
     /// set is what the account answers for: a source dropped from it clears
     /// that key rather than leaving it naming an account the owner has just
     /// taken it off.

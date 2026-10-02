@@ -1,4 +1,4 @@
-//! Screen 6: the funds held across the owner's investment accounts.
+//! Screen 7: the funds held across the owner's investment accounts.
 //!
 //! One row per holding -- the account it sits in, the ticker, the balance
 //! the owner typed -- filtered by account and by a search over ticker and

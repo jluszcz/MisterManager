@@ -1190,7 +1190,7 @@ mod tests {
 
     /// `n` is a free-form goal: a name, a target and a date, in the container
     /// the `Tab` filter names. Creating goals *from* recurring goal entries is
-    /// `s` on screen 7, over on the table those entries live in.
+    /// `s` on screen 6, over on the table those entries live in.
     #[test]
     fn n_on_savings_opens_a_blank_goal_form() {
         let mut app = app();

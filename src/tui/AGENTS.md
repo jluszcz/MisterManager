@@ -1118,7 +1118,7 @@ deferred to nothing.
 
 - **Only Recurring Transactions' row and a filtered ledger's title show an account code.** Every
   other account display — Overview, both ledgers' rows, Savings, and the worksheet and picker
-  titles — shows `account.name`, through `Account::named`. Screen 8's `Acct` column goes through
+  titles — shows `account.name`, through `Account::named`. Screen 9's `Acct` column goes through
   `Account::coded` because its other columns already pin a row down exactly, so the code alone is
   enough to say which account it belongs to, and that much detail reads better tight than padded;
   the ledger title goes through `Account::coded` too, for the other reason a code beats a name — a
@@ -1699,7 +1699,7 @@ deferred to nothing.
   to a handler means adding it to its `Topic`'s table, which
   `every_key_a_screen_handler_matches_appears_in_its_table` and
   `every_key_a_modal_handler_matches_appears_in_its_table` enforce.
-- **Screen 8 shows the last date a recurring transaction reaches, not the horizon it may reach.**
+- **Screen 9 shows the last date a recurring transaction reaches, not the horizon it may reach.**
   `recurring_txn::last_owned_dates` is `MAX(txn.date)` over the rows it owns, beside the `Rows`
   count from the same source — so the column is `—` until the first `g`, and it is the number `x`
   moves. The end date stays editable in the `e` form: a cap the owner sets belongs with the rest of

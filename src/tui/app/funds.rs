@@ -1,4 +1,4 @@
-//! Screen 6's key handling: adding, editing and deleting a holding, the
+//! Screen 7's key handling: adding, editing and deleting a holding, the
 //! account filter and the search over the list, and `g`/`G`, which refresh a
 //! fund's composition from SEC.
 //!

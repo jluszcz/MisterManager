@@ -1582,7 +1582,7 @@ mod tests {
     #[cfg(feature = "demo")]
     const DEMO_FIXTURE_FIGURES: [&str; 13] = [
         "1,000", "1,200", "14.99", "25.99", "15,000", "10,000", "100.00", "128", "9,000", "50,000",
-        // Screen 0 at 37 on a $50,000 salary: $13,000 saved against a band
+        // Screen 8 at 37 on a $50,000 salary: $13,000 saved against a band
         // of $170,000-$180,000, so $157,000 short.
         "13,000", "170,000", "157,000",
     ];
@@ -1642,7 +1642,7 @@ mod tests {
     /// a screen that drew nothing, so every screen must be shown to have drawn
     /// a pseudonym for an account it holds.
     ///
-    /// Screen 7, Recurring Goals, is not in the sweep: a recurring goal has no
+    /// Screen 6, Recurring Goals, is not in the sweep: a recurring goal has no
     /// account column at all, so no account name, real or masked, is ever on
     /// that screen -- an absence check there would pass on the strength of a
     /// screen that never had anything to hide. And the set checked against is
@@ -1670,7 +1670,7 @@ mod tests {
         .into_iter()
         .map(|name| crate::demo::text(name).to_string())
         .collect();
-        for screen in "12349".chars() {
+        for screen in "123490".chars() {
             press(&mut app, KeyCode::Char(screen));
             let drawn = drawn(&mut app);
             assert!(
@@ -1818,8 +1818,8 @@ mod tests {
             ('0', KeyCode::Char('e')),
             ('8', KeyCode::Char('e')),
         ] {
-            // `s` on screen 7 draws off `recurring_goal`, which `planning_app`
-            // fills neither of; screen 6 needs a holding under the cursor,
+            // `s` on screen 6 draws off `recurring_goal`, which `planning_app`
+            // fills neither of; screen 7 needs a holding under the cursor,
             // which `planning_app` carries no investment account to hold.
             // Every other screen here has its rows on the fixture that
             // carries the bills screen 5 needs.
@@ -1952,8 +1952,8 @@ mod tests {
             ('0', KeyCode::Char('e')),
             ('8', KeyCode::Char('e')),
         ] {
-            // `s` on screen 7 draws off `recurring_goal`, which `planning_app`
-            // fills neither of; screen 6 needs a holding under the cursor,
+            // `s` on screen 6 draws off `recurring_goal`, which `planning_app`
+            // fills neither of; screen 7 needs a holding under the cursor,
             // which `planning_app` carries no investment account to hold.
             let mut app = match (screen, key) {
                 ('6', KeyCode::Char('s')) | ('7', _) | ('8', _) => {
@@ -1988,7 +1988,7 @@ mod tests {
                 app.status
             );
             let drawn = drawn(&mut app);
-            // `planning_app`'s own names, and the fixture names for screen 7's
+            // `planning_app`'s own names, and the fixture names for screen 6's
             // `s`.
             //
             // `Housing` and `Mom & Dad` are goals in the fixture too, and are
@@ -3029,7 +3029,7 @@ mod tests {
     /// what leaves Funds empty in every other fixture in this file.
     ///
     /// Filling Funds is also what gives the demo sweeps below a figure and a
-    /// name on screen 6 to check for.
+    /// name on screen 7 to check for.
     fn app_with_two_rows_on_every_list() -> App {
         let mut app = app();
         let broker = account::insert(
@@ -3046,7 +3046,7 @@ mod tests {
         account::set_retirement(&app.db, broker, true).unwrap();
         setting::set(&app.db, key::ANNUAL_SALARY, Cents::from_dollars(50_000)).unwrap();
         // Derived from the fixture's day, for `app_with_mixes`' reason. An age
-        // is what puts screen 0's Saved, its targets and its shortfall on the
+        // is what puts screen 8's Saved, its targets and its shortfall on the
         // screen for the sweeps to check, beside the salary.
         let birth = today().with_year(today().year() - 37).unwrap();
         setting::set(&app.db, key::BIRTH_DATE, birth).unwrap();

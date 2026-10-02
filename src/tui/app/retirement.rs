@@ -1,4 +1,4 @@
-//! Screen 0: retirement savings against the age rule. Nothing on it is
+//! Screen 8: retirement savings against the age rule. Nothing on it is
 //! selectable, so it has no cursor and no scroll keys.
 
 use super::App;
