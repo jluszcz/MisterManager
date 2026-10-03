@@ -1193,9 +1193,9 @@ deferred to nothing.
   these screens only render what is already there. All are display only, but they part ways past
   that: on Savings and Planning the `edit` prefill keeps the stored cents *and* the commit path
   accepts it back, so opening a constant and pressing Enter cannot quietly round it. Funds' `e`
-  prefill keeps the stored cents too, but its commit path goes through `form::parse_whole_amount`,
-  which *refuses* a value carrying cents rather than rounding it — opening a holding whose stored
-  balance carries cents and pressing Enter is a parse error, not a silent round. Planning keeps one footer at
+  prefill keeps the stored cents too, but its commit path truncates them to a whole dollar —
+  `HoldingForm::commit` says why a balance is the one typed figure rounded rather than refused —
+  so opening such a holding and pressing Enter drops the cents the screen was already not drawing. Planning keeps one footer at
   full precision — its pin drift, because sub-dollar drift is the only thing that line exists to
   show. Savings' `Unallocated` footer drops the cents like every column above it, for a reason of
   its own: sub-dollar drift there is what a container sits at for months, so the line reads `0` and
