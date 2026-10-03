@@ -1112,8 +1112,8 @@ impl HoldingForm {
     /// in the other. Normalising the typing is what folds the three at once,
     /// and tickers are written in capitals anyway.
     ///
-    /// The balance is **truncated** to a whole dollar rather than refused, as
-    /// a goal figure's would be: it is copied off a statement quoting cents,
+    /// The balance is **truncated** to a whole dollar, unlike a goal figure,
+    /// which refuses cents: a balance is copied off a statement quoting cents,
     /// not chosen, so the cents are noise rather than a typo -- and toward
     /// zero is the direction the screen already drops them in when drawing it.
     pub fn commit(&self) -> Result<(AccountId, String, Cents)> {
