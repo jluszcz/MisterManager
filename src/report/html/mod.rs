@@ -64,15 +64,6 @@ fn whole_money(cents: Cents) -> String {
     money(whole.to_whole_dollars(), whole)
 }
 
-/// A money cell for an optional figure -- `per_paycheck` is `None` when a
-/// goal has no runway to divide, or is already at its target.
-fn optional_money(cents: Option<Cents>) -> String {
-    match cents {
-        Some(c) => whole_money(c),
-        None => "<td class=\"n\">--</td>".to_string(),
-    }
-}
-
 /// An account, in its own color. The report's half of the rule that an
 /// account never reaches a glyph without its color -- `tui::label` has the
 /// other half.
@@ -113,13 +104,31 @@ pub(super) const TABS: [(&str, &str); 7] = [
     ("retirement", "Retirement"),
 ];
 
-/// The tab bar, and the radios that drive it.
+/// The id of the narrow page's menu: a radio in the tabs' own group rather
+/// than a checkbox beside it, which is what lets choosing a tab close it.
+/// Checking a tab unchecks the menu as a side effect of being in one group,
+/// where a checkbox would stay open over the panel it had just switched to
+/// until it was tapped again -- and the page has no script to tap it.
+const MENU: &str = "menu";
+
+/// Below this width the tab bar would wrap onto a second line, so the page
+/// draws the menu instead. Seven labels at the nav's padding run about
+/// 35rem, plus the body's own padding either side.
+const NARROW: &str = "38rem";
+
+/// The tab bar, the narrow page's menu bar, and the radios that drive both.
 ///
 /// A checkbox hack rather than a click handler, because the page carries no
 /// script: a phone opening this out of a sync folder still switches tabs
 /// offline. Every radio sits ahead of the nav and of every panel, since
 /// `:checked ~` only ever looks forward -- an input placed after the thing it
 /// shows would leave the page stuck on whichever panel CSS defaulted to.
+///
+/// The menu bar names the tab it is on, one `<span>` per tab with the checked
+/// one shown, the way a ledger's month picker names its month. While the menu
+/// is open no tab is checked, so no panel shows: the open menu *is* the page
+/// until a tab is chosen, which is what a menu with no way to close itself
+/// but a choice has to be.
 fn tab_bar() -> String {
     let inputs: String = TABS
         .iter()
@@ -134,12 +143,20 @@ fn tab_bar() -> String {
         .iter()
         .map(|(id, name)| format!("<label for=\"{id}\">{name}</label>"))
         .collect();
-    format!("{inputs}<nav>{labels}</nav>")
+    let current: String = TABS
+        .iter()
+        .map(|(id, name)| format!("<span id=\"{id}-cur\">{name}</span>"))
+        .collect();
+    format!(
+        "{inputs}<input class=\"tab\" type=\"radio\" name=\"tab\" id=\"{MENU}\">\
+         <div class=\"menubar\"><label for=\"{MENU}\" aria-label=\"Tabs\">\u{2630}</label>\
+         {current}</div><nav>{labels}</nav>"
+    )
 }
 
-/// Which panel is shown, which label is lit, and where the focus ring goes --
-/// one rule set per tab, generated so that the list above stays the only
-/// place a tab is named.
+/// Which panel is shown, which label is lit, where the focus ring goes, and
+/// which name the narrow page's menu bar reads -- one rule set per tab,
+/// generated so that the list above stays the only place a tab is named.
 fn tab_rules() -> String {
     TABS.iter()
         .map(|(id, _)| {
@@ -148,16 +165,50 @@ fn tab_rules() -> String {
                  {{color:inherit;border-bottom-color:currentColor}}\
                  #{id}:focus-visible~nav label[for={id}]\
                  {{outline:2px solid currentColor;outline-offset:-2px}}\
-                 #{id}:checked~#{id}-panel{{display:block}}"
+                 #{id}:checked~#{id}-panel{{display:block}}\
+                 #{id}:checked~.menubar #{id}-cur{{display:inline}}"
             )
         })
         .collect()
 }
 
+/// Everything that changes below [`NARROW`]: the tab bar traded for the
+/// menu, and the Retirement tab's milestone table set a size smaller.
+///
+/// That table is four columns of bands, each a figure either side of a spaced
+/// dash, and a band broken at its dash reads as two figures -- so its cells
+/// do not wrap, and the face and the padding are what give way instead. At
+/// the page's own size it runs past the 361px a phone leaves; the size here
+/// sets it about a tenth inside that in Chrome, since Safari's figures run
+/// wider and a margin that fit one browser exactly scrolled in the other.
+///
+/// The menu's radio is `display:none` above the breakpoint, not merely moved
+/// off-screen as the tabs' are. It is in their group, and the arrow keys walk
+/// a group's rendered radios: one left rendered at a width with no menu to
+/// show would let `→` off the last tab check it, leaving no tab checked and
+/// so no panel drawn.
+fn narrow_rules() -> String {
+    format!(
+        "#{MENU}{{display:none}}\
+         @media (max-width:{NARROW}){{\
+         #{MENU}{{display:block}}\
+         div.menubar{{display:flex}}\
+         nav{{display:none;flex-direction:column}}\
+         #{MENU}:checked~nav{{display:flex}}\
+         #{MENU}:checked~.menubar{{display:none}}\
+         #{MENU}:focus-visible~.menubar label\
+         {{outline:2px solid currentColor;outline-offset:-2px}}\
+         table.bands{{font-size:0.72rem}}\
+         table.bands td,table.bands th{{padding-left:0.15rem;padding-right:0.15rem}}\
+         }}"
+    )
+}
+
 /// A system font stack, tabular money, a favorite's band, an expired goal's
 /// marker, the tab switch, the ledgers' month dropdown, the allocation bar
-/// and its legend, and the one media query that flips background and
-/// foreground for a phone in dark mode.
+/// and its legend, and the media query that flips background and foreground
+/// for a phone in dark mode. The other media query, the narrow page's, is
+/// [`narrow_rules`]': it names the menu's id.
 /// Target a phone width; there is no `MIN_WIDTH` here.
 ///
 /// The radios are moved off the page rather than `display:none`d, which would
@@ -165,7 +216,7 @@ fn tab_rules() -> String {
 /// alone.
 ///
 /// Three classes say what a column may do with the width it is given, and
-/// between them they are what fits Savings' six columns on a phone. `n` and
+/// between them they are what fits Savings' five columns on a phone. `n` and
 /// `d` -- a figure and a date -- never wrap: both offer a break at a comma or
 /// a hyphen, and a table narrow enough takes it, so `2026-08-` over `22` reads
 /// as two dates rather than one and `-1,` over `000.00` as neither. Refusing
@@ -192,13 +243,13 @@ fn tab_rules() -> String {
 /// to see.
 ///
 /// The table face is smaller than the page's and the cells are padded by a
-/// quarter of it. That is Savings' bill too: six columns, one of them a date
-/// and three of them money, on the 361px a 393px phone leaves inside the
+/// quarter of it. That is Savings' bill too: five columns, one of them a date
+/// and two of them money, on the 361px a 393px phone leaves inside the
 /// body's padding.
 const STYLE: &str = "\
     :root{color-scheme:light dark}\
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\
-    margin:0 auto;max-width:32rem;padding:1rem;background:#ffffff;color:#1a1a1a}\
+    margin:0 auto;max-width:40rem;padding:1rem;background:#ffffff;color:#1a1a1a}\
     h3{margin:1.2rem 0 0.4rem}\
     p.stamp{color:#666666;margin:0 0 0.6rem;font-size:0.85rem}\
     table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:0.82rem}\
@@ -224,6 +275,11 @@ const STYLE: &str = "\
     nav{display:flex;flex-wrap:wrap;border-bottom:1px solid #dddddd;margin-bottom:0.8rem}\
     nav label{padding:0.5rem 0.7rem;margin-bottom:-1px;cursor:pointer;font-weight:600;\
     color:#666666;border-bottom:2px solid transparent}\
+    div.menubar{display:none;align-items:center;gap:0.6rem;font-weight:600;\
+    border-bottom:1px solid #dddddd;margin-bottom:0.8rem;padding:0.3rem 0}\
+    div.menubar label{cursor:pointer;font-size:1.3rem;line-height:1;padding:0.2rem 0.5rem;\
+    border:1px solid #dddddd;border-radius:0.35rem}\
+    div.menubar span{display:none}\
     section.panel{display:none;overflow-x:auto}\
     tbody+tbody tr:first-child td{padding-top:0.9rem}\
     details.picker{margin:0 0 0.8rem}\
@@ -241,7 +297,8 @@ const STYLE: &str = "\
     @media (prefers-color-scheme: dark){\
     body{background:#121212;color:#eeeeee}\
     td,th{border-bottom-color:#333333}\
-    nav,footer,details.picker summary,details.picker div.options{border-color:#333333}\
+    nav,footer,details.picker summary,details.picker div.options,\
+    div.menubar,div.menubar label{border-color:#333333}\
     tr.fav{background:#3a3315}\
     div.bar{background:#333333}\
     }";
@@ -274,8 +331,9 @@ pub fn page(snapshot: &Snapshot) -> String {
     // exist is a fact about the database, and how deep the waterfall goes is
     // a fact about the plan.
     let rules = format!(
-        "{}{}{}{}",
+        "{}{}{}{}{}",
         tab_rules(),
+        narrow_rules(),
         ledger::month_rules(&snapshot.cash),
         ledger::month_rules(&snapshot.credit),
         planning::depth_rules(&snapshot.planning),
@@ -295,7 +353,7 @@ pub fn page(snapshot: &Snapshot) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::fixture::{cells, panel, row_column_counts, snapshot, tables};
+    use super::fixture::{cells, misaligned_headers, panel, row_column_counts, snapshot, tables};
     use super::*;
 
     /// A phone opening this out of a sync folder may be offline, and a page
@@ -389,6 +447,46 @@ mod tests {
             cells(html),
             vec![(" class=\"d\"", "2026-08-21"), ("", "Date")]
         );
+    }
+
+    /// A header sits over its column the way the column's cells sit: a
+    /// right-aligned figure under a left-aligned heading reads as belonging
+    /// to the column beside it.
+    #[test]
+    fn every_header_is_aligned_with_its_column() {
+        let page = page(&snapshot(
+            vec![fixture::row("Rainy Day", 500, 1_000)],
+            1_000,
+        ));
+        for table in tables(&page) {
+            assert_eq!(misaligned_headers(table), Vec::<String>::new(), "{table}");
+        }
+    }
+
+    /// The narrow page's menu is a radio in the tabs' own group, so choosing
+    /// a tab is what closes it; a menu outside the group would stay open
+    /// over the panel it had just switched to.
+    #[test]
+    fn the_menu_is_one_of_the_tabs_radios_and_opens_the_nav() {
+        let page = page(&snapshot(
+            vec![fixture::row("Rainy Day", 500, 1_000)],
+            1_000,
+        ));
+        assert!(
+            page.contains(&format!("type=\"radio\" name=\"tab\" id=\"{MENU}\">")),
+            "the menu is not in the tabs' group"
+        );
+        assert!(page.contains(&format!("#{MENU}:checked~nav{{display:flex}}")));
+        // Rendered only where it has a menu to open, or the arrow keys reach
+        // it from the last tab on a wide page and blank it.
+        assert!(page.contains(&format!("#{MENU}{{display:none}}@media")));
+        for (id, name) in TABS {
+            assert!(
+                page.contains(&format!("<span id=\"{id}-cur\">{name}</span>")),
+                "the menu bar cannot name the {id} tab"
+            );
+            assert!(page.contains(&format!("#{id}:checked~.menubar #{id}-cur")));
+        }
     }
 
     /// The page's job on a phone is to be honest about its own age, and the

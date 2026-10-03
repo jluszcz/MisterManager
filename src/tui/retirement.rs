@@ -47,10 +47,10 @@ fn status_span(status: Status, short_by: Option<Cents>) -> Span<'static> {
 fn title(r: &Retirement) -> Line<'static> {
     let mut text = String::from("Retirement");
     if let Some(age) = r.age {
-        text.push_str(&format!(" · age {age}"));
+        text.push_str(&format!(" · Age {age}"));
     }
     if let Some(salary) = r.salary {
-        text.push_str(&format!(" · salary {}", dollars(salary)));
+        text.push_str(&format!(" · Salary {}", dollars(salary)));
     }
     Line::from(text)
 }

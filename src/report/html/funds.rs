@@ -17,7 +17,6 @@
 
 use super::{account, escape, whole_money};
 use crate::allocation::{self, Class};
-use crate::db::account::TaxTreatment;
 use crate::db::fund_mix::Slice;
 use crate::palette;
 use crate::rate::BasisPoints;
@@ -42,8 +41,8 @@ fn color(class: Class) -> String {
 /// imported into has no age to derive a bond target from -- and until it
 /// does, there is nothing here to state.
 ///
-/// The mark is `optional_money`'s and `savings::percent`'s, because the page
-/// has one. A reader meets this column beside those two with no way to hover
+/// The mark is `savings::percent`'s, because the page has one. A reader meets
+/// this column beside that one with no way to hover
 /// for an explanation, and a second spelling of "nothing here" would be a
 /// difference they had to work out the meaning of.
 fn percent(share: Option<BasisPoints>) -> String {
@@ -75,15 +74,17 @@ fn delta(share: Option<BasisPoints>) -> String {
 }
 
 /// The summary's own header, in the Funds screen's column order and wording,
-/// each column carrying the class its cells below carry.
-const SUMMARY_HEADER: [(&str, &str); 7] = [
+/// each column carrying the class its cells below carry -- and three of its
+/// seven columns short. The screen's tax columns (`Taxable`, `Tax-deferred`,
+/// `Tax-free`) are a second question about the same portfolio, where it is
+/// held rather than what it holds, and seven columns do not fit a phone; the
+/// question the page is opened to answer is the allocation against the age
+/// rule, which is these four.
+const SUMMARY_HEADER: [(&str, &str); 4] = [
     ("Class", ""),
     ("Target", "n"),
     ("Actual", "n"),
     ("\u{394}", "n"),
-    ("Taxable", "n"),
-    ("Tax-deferred", "n"),
-    ("Tax-free", "n"),
 ];
 
 /// The holdings' header: the screen's own wording, three of its six columns
@@ -134,20 +135,11 @@ fn header(columns: &[(&str, &str)]) -> String {
 /// on the label instead. Either way a class is named in its own color
 /// exactly once, and tinting the label *and* keeping the legend would spend
 /// two marks on one fact.
-///
-/// The three tax columns are a second question about the same portfolio --
-/// not what it holds but where it is held -- and each is a share of the same
-/// denominator as `Actual`, so a row reads across to its own total and a
-/// column reads down to what that treatment holds.
-fn summary(rows: &[allocation::SummaryRow], lookthrough: &crate::allocation::Allocation) -> String {
+fn summary(rows: &[allocation::SummaryRow]) -> String {
     let mut out = header(&SUMMARY_HEADER);
     for row in rows {
-        let treatments: String = TaxTreatment::ALL
-            .iter()
-            .map(|treatment| percent(Some(lookthrough.class_in(row.class, *treatment))))
-            .collect();
         out.push_str(&format!(
-            "<tr><td>{}</td>{}{}{}{treatments}</tr>",
+            "<tr><td>{}</td>{}{}{}</tr>",
             row.class.label(),
             percent(row.target),
             percent(Some(row.actual)),
@@ -241,10 +233,7 @@ fn section(account_allocation: &AccountAllocation) -> String {
     let mut html = format!("<h3>{}</h3>", account(&account_allocation.account));
     if !account_allocation.summary.is_empty() {
         html.push_str(&coverage(&account_allocation.lookthrough));
-        html.push_str(&summary(
-            &account_allocation.summary,
-            &account_allocation.lookthrough,
-        ));
+        html.push_str(&summary(&account_allocation.summary));
         html.push_str(&bar(&account_allocation.lookthrough.slices));
     }
     html.push_str(&holdings(&account_allocation.holdings));
@@ -283,7 +272,7 @@ pub(super) fn sections(allocation: &Allocation) -> String {
     } else {
         html.push_str("<h3>Allocation</h3>");
         html.push_str(&coverage(&allocation.lookthrough));
-        html.push_str(&summary(&allocation.summary, &allocation.lookthrough));
+        html.push_str(&summary(&allocation.summary));
         html.push_str(&bar(&allocation.lookthrough.slices));
     }
     html.extend(allocation.accounts.iter().map(section));
@@ -371,41 +360,17 @@ mod tests {
         }
     }
 
-    /// The page and the screen are two spellings of one table, so the tax
-    /// columns have to reach the page as figures that foot the same way --
-    /// across to a class's own share, and down to what a treatment holds.
+    /// The tax split is the screen's and not the page's: three more
+    /// columns put the summary past a phone.
     #[test]
-    fn the_tax_columns_reach_the_page_and_foot_across_each_class() {
-        let snapshot = snapshot(vec![], 1_000);
-        let panel = funds_panel(&snapshot);
-        let lookthrough = &snapshot.allocation.lookthrough;
-
+    fn the_tax_columns_are_left_off_the_page() {
+        let panel = funds_panel(&snapshot(vec![], 1_000));
         for treatment in TaxTreatment::ALL {
             assert!(
-                panel.contains(treatment.label()),
-                "{} has no column: {panel}",
+                !panel.contains(&format!(">{}<", treatment.label())),
+                "{} has a column: {panel}",
                 treatment.label()
             );
-        }
-        // The fixture holds one account taxable and the other tax-deferred,
-        // so a column drawn over the wrong class would not foot.
-        for class in Class::ALL {
-            let across: i64 = TaxTreatment::ALL
-                .iter()
-                .map(|t| lookthrough.class_in(class, *t).0)
-                .sum();
-            assert_eq!(
-                across,
-                class.actual(&lookthrough.slices).0,
-                "{class:?} does not foot across its treatments"
-            );
-            for treatment in TaxTreatment::ALL {
-                let share = lookthrough.class_in(class, treatment);
-                assert!(
-                    panel.contains(&format!("{share}%")),
-                    "{class:?} in {treatment:?} has no cell: {panel}"
-                );
-            }
         }
     }
 

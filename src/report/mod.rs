@@ -908,5 +908,7 @@ mod tests {
                 "nothing switches the {id} panel on"
             );
         }
+        assert!(unquoted.contains("for=menu>"), "no menu button");
+        assert!(page.contains("#menu:checked~nav"), "nothing opens the menu");
     }
 }

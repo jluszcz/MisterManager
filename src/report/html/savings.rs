@@ -1,6 +1,6 @@
 //! The Savings tab: every container's goals, and what it has left over.
 
-use super::{account, escape, optional_money, whole_money};
+use super::{account, escape, whole_money};
 use crate::palette;
 use crate::rate::Percent;
 use crate::report::Container;
@@ -42,16 +42,19 @@ fn percent(percent: Option<Percent>) -> String {
 }
 
 /// The Savings table's own header, in `src/tui/savings.rs`'s column order and
-/// wording minus the leading `Account` column -- the report groups a
-/// container's rows under its own heading instead of repeating the container
-/// on every row, and `src/report/` cannot name `tui` to read the labels off
-/// it directly, so the two sinks are kept in agreement by eye instead.
-const HEADER: [&str; 6] = ["Goal", "Current", "Goal", "%", "Goal Date", "$/Pay"];
+/// wording minus two columns: the leading `Account`, because the report
+/// groups a container's rows under its own heading instead of repeating the
+/// container on every row; and the trailing `$/Pay`, because six columns do
+/// not fit a phone and what a goal asks per paycheck is a figure for the
+/// payday, which is spent at the screen rather than read off the page.
+/// `src/report/` cannot name `tui` to read the labels off it directly, so the
+/// two sinks are kept in agreement by eye instead.
+const HEADER: [&str; 5] = ["Goal", "Current", "Goal", "%", "Goal Date"];
 
 /// One container: its goals, and the Unallocated remainder below them.
 ///
-/// The widest table on the page -- six columns, and a phone -- so the goal
-/// name is the column that gives way (`w`) while the date and the three
+/// The widest table on the page -- five columns, and a phone -- so the goal
+/// name is the column that gives way (`w`) while the date and the
 /// figures hold their line. `Unallocated` is ours rather than the owner's and
 /// takes no `w`: it is a word the column is sized to fit, not one it may break
 /// to make room for something else.
@@ -74,23 +77,22 @@ fn section(container: &Container) -> String {
             .map(|d| escape(&d.to_string()))
             .unwrap_or_default();
         rows.push_str(&format!(
-            "<tr{}><td class=\"w\">{}</td>{}{}{}<td class=\"d\">{goal_date}</td>{}</tr>",
+            "<tr{}><td class=\"w\">{}</td>{}{}{}<td class=\"d\">{goal_date}</td></tr>",
             row_classes(r),
             escape(&r.name),
             whole_money(r.current),
             whole_money(r.goal),
             percent(r.percent),
-            optional_money(r.per_paycheck),
         ));
     }
     // Named rather than left to `whole_money`, which would do the same
     // arithmetic: this is the rule the screen's own footer reads, and one
     // function is what stops the two sinks quoting different remainders.
     let excess = unallocated(container.excess);
-    // Six cells, matching every goal row above: the excess is a money figure
+    // Five cells, matching every goal row above: the excess is a money figure
     // and Current is where a reader looks for "how much is sitting here".
     rows.push_str(&format!(
-        "<tr><td>Unallocated</td>{}<td class=\"n\"></td><td class=\"n\"></td><td class=\"d\"></td><td class=\"n\"></td></tr>",
+        "<tr><td>Unallocated</td>{}<td class=\"n\"></td><td class=\"n\"></td><td class=\"d\"></td></tr>",
         whole_money(excess)
     ));
     format!(
@@ -234,6 +236,16 @@ mod tests {
         // `>-0<` rather than `-0`, which every goal date carries.
         assert!(!panel.contains(">-0<"), "{panel}");
         assert!(panel.contains("<td class=\"n\">0</td>"), "{panel}");
+    }
+
+    /// `$/Pay` is the screen's and not the page's: the sixth column put the
+    /// table past a phone.
+    #[test]
+    fn the_per_paycheck_column_is_left_off_the_page() {
+        let page = page(&snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000));
+        let panel = panel(&page, "savings");
+        assert!(!panel.contains("$/Pay"), "{panel}");
+        assert!(!panel.contains(">25<"), "the per-paycheck figure: {panel}");
     }
 
     /// Unlike an empty Overview band, which is a group the owner does not
