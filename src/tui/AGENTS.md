@@ -1461,10 +1461,11 @@ deferred to nothing.
   nothing about when anything falls due, and a month already past this year lands two calendars
   out. The date is computed once, when the picker opens, and is the date the commit writes.
 - **A created goal is dated for the year ahead, not the next occurrence.** `picker::goal_date`
-  starts from `next_occurrence` — the first of the entry's month on or after today — and steps a
-  year past it, because creating goals is a reseed rather than a catch-up. Counting from the
-  occurrence rather than from the calendar is what puts a month already gone this year two
-  calendars out: March, reseeded in August 2026, next occurs in March 2027 and so lands in 2028.
+  starts from `next_occurrence` — the first of the entry's month, this year while that month has
+  not ended — and steps a year past it, because creating goals is a reseed rather than a
+  catch-up. Counting from the occurrence rather than from the calendar is what puts a month
+  already gone this year two calendars out: March, reseeded in August 2026, next occurs in March
+  2027 and so lands in 2028.
   `Biennial` steps two years instead when `goal::has_goal_dated_in_year` says the entry already has
   this year's round — every two years means the year between is skipped rather than filled. Closed
   goals count there: a round that has been through and been closed out has still been through.

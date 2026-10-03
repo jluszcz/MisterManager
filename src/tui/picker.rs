@@ -25,16 +25,21 @@ use anyhow::{Context, Result};
 use chrono::{Datelike, Months, NaiveDate};
 use std::collections::{HashMap, HashSet};
 
-/// The first of `month`, in the first year where that lands on or after
-/// `today`. `None` only for a month outside 1-12, which the schema's `CHECK`
-/// already refuses.
+/// The first of `month`, this year if `today` falls in or before that month
+/// and next year otherwise. `None` only for a month outside 1-12, which the
+/// schema's `CHECK` already refuses.
+///
+/// The month under way counts as this year's occurrence even once its first
+/// is behind `today`: a reseed run on October 3rd is the one meant for this
+/// October's round, and comparing against the first would push every entry
+/// due this month a year further out than every entry due next month.
 pub fn next_occurrence(month: u32, today: NaiveDate) -> Option<NaiveDate> {
-    let this_year = NaiveDate::from_ymd_opt(today.year(), month, 1)?;
-    if this_year >= today {
-        Some(this_year)
+    let year = if month >= today.month() {
+        today.year()
     } else {
-        NaiveDate::from_ymd_opt(today.year() + 1, month, 1)
-    }
+        today.year() + 1
+    };
+    NaiveDate::from_ymd_opt(year, month, 1)
 }
 
 /// The goal date a new goal from `entry` takes.
@@ -376,7 +381,12 @@ mod tests {
         assert_eq!(
             next_occurrence(8, day(2026, 8, 1)),
             Some(day(2026, 8, 1)),
-            "at or after today, so the first of this month counts"
+            "the first of this month counts on the first"
+        );
+        assert_eq!(
+            next_occurrence(8, day(2026, 8, 16)),
+            Some(day(2026, 8, 1)),
+            "and still counts once the first is behind it: the month is not over"
         );
     }
 
@@ -385,7 +395,7 @@ mod tests {
     #[test]
     fn the_next_occurrence_of_a_month_already_past_crosses_the_year_boundary() {
         assert_eq!(next_occurrence(3, day(2026, 8, 16)), Some(day(2027, 3, 1)));
-        assert_eq!(next_occurrence(8, day(2026, 8, 16)), Some(day(2027, 8, 1)));
+        assert_eq!(next_occurrence(7, day(2026, 8, 1)), Some(day(2027, 7, 1)));
     }
 
     /// A reseed is for the year ahead, so an annual entry lands a year past
@@ -452,8 +462,8 @@ mod tests {
         );
         assert_eq!(
             goal_date(&lego, false, day(2026, 12, 2)).unwrap(),
-            day(2028, 12, 1),
-            "the first has passed, so the next occurrence is already 2027"
+            day(2027, 12, 1),
+            "December 2026 is still under way, so the reseed is for 2027"
         );
     }
 
