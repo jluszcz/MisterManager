@@ -1237,8 +1237,8 @@ mod tests {
 
     /// The sibling refusal, and the sharper one: this error fires only on
     /// text that *already parsed* as money, so what it quotes back is a real
-    /// figure every time. `e` on a fund row prefills the stored cents, which
-    /// is exactly the input that trips it.
+    /// figure every time. `e` on a goal whose imported base carries cents
+    /// prefills them, which is exactly the input that trips it.
     #[cfg(feature = "demo")]
     #[test]
     fn a_demo_scrambles_the_figure_a_refused_whole_amount_quotes() {

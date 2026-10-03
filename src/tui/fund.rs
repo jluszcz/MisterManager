@@ -27,7 +27,7 @@
 //! move.
 
 use super::cursor::{Cursor, Viewport, impl_scroll};
-use super::form::{AccountChoice, Field, Focused, FormFields, Step, next_in, parse_whole_amount};
+use super::form::{AccountChoice, Field, Focused, FormFields, Step, next_in, parse_amount};
 use super::search::{Search, SearchBox};
 use super::widget::{field_stack, render_fields};
 use super::{
@@ -1111,11 +1111,16 @@ impl HoldingForm {
     /// with a mix fetched under one spelling never reaching a holding typed
     /// in the other. Normalising the typing is what folds the three at once,
     /// and tickers are written in capitals anyway.
+    ///
+    /// The balance is **truncated** to a whole dollar, unlike a goal figure,
+    /// which refuses cents: a balance is copied off a statement quoting cents,
+    /// not chosen, so the cents are noise rather than a typo -- and toward
+    /// zero is the direction the screen already drops them in when drawing it.
     pub fn commit(&self) -> Result<(AccountId, String, Cents)> {
         let account = self.account.selected().context("no account is selected")?;
         let ticker = self.ticker.value().trim().to_uppercase();
         ensure!(!ticker.is_empty(), "ticker must not be empty");
-        let balance = parse_whole_amount(self.balance.value())?;
+        let balance = parse_amount(self.balance.value())?.trunc_to_dollar();
         Ok((account.id, ticker, balance))
     }
 }
@@ -2219,17 +2224,16 @@ mod tests {
         assert!(err.to_string().contains("ticker"), "{err}");
     }
 
-    /// Goal and fund figures alike are typed in whole dollars -- a typo
-    /// rather than a deliberate cents figure -- and `parse_whole_amount`
-    /// refuses rather than rounds.
+    /// A balance is copied off a statement, so its cents are dropped rather
+    /// than refused -- toward zero, the way the screen draws it.
     #[test]
-    fn a_holding_form_refuses_a_balance_carrying_cents() {
+    fn a_holding_form_truncates_a_balance_carrying_cents() {
         let mut form = HoldingForm::add(accounts(), None).unwrap();
         typed(&mut form, HoldingField::Ticker, "USM");
-        typed(&mut form, HoldingField::Balance, "100.50");
+        typed(&mut form, HoldingField::Balance, "100.99");
 
-        let err = form.commit().unwrap_err();
-        assert!(err.to_string().contains("100.50"), "{err}");
+        let (_, _, balance) = form.commit().unwrap();
+        assert_eq!(balance, Cents::from_dollars(100));
     }
 
     #[test]
