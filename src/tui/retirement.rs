@@ -6,16 +6,18 @@ use super::Label;
 use super::form::{DateField, Field, Focused, FormFields, next_in, parse_whole_amount};
 use super::style;
 use super::widget::{field_stack, render_fields};
+use crate::balance_history::{History, Series};
+use crate::calc::Month;
 use crate::calc::retirement::{BAND_DASH, Band, Status};
 use crate::money::Cents;
 use crate::retirement::Retirement;
 use anyhow::{Result, ensure};
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Cell, Paragraph, Row, Table};
+use ratatui::widgets::{Axis, Block, Cell, Chart, LegendPosition, Paragraph, Row, Table};
 
 /// What a figure that cannot be stated draws as -- the Funds screen's word
 /// for the same thing.
@@ -158,52 +160,82 @@ fn milestone_table(r: &Retirement) -> Table<'static> {
     .header(header)
 }
 
-fn account_table(r: &Retirement) -> Table<'static> {
-    let header = Row::new(vec![
-        Cell::from("Account"),
-        Cell::from("Tax"),
-        super::right_header("Balance"),
-        super::right_header("Share"),
-    ])
-    .style(Style::default().add_modifier(Modifier::BOLD));
-    let rows = r.held.iter().map(|h| {
-        let share = h
-            .share_of(r.saved)
-            .map(|s| format!("{s}%"))
-            .unwrap_or_else(|| ABSENT.to_string());
-        Row::new(vec![
-            super::account_cell(&h.account),
-            Cell::from(h.tax_label()),
-            super::whole_amount(h.balance),
-            Cell::from(Line::from(share).right_aligned()),
-        ])
-    });
-    Table::new(
-        rows,
-        [
-            Constraint::Min(20),
-            super::label_width("Tax", super::tax_labels()),
-            Constraint::Length(14),
-            Constraint::Length(9),
-        ],
-    )
-    .header(header)
+/// What a chart with no account behind it draws instead of axes.
+const NO_HISTORY: &str = "Nothing recorded yet";
+
+/// A month as a point on the x axis: consecutive months one apart, whatever
+/// their lengths.
+fn month_x(month: Month) -> f64 {
+    let first = month.first_day();
+    f64::from(first.year() * 12 + first.month0() as i32)
 }
 
-pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement) {
-    let standing = standing_lines(r);
-    // Each box is its content plus a border above and below, the table ones
-    // a header row too. No account box at all until one is marked: the
-    // standing box already says where to mark one.
-    let accounts = match r.held.is_empty() {
-        true => 0,
-        false => r.held.len() as u16 + 3,
+/// One chart: a line per account, in its own color, across every month any
+/// of them was recorded in. The y axis starts at zero, so a line's height is
+/// its balance rather than its distance from the lowest one drawn.
+fn render_chart(frame: &mut Frame, area: Rect, title: &'static str, series: &[Series]) {
+    let block = Block::bordered().title(title);
+    let months = || series.iter().flat_map(|s| s.points.iter().map(|(m, _)| *m));
+    let (Some(first), Some(last)) = (months().min(), months().max()) else {
+        frame.render_widget(Paragraph::new(NO_HISTORY).block(block), area);
+        return;
     };
-    let [title_area, box_area, table_area, accounts_area, _] = Layout::vertical([
+    let cents = || series.iter().flat_map(|s| s.points.iter().map(|(_, c)| *c));
+    let low = cents().min().unwrap_or(Cents::ZERO).min(Cents::ZERO);
+    // A dollar of range at least, so a chart of nothing but zeroes still has
+    // an axis to draw them against.
+    let high = cents().max().unwrap_or(Cents::ZERO).max(low + Cents(100));
+    let data: Vec<Vec<(f64, f64)>> = series
+        .iter()
+        .map(|s| {
+            s.points
+                .iter()
+                .map(|(m, c)| (month_x(*m), c.0 as f64))
+                .collect()
+        })
+        .collect();
+    let datasets = series
+        .iter()
+        .zip(&data)
+        .map(|(s, points)| super::account_series(&s.account, points))
+        .collect();
+    // One month alone is centred between a month either side: on an axis of
+    // its own width it would sit on the left edge, under the legend.
+    let label = |m: Month| m.first_day().format("%b %Y").to_string();
+    let x = match first == last {
+        true => Axis::default()
+            .bounds([month_x(first) - 1.0, month_x(first) + 1.0])
+            .labels([String::new(), label(first), String::new()]),
+        false => Axis::default()
+            .bounds([month_x(first), month_x(last)])
+            .labels([label(first), label(last)]),
+    };
+    let y = Axis::default()
+        .bounds([low.0 as f64, high.0 as f64])
+        .labels([
+            compact(low),
+            compact(Cents((low.0 + high.0) / 2)),
+            compact(high),
+        ]);
+    let chart = Chart::new(datasets)
+        .block(block)
+        .x_axis(x)
+        .y_axis(y)
+        .legend_position(Some(LegendPosition::TopLeft))
+        // Shown whenever it fits at all: an account's line is told apart from
+        // its neighbours only by its color, and the legend is what names it.
+        .hidden_legend_constraints((Constraint::Percentage(100), Constraint::Percentage(100)));
+    frame.render_widget(chart, area);
+}
+
+pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement, history: &History) {
+    let standing = standing_lines(r);
+    // Each box is its content plus a border above and below, the table a
+    // header row too. The charts take whatever is left.
+    let [title_area, box_area, table_area, charts_area] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(standing.len() as u16 + 2),
         Constraint::Length(r.rows.len() as u16 + 3),
-        Constraint::Length(accounts),
         Constraint::Min(0),
     ])
     .areas(area);
@@ -216,12 +248,17 @@ pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement) {
         milestone_table(r).block(Block::bordered().title("Milestones")),
         table_area,
     );
-    if !r.held.is_empty() {
-        frame.render_widget(
-            account_table(r).block(Block::bordered().title("Accounts")),
-            accounts_area,
-        );
-    }
+    // Side by side rather than stacked: a chart is read across, and height
+    // is the dimension the boxes above have already spent.
+    let [cash_area, investment_area] =
+        Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(charts_area);
+    render_chart(frame, cash_area, "Cash balances over time", &history.cash);
+    render_chart(
+        frame,
+        investment_area,
+        "Investment balances over time",
+        &history.investment,
+    );
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

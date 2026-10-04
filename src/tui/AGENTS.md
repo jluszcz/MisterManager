@@ -204,7 +204,10 @@ portfolio, so beside one account's `Δ` the figure would be on another denominat
 `Funds::recommendation` is where that gate is. `recurring_goal` is the sixth screen, before Funds
 so that the screens a payday is worked from sit together. `retirement` is the eighth, beside Funds
 because both read the investment accounts: retirement savings against the age rule, read from
-`crate::retirement` and drawn with no cursor. Its one key, `e`, edits the salary and the birth
+`crate::retirement` and drawn with no cursor, and under it two charts of what the cash and
+investment accounts held month by month, read from `crate::balance_history`. An account reaches a
+chart through `account_label::account_series`, the third exit beside `account_cell` and
+`label_line`, so a line and its legend entry are the account's own color by construction. Its one key, `e`, edits the salary and the birth
 date — the first editor the birth date has, pressed here rather than on Funds, whose target the
 same date sets, because this is the first screen that needs both. `recurring_txn` is the ninth,
 closing out the app's CRUD coverage, and `accounts` is screen `0`, last in the bar because that is

@@ -83,6 +83,7 @@ macro_rules! text_enum {
 }
 
 pub mod account;
+pub mod balance_snapshot;
 pub mod bill;
 pub mod date;
 pub mod fund_mix;
@@ -206,7 +207,7 @@ pub fn snapshot(src: &Path, dest: &Path) -> Result<()> {
 /// deleted explicitly anyway so this order is self-documenting rather than
 /// relying on a cascade a reader has to go look up.
 ///
-/// **Four tables the schema creates are deliberately not here.** `account`
+/// **Five tables the schema creates are deliberately not here.** `account`
 /// holds the owner's own naming, banding and ordering, which the import no
 /// longer supplies — it writes a row per code and nothing more — so clearing
 /// it would throw that away on every `--replace`. `recurring_txn` only
@@ -216,8 +217,16 @@ pub fn snapshot(src: &Path, dest: &Path) -> Result<()> {
 /// `fund_mix` are the two newest exemptions: the workbook carries neither a
 /// fund's ticker nor its composition, so a replace has nothing in either to
 /// write back — the owner's typed balances and the fetcher's own cache both
-/// survive it untouched, the same as `account` does.
+/// survive it untouched, the same as `account` does. `holding_snapshot` is
+/// the newest: a fund's past balances exist nowhere else, so nothing could
+/// put them back.
+///
+/// `balance_snapshot` *is* here, though the import never writes it: every
+/// figure in it is the ledger's, so a replace that rewrites the ledger leaves
+/// each one quoting a ledger that is gone. Cleared, it is filled back in from
+/// the new one by the `balance_history::take` that follows the import.
 const IMPORTED_TABLES: &[&str] = &[
+    "balance_snapshot",
     "allocation",
     "batch",
     "goal",
@@ -238,7 +247,13 @@ const IMPORTED_TABLES: &[&str] = &[
 /// checks: a table added to the schema and forgotten in both would survive a
 /// `--replace` silently.
 #[cfg(test)]
-const PRESERVED_TABLES: &[&str] = &["account", "recurring_txn", "holding", "fund_mix"];
+const PRESERVED_TABLES: &[&str] = &[
+    "account",
+    "recurring_txn",
+    "holding",
+    "fund_mix",
+    "holding_snapshot",
+];
 
 /// Whether this database already holds imported data.
 ///
@@ -716,6 +731,8 @@ mod tests {
             }],
         )
         .unwrap();
+        crate::balance_history::take(&db, chrono::NaiveDate::from_ymd_opt(2026, 1, 15).unwrap())
+            .unwrap();
 
         // Every table this test seeds a row in beforehand, so a table
         // dropped from both lists here would still be caught: a count that

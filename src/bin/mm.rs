@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use jluszcz_finance_utils::backup::cli::{self as backup, BackupArgs};
 #[cfg(feature = "import")]
 use mistermanager::import;
-use mistermanager::{BACKUP, config, db, mix, report, tui};
+use mistermanager::{BACKUP, balance_history, config, db, mix, report, tui};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -134,6 +134,7 @@ fn main() -> Result<()> {
     // database it was rendered from, never over the real one.
     let scratch_dir = path.parent().filter(|_| scratch).map(PathBuf::from);
     let today = cli.today.unwrap_or_else(|| Local::now().date_naive());
+    let real_today = cli.today.is_none().then_some(today);
 
     let config_path = match cli.config {
         Some(p) => p,
@@ -148,7 +149,14 @@ fn main() -> Result<()> {
         // global, so the TUI honors them exactly as the importer does.
         None => {
             let sec_contact = cfg.sec.as_ref().map(|s| s.contact.clone());
-            let db = tui::run(db::open(&path)?, today, demo, sec_contact)?;
+            let db = db::open(&path)?;
+            // Before the TUI, so the months the ledger can recover are on
+            // record whether or not anything in the session goes on to write.
+            take_snapshot(&db, real_today);
+            let db = tui::run(db, today, demo, sec_contact)?;
+            // Again on the way out, so this month holds what the session left
+            // it at rather than what it opened on.
+            take_snapshot(&db, real_today);
             // The configured page belongs to the real database, so a scratch
             // run writes its own into the scratch directory instead.
             match &scratch_dir {
@@ -172,7 +180,12 @@ fn main() -> Result<()> {
                          container account holds -- then re-run this same command, with no flag"
                     );
                 }
-                import::Report::Full(report) => print_full(&report),
+                import::Report::Full(report) => {
+                    // A `--replace` clears the ledger months, and they are the
+                    // new ledger's to fill rather than the next launch's.
+                    take_snapshot(&db, real_today);
+                    print_full(&report)
+                }
             }
         }
         Some(Command::Report { dir }) => {
@@ -267,6 +280,24 @@ fn main() -> Result<()> {
         backup::scheduled(&BACKUP, &path, cfg.backup.as_ref(), db::snapshot);
     }
     Ok(())
+}
+
+/// A snapshot is a chart's history, not a figure anything spends, so a failed
+/// one warns rather than keeping the app closed or failing an import that has
+/// already committed. Any ledger month it missed is recovered by the next run.
+///
+/// `None` under `--today`, which skips it: the snapshot writes the month it
+/// is handed as the current one, so a pretended date would rewrite a month
+/// that is over -- fund history included, which nothing can rebuild -- or
+/// record one that has not happened. `--db` is not a reason to skip, since the
+/// snapshot lands in the database it names.
+fn take_snapshot(db: &db::Db, real_today: Option<NaiveDate>) {
+    let Some(today) = real_today else {
+        return;
+    };
+    if let Err(e) = balance_history::take(db, today) {
+        eprintln!("snapshot failed: {e:#}");
+    }
 }
 
 /// Never fatal, for the reason a scheduled backup is not: someone who has

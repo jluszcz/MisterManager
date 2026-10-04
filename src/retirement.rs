@@ -157,8 +157,9 @@ fn row(age: i64, now: bool, salary: Option<Cents>) -> Row {
     }
 }
 
-/// Now, then the milestones still ahead. A passed one is left out: with no
-/// balance history there is no saying whether it was met *at* that age, and
+/// Now, then the milestones still ahead. A passed one is left out: fund
+/// history starts at the first snapshot, so there is no saying whether it
+/// was met *at* that age, and
 /// a past target says nothing about today. With no age there is no Now and
 /// nothing has passed, so every milestone is drawn.
 pub fn rows(age: Option<i64>, salary: Option<Cents>) -> Vec<Row> {

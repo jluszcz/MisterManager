@@ -42,7 +42,7 @@ use crate::account_label::{Account, Label};
 use crate::db::Db;
 use crate::db::account::TaxTreatment;
 use crate::rate::BasisPoints;
-use account_label::{account_cell, label_line};
+use account_label::{account_cell, account_series, label_line};
 use anyhow::{Result, ensure};
 use app::App;
 use chrono::NaiveDate;

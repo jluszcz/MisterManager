@@ -1,5 +1,6 @@
 pub mod account_label;
 pub mod allocation;
+pub mod balance_history;
 pub mod calc;
 pub mod config;
 pub mod db;

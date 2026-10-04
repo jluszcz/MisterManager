@@ -178,7 +178,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/config.rs` | The TOML config file. `serde` is named here and in `src/mix/sec.rs`; `toml` only in tests (`src/config.rs`, `src/report/mod.rs`). |
 | `src/plan_line.rs` | Every Planning line: its label, the amount it moves, and the setting key that says where it lands. |
 | `src/plan_rows.rs` | The Planning waterfall as an ordered list of rows, in neither medium -- a peer of `overview` and `savings`. The order, the labels, the grouping, the two footers outside the transfers block, and `Target`, the constant a row *is*. The Planning screen and the report's Planning tab both read it, and each spends `Row::depth` in its own units. |
-| `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `per_paycheck_over_years`, `period_days`, `pro_rata`, the Planning waterfall, `fund` (the age-based allocation target), `retirement` (where retirement savings should stand at an age), `schedule` (when a recurring thing happens). No database. |
+| `src/calc/` | Pure formulas: `tax`, `biweekly`, `per_paycheck`, `per_paycheck_over_years`, `period_days`, `pro_rata`, the Planning waterfall, `fund` (the age-based allocation target), `retirement` (where retirement savings should stand at an age), `schedule` (when a recurring thing happens), `Month` (a calendar month, which the ledger window steps by and a snapshot is keyed on). No database. |
 | `src/description.rs` | What a transaction's description reads as, in any medium: the stored text, or `—` when there is none. One rule rather than one per sink, the same split `palette` makes for color — `tui`'s ledger, status line and delete confirmation read it, and so does `report::html::ledger`. |
 | `src/demo/` | `mm --demo`: the mask every absolute figure and owner-entered name is drawn through, and the once-per-run salt that turns it on. `mask` is the pure scrambling and pseudoword rules; `mod.rs` is the API every layer that puts a figure or a name in front of a human calls — `tui`, `transfer`'s prose, and the refusals `goal` and `db` build for a screen to print verbatim. Compiles only under the `demo` Cargo feature. |
 | `src/db/` | Schema and queries — one module per aggregate. |
@@ -187,6 +187,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/db/bill.rs` | The monthly bill block, labelled — the `Planning!C6:E12` rows, and the owner's mark saying which of them the Biweekly Expenses figure counts. |
 | `src/db/holding.rs` | The `holding` table — a fund held in an investment account, and the balance the owner typed. |
 | `src/db/fund_mix.rs` | The `fund_mix` table — one fund's composition by asset class, plus the name the fund files under, as of the filing both were read from. |
+| `src/db/balance_snapshot.rs` | The `balance_snapshot` and `holding_snapshot` tables — a ledger account's balance per month, and a fund's per account per month. Its writers leave an unchanged figure unwritten, so a run that edits nothing still reads as one that wrote no rows. |
 | `src/db/recurring_txn.rs` | The `recurring_txn` table — rows whose amount and date are known in advance. CRUD plus the queries regeneration needs. |
 | `src/import/` | Reads `Money.xlsx` via `calamine`. Behind the non-default `import` Cargo feature — it is the only module naming `calamine`, which is what lets that dependency be `optional`, so a default build compiles no spreadsheet parser and offers no `mm import`. |
 | `src/mix/` | A fund's composition, read out of SEC's N-PORT filings and written to `db::fund_mix`. `sec` is the network client — the only place `reqwest`, `jluszcz_rust_utils` and `tokio` are named; `classify` is pure, with neither a network nor a database in it; `mod.rs` is the policy over the two. `mm mixes` and the Funds screen's `g`/`G` are the only things that run it. |
@@ -196,6 +197,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/fund_label.rs` | What a fund's filed name reads as, in any medium — `seriesName` with its trailing `Fund` dropped and its shouting undone, and the initialisms inside it left alone. A peer of `description.rs`, and for its reason: the Funds screen draws these and the report's holdings table is the obvious second reader. |
 | `src/fund.rs` | Reads the birth date and the international-equity split out of `db`, feeds `calc::fund::targets`; and `investment`, the account the Planning `Investment` line buys into beside what the waterfall puts on that line. |
 | `src/allocation.rs` | The look-through: each holding's balance apportioned by its fund's composition and summed by asset class, against what the age rule asks for. A peer of `overview`, `savings` and `plan_rows`, in neither medium — the Funds screen and the report's Funds tab both read it, so the apportioning, the row order, the four-class bar's classes and the combining of the two bond classes are stated once here. It is a share of what it *covers*: a holding whose fund has no composition on record is outside the denominator, and `Allocation::coverage` is what says so. `recommend` is the one place the Planning `Investment` line is matched to funds. |
+| `src/balance_history.rs` | What each account stood at, month by month: `take` records today's month (and fills every earlier ledger month the table has no figure for) on every `mm` launch and quit, and `load` reads it back as one series per account, by kind, with today's month read live. The Retirement screen charts the cash and investment series; the credit one is kept and drawn nowhere. |
 | `src/retirement.rs` | Retirement savings against the age rule, in neither medium: what the retirement-marked accounts hold, as a multiple of `key::ANNUAL_SALARY` and as a tax-free share, and the milestone table from the owner's age on. The Retirement screen and the report's Retirement tab both draw it. |
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. `spread_asks` prices the plug's set, and `unmet_asks` says when the plug falls short of it. |
@@ -403,10 +405,29 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   `--replace` clears, so `mm import` carries it across beside `INVESTMENT_ACCOUNT`. The birth
   date on the same form is not carried: it is `Constants!K2`, so a `--replace` takes it back from
   the workbook, which is what `e`'s panel entry says. Passed
-  milestones are not drawn: with no balance history there is no saying whether one was met *at*
+  milestones are not drawn: fund history starts at the first snapshot, so there is no saying whether one was met *at*
   that age.
 - **`holding` and `fund_mix` are in `PRESERVED_TABLES`**, and the reason is uniform: the workbook
-  carries neither, so a `--replace` has nothing to say about them.
+  carries neither, so a `--replace` has nothing to say about them. `holding_snapshot` is there
+  too, being history nothing could regenerate. `balance_snapshot` is not: it is in
+  `IMPORTED_TABLES` although the import never writes it, because every figure in it was read off
+  the ledger the replace throws away, and `mm import` re-takes the snapshot once the new ledger is
+  in.
+- **A month's snapshot is written once it is over and never again, short of a `--replace`; today's
+  is rewritten by every run.** `balance_history::take` runs before the TUI opens and after it
+  closes, and after a full `mm import`, on whatever database `--db` names — and **not at all under
+  `--today`**: `take` writes the month it is handed as the current one, so a pretended date would
+  rewrite a month already over, fund history included, or record one not yet reached. The Retirement
+  screen still draws under `--today`, reading the stored months before it and its own month live.
+  A month is a `calc::Month`, which cannot name any day but the first; the schema's `CHECK` is the
+  backstop under it. A past ledger month with no figure is
+  recovered from the ledger, a past month with one keeps it whatever the ledger has become since,
+  and a fund month is only ever recorded, since a holding carries no date to recover one from. A
+  ledger month's figure is its balance on the month's last day, every row dated inside the month
+  counted — deliberately not the Overview's Month-End, which is quoted on the first of the next
+  month and so would count that first toward the month before. **The writers must not touch an unchanged row**: the report's
+  quit gate reads `Db::wrote_rows`, and a snapshot that re-stored the same figure would make every
+  run look like one that edited something.
 - **`holding.sort` is the order the holdings were entered in, and the Funds screen binds no key
   that changes it.** A fund's place in a list is not an arrangement worth making — what a reader
   wants from that screen is the summary above it and the search across it — so unlike `account`
@@ -703,8 +724,8 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
 - **Import is not additive.** `import_all` refuses to run against a database already holding
   transactions or goals; `--replace` clears the imported tables first. The whole import runs in one
   SQL transaction.
-- **`--replace` clears every table but two, and the two it keeps are the two the import does not
-  write.** `IMPORTED_TABLES` is the clear list and `PRESERVED_TABLES` names the exceptions;
+- **`--replace` clears every table whose rows the old ledger or workbook produced, and keeps the
+  rest.** `IMPORTED_TABLES` is the clear list and `PRESERVED_TABLES` names the exceptions;
   between them they must cover every table the schema creates — baseline and chain alike — which
   is what `every_table_the_schema_creates_is_either_cleared_or_deliberately_kept` holds up. `account` is
   kept because its naming, banding and ordering are the owner's. `recurring_txn` is kept because
