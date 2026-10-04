@@ -43,6 +43,17 @@ impl Month {
     pub fn next(self) -> Month {
         self.shifted(1)
     }
+
+    /// Months since the calendar's year zero, so consecutive months are one
+    /// apart whatever their lengths: a month as a position on an axis.
+    pub fn ordinal(self) -> i32 {
+        self.0.year() * 12 + self.0.month0() as i32
+    }
+
+    /// How the month reads on a chart's axis or in a title: `Sep 2026`.
+    pub fn label(self) -> String {
+        self.0.format("%b %Y").to_string()
+    }
 }
 
 #[cfg(test)]

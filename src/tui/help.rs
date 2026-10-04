@@ -106,7 +106,8 @@ struct Filter {
 /// constants below are handles into this array rather than four more
 /// literals. A screen offering some of these shows them in this order,
 /// before the first key it owns alone -- all but the Overview's `Esc`, which
-/// follows the scrub it undoes;
+/// follows the scrub it undoes, and Retirement's, which follows the window
+/// keys it undoes;
 /// `the_shared_filters_lead_every_screen_footer_in_one_order` is what holds
 /// that up, and `every_filter_key_is_labelled_with_its_shared_word` is what
 /// stops a table naming one of these keys itself.
@@ -496,11 +497,42 @@ const RETIREMENT_EDIT: &str = "Edit the salary the savings are a multiple of, an
 #[cfg(not(feature = "import"))]
 const RETIREMENT_EDIT: &str = "Edit the salary the savings are a multiple of, and the birth date the age comes from. The birth date is also what the Funds screen's target is set by.";
 
-const RETIREMENT: [Entry; 1] = [Entry {
-    key: "e",
-    label: Label::Own("edit"),
-    detail: RETIREMENT_EDIT,
-}];
+/// The window's three keys lead, and `Esc` follows them rather than leading
+/// as a filter, for the Overview's reason: it undoes the keys before it. `[ ]`
+/// is named for its edge rather than with the shared `month`, because it is
+/// one of a pair -- `{ }` is the other edge -- and `month` would name half of
+/// it. Both exemptions are stated in the two tests that would otherwise hold
+/// this table to the shared filters.
+const RETIREMENT: [Entry; 5] = [
+    Entry {
+        key: "[ ]",
+        label: Label::Own(GRAPH_START),
+        detail: "Move the charts' first month a month earlier or later. View state only: nothing is saved, and restarting shows the whole history again.",
+    },
+    Entry {
+        key: "{ }",
+        label: Label::Own("graph end"),
+        detail: "Move the charts' last month a month earlier or later -- the same step as '[' and ']', on the window's other edge.",
+    },
+    Entry {
+        key: "w",
+        label: Label::Own("graph window"),
+        detail: "Type the charts' window: a start and an end, opening on the months drawn now. Either left blank is that edge of the history, and any day names its month.",
+    },
+    Entry::filter(
+        CLEAR_FILTER,
+        "Draw the charts across the whole history again.",
+    ),
+    Entry {
+        key: "e",
+        label: Label::Own("edit"),
+        detail: RETIREMENT_EDIT,
+    },
+];
+
+/// Retirement's `[ ]` word, named so the test exempting it from the shared
+/// `month` exempts exactly this label and no other.
+const GRAPH_START: &str = "graph start";
 
 const RECURRING_TXNS: [Entry; 7] = [
     Entry {
@@ -1468,6 +1500,10 @@ mod tests {
                 let Some(filter) = FILTERS.iter().find(|filter| filter.key == entry.key) else {
                     continue;
                 };
+                // Retirement's `[ ]` is one edge of a pair; see `RETIREMENT`.
+                if topic == Topic::Retirement && entry.label == Label::Own(GRAPH_START) {
+                    continue;
+                }
                 let allowed = [Label::Hidden, Label::Own(filter.word)];
                 assert!(
                     allowed.contains(&entry.label),
@@ -1485,16 +1521,17 @@ mod tests {
     /// that has one, rather than wherever that screen's table happened to put
     /// it.
     ///
-    /// The Overview's `Esc` is the one item exempt: it clears the scrub
-    /// rather than a filter, and follows the arrows it undoes. Only that item
-    /// is dropped, so a filter the Overview grows later is still held to the
-    /// rule.
+    /// The Overview's and Retirement's `Esc` are the items exempt: each
+    /// clears the view state the keys before it moved -- the scrub, the
+    /// charts' window -- rather than a filter, and follows those keys. Only
+    /// that item is dropped, so a filter either screen grows later is still
+    /// held to the rule.
     #[test]
     fn the_shared_filters_lead_every_screen_footer_in_one_order() {
         let scrub_clear = format!("{} {}", CLEAR_FILTER.key, CLEAR_FILTER.word);
         for topic in SCREENS {
             let mut items = footer_items(topic.keys());
-            if topic == Topic::Overview {
+            if matches!(topic, Topic::Overview | Topic::Retirement) {
                 items.retain(|item| *item != scrub_clear);
             }
             let places: Vec<Option<usize>> = items
@@ -1572,7 +1609,10 @@ mod tests {
             "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings"
         );
         assert_eq!(Topic::Accounts.footer(), "a add · e edit · ⇧↑↓ move");
-        assert_eq!(Topic::Retirement.footer(), "e edit");
+        assert_eq!(
+            Topic::Retirement.footer(),
+            "[ ] graph start · { } graph end · w graph window · Esc clear · e edit"
+        );
     }
 
     /// The Credit ledger shares the Ledger topic with Cash but has no `t`:

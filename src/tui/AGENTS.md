@@ -116,7 +116,10 @@ ledgers, All on Savings and Recurring Goals, the derived Paycheck-Eve on the Ove
 the shared word is `clear` rather than one screen's answer imposed on the others. Two tests hold it
 up: `every_filter_key_is_labelled_with_its_shared_word` over every topic there is, and
 `the_shared_filters_lead_every_screen_footer_in_one_order` over the nine with footers, less the
-Overview's `Esc`, which clears a scrub rather than a filter and follows the arrows it undoes.
+Overview's `Esc`, which clears a scrub rather than a filter and follows the arrows it undoes, and
+Retirement's, which clears the charts' window and follows the keys that move it. Retirement's `[ ]`
+is the one filter key exempt from its shared word: it is labelled `graph start` beside `{ } graph
+end`, since `month` would name one edge of a pair.
 
 **A footer must fit `MIN_WIDTH`, and the budget is what decides how a key is labelled.** ratatui
 truncates a `Paragraph` from the right, so an over-wide left half runs into the chrome and drops its
@@ -205,11 +208,21 @@ portfolio, so beside one account's `Δ` the figure would be on another denominat
 so that the screens a payday is worked from sit together. `retirement` is the eighth, beside Funds
 because both read the investment accounts: retirement savings against the age rule, read from
 `crate::retirement` and drawn with no cursor, and under it two charts of what the cash and
-investment accounts held month by month, read from `crate::balance_history`. An account reaches a
+investment accounts held month by month, read from `crate::balance_history`, each with a `Total`
+line summing its accounts on the same axis wherever there are two to sum, in the terminal's own foreground, since black would
+vanish on a dark theme. The two charts share one scale — the same
+months across whichever of them recorded fewer, and the same dollars up — so they read as one
+picture rather than two; that scale, the windowing and the Totals are `balance_history::Charts`,
+which the report's Retirement tab draws too, so the screen decides only glyphs and the window. An account reaches a
 chart through `account_label::account_series`, the third exit beside `account_cell` and
-`label_line`, so a line and its legend entry are the account's own color by construction. Its one key, `e`, edits the salary and the birth
+`label_line`, so a line and its legend entry are the account's own color by construction. `e` edits the salary and the birth
 date — the first editor the birth date has, pressed here rather than on Funds, whose target the
-same date sets, because this is the first screen that needs both. `recurring_txn` is the ninth,
+same date sets, because this is the first screen that needs both. The rest of its keys move the
+charts' window, which is view state like the Overview's scrub: `[`/`]` step its start a month,
+the vocabulary's month step; `{`/`}` step its end, the same keys
+shifted for the window's other edge, which nothing else in the vocabulary has; `Esc` clears it
+back to the whole history; and `w` types both edges into a form — a new letter, because `E`
+would read as the full form of what `e` edits rather than a second object. `recurring_txn` is the ninth,
 closing out the app's CRUD coverage, and `accounts` is screen `0`, last in the bar because that is
 where the key sits on the keyboard and because it is the screen visited least: `a`, which creates
 an account the workbook does not name, and `e`, over everything the workbook does not say about

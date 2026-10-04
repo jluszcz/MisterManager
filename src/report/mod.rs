@@ -161,6 +161,9 @@ pub struct Snapshot {
     pub planning: Planning,
     pub allocation: Allocation,
     pub retirement: crate::retirement::Retirement,
+    /// The Retirement tab's two charts across the whole history, or `None`
+    /// before anything is recorded.
+    pub charts: Option<crate::balance_history::Charts>,
 }
 
 /// One ledger, every row of it, grouped by month.
@@ -395,6 +398,9 @@ impl Snapshot {
             },
             allocation: allocation_view(db, today, &accounts)?,
             retirement: crate::retirement::load(db, today)?,
+            charts: crate::balance_history::Charts::whole(&crate::balance_history::load(
+                db, today,
+            )?),
         })
     }
 }

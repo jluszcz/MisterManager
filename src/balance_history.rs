@@ -122,6 +122,135 @@ pub fn load(db: &Db, today: NaiveDate) -> Result<History> {
     Ok(history)
 }
 
+/// What `series` held between them each month any of them was recorded in.
+///
+/// An account with no point in a month adds nothing to it rather than
+/// dropping the month: a ledger account has no point before its first row,
+/// and a fund none before it was first recorded, and in both it held nothing.
+pub fn total(series: &[Series]) -> Vec<(Month, Cents)> {
+    let mut sums: BTreeMap<Month, Cents> = BTreeMap::new();
+    for (month, cents) in series.iter().flat_map(|s| &s.points) {
+        *sums.entry(*month).or_default() += *cents;
+    }
+    sums.into_iter().collect()
+}
+
+/// The first and last month recorded across the cash and investment
+/// histories -- the two that are charted -- or `None` before anything is.
+pub fn extent(history: &History) -> Option<(Month, Month)> {
+    let months = || {
+        history
+            .cash
+            .iter()
+            .chain(&history.investment)
+            .flat_map(|s| s.points.iter().map(|(m, _)| *m))
+    };
+    Some((months().min()?, months().max()?))
+}
+
+/// One chart: its accounts cut to the charts' months, and their sum.
+#[derive(Clone, Debug, Default)]
+pub struct Chart {
+    /// Only the accounts with a point inside the months, so one with nothing
+    /// to draw takes no legend entry either.
+    pub series: Vec<Series>,
+    /// Empty unless there are two accounts to sum: one account's Total is
+    /// that account's line again, drawn over it in another ink, so the one
+    /// line on the chart would wear a color its legend entry does not.
+    pub total: Vec<(Month, Cents)>,
+}
+
+impl Chart {
+    fn new(series: &[Series], (first, last): (Month, Month)) -> Chart {
+        let series: Vec<Series> = series
+            .iter()
+            .map(|s| Series {
+                account: s.account.clone(),
+                points: s
+                    .points
+                    .iter()
+                    .filter(|(m, _)| (first..=last).contains(m))
+                    .copied()
+                    .collect(),
+            })
+            .filter(|s| !s.points.is_empty())
+            .collect();
+        let total = match series.len() {
+            0 | 1 => Vec::new(),
+            _ => total(&series),
+        };
+        Chart { series, total }
+    }
+
+    fn cents(&self) -> impl Iterator<Item = Cents> + '_ {
+        self.series
+            .iter()
+            .flat_map(|s| &s.points)
+            .chain(&self.total)
+            .map(|(_, c)| *c)
+    }
+}
+
+/// The two charts' titles and what either draws before anything is recorded,
+/// in every medium that draws them.
+pub const CASH_TITLE: &str = "Cash balances over time";
+pub const INVESTMENT_TITLE: &str = "Investment balances over time";
+pub const NO_HISTORY: &str = "Nothing recorded yet";
+
+/// The cash and investment charts, against one scale, in neither medium:
+/// the Retirement screen and the report's Retirement tab both draw it.
+///
+/// One scale so the two read as one picture -- the same months across,
+/// whichever chart recorded fewer, and the same dollars up, so a line's
+/// height means one figure on either side.
+#[derive(Clone, Debug)]
+pub struct Charts {
+    pub cash: Chart,
+    pub investment: Chart,
+    /// The first and last month drawn.
+    pub months: (Month, Month),
+    /// The lowest and highest figure on the y axis: always spanning zero,
+    /// so a line's height is its balance rather than its distance from the
+    /// lowest one drawn, and a dollar of range at least, so a chart of
+    /// nothing but zeroes still has an axis to draw them against.
+    pub cents: (Cents, Cents),
+}
+
+impl Charts {
+    /// Both charts across `months`, each Total summing only what is inside
+    /// them and the scale fitted to what is drawn rather than to the whole
+    /// history.
+    pub fn new(history: &History, months: (Month, Month)) -> Charts {
+        let cash = Chart::new(&history.cash, months);
+        let investment = Chart::new(&history.investment, months);
+        let figures = || cash.cents().chain(investment.cents());
+        let low = figures().min().unwrap_or(Cents::ZERO).min(Cents::ZERO);
+        let high = figures()
+            .max()
+            .unwrap_or(Cents::ZERO)
+            .max(Cents::ZERO)
+            .max(low + Cents(100));
+        Charts {
+            cash,
+            investment,
+            months,
+            cents: (low, high),
+        }
+    }
+
+    /// The three figures the y axis is labelled and gridded at: its ends and
+    /// the midpoint between them.
+    pub fn ticks(&self) -> [Cents; 3] {
+        let (low, high) = self.cents;
+        [low, Cents((low.0 + high.0) / 2), high]
+    }
+
+    /// Both charts across everything recorded, or `None` before anything is.
+    pub fn whole(history: &History) -> Option<Charts> {
+        extent(history).map(|months| Charts::new(history, months))
+    }
+}
+
 /// Each ledger account's balance on the last day of every month from its
 /// first row up to, not including, `current` -- a month it moved nothing in
 /// carrying the balance before.
@@ -374,6 +503,29 @@ mod tests {
         assert_eq!(
             points(&history.credit[0]),
             vec![(day(2026, 8, 1), Cents::from_dollars(80))]
+        );
+    }
+
+    #[test]
+    fn the_total_sums_every_account_and_counts_one_not_yet_opened_as_nothing() {
+        let db = db::open_in_memory().unwrap();
+        let chk = cash(&db);
+        let sav = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 1, None).unwrap();
+        row(&db, chk, day(2026, 6, 10), 1_000);
+        row(&db, sav, day(2026, 7, 10), 300);
+        row(&db, chk, day(2026, 8, 10), 200);
+        take(&db, today()).unwrap();
+        let history = load(&db, today()).unwrap();
+        assert_eq!(
+            total(&history.cash)
+                .into_iter()
+                .map(|(m, c)| (m.first_day(), c))
+                .collect::<Vec<_>>(),
+            vec![
+                (day(2026, 6, 1), Cents::from_dollars(1_000)),
+                (day(2026, 7, 1), Cents::from_dollars(1_300)),
+                (day(2026, 8, 1), Cents::from_dollars(1_500)),
+            ]
         );
     }
 

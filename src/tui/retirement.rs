@@ -6,18 +6,23 @@ use super::Label;
 use super::form::{DateField, Field, Focused, FormFields, next_in, parse_whole_amount};
 use super::style;
 use super::widget::{field_stack, render_fields};
-use crate::balance_history::{History, Series};
+use crate::balance_history::{
+    self, CASH_TITLE, Charts, History, INVESTMENT_TITLE, NO_HISTORY, Series,
+};
 use crate::calc::Month;
 use crate::calc::retirement::{BAND_DASH, Band, Status};
 use crate::money::Cents;
 use crate::retirement::Retirement;
 use anyhow::{Result, ensure};
-use chrono::{Datelike, NaiveDate};
+use chrono::NaiveDate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
+use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Axis, Block, Cell, Chart, LegendPosition, Paragraph, Row, Table};
+use ratatui::widgets::{
+    Axis, Block, Cell, Chart, Dataset, GraphType, LegendPosition, Paragraph, Row, Table,
+};
 
 /// What a figure that cannot be stated draws as -- the Funds screen's word
 /// for the same thing.
@@ -46,13 +51,23 @@ fn status_span(status: Status, short_by: Option<Cents>) -> Span<'static> {
     Span::styled(text, Style::default().fg(style::standing_color(status)))
 }
 
-fn title(r: &Retirement) -> Line<'static> {
+/// The charts' window is named only once it is narrowed: the whole history
+/// is what the x axes already show, and a screen quoting a narrowed one
+/// must say so.
+fn title(r: &Retirement, charts: Option<(Month, Month)>) -> Line<'static> {
     let mut text = String::from("Retirement");
     if let Some(age) = r.age {
         text.push_str(&format!(" · Age {age}"));
     }
     if let Some(salary) = r.salary {
         text.push_str(&format!(" · Salary {}", dollars(salary)));
+    }
+    if let Some((first, last)) = charts {
+        text.push_str(&format!(
+            " · Charts {}{BAND_DASH}{}",
+            first.label(),
+            last.label()
+        ));
     }
     Line::from(text)
 }
@@ -160,63 +175,128 @@ fn milestone_table(r: &Retirement) -> Table<'static> {
     .header(header)
 }
 
-/// What a chart with no account behind it draws instead of axes.
-const NO_HISTORY: &str = "Nothing recorded yet";
-
-/// A month as a point on the x axis: consecutive months one apart, whatever
-/// their lengths.
-fn month_x(month: Month) -> f64 {
-    let first = month.first_day();
-    f64::from(first.year() * 12 + first.month0() as i32)
+/// The months both charts are drawn across. `None` at an edge is that edge
+/// of the history, whatever it has grown to by the next draw -- which is
+/// what the screen opens on, and what `Esc` goes back to.
+///
+/// View state only, like the Overview's scrub: nothing is stored, so every
+/// launch opens on the whole history.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Window {
+    start: Option<Month>,
+    end: Option<Month>,
 }
 
-/// One chart: a line per account, in its own color, across every month any
-/// of them was recorded in. The y axis starts at zero, so a line's height is
-/// its balance rather than its distance from the lowest one drawn.
-fn render_chart(frame: &mut Frame, area: Rect, title: &'static str, series: &[Series]) {
-    let block = Block::bordered().title(title);
-    let months = || series.iter().flat_map(|s| s.points.iter().map(|(m, _)| *m));
-    let (Some(first), Some(last)) = (months().min(), months().max()) else {
-        frame.render_widget(Paragraph::new(NO_HISTORY).block(block), area);
-        return;
-    };
-    let cents = || series.iter().flat_map(|s| s.points.iter().map(|(_, c)| *c));
-    let low = cents().min().unwrap_or(Cents::ZERO).min(Cents::ZERO);
-    // A dollar of range at least, so a chart of nothing but zeroes still has
-    // an axis to draw them against.
-    let high = cents().max().unwrap_or(Cents::ZERO).max(low + Cents(100));
-    let data: Vec<Vec<(f64, f64)>> = series
+impl Window {
+    /// A window from `start` through `end`, held inside `extent`: an edge
+    /// past the history is moved onto it, and an edge landing *on* it is
+    /// stored as `None`, so a window stepped back out to the history's edge
+    /// is the unnarrowed one rather than a copy of it that stops growing.
+    pub fn within(start: Option<Month>, end: Option<Month>, extent: (Month, Month)) -> Window {
+        let (first, last) = extent;
+        let start = start.unwrap_or(first).clamp(first, last);
+        let end = end.unwrap_or(last).clamp(start, last);
+        Window {
+            start: (start != first).then_some(start),
+            end: (end != last).then_some(end),
+        }
+    }
+
+    pub fn start(self) -> Option<Month> {
+        self.start
+    }
+
+    pub fn end(self) -> Option<Month> {
+        self.end
+    }
+
+    /// The months drawn, given what is recorded -- held inside it, since the
+    /// history a window was stepped against may not be the one it is drawn
+    /// against after a reload.
+    pub fn bounds(self, extent: (Month, Month)) -> (Month, Month) {
+        let held = Window::within(self.start, self.end, extent);
+        (held.start.unwrap_or(extent.0), held.end.unwrap_or(extent.1))
+    }
+
+    /// The start moved by `months`, no later than the end.
+    pub fn step_start(self, months: i32, extent: (Month, Month)) -> Window {
+        let (start, end) = self.bounds(extent);
+        Window::within(Some(start.shifted(months).min(end)), self.end, extent)
+    }
+
+    /// The end moved by `months`, no earlier than the start.
+    pub fn step_end(self, months: i32, extent: (Month, Month)) -> Window {
+        let (start, end) = self.bounds(extent);
+        Window::within(self.start, Some(end.shifted(months).max(start)), extent)
+    }
+
+    pub fn is_narrowed(self) -> bool {
+        self != Window::default()
+    }
+}
+
+/// What a chart with history, none of it inside the window, draws instead.
+const NOTHING_IN_WINDOW: &str = "Nothing recorded in this window";
+
+/// A month as a point on the x axis.
+fn month_x(month: Month) -> f64 {
+    f64::from(month.ordinal())
+}
+
+fn plot(points: &[(Month, Cents)]) -> Vec<(f64, f64)> {
+    points
         .iter()
-        .map(|s| {
-            s.points
-                .iter()
-                .map(|(m, c)| (month_x(*m), c.0 as f64))
-                .collect()
-        })
-        .collect();
+        .map(|(m, c)| (month_x(*m), c.0 as f64))
+        .collect()
+}
+
+/// One chart: a line per account, in its own color, and their sum, where
+/// there is one, in [`style::TOTAL`], against the scale both charts share.
+fn render_chart(
+    frame: &mut Frame,
+    area: Rect,
+    title: &'static str,
+    chart: &balance_history::Chart,
+    charts: &Charts,
+    empty: &'static str,
+) {
+    let block = Block::bordered().title(title);
+    if chart.series.is_empty() {
+        frame.render_widget(Paragraph::new(empty).block(block), area);
+        return;
+    }
+    let balance_history::Chart { series, total } = chart;
+    let (first, last) = charts.months;
+    let (low, high) = charts.cents;
+    let data: Vec<Vec<(f64, f64)>> = series.iter().map(|s| plot(&s.points)).collect();
+    let total_data = plot(total);
+    let ink = Style::default().fg(style::TOTAL);
     let datasets = series
         .iter()
         .zip(&data)
         .map(|(s, points)| super::account_series(&s.account, points))
+        .chain((!total.is_empty()).then(|| {
+            Dataset::default()
+                .name(Span::styled("Total", ink))
+                .marker(Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(ink)
+                .data(&total_data)
+        }))
         .collect();
     // One month alone is centred between a month either side: on an axis of
     // its own width it would sit on the left edge, under the legend.
-    let label = |m: Month| m.first_day().format("%b %Y").to_string();
     let x = match first == last {
         true => Axis::default()
             .bounds([month_x(first) - 1.0, month_x(first) + 1.0])
-            .labels([String::new(), label(first), String::new()]),
+            .labels([String::new(), first.label(), String::new()]),
         false => Axis::default()
             .bounds([month_x(first), month_x(last)])
-            .labels([label(first), label(last)]),
+            .labels([first.label(), last.label()]),
     };
     let y = Axis::default()
         .bounds([low.0 as f64, high.0 as f64])
-        .labels([
-            compact(low),
-            compact(Cents((low.0 + high.0) / 2)),
-            compact(high),
-        ]);
+        .labels(charts.ticks().map(compact));
     let chart = Chart::new(datasets)
         .block(block)
         .x_axis(x)
@@ -228,8 +308,15 @@ fn render_chart(frame: &mut Frame, area: Rect, title: &'static str, series: &[Se
     frame.render_widget(chart, area);
 }
 
-pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement, history: &History) {
+pub(super) fn render(
+    frame: &mut Frame,
+    area: Rect,
+    r: &Retirement,
+    history: &History,
+    window: Window,
+) {
     let standing = standing_lines(r);
+    let bounds = balance_history::extent(history).map(|extent| window.bounds(extent));
     // Each box is its content plus a border above and below, the table a
     // header row too. The charts take whatever is left.
     let [title_area, box_area, table_area, charts_area] = Layout::vertical([
@@ -239,7 +326,10 @@ pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement, history: &Hi
         Constraint::Min(0),
     ])
     .areas(area);
-    frame.render_widget(Paragraph::new(title(r)), title_area);
+    frame.render_widget(
+        Paragraph::new(title(r, bounds.filter(|_| window.is_narrowed()))),
+        title_area,
+    );
     frame.render_widget(
         Paragraph::new(standing).block(Block::bordered().title("Where you stand")),
         box_area,
@@ -252,12 +342,33 @@ pub(super) fn render(frame: &mut Frame, area: Rect, r: &Retirement, history: &Hi
     // is the dimension the boxes above have already spent.
     let [cash_area, investment_area] =
         Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(charts_area);
-    render_chart(frame, cash_area, "Cash balances over time", &history.cash);
+    let empty = |series: &[Series]| match series.is_empty() {
+        true => NO_HISTORY,
+        false => NOTHING_IN_WINDOW,
+    };
+    let Some(months) = bounds else {
+        for (area, title) in [(cash_area, CASH_TITLE), (investment_area, INVESTMENT_TITLE)] {
+            let block = Block::bordered().title(title);
+            frame.render_widget(Paragraph::new(NO_HISTORY).block(block), area);
+        }
+        return;
+    };
+    let charts = Charts::new(history, months);
+    render_chart(
+        frame,
+        cash_area,
+        CASH_TITLE,
+        &charts.cash,
+        &charts,
+        empty(&history.cash),
+    );
     render_chart(
         frame,
         investment_area,
-        "Investment balances over time",
-        &history.investment,
+        INVESTMENT_TITLE,
+        &charts.investment,
+        &charts,
+        empty(&history.investment),
     );
 }
 
@@ -354,4 +465,230 @@ pub(super) fn render_form(frame: &mut Frame, form: &mut RetirementForm) {
         "Edit retirement — Tab field · Enter save · Esc cancel",
         lines,
     );
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum WindowField {
+    Start,
+    End,
+}
+
+impl WindowField {
+    /// Tab order, and the order the fields render in.
+    pub const ORDER: [WindowField; 2] = [WindowField::Start, WindowField::End];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WindowField::Start => "Start",
+            WindowField::End => "End",
+        }
+    }
+}
+
+/// `w` on Retirement: the charts' window typed rather than stepped. A date
+/// field rather than a month one, because a `DateField` is what every date in
+/// the app is typed into; any day names its month.
+///
+/// It opens on the months the charts are drawing, open edges included, so a
+/// change is an edit of what is on screen rather than a retyping of it: the
+/// first of the start month and the last of the end one, reading as the span
+/// drawn. An edge saved where the history stops follows it again, through
+/// [`Window::within`], and an edge left blank is that edge of the history too.
+#[derive(Debug)]
+pub struct WindowForm {
+    pub focus: WindowField,
+    start: DateField,
+    end: DateField,
+}
+
+impl WindowForm {
+    /// `shown` is what the charts draw, `None` before anything is recorded.
+    pub fn new(today: NaiveDate, shown: Option<(Month, Month)>) -> WindowForm {
+        WindowForm {
+            focus: WindowField::Start,
+            start: DateField::given(today, shown.map(|(start, _)| start.first_day())),
+            end: DateField::given(today, shown.map(|(_, end)| end.last_day())),
+        }
+    }
+
+    pub fn display(&self, field: WindowField) -> Label {
+        let focused = self.focus == field;
+        Label::from(match field {
+            WindowField::Start => self.start.display(focused),
+            WindowField::End => self.end.display(focused),
+        })
+    }
+
+    /// The two months, refusing an end before the start: clamping one to the
+    /// other would draw a window the owner did not type.
+    pub fn commit(&self) -> Result<(Option<Month>, Option<Month>)> {
+        let start = self.start.parse_opt()?.map(Month::of);
+        let end = self.end.parse_opt()?.map(Month::of);
+        if let (Some(start), Some(end)) = (start, end) {
+            ensure!(start <= end, "the end is before the start");
+        }
+        Ok((start, end))
+    }
+}
+
+impl FormFields for WindowForm {
+    fn move_focus(&mut self, step: isize) {
+        self.focus = next_in(&WindowField::ORDER, self.focus, step);
+    }
+
+    fn focused(&mut self) -> Focused<'_> {
+        match self.focus {
+            WindowField::Start => Focused::Date(&mut self.start),
+            WindowField::End => Focused::Date(&mut self.end),
+        }
+    }
+}
+
+pub(super) fn render_window_form(frame: &mut Frame, form: &mut WindowForm) {
+    let caret = form.caret();
+    let lines = field_stack(
+        &WindowField::ORDER,
+        form.focus,
+        caret,
+        WindowField::label,
+        |f| form.display(f),
+        &[],
+    );
+    render_fields(
+        frame,
+        "Chart window — blank is the whole history · Enter save · Esc cancel",
+        lines,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::account_label::Account;
+    use crate::test_support::{cash, day};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+
+    const WIDTH: u16 = 60;
+    const HEIGHT: u16 = 20;
+
+    fn series(accounts: &[crate::db::account::Account], index: usize, dollars: [i64; 2]) -> Series {
+        Series {
+            account: Account::named(accounts, accounts[index].id),
+            points: vec![
+                (Month::of(day(2026, 7, 1)), Cents::from_dollars(dollars[0])),
+                (Month::of(day(2026, 8, 1)), Cents::from_dollars(dollars[1])),
+            ],
+        }
+    }
+
+    fn drawn(series: &[Series]) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).unwrap();
+        terminal
+            .draw(|frame| {
+                let history = History {
+                    cash: series.to_vec(),
+                    ..History::default()
+                };
+                let charts = Charts::new(&history, (month(7), month(8)));
+                render_chart(
+                    frame,
+                    frame.area(),
+                    "Chart",
+                    &charts.cash,
+                    &charts,
+                    NO_HISTORY,
+                )
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn row(buffer: &Buffer, y: u16) -> String {
+        (0..WIDTH).map(|x| buffer[(x, y)].symbol()).collect()
+    }
+
+    /// The accounts top out at $9,000 and their sum at $11,000: the one axis
+    /// reaches the sum, so the Total is drawn rather than clipped off the top.
+    #[test]
+    fn the_total_is_drawn_in_the_terminal_foreground_against_the_accounts_axis() {
+        let accounts = [cash(1, "CHK"), cash(2, "SAV")];
+        let buffer = drawn(&[
+            series(&accounts, 0, [1_000, 2_000]),
+            series(&accounts, 1, [9_000, 9_000]),
+        ]);
+        let top = row(&buffer, 1);
+        assert!(top.starts_with("│$11K"), "{top}");
+        let legend = (0..HEIGHT).map(|y| row(&buffer, y)).collect::<String>();
+        assert!(legend.contains("Total"), "{legend}");
+        let black_line = buffer.content().iter().any(|cell| {
+            cell.fg == style::TOTAL
+                && cell
+                    .symbol()
+                    .chars()
+                    .all(|c| ('\u{2801}'..='\u{28ff}').contains(&c))
+        });
+        assert!(black_line, "no braille drawn in the Total's color");
+    }
+
+    fn month(m: u32) -> Month {
+        Month::of(day(2026, m, 1))
+    }
+
+    /// March through August.
+    const EXTENT: fn() -> (Month, Month) = || (month(3), month(8));
+
+    #[test]
+    fn a_window_reaching_past_the_history_is_held_inside_it() {
+        let window = Window::within(
+            Some(Month::of(day(2025, 1, 1))),
+            Some(Month::of(day(2027, 1, 1))),
+            EXTENT(),
+        );
+        assert_eq!(window.bounds(EXTENT()), EXTENT());
+        assert!(!window.is_narrowed());
+    }
+
+    /// Stored as `None` rather than as August, so a month recorded next
+    /// month is drawn without the owner widening the window to reach it.
+    #[test]
+    fn an_edge_stepped_back_onto_the_history_follows_it_again() {
+        let window = Window::default()
+            .step_end(-1, EXTENT())
+            .step_end(1, EXTENT());
+        assert_eq!(window, Window::default());
+    }
+
+    #[test]
+    fn a_window_drawn_against_a_shorter_history_than_it_was_set_on_stays_inside_it() {
+        let window = Window::within(Some(month(7)), None, EXTENT());
+        assert_eq!(window.bounds((month(3), month(5))), (month(5), month(5)));
+    }
+
+    #[test]
+    fn the_start_stops_at_the_end_rather_than_passing_it() {
+        let window = Window::default().step_end(-3, EXTENT());
+        let window = (0..10).fold(window, |w, _| w.step_start(1, EXTENT()));
+        assert_eq!(window.bounds(EXTENT()), (month(5), month(5)));
+        let window = (0..10).fold(window, |w, _| w.step_end(-1, EXTENT()));
+        assert_eq!(window.bounds(EXTENT()), (month(5), month(5)));
+    }
+
+    #[test]
+    fn the_window_form_refuses_an_end_before_the_start() {
+        let mut form = WindowForm::new(day(2026, 8, 15), Some((month(6), month(7))));
+        assert_eq!(form.commit().unwrap(), (Some(month(6)), Some(month(7))));
+        form.focus = WindowField::End;
+        let Focused::Date(end) = form.focused() else {
+            panic!("End is a date field");
+        };
+        for _ in 0.."2026-07-31".len() {
+            end.backspace();
+        }
+        for c in "2026-04-30".chars() {
+            end.push(c);
+        }
+        assert!(form.commit().is_err());
+    }
 }

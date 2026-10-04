@@ -294,6 +294,11 @@ const STYLE: &str = "\
     table.ledger tbody{display:none}\
     footer{border-top:1px solid #dddddd;margin-top:1.5rem;padding-top:0.6rem}\
     footer p.stamp{margin:0}\
+    h4{margin:1rem 0 0.3rem;font-size:0.9rem}\
+    p.note{color:#666666;font-size:0.82rem}\
+    svg.chart{display:block;width:100%;height:auto;margin:0 0 0.3rem}\
+    svg.chart line.grid{stroke:#dddddd;stroke-width:1}\
+    svg.chart text.axis{fill:#666666;font-size:10px;font-variant-numeric:tabular-nums}\
     @media (prefers-color-scheme: dark){\
     body{background:#121212;color:#eeeeee}\
     td,th{border-bottom-color:#333333}\
@@ -301,6 +306,10 @@ const STYLE: &str = "\
     div.menubar,div.menubar label{border-color:#333333}\
     tr.fav{background:#3a3315}\
     div.bar{background:#333333}\
+    svg.chart line.grid{stroke:#333333}\
+    svg.chart .total{stroke:#eeeeee}\
+    svg.chart circle.total{fill:#eeeeee}\
+    span.key.total{background:#eeeeee!important}\
     }";
 
 /// How old the page is, in the footer: a reader arrives at the figures, and
@@ -317,7 +326,7 @@ pub fn page(snapshot: &Snapshot) -> String {
         savings::sections(&snapshot.containers),
         planning::block(&snapshot.planning),
         funds::sections(&snapshot.allocation),
-        retirement::panel(&snapshot.retirement),
+        retirement::panel(&snapshot.retirement, snapshot.charts.as_ref()),
     ];
     let body: String = TABS
         .iter()
