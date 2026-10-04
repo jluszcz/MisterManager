@@ -212,13 +212,19 @@ pub(super) fn descriptions(ledger: &Ledger) -> Vec<&str> {
 
 /// Everything the screen draws, as one string per test to search.
 pub(super) fn drawn(app: &mut App) -> String {
+    drawn_at(app, 24)
+}
+
+/// [`drawn`] on a terminal `height` rows tall, for a screen whose last box is
+/// given only what the ones above it leave.
+pub(super) fn drawn_at(app: &mut App, height: u16) -> String {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 24)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
     terminal.draw(|frame| app.render(frame)).unwrap();
     let buffer = terminal.backend().buffer().clone();
-    (0..24)
+    (0..height)
         .map(|y| {
             (0..MIN_WIDTH)
                 .map(|x| buffer[(x, y)].symbol())

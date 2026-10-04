@@ -92,13 +92,49 @@ mod tests {
             !screen.contains("By 35"),
             "a passed milestone is drawn:\n{screen}"
         );
-        assert!(screen.contains("Long Haul"), "{screen}");
-        for title in ["Where you stand", "Milestones", "Accounts"] {
+        for title in ["Where you stand", "Milestones", "Cash balances over time"] {
             assert!(
                 screen.lines().any(|l| l.contains('┌') && l.contains(title)),
                 "no {title} box:\n{screen}"
             );
         }
+    }
+
+    /// The terminal height the charts are held to: the boxes above them take
+    /// a fixed share and the charts get what is left, so at the 24 rows
+    /// `drawn` uses there is none.
+    const CHART_HEIGHT: u16 = 40;
+
+    /// The fixture's ledger runs into last month, so the cash chart spans
+    /// two months; the fund was recorded only today, so its chart spans one.
+    #[test]
+    fn the_charts_draw_cash_and_investment_history_and_leave_credit_out() {
+        let mut app = retirement_app();
+        crate::balance_history::take(&app.db, today()).unwrap();
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('8'));
+        let screen = drawn_at(&mut app, CHART_HEIGHT);
+        for title in ["Cash balances over time", "Investment balances over time"] {
+            assert!(
+                screen.lines().any(|l| l.contains('┌') && l.contains(title)),
+                "no {title} chart:\n{screen}"
+            );
+        }
+        for name in ["Everyday", "Rainy Day", "Long Haul"] {
+            assert!(screen.contains(name), "{name} has no line:\n{screen}");
+        }
+        assert!(screen.contains("Aug 2026"), "{screen}");
+        for card in ["Card One", "Card Two"] {
+            assert!(!screen.contains(card), "{card} was charted:\n{screen}");
+        }
+    }
+
+    #[test]
+    fn with_no_history_a_chart_says_so() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('8'));
+        let screen = drawn_at(&mut app, CHART_HEIGHT);
+        assert!(screen.contains("Nothing recorded yet"), "{screen}");
     }
 
     #[test]
@@ -208,11 +244,10 @@ mod tests {
         let now = screen.lines().find(|l| l.contains("Now (37)")).unwrap();
         assert!(now.contains("$37,400"), "the Now row disagrees: {now}");
         assert!(screen.contains("$400K – $450K"), "{screen}");
-        // Tenths in the standing and the milestones, hundredths in Accounts.
+        // Tenths in the standing and the milestones.
         assert!(screen.contains("0.0%"), "{screen}");
         assert!(screen.contains("11.0 – 12.0%"), "{screen}");
         assert!(screen.contains("12.5 – 15.0%"), "{screen}");
-        assert!(screen.contains("100.00%"), "{screen}");
 
         // Each milestone's shortfall against today's $330,000 -- 45 asks
         // $500,000, and 15% of that, $75,000, tax-free.

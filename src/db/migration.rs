@@ -393,6 +393,37 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // Nothing to move: no amount is stored until the owner types one.
         data: None,
     },
+    Migration {
+        version: 18,
+        // What each account and each fund stood at, month by month. A month is
+        // its first day, the shape every other date column has, and `CHECK`ed
+        // to be one so no two spellings of a month can sit side by side under
+        // the primary key.
+        //
+        // Two tables because the two halves come from different places: a
+        // ledger account's balance is a sum `balance_snapshot` records, and
+        // an investment account's is the sum of its funds, which is all
+        // `holding_snapshot` records -- storing that sum as well would be
+        // one fact twice. A fund is keyed by account and ticker rather than
+        // by `holding.id`, because a holding can be deleted and its history
+        // must outlive it.
+        sql: "CREATE TABLE balance_snapshot (
+                month      TEXT    NOT NULL CHECK (substr(month, 9) = '01'),
+                account_id INTEGER NOT NULL REFERENCES account(id),
+                cents      INTEGER NOT NULL,
+                PRIMARY KEY (month, account_id)
+              );
+              CREATE TABLE holding_snapshot (
+                month      TEXT    NOT NULL CHECK (substr(month, 9) = '01'),
+                account_id INTEGER NOT NULL REFERENCES account(id),
+                ticker     TEXT    NOT NULL,
+                cents      INTEGER NOT NULL,
+                PRIMARY KEY (month, account_id, ticker)
+              );",
+        // Nothing to move: the first `mm` run fills the ledger months in from
+        // the ledger, and a fund has no history to recover.
+        data: None,
+    },
 ];
 
 /// The last thing to tell an owner whose database this build will not open.

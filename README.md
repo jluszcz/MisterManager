@@ -193,8 +193,21 @@ savings fall short of it — the dollar target, and the tax-free share of that t
 growth assumed, so a later milestone reads as everything still to save for it. An account that is only partly
 tax-free, a workplace plan with a Roth side, takes its tax-free part on screen `0`, as a percentage
 or as a dollar amount — typing into either works out the other from what the account holds, and
-the one you typed last is what is kept. That part counts as tax-free here and in the Funds screen's tax columns. The report
-carries the same page as its last tab.
+the one you typed last is what is kept. That part counts as tax-free here and in the Funds screen's tax columns.
+
+Below the milestones, two charts draw every cash account's and every investment account's balance
+month by month. Each `mm` launch records this month's balances — every ledger account's balance on
+the month's last day and every fund's typed balance — and again on quit, overwriting the month so far; a month
+already over keeps what was recorded in it, until an `mm import --replace` clears the cash and
+credit months and rebuilds them from the new ledger — fund history is kept. A cash month nothing was recorded in is worked out from
+the ledger, so the cash chart reaches back to the first row on the first run. A fund's balance has
+no date, so investment history starts on the first run and grows a point per month the app is
+opened. Credit balances are recorded the same way, but not charted. A run with `--today` records
+nothing, since it would write a pretended month over a real one. The charts need a terminal about
+40 rows tall; on a shorter one they get whatever the boxes above leave.
+
+The report carries the standing and the milestones as its last tab, with the per-account table the
+screen gives up for the charts.
 
 ### `9` Recurring Transactions
 

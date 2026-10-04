@@ -2,12 +2,13 @@
 //!
 //! [`crate::account_label::Account`] carries an account's text and its color together
 //! and will not hand over one without the other. This module is where that
-//! pair becomes ratatui: [`account_cell`] for a table cell and [`label_line`]
-//! for a title, and nothing else in `tui` may draw an account.
+//! pair becomes ratatui: [`account_cell`] for a table cell, [`label_line`]
+//! for a title and [`account_series`] for a line on a chart, and nothing else
+//! in `tui` may draw an account.
 
 use crate::account_label::{Account, Label, Segment};
 use ratatui::text::Line as TextLine;
-use ratatui::widgets::Cell;
+use ratatui::widgets::{Cell, Dataset};
 
 use super::style;
 
@@ -43,6 +44,26 @@ pub(super) fn label_line(label: &Label) -> TextLine<'static> {
             })
             .collect::<Vec<Span<'static>>>(),
     )
+}
+
+/// One account's line on a chart, drawn and named in its own color, so the
+/// legend entry and the line it keys are one color by construction.
+///
+/// The third exit, and the same guarantee as the other two.
+pub(super) fn account_series<'a>(account: &Account, data: &'a [(f64, f64)]) -> Dataset<'a> {
+    use ratatui::style::Style;
+    use ratatui::symbols::Marker;
+    use ratatui::text::Span;
+    use ratatui::widgets::GraphType;
+    account.render_with(|text, color| {
+        let ink = Style::default().fg(style::palette(color));
+        Dataset::default()
+            .name(Span::styled(text.to_string(), ink))
+            .marker(Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(ink)
+            .data(data)
+    })
 }
 
 #[cfg(test)]

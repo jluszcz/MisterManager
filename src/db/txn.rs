@@ -1,5 +1,6 @@
 use super::date::{self, iso};
 use super::{AccountId, Db, RecurringTxnId, TxnId};
+use crate::calc::Month;
 use crate::db::account::Kind;
 use crate::money::Cents;
 use anyhow::{Result, ensure};
@@ -124,6 +125,40 @@ pub fn date_range(db: &Db) -> Result<Option<(NaiveDate, NaiveDate)>> {
         return Ok(None);
     };
     Ok(Some((date::parse(&min, 0)?, date::parse(&max, 1)?)))
+}
+
+/// What each ledger account moved by in each month, up to and including the
+/// row dated `through`, ordered by account and then month. A month an account
+/// moved nothing in has no row here.
+pub fn monthly_nets(db: &Db, through: NaiveDate) -> Result<Vec<(AccountId, Month, Cents)>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT t.account_id, strftime('%Y-%m-01', t.date) AS month, SUM(t.cents)
+           FROM txn t JOIN account a ON a.id = t.account_id
+          WHERE a.kind != ?1 AND t.date <= ?2
+          GROUP BY t.account_id, month
+          ORDER BY t.account_id, month",
+    )?;
+    let rows = stmt.query_map(params![Kind::Investment.as_str(), iso(through)], |r| {
+        Ok((r.get(0)?, r.get(1)?, Cents(r.get(2)?)))
+    })?;
+    super::collect_rows(rows)
+}
+
+/// Every ledger account's balance on `date`, for the accounts holding any row
+/// on or before it -- [`balances_at`] without the accounts that have no
+/// history yet, and without the investment accounts, which have no ledger.
+pub fn ledger_balances_at(db: &Db, date: NaiveDate) -> Result<Vec<(AccountId, Cents)>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT t.account_id, SUM(t.cents)
+           FROM txn t JOIN account a ON a.id = t.account_id
+          WHERE a.kind != ?1 AND t.date <= ?2
+          GROUP BY t.account_id
+          ORDER BY t.account_id",
+    )?;
+    let rows = stmt.query_map(params![Kind::Investment.as_str(), iso(date)], |r| {
+        Ok((r.get(0)?, Cents(r.get(1)?)))
+    })?;
+    super::collect_rows(rows)
 }
 
 impl Txn {

@@ -5,8 +5,10 @@
 //! what they say. Writing one and reading it back is this module's whole
 //! job, so the format literal is stated once rather than beside every query.
 
-use chrono::NaiveDate;
-use rusqlite::types::Type;
+use crate::calc::Month;
+use chrono::{Datelike, NaiveDate};
+use rusqlite::ToSql;
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, Type, ValueRef};
 
 /// The format every stored date is written in.
 const FORMAT: &str = "%Y-%m-%d";
@@ -37,9 +39,53 @@ pub fn parse_opt(raw: Option<String>, column: usize) -> rusqlite::Result<Option<
     raw.as_deref().map(|raw| parse(raw, column)).transpose()
 }
 
+/// A month is stored as its first day, in the format every date column has.
+impl ToSql for Month {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(iso(self.first_day())))
+    }
+}
+
+/// Any other day is a corrupt row rather than a month to round down: the
+/// schema's `CHECK` should have kept it out, and two spellings of one month
+/// under a primary key would be two rows.
+impl FromSql for Month {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let raw = value.as_str()?;
+        let date = NaiveDate::parse_from_str(raw, FORMAT).map_err(|e| {
+            FromSqlError::Other(format!("{raw:?} is not a YYYY-MM-DD date: {e}").into())
+        })?;
+        if date.day() != 1 {
+            return Err(FromSqlError::Other(
+                format!("{raw:?} is not the first of a month").into(),
+            ));
+        }
+        Ok(Month::of(date))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_month_survives_the_round_trip_through_storage() {
+        let db = crate::db::open_in_memory().unwrap();
+        let month = Month::of(NaiveDate::from_ymd_opt(2026, 8, 19).unwrap());
+        let back: Month = db
+            .conn
+            .query_row("SELECT ?1", [month], |r| r.get(0))
+            .unwrap();
+        assert_eq!(back, month);
+    }
+
+    #[test]
+    fn a_stored_month_that_is_not_a_first_is_refused_on_the_way_back() {
+        let db = crate::db::open_in_memory().unwrap();
+        let read: rusqlite::Result<Month> =
+            db.conn.query_row("SELECT '2026-08-15'", [], |r| r.get(0));
+        assert!(read.is_err());
+    }
 
     #[test]
     fn a_date_survives_the_round_trip_through_storage() {

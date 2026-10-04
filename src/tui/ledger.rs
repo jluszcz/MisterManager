@@ -1,24 +1,25 @@
 use super::cursor::{Cursor, Viewport, impl_scroll};
 use super::search::{Search, SearchBox};
+use crate::calc::Month;
 use crate::db::AccountId;
 use crate::db::account::{self, Account, Kind};
 use crate::db::txn::{Filter, Txn};
 use crate::description;
 use crate::money::Cents;
-use chrono::{Datelike, Months, NaiveDate};
+use chrono::{Datelike, NaiveDate};
 use std::collections::HashMap;
 
 /// How many days at each end of a month widen the window to two months.
 const FLANK: u32 = 7;
 
-/// The months one ledger screen shows: a first-of-month date and a count.
+/// The months one ledger screen shows: the first of them and a count.
 ///
 /// The end date is derived rather than stored. Storing it would put
 /// end-of-month arithmetic in the path of every `[` press, which is the
 /// January 31 → February 31 bug waiting to happen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Window {
-    start: NaiveDate,
+    start: Month,
     months: u32,
 }
 
@@ -31,11 +32,11 @@ impl Window {
     /// The seven days are counted from the month's own length, so February
     /// starts widening on the 22nd where August waits until the 25th.
     pub fn containing(today: NaiveDate) -> Window {
-        let start = first_of_month(today);
-        let month_length = end_of_month(start).day();
+        let start = Month::of(today);
+        let month_length = start.last_day().day();
         if today.day() <= FLANK {
             Window {
-                start: shift_months(start, -1),
+                start: start.shifted(-1),
                 months: 2,
             }
         } else if today.day() > month_length - FLANK {
@@ -46,18 +47,18 @@ impl Window {
     }
 
     pub fn start(&self) -> NaiveDate {
-        self.start
+        self.start.first_day()
     }
 
     pub fn end(&self) -> NaiveDate {
-        end_of_month(shift_months(self.start, self.months as i32 - 1))
+        self.start.shifted(self.months as i32 - 1).last_day()
     }
 
     /// How the window reads in the title bar: `Aug 2026`, `Jul–Aug 2026`, or
     /// `Dec 2026 – Jan 2027` when it straddles New Year, since `Dec–Jan 2027`
     /// would misdate the December half.
     pub fn label(&self) -> String {
-        let (start, end) = (self.start, self.end());
+        let (start, end) = (self.start(), self.end());
         let month = |d: NaiveDate| d.format("%b").to_string();
         if start.year() != end.year() {
             format!(
@@ -77,30 +78,10 @@ impl Window {
     /// Slide by whole months, keeping the span. `[` and `]` are this.
     fn shifted(&self, months: i32) -> Window {
         Window {
-            start: shift_months(self.start, months),
+            start: self.start.shifted(months),
             months: self.months,
         }
     }
-}
-
-fn first_of_month(date: NaiveDate) -> NaiveDate {
-    date.with_day(1).expect("every month has a first day")
-}
-
-/// The last day of the month `first_of_month` opens.
-fn end_of_month(first_of_month: NaiveDate) -> NaiveDate {
-    shift_months(first_of_month, 1)
-        .pred_opt()
-        .expect("the day before a first-of-month is representable")
-}
-
-fn shift_months(date: NaiveDate, months: i32) -> NaiveDate {
-    let shifted = if months >= 0 {
-        date.checked_add_months(Months::new(months as u32))
-    } else {
-        date.checked_sub_months(Months::new(months.unsigned_abs()))
-    };
-    shifted.expect("ledger dates are nowhere near the ends of the calendar")
 }
 
 /// The Cash or Credit screen's view state: which slice of the ledger is
@@ -197,9 +178,7 @@ impl Ledger {
             return window;
         };
         Window {
-            start: window
-                .start
-                .clamp(first_of_month(oldest), first_of_month(newest)),
+            start: window.start.clamp(Month::of(oldest), Month::of(newest)),
             months: window.months,
         }
     }

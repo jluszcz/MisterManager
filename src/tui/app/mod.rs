@@ -287,6 +287,9 @@ pub struct App {
     recurring_goal: RecurringGoals,
     accounts: Accounts,
     retirement: crate::retirement::Retirement,
+    /// The Retirement screen's charts: every account's month-by-month
+    /// balances.
+    history: crate::balance_history::History,
     /// The `[sec] contact` line from the config file, or `None` when the
     /// section is absent. Carried rather than read per press because it is a
     /// fact about the run, the same standing as `today` -- and because
@@ -415,6 +418,7 @@ impl App {
             recurring_goal: RecurringGoals::new(i64::from(today.month())),
             accounts: Accounts::new(),
             retirement: crate::retirement::Retirement::default(),
+            history: crate::balance_history::History::default(),
             sec_contact,
             db,
             today,
@@ -731,6 +735,7 @@ impl App {
         // Today rather than `self.adhoc`: a holding's balance carries no
         // date, so there is nothing for a scrub to move.
         self.retirement = crate::retirement::load(&self.db, self.today)?;
+        self.history = crate::balance_history::load(&self.db, self.today)?;
         self.reload_recurring_txns()?;
         self.reload_recurring_goals()?;
         Ok(())
@@ -1168,7 +1173,9 @@ impl App {
                 let viewport = accounts_screen::render(frame, body, &self.accounts);
                 self.accounts.record_viewport(viewport);
             }
-            Screen::Retirement => retirement_screen::render(frame, body, &self.retirement),
+            Screen::Retirement => {
+                retirement_screen::render(frame, body, &self.retirement, &self.history)
+            }
         }
 
         // Two paragraphs rather than one string: the app-wide keys sit
