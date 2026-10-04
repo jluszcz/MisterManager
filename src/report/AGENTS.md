@@ -152,6 +152,14 @@ about a figure, one of them is wrong.
   shares and a bare `1,253,067` under `Balance` is one header away from reading as either. Its
   milestone table is four columns of bands, which refuse to wrap — a band broken at its dash reads
   as two figures — so below the narrow breakpoint that table alone takes a smaller face and tighter padding.
+  **Its two charts are `balance_history::Charts` drawn as inline SVG**, the bar's argument again: a
+  charting library is the one thing that could fail to arrive, so every coordinate is computed at
+  render time. They span the whole history, since a page has no key to move the screen's window,
+  and share the screen's one scale for the screen's reason. They are stacked rather than side by
+  side, each being half a phone otherwise, and carry no hover layer, which would need script; the
+  gridline figures and the legend are what a reader checks a line against. The Total is
+  `palette::TOTAL`, black, and the one mark the dark scheme re-inks: black on that ground is no
+  line at all, so the `total` class takes the page's own foreground there.
 - **A cell says what it may do with its width, and a table never widens past the
   phone.** Three classes carry it: `n` is a figure and `d` a date, and neither
   wraps — a comma and a hyphen are both break opportunities, and a column narrow

@@ -1,22 +1,52 @@
 //! Screen 8: retirement savings against the age rule. Nothing on it is
-//! selectable, so it has no cursor and no scroll keys.
+//! selectable, so it has no cursor and no scroll keys; what the keys move
+//! besides the two settings is the charts' window.
 
 use super::App;
 use crate::db::setting::{self, key};
 use crate::tui::modal::Modal;
-use crate::tui::retirement::RetirementForm;
+use crate::tui::retirement::{RetirementForm, Window, WindowForm};
 use anyhow::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 impl App {
     pub(super) fn retirement_key(&mut self, event: KeyEvent) -> Result<()> {
-        if event.code == KeyCode::Char('e') {
-            self.modal = Some(Modal::Retirement(RetirementForm::new(
-                self.today,
-                setting::get(&self.db, key::ANNUAL_SALARY)?,
-                setting::get(&self.db, key::BIRTH_DATE)?,
-            )));
+        let extent = crate::balance_history::extent(&self.history);
+        let window = self.chart_window;
+        match (event.code, extent) {
+            (KeyCode::Char('e'), _) => {
+                self.modal = Some(Modal::Retirement(RetirementForm::new(
+                    self.today,
+                    setting::get(&self.db, key::ANNUAL_SALARY)?,
+                    setting::get(&self.db, key::BIRTH_DATE)?,
+                )));
+            }
+            (KeyCode::Char('w'), _) => {
+                let shown = extent.map(|extent| window.bounds(extent));
+                self.modal = Some(Modal::ChartWindow(WindowForm::new(self.today, shown)));
+            }
+            (KeyCode::Char('['), Some(extent)) => self.chart_window = window.step_start(-1, extent),
+            (KeyCode::Char(']'), Some(extent)) => self.chart_window = window.step_start(1, extent),
+            (KeyCode::Char('{'), Some(extent)) => self.chart_window = window.step_end(-1, extent),
+            (KeyCode::Char('}'), Some(extent)) => self.chart_window = window.step_end(1, extent),
+            (KeyCode::Esc, _) => self.chart_window = Window::default(),
+            _ => {}
         }
+        Ok(())
+    }
+
+    /// With nothing recorded there is no history to hold the window inside,
+    /// so it opens on the whole of it -- the only window there is.
+    pub(super) fn commit_chart_window(&mut self) -> Result<()> {
+        let Some(Modal::ChartWindow(form)) = &self.modal else {
+            return Ok(());
+        };
+        let (start, end) = form.commit()?;
+        self.chart_window = match crate::balance_history::extent(&self.history) {
+            Some(extent) => Window::within(start, end, extent),
+            None => Window::default(),
+        };
+        self.close_modal();
         Ok(())
     }
 
@@ -52,6 +82,7 @@ mod tests {
     use crate::db::holding;
     use crate::db::setting::{self, key};
     use crate::money::Cents;
+    use crate::test_support::day;
     use crate::tui::app::App;
     use crate::tui::app::test_support::*;
     use chrono::Datelike;
@@ -120,13 +151,154 @@ mod tests {
                 "no {title} chart:\n{screen}"
             );
         }
-        for name in ["Everyday", "Rainy Day", "Long Haul"] {
+        for name in ["Everyday", "Rainy Day", "Long Haul", "Total"] {
             assert!(screen.contains(name), "{name} has no line:\n{screen}");
         }
         assert!(screen.contains("Aug 2026"), "{screen}");
         for card in ["Card One", "Card Two"] {
             assert!(!screen.contains(card), "{card} was charted:\n{screen}");
         }
+    }
+
+    /// The fixture's ledger plus Everyday rows in March and May, so the
+    /// history runs March through August.
+    fn charted_app() -> App {
+        let mut app = retirement_app();
+        let everyday = account::by_code(&app.db, "CHK", Kind::Cash)
+            .unwrap()
+            .unwrap()
+            .id;
+        write(&app.db, everyday, day(2026, 3, 10), 50_000, "Paycheck");
+        write(&app.db, everyday, day(2026, 5, 10), 50_000, "Paycheck");
+        crate::balance_history::take(&app.db, today()).unwrap();
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('8'));
+        app
+    }
+
+    #[test]
+    fn brackets_move_the_charts_start_and_esc_brings_back_the_whole_history() {
+        let mut app = charted_app();
+        let screen = drawn_at(&mut app, CHART_HEIGHT);
+        assert!(screen.contains("Mar 2026"), "{screen}");
+        assert!(!screen.contains("Charts"), "{screen}");
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char(']'));
+        let screen = drawn_at(&mut app, CHART_HEIGHT);
+        assert!(screen.contains("Charts May 2026 – Aug 2026"), "{screen}");
+        assert!(!screen.contains("Mar 2026"), "{screen}");
+        press(&mut app, KeyCode::Esc);
+        let screen = drawn_at(&mut app, CHART_HEIGHT);
+        assert!(!screen.contains("Charts"), "{screen}");
+        assert!(screen.contains("Mar 2026"), "{screen}");
+    }
+
+    /// Cash runs March through August and the fund was recorded only in
+    /// August, yet both charts span March to August and top out at the
+    /// fund's $330K.
+    #[test]
+    fn the_two_charts_share_their_months_and_their_dollars() {
+        let mut app = charted_app();
+        let screen = drawn_at(&mut app, CHART_HEIGHT);
+        let lines: Vec<&str> = screen.lines().collect();
+        let below = |title: &str| {
+            let at = lines
+                .iter()
+                .position(|l| l.contains(title))
+                .unwrap_or_else(|| panic!("no {title}:\n{screen}"));
+            lines[at + 1]
+        };
+        let top = below("Cash balances over time");
+        assert_eq!(top.matches("$330K").count(), 2, "{screen}");
+        let x_labels = lines
+            .iter()
+            .find(|l| l.contains("Aug 2026"))
+            .unwrap_or_else(|| panic!("no x axis:\n{screen}"));
+        assert_eq!(x_labels.matches("Mar 2026").count(), 2, "{screen}");
+    }
+
+    #[test]
+    fn braces_move_the_charts_end() {
+        let mut app = charted_app();
+        press(&mut app, KeyCode::Char('{'));
+        let screen = drawn_at(&mut app, CHART_HEIGHT);
+        assert!(screen.contains("Charts Mar 2026 – Jul 2026"), "{screen}");
+        press(&mut app, KeyCode::Char('}'));
+        let screen = drawn_at(&mut app, CHART_HEIGHT);
+        assert!(!screen.contains("Charts"), "{screen}");
+    }
+
+    /// The investment fund was recorded only in August, so a window ending
+    /// before it has history for that chart and none of it inside.
+    #[test]
+    fn a_chart_with_nothing_inside_the_window_says_so() {
+        let mut app = charted_app();
+        press(&mut app, KeyCode::Char('{'));
+        let screen = drawn_at(&mut app, CHART_HEIGHT);
+        assert!(
+            screen.contains("Nothing recorded in this window"),
+            "{screen}"
+        );
+    }
+
+    #[test]
+    fn w_types_the_charts_window() {
+        let mut app = charted_app();
+        press(&mut app, KeyCode::Char('w'));
+        ctrl_press(&mut app, 'u');
+        for c in "2026-04-15".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Tab);
+        ctrl_press(&mut app, 'u');
+        for c in "2026-06-15".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Enter);
+        assert!(app.modal.is_none(), "the form stayed open");
+        let screen = drawn_at(&mut app, CHART_HEIGHT);
+        assert!(screen.contains("Charts Apr 2026 – Jun 2026"), "{screen}");
+    }
+
+    /// Saved untouched, the end is still open: it was prefilled with the
+    /// month the history stops at, which is where an open edge is stored.
+    #[test]
+    fn w_opens_on_the_window_the_charts_are_drawing() {
+        let mut app = charted_app();
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char('w'));
+        let screen = drawn_at(&mut app, CHART_HEIGHT);
+        assert!(screen.contains("2026-04-01"), "{screen}");
+        assert!(screen.contains("2026-08-31"), "{screen}");
+        press(&mut app, KeyCode::Enter);
+        assert!(app.modal.is_none(), "the form stayed open");
+        assert_eq!(
+            app.chart_window.start(),
+            Some(crate::calc::Month::of(day(2026, 4, 1)))
+        );
+        assert_eq!(app.chart_window.end(), None);
+    }
+
+    #[test]
+    fn an_end_before_the_start_is_refused_and_the_form_stays_open() {
+        let mut app = charted_app();
+        press(&mut app, KeyCode::Char('w'));
+        ctrl_press(&mut app, 'u');
+        for c in "2026-06-01".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Tab);
+        ctrl_press(&mut app, 'u');
+        for c in "2026-04-01".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Enter);
+        assert!(app.modal.is_some(), "the form closed");
+        assert!(
+            app.status.contains("the end is before the start"),
+            "{}",
+            app.status
+        );
     }
 
     #[test]

@@ -62,6 +62,12 @@ pub const NEGATIVE: Color = rgb(crate::palette::NEGATIVE);
 /// which the report's Credit tab reads too.
 pub const POSITIVE: Color = rgb(crate::palette::POSITIVE);
 
+/// The Total line on each Retirement chart, and its legend entry: the
+/// terminal's own foreground, which is no account's color and reads on a
+/// light theme and a dark one alike. [`crate::palette::TOTAL`]'s black is the
+/// report's, which can re-ink it under a dark scheme where a terminal cannot.
+pub const TOTAL: Color = Color::Reset;
+
 /// Something the owner probably meant to configure and has not.
 ///
 /// Amber rather than red: [`NEGATIVE`] means a figure below zero and, on the

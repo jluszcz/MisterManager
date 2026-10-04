@@ -47,6 +47,14 @@ pub fn account(color: AccountColor) -> Rgb {
     }
 }
 
+/// The Total line on each of the report's Retirement charts: no account color
+/// is black, so the sum cannot be mistaken for one of its parts. The report
+/// swaps it for its own ink under a dark scheme, where black on its dark
+/// ground would be no line at all; the screen draws the Total in the
+/// terminal's own foreground instead, for the same reason, since it cannot
+/// know which ground it is drawn on.
+pub const TOTAL: Rgb = (0, 0, 0);
+
 /// A negative amount, in every medium that renders one.
 pub const NEGATIVE: Rgb = (178, 34, 34);
 

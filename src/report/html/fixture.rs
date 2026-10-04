@@ -329,6 +329,7 @@ pub(super) fn snapshot(rows: Vec<crate::savings::Row>, net: i64) -> Snapshot {
         planning: Planning::Resolved(Box::new(plan_view())),
         allocation: funds(targets()),
         retirement: crate::retirement::Retirement::default(),
+        charts: None,
     }
 }
 

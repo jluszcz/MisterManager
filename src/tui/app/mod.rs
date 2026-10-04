@@ -290,6 +290,10 @@ pub struct App {
     /// The Retirement screen's charts: every account's month-by-month
     /// balances.
     history: crate::balance_history::History,
+    /// The months those charts are drawn across. View state, like the
+    /// Overview's scrub, and kept across a reload: an edge left open follows
+    /// the history as it grows.
+    chart_window: retirement_screen::Window,
     /// The `[sec] contact` line from the config file, or `None` when the
     /// section is absent. Carried rather than read per press because it is a
     /// fact about the run, the same standing as `today` -- and because
@@ -419,6 +423,7 @@ impl App {
             accounts: Accounts::new(),
             retirement: crate::retirement::Retirement::default(),
             history: crate::balance_history::History::default(),
+            chart_window: retirement_screen::Window::default(),
             sec_contact,
             db,
             today,
@@ -978,6 +983,7 @@ impl App {
             Some(Modal::Account(_)) => self.form_key(key, App::commit_account),
             Some(Modal::Holding(_)) => self.form_key(key, App::commit_holding_form),
             Some(Modal::Retirement(_)) => self.form_key(key, App::commit_retirement_form),
+            Some(Modal::ChartWindow(_)) => self.form_key(key, App::commit_chart_window),
             // Three modes over one modal, so the dispatch is one arm with two
             // guards rather than three variants: `Esc` then peels one layer at
             // a time with no flag on `App` saying what to return to.
@@ -1173,9 +1179,13 @@ impl App {
                 let viewport = accounts_screen::render(frame, body, &self.accounts);
                 self.accounts.record_viewport(viewport);
             }
-            Screen::Retirement => {
-                retirement_screen::render(frame, body, &self.retirement, &self.history)
-            }
+            Screen::Retirement => retirement_screen::render(
+                frame,
+                body,
+                &self.retirement,
+                &self.history,
+                self.chart_window,
+            ),
         }
 
         // Two paragraphs rather than one string: the app-wide keys sit
