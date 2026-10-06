@@ -283,7 +283,7 @@ const LEDGER: [Entry; 11] = [
     },
 ];
 
-const SAVINGS: [Entry; 16] = [
+const SAVINGS: [Entry; 17] = [
     Entry::filter(
         ACCOUNT_FILTER,
         "Cycle the container filter: All, then one entry per account that holds goals.",
@@ -299,7 +299,7 @@ const SAVINGS: [Entry; 16] = [
     ),
     Entry::filter(
         CLEAR_FILTER,
-        "Clear a kept search if one is narrowing the list; otherwise clear both filters at once, showing every goal again, undated ones included. The next month step re-enters at today's month rather than the one you left.",
+        "Clear a kept search if one is narrowing the list; otherwise clear every filter at once -- container, month and favorites -- showing every goal again, undated ones included. The next month step re-enters at today's month rather than the one you left.",
     ),
     Entry::filter(
         SEARCH_FILTER,
@@ -307,22 +307,22 @@ const SAVINGS: [Entry; 16] = [
     ),
     Entry {
         key: "a",
-        label: Label::Shared("allocate"),
+        label: Label::Shared("money"),
         detail: "Allocate cash to the selected goal. One row, written as its own batch.",
     },
     Entry {
         key: "A",
-        label: Label::Shared("allocate"),
+        label: Label::Shared("money"),
         detail: "Open a payday worksheet for the container, prefilled from per-paycheck. One commit is one batch, so a fumbled payday is one undo. Payday means running it once per container.",
     },
     Entry {
         key: "i",
-        label: Label::Shared("allocate"),
+        label: Label::Shared("money"),
         detail: "Open an interest worksheet. The container's interest policy decides the prefill: pro rata, or a rescale of its previous Interest batch.",
     },
     Entry {
         key: "t",
-        label: Label::Shared("allocate"),
+        label: Label::Shared("money"),
         detail: "Move part of the selected goal's value to another goal in the same container. Both goals stay open -- 'c' is the ending that closes one -- and the pair is one batch, so 'U' takes the whole transfer back. Crossing containers is refused.",
     },
     Entry {
@@ -348,7 +348,12 @@ const SAVINGS: [Entry; 16] = [
     Entry {
         key: "f",
         label: Label::Shared("goal"),
-        detail: "Mark the selected goal, or take the mark back. A marked goal's row is drawn as a band, and that is the whole of what it does: it does not sort the goal up and it does not survive a filter the goal itself would not.",
+        detail: "Mark the selected goal, or take the mark back. A marked goal's row is drawn as a band, and 'F' narrows to the marked ones; beyond that it does nothing: it does not sort the goal up and it does not survive a filter the goal itself would not.",
+    },
+    Entry {
+        key: "F",
+        label: Label::Shared("goal"),
+        detail: "Show only the marked goals, or every goal again. Narrows alongside the container, month and search; Esc clears it with the other filters.",
     },
     Entry {
         key: "Enter",
@@ -1590,7 +1595,7 @@ mod tests {
         );
         assert_eq!(
             Topic::Savings.footer(),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t allocate · n/e/c/⇧↑↓/f/Enter goal · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t money · n/e/c/⇧↑↓/f/F/Enter goal · U undo"
         );
         assert_eq!(
             Topic::Planning.footer(),

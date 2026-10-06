@@ -57,6 +57,7 @@ impl App {
             KeyCode::Char('c') => self.open_close_out()?,
             KeyCode::Char('n') => self.open_new_goal()?,
             KeyCode::Char('f') => self.toggle_favorite()?,
+            KeyCode::Char('F') => self.savings.toggle_favorites_only(),
             KeyCode::Char('U') => self.open_undo()?,
             // The long form of the balance cell the row already carries.
             KeyCode::Enter => self.open_history()?,
@@ -625,6 +626,49 @@ mod tests {
         press(&mut app, KeyCode::Char('f'));
 
         assert!(!app.status.is_empty(), "{:?}", app.status);
+    }
+
+    /// `F` narrows to the marked goals and is its own way back out.
+    #[test]
+    fn capital_f_shows_only_the_marked_goals_and_pressing_it_again_shows_them_all() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('f'));
+
+        press(&mut app, KeyCode::Char('F'));
+        assert_eq!(savings_favorites(&app), vec![true]);
+
+        press(&mut app, KeyCode::Char('F'));
+        assert_eq!(savings_favorites(&app), vec![false, true]);
+    }
+
+    /// `Esc` clears the favorites filter with the others, as it does every
+    /// filter on this screen.
+    #[test]
+    fn esc_clears_the_favorites_filter() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('F'));
+        assert!(app.savings.rows().is_empty());
+
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.savings.favorites_only());
+        assert_eq!(savings_favorites(&app), vec![false, false]);
+    }
+
+    /// Unmarking a goal while only the marked ones show takes it off the
+    /// list at once: the filter reads the database, not the row as it was.
+    #[test]
+    fn unmarking_a_goal_under_the_favorites_filter_drops_it_from_the_list() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('f'));
+        press(&mut app, KeyCode::Char('F'));
+        assert_eq!(savings_favorites(&app), vec![true]);
+
+        press(&mut app, KeyCode::Char('f'));
+        assert!(app.savings.rows().is_empty());
     }
 
     /// One form, two jobs, so the border is the only thing on screen that says
