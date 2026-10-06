@@ -2305,7 +2305,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '4'),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t allocate · n/e/c/⇧↑↓/f/Enter goal · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t money · n/e/c/⇧↑↓/f/F/Enter goal · U undo"
         );
         assert_eq!(
             footer_of(&mut app, '5'),
@@ -2783,6 +2783,7 @@ mod tests {
                     "n",
                     "⇧↑↓",
                     "f",
+                    "F",
                     "U",
                     "Enter",
                 ],

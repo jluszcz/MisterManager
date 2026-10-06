@@ -30,6 +30,7 @@ forget, and the copy that goes stale is always the one further from the code.
 | `p` | pay a card on the ledgers, pin a plan on Planning — unrelated actions, so the letter is free to serve both |
 | `P` | unpin a plan on Planning, mark the paycheck on Recurring Txns — likewise |
 | `f` | the owner's own mark on the selected row: a favorite on Savings, a biweekly expense on Planning — one verb, two things worth marking |
+| `F` | narrow to the rows `f` has marked, on Savings — a filter `Esc` clears with the screen's others |
 | `r` | reconcile the ledgers' filtered account against a statement |
 | `[` / `]` | step a month: the filter a screen narrows by, or the date a field holds |
 | `←` / `→` | move the caret in a text field, step a date a day at a time, or cycle the focused selector — see the invariant below |
@@ -128,7 +129,7 @@ own last keys with nothing on screen to say a word went missing.
 halves plus the separator; `app`'s two own width tests measure what `App::footer` composes at
 runtime, which a `Topic` alone does not see. The first lever when a screen runs out of room is
 `Label::Shared`: several keys join under one word naming what they act *on* — `E/a/d bill` on
-Planning, `a/A/i/t allocate` and `n/e/c/⇧↑↓/f/Enter goal` on Savings, `a/t/p money` on the ledgers,
+Planning, `a/A/i/t money` and `n/e/c/⇧↑↓/f/F/Enter goal` on Savings, `a/t/p money` on the ledgers,
 where the three keys that write new rows join against the `e` and `d` that act on the one selected —
 which buys back a whole item's separator per key absorbed, and the verbs it costs are a keystroke
 away in the panel, which has room for them. A shorter word is the smaller adjustment beside it —
@@ -141,11 +142,12 @@ prints for it, and one column where the word is six. `⇧↑↓` is what let Sav
 `goal` run at all. The arrows under it drop their slash (`⇧←→`, not `⇧←/→`): inside a `Shared` run
 the slash is what separates keys, so `n/e/c/⇧↑/↓` would read as two.
 
-**Savings' footer is the one closest to the edge**, at one column of slack, so the next key that
-needs a group is likelier to be its than any other screen's — and its lever is spent: every key it
-has that writes or acts on one goal is already inside `a/A/i/t allocate` or
-`n/e/c/⇧↑↓/f/Enter goal`, which is what bought `Enter` and `t` their places there. The ledgers' is
-the next widest, and both of *its* levers are spent too, the
+**Savings' footer is the one closest to the edge**, at two columns of slack, so the next key that
+needs a group is likelier to be its than any other screen's — and both its levers are spent: every
+key it has that writes or acts on one goal is already inside `a/A/i/t money` or
+`n/e/c/⇧↑↓/f/F/Enter goal`, which is what bought `Enter`, `t` and `F` their places there, and the
+first of those took the ledgers' `money` over `allocate` for the three columns `F` needed. The
+ledgers' is the next widest, and both of *its* levers are spent too, the
 grouping on `a/t/p` and the shorter word on `Tab`. A footer that overflows has nothing left to fall
 back on but a shorter word somewhere.
 

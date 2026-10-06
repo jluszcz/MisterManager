@@ -74,8 +74,9 @@ goal in the same container, and `c` ends it — returning its value to unallocat
 another goal in that container.
 
 Goals with no date lead the list, in an order you set with `Shift`+`↑`/`↓`; goals with one follow,
-soonest first, since a deadline decides a goal's place for it. `f` marks a goal for the eye only;
-the mark is stored on the goal, so unlike an account's color it does not survive a `--replace`.
+soonest first, since a deadline decides a goal's place for it. `f` marks a goal for the eye, and
+`F` narrows the list to the marked ones; the mark is stored on the goal, so unlike an account's
+color it does not survive a `--replace`.
 
 An allocation's amount takes `/N` for a fraction of the container's unallocated remainder — `/2` is
 half of it, `/12` a twelfth — and the form names the remainder it would divide before committing.

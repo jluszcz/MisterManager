@@ -26,8 +26,10 @@ pub struct Savings {
     /// The months `[` and `]` cycle through: every month the dated goals
     /// span, rebuilt whenever the goals are.
     month: MonthCycle<YearMonth>,
-    /// Indices into `all` that survive the container filter, the month, and
-    /// the search.
+    /// `F`: only the goals `f` has marked.
+    favorites_only: bool,
+    /// Indices into `all` that survive the container filter, the month, the
+    /// favorites filter, and the search.
     visible: Vec<usize>,
     search: SearchBox,
     cursor: Cursor,
@@ -43,6 +45,7 @@ impl Savings {
             excess: Vec::new(),
             all: Vec::new(),
             month: MonthCycle::new(Vec::new(), YearMonth::of(today)),
+            favorites_only: false,
             visible: Vec::new(),
             search: SearchBox::new(),
             cursor: Cursor::new(),
@@ -179,15 +182,26 @@ impl Savings {
         self.refilter();
     }
 
-    /// `Esc`: show every goal again, undated ones included -- both filters
-    /// at once, whichever of them is set. The screen narrows two ways and
+    /// `F`: narrow to the marked goals, or widen back out of them.
+    pub fn toggle_favorites_only(&mut self) {
+        self.favorites_only = !self.favorites_only;
+        self.refilter();
+    }
+
+    pub fn favorites_only(&self) -> bool {
+        self.favorites_only
+    }
+
+    /// `Esc`: show every goal again, undated ones included -- every filter
+    /// at once, whichever of them is set. The screen narrows three ways and
     /// the title shows them side by side, so one key that clears whatever is
     /// there is a reflex where "Esc means month, Tab back around to All"
-    /// asks the owner to remember which of the two narrowed the list they
-    /// are looking at.
+    /// asks the owner to remember which of them narrowed the list they are
+    /// looking at.
     pub fn clear_filters(&mut self) {
         self.container = None;
         self.month.clear();
+        self.favorites_only = false;
         self.refilter();
     }
 
@@ -221,7 +235,7 @@ impl Savings {
         }
     }
 
-    /// The container, the month, the needle -- and what the goals still
+    /// The container, the month, the favorites, the needle -- and what the goals still
     /// showing come to each payday.
     ///
     /// **The figure follows every filter**, which is the opposite call the
@@ -243,6 +257,9 @@ impl Savings {
         };
         if let Some(month) = self.month.selected() {
             title = title.text(format!(" · {}", month.label()));
+        }
+        if self.favorites_only {
+            title = title.text(" · Favorites");
         }
         if !self.search().is_empty() {
             title = title.text(format!(" · /{}", self.search()));
@@ -267,9 +284,9 @@ impl Search for Savings {
         &mut self.search
     }
 
-    /// The container filter, the month, and the search, in one pass — so the
-    /// three cannot narrow to different lists. Also the hook `Tab` and `[`/`]`
-    /// call when they move.
+    /// The container filter, the month, the favorites, and the search, in one
+    /// pass — so the four cannot narrow to different lists. Also the hook
+    /// `Tab`, `[`/`]` and `F` call when they move.
     ///
     /// A row answers to its name and to the two figures it is *about*. `%` and
     /// `$/Pay` are derived from those two and are deliberately not offered:
@@ -279,6 +296,7 @@ impl Search for Savings {
         let matcher = self.matcher();
         let container = self.container;
         let month = self.month.selected();
+        let favorites_only = self.favorites_only;
         self.visible = self
             .all
             .iter()
@@ -287,6 +305,7 @@ impl Search for Savings {
             // A goal with no date belongs to no month, so a month filter
             // drops it: All is the only place it can be seen.
             .filter(|(_, row)| month.is_none_or(|m| row.goal_date.is_some_and(|d| m.contains(d))))
+            .filter(|(_, row)| !favorites_only || row.favorite)
             .filter(|(_, row)| matcher.matches(&row.name, &[row.current, row.goal]))
             .map(|(i, _)| i)
             .collect();
@@ -643,6 +662,31 @@ mod tests {
         savings.clear_filters();
         assert_eq!(savings.search(), "lego");
         assert_eq!(names(&savings), vec!["Lego"]);
+    }
+
+    #[test]
+    fn the_favorites_filter_narrows_with_the_other_filters_and_names_itself() {
+        let mut goals = vec![
+            goal(1, 1, "Bill Payments", 0, 10_000, None),
+            goal(2, 1, "Apple Watch", 0, 10_000, None),
+            goal(3, 2, "Lego", 0, 10_000, None),
+        ];
+        goals[1].goal.favorite = true;
+        goals[2].goal.favorite = true;
+        let mut savings = Savings::new(accounts(), today());
+        savings.set_containers(vec![AccountId(1), AccountId(2)]);
+        savings.set_goals(goals, 26).unwrap();
+
+        savings.toggle_favorites_only();
+        assert_eq!(names(&savings), vec!["Apple Watch", "Lego"]);
+        assert!(savings.title().plain_text().contains("Favorites"));
+
+        savings.next_container();
+        assert_eq!(names(&savings), vec!["Apple Watch"]);
+
+        savings.clear_filters();
+        assert!(!savings.favorites_only());
+        assert_eq!(names(&savings).len(), 3);
     }
 
     #[test]
