@@ -110,7 +110,7 @@ status message withholds the chrome for an unrelated reason: it borrows the whol
 **The shared filter keys lead every footer that has them but the Overview's, in one order, under one
 word each.**
 `Tab acct`, `[ ] month`, `Esc clear`, `/ search` — `help::FILTERS` states the order and the four
-words, and a table reaches them through `Entry::filter` rather than writing a `Label::Own` of its
+words, and a table reaches them through `help::filter_entry` rather than writing a `Label::Own` of its
 own, so a filter over the same thing cannot be called two names by two screens. What a screen still
 writes is the `detail`: `Esc` genuinely clears to different places — All and today's window on the
 ledgers, All on Savings and Recurring Goals, the derived Paycheck-Eve on the Overview — and the panel is where that difference belongs, which is why

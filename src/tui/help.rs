@@ -37,34 +37,11 @@
 //! `app::tests::the_app_wide_keys_work_from_every_screen`.
 
 use super::widget;
+use jluszcz_finance_utils::tui::help::footer_items;
+pub(super) use jluszcz_finance_utils::tui::help::{Entry, Label};
 use ratatui::Frame;
 use ratatui::text::Line as TextLine;
 use ratatui::widgets::{Block, Clear, Paragraph};
-
-/// One key, as the footer says it and as the panel says it.
-#[derive(Copy, Clone)]
-pub(super) struct Entry {
-    /// How the key is printed -- `Tab`, `[ ]`, `←/→`.
-    pub(super) key: &'static str,
-    /// The footer word, if any, and whether it is this entry's own or shared
-    /// with its neighbors.
-    pub(super) label: Label,
-    /// The sentence. What the footer has no room for.
-    pub(super) detail: &'static str,
-}
-
-/// How an entry's key joins the footer, if at all.
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(super) enum Label {
-    /// Live, but the footer does not name it.
-    Hidden,
-    /// The entry's own footer word: joins as `{key} {word}`.
-    Own(&'static str),
-    /// A word shared with the entries beside it: their keys join with `/`
-    /// under one word, as `E/a/d bill`. Adjacency in the table is what groups
-    /// them, so grouping cannot silently reorder the footer.
-    Shared(&'static str),
-}
 
 /// An app-wide key: a footer item with no panel row, and so with no `detail`
 /// to be one.
@@ -146,16 +123,14 @@ const CLEAR_FILTER: Filter = FILTERS[2];
 /// Narrow the rows by typing.
 const SEARCH_FILTER: Filter = FILTERS[3];
 
-impl Entry {
-    /// One of the shared filters, with the sentence this screen tells about
-    /// it. The key and the footer word come from the [`Filter`], which is
-    /// what keeps them from being written per-screen.
-    const fn filter(filter: Filter, detail: &'static str) -> Entry {
-        Entry {
-            key: filter.key,
-            label: Label::Own(filter.word),
-            detail,
-        }
+/// One of the shared filters, with the sentence this screen tells about it.
+/// The key and the footer word come from the [`Filter`], which is what keeps
+/// them from being written per-screen.
+const fn filter_entry(filter: Filter, detail: &'static str) -> Entry {
+    Entry {
+        key: filter.key,
+        label: Label::Own(filter.word),
+        detail,
     }
 }
 
@@ -226,28 +201,28 @@ const OVERVIEW: [Entry; 3] = [
     // them, unlike every other screen's `Esc`: the Overview narrows nothing,
     // so this undoes the scrub beside it rather than a filter, and reads as
     // the scrub's own way back.
-    Entry::filter(
+    filter_entry(
         CLEAR_FILTER,
         "Put a scrubbed Paycheck-Eve column back on the derived date, however far it was moved.",
     ),
 ];
 
 const LEDGER: [Entry; 11] = [
-    Entry::filter(ACCOUNT_FILTER, "Cycle the account filter, All included."),
+    filter_entry(ACCOUNT_FILTER, "Cycle the account filter, All included."),
     Entry {
         key: "BackTab",
         label: Label::Hidden,
         detail: "Cycle the account filter the other way.",
     },
-    Entry::filter(
+    filter_entry(
         MONTH_FILTER,
         "Step the month shown. Cash and Credit share one window, so both ledgers move together.",
     ),
-    Entry::filter(
+    filter_entry(
         CLEAR_FILTER,
         "Clear a kept search if one is narrowing the rows; otherwise return the account filter to All and the window to the month containing today. Both ledgers share the window, so that half moves them together.",
     ),
-    Entry::filter(
+    filter_entry(
         SEARCH_FILTER,
         "Filter rows by description or amount as you type -- 1234 finds a row of $1,234.56. Enter keeps the filter and leaves the box; Esc clears it.",
     ),
@@ -284,7 +259,7 @@ const LEDGER: [Entry; 11] = [
 ];
 
 const SAVINGS: [Entry; 17] = [
-    Entry::filter(
+    filter_entry(
         ACCOUNT_FILTER,
         "Cycle the container filter: All, then one entry per account that holds goals.",
     ),
@@ -293,15 +268,15 @@ const SAVINGS: [Entry; 17] = [
         label: Label::Hidden,
         detail: "Cycle the container filter the other way.",
     },
-    Entry::filter(
+    filter_entry(
         MONTH_FILTER,
         "Step the goal-date filter, wrapping at either end.",
     ),
-    Entry::filter(
+    filter_entry(
         CLEAR_FILTER,
         "Clear a kept search if one is narrowing the list; otherwise clear every filter at once -- container, month and favorites -- showing every goal again, undated ones included. The next month step re-enters at today's month rather than the one you left.",
     ),
-    Entry::filter(
+    filter_entry(
         SEARCH_FILTER,
         "Filter goals by name, balance or target as you type -- 1234 finds a goal at $1,234.56. The % and $/Pay columns are derived and are not searched. Enter keeps the filter and leaves the box; Esc clears it.",
     ),
@@ -416,7 +391,7 @@ const PLANNING: [Entry; 9] = [
 ];
 
 const FUNDS: [Entry; 9] = [
-    Entry::filter(
+    filter_entry(
         ACCOUNT_FILTER,
         "Cycle the account filter: All, then one entry per investment account.",
     ),
@@ -425,11 +400,11 @@ const FUNDS: [Entry; 9] = [
         label: Label::Hidden,
         detail: "Cycle the account filter the other way.",
     },
-    Entry::filter(
+    filter_entry(
         CLEAR_FILTER,
         "Clear a kept search if one is narrowing the list; otherwise return the account filter to All.",
     ),
-    Entry::filter(
+    filter_entry(
         SEARCH_FILTER,
         "Filter holdings by ticker or account as you type. Enter keeps the filter and leaves the box; Esc clears it.",
     ),
@@ -524,7 +499,7 @@ const RETIREMENT: [Entry; 5] = [
         label: Label::Own("graph window"),
         detail: "Type the charts' window: a start and an end, opening on the months drawn now. Either left blank is that edge of the history, and any day names its month.",
     },
-    Entry::filter(
+    filter_entry(
         CLEAR_FILTER,
         "Draw the charts across the whole history again.",
     ),
@@ -578,15 +553,15 @@ const RECURRING_TXNS: [Entry; 7] = [
 ];
 
 const RECURRING_GOALS: [Entry; 7] = [
-    Entry::filter(
+    filter_entry(
         MONTH_FILTER,
         "Step the month filter. Entries carry a month and no date, so the cycle is the calendar: December wraps to January. The screen opens on All, and the first step enters at this month.",
     ),
-    Entry::filter(
+    filter_entry(
         CLEAR_FILTER,
         "Clear a kept search if one is narrowing the list; otherwise return to All. The next month step re-enters at this month rather than the one you left.",
     ),
-    Entry::filter(
+    filter_entry(
         SEARCH_FILTER,
         "Filter entries by name or base as you type -- 128 finds an entry at $128.00. The month is [ ]'s already, and the Open tally is not searched. Enter keeps the filter and leaves the box; Esc clears it.",
     ),
@@ -1207,7 +1182,7 @@ impl Topic {
             .filter(|entry| !omit.contains(&entry.key))
             .copied()
             .collect();
-        footer_items(&live).join(SEPARATOR)
+        footer_items(&[&live]).join(SEPARATOR)
     }
 }
 
@@ -1233,36 +1208,6 @@ pub(super) fn chrome() -> String {
 
 /// What separates one footer item from the next.
 const SEPARATOR: &str = " · ";
-
-/// One item per footer word: `Own` entries stand alone, adjacent `Shared`
-/// entries of the same word join with `/` under it, and `Hidden` entries
-/// contribute nothing.
-///
-/// Adjacency, not the word, is what groups a `Shared` run -- two runs of the
-/// same word with something else between them stay two footer items, so a
-/// caller cannot merge entries by reordering the table.
-fn footer_items(entries: &[Entry]) -> Vec<String> {
-    let mut items = Vec::new();
-    let mut i = 0;
-    while i < entries.len() {
-        match entries[i].label {
-            Label::Hidden => i += 1,
-            Label::Own(word) => {
-                items.push(format!("{} {word}", entries[i].key));
-                i += 1;
-            }
-            Label::Shared(word) => {
-                let start = i;
-                while i < entries.len() && entries[i].label == Label::Shared(word) {
-                    i += 1;
-                }
-                let keys: Vec<&str> = entries[start..i].iter().map(|entry| entry.key).collect();
-                items.push(format!("{} {word}", keys.join("/")));
-            }
-        }
-    }
-    items
-}
 
 /// How wide the panel is drawn, or the terminal less a margin when that is
 /// narrower.
@@ -1409,7 +1354,7 @@ mod tests {
     /// What a topic's table alone joins to, before its chrome is appended --
     /// the half of `footer_without` these grouping tests are about.
     fn join_footer(entries: &[Entry]) -> String {
-        footer_items(entries).join(SEPARATOR)
+        footer_items(&[entries]).join(SEPARATOR)
     }
 
     /// Every topic there is. `SCREENS` stays separate because only those nine
@@ -1489,7 +1434,7 @@ mod tests {
         }
     }
 
-    /// A screen may not name a shared filter key itself. `Entry::filter` is
+    /// A screen may not name a shared filter key itself. `filter_entry` is
     /// the only way to label one, so a hand-written `Label::Own` beside `Tab`
     /// or `Esc` is what this catches -- the way one filter starts being
     /// called two things.
@@ -1535,7 +1480,7 @@ mod tests {
     fn the_shared_filters_lead_every_screen_footer_in_one_order() {
         let scrub_clear = format!("{} {}", CLEAR_FILTER.key, CLEAR_FILTER.word);
         for topic in SCREENS {
-            let mut items = footer_items(topic.keys());
+            let mut items = footer_items(&[topic.keys()]);
             if matches!(topic, Topic::Overview | Topic::Retirement) {
                 items.retain(|item| *item != scrub_clear);
             }
