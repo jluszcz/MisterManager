@@ -19,7 +19,10 @@ use crate::db::txn::Suggestion;
 use crate::money::Cents;
 use crate::rate::BasisPoints;
 use anyhow::{Context, Result, ensure};
-use chrono::{Months, NaiveDate, TimeDelta};
+use chrono::NaiveDate;
+/// What `←`/`→`, `Shift` with them, and `[`/`]` do to a date, and the
+/// direction a selector reads from the same keys.
+pub use jluszcz_finance_utils::tui::date::Step;
 use jluszcz_finance_utils::tui::date::{iso, parse_shorthand};
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
@@ -290,88 +293,6 @@ impl DateField {
             return Ok(None);
         }
         self.parse().map(Some)
-    }
-}
-
-/// How far one keypress moves what it is pressed on: a day, a week with
-/// `Shift`, or a month on `[`/`]`.
-///
-/// One value rather than a direction and a magnitude, so a form's answer to
-/// the keys is one match on its focus rather than several near-identical ones
-/// that have to be kept in step by hand. A bigger step is then the same nudge
-/// carrying a bigger number, by construction, rather than a second code path
-/// beside the first.
-///
-/// A selector has no week and no month to move, so it reads the direction and
-/// ignores the size: a modified arrow that did nothing would be a dead key on
-/// the very fields the hand reaches for it on.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Step {
-    amount: i64,
-    unit: Unit,
-}
-
-/// What a [`Step`]'s amount counts.
-///
-/// A month is not a number of days -- August steps to September over 31 of
-/// them and February over 28 -- so the unit travels with the amount instead
-/// of being flattened into days at the constant, where it would have to guess
-/// which month it was about to land in.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum Unit {
-    Days,
-    Months,
-}
-
-impl Step {
-    /// `→`, and `←`.
-    pub const NEXT: Step = Step::days(1);
-    pub const PREVIOUS: Step = Step::days(-1);
-    /// `Shift` with them.
-    pub const NEXT_WEEK: Step = Step::days(super::WEEK);
-    pub const PREVIOUS_WEEK: Step = Step::days(-super::WEEK);
-    /// `]`, and `[`.
-    pub const NEXT_MONTH: Step = Step::months(1);
-    pub const PREVIOUS_MONTH: Step = Step::months(-1);
-
-    const fn days(amount: i64) -> Step {
-        Step {
-            amount,
-            unit: Unit::Days,
-        }
-    }
-
-    const fn months(amount: i64) -> Step {
-        Step {
-            amount,
-            unit: Unit::Months,
-        }
-    }
-
-    /// The date `from` steps to, or `None` where the calendar runs out.
-    ///
-    /// A month step clamps the day into the month it lands in, which is what
-    /// `chrono` does and the only answer there is: the 31st of a month
-    /// stepping onto a thirty-day one has nowhere else to go, and stepping
-    /// back from there does not return to the 31st. Stepping a *date* is the
-    /// one reading of a month here -- what a screen's `[`/`]` month filter
-    /// steps is a filter, and lives in [`super::month`].
-    pub fn apply(self, from: NaiveDate) -> Option<NaiveDate> {
-        match self.unit {
-            Unit::Days => from.checked_add_signed(TimeDelta::days(self.amount)),
-            Unit::Months => {
-                let months = Months::new(u32::try_from(self.amount.unsigned_abs()).ok()?);
-                match self.amount {
-                    ..0 => from.checked_sub_months(months),
-                    _ => from.checked_add_months(months),
-                }
-            }
-        }
-    }
-
-    /// Which way, which is all a selector takes.
-    pub fn direction(self) -> isize {
-        self.amount.signum() as isize
     }
 }
 

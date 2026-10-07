@@ -557,7 +557,8 @@ deferred to nothing.
     still parsed at commit rather than only ever assembled by arrow.
   - **One step type, so a modifier cannot mean a week on one handler and nothing on the next.**
     `form::Step` carries an amount *and the unit it counts*, and hands a selector `direction()`
-    alone; `tui::WEEK` is the only place `7` is written; and `app::week_step` and `app::month_step`
+    alone; the week step itself is finance-utils' `Step::NEXT_WEEK`, and `tui::WEEK` is what the
+    rest of the app counts a week in; and `app::week_step` and `app::month_step`
     are how the three handlers that answer a step key themselves — the Overview scrub, the
     worksheet, and `t`'s confirmation — read the modifier and the brackets. A selector steps **one**
     choice under `Shift` rather than none: it has no week to move, and a modified arrow the terminal
