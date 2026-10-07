@@ -210,7 +210,7 @@ fn every_planning_constant_comes_from_the_sheet() {
     let sheet_pct = |row: usize| {
         planning
             .get((row, 5))
-            .and_then(mistermanager::import::cell::as_percent)
+            .and_then(mistermanager::import::cell::as_rate_bp)
             .unwrap_or_else(|| panic!("no percentage at row {row}"))
     };
     for (setting_key, row, cell) in [

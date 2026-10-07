@@ -230,14 +230,14 @@ fn planning(db: &Db, sheets: &mut Sheets) -> Result<()> {
         }
     }
 
-    // Fractions, stored as whole percent: F19, then F25:F27.
+    // Fractions, stored as basis points: F19, then F25:F27.
     for (row, setting_key) in [
         (18, key::BILL_PAYMENT_PCT),
         (24, key::SPLIT_FUTURE_HOUSING_PCT),
         (25, key::SPLIT_RETIREMENT_PCT),
         (26, key::SPLIT_INVESTMENT_PCT),
     ] {
-        if let Some(pct) = cell::as_percent(&at(row, 5)) {
+        if let Some(pct) = cell::as_rate_bp(&at(row, 5)) {
             setting::set(db, setting_key, pct)?;
         }
     }

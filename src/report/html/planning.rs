@@ -122,7 +122,7 @@ fn render(row: &plan_rows::Row, after_blank: bool) -> String {
         Value::None => "<td class=\"n\"></td>".to_string(),
     };
     let extra = match row.extra {
-        Extra::Percent(pct) => format!("{}%", pct.0),
+        Extra::Percent(pct) => format!("{}%", pct.exact_percent()),
         Extra::Biweekly(cents) => escape(&cents.to_whole_dollars()),
         Extra::Gap(cents) => gap(cents),
         Extra::Date(date) => escape(&format!("{date}*")),

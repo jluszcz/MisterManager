@@ -6,7 +6,7 @@ use crate::gate::Gate;
 use crate::goal as goal_engine;
 use crate::money::Cents;
 use crate::plan_rows::Target;
-use crate::rate::Percent;
+use crate::rate::BasisPoints;
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
 
@@ -47,12 +47,12 @@ pub fn settings_from_db(db: &Db) -> Result<PlanSettings> {
         buffer: s.get_or(key::PLANNING_BUFFER, dollars(5_000))?,
         periods_per_year: s.get_or(key::PAY_PERIODS_PER_YEAR, 26)?,
         bill_payment_cap: s.get_or(key::BILL_PAYMENT_CAP, dollars(1_800))?,
-        bill_payment_pct: s.get_or(key::BILL_PAYMENT_PCT, Percent(40))?,
+        bill_payment_pct: s.get_or(key::BILL_PAYMENT_PCT, BasisPoints(4_000))?,
         mom_and_dad_annual: s.get_or(key::MOM_AND_DAD_ANNUAL, dollars(12_000))?,
         goals_floor: s.get_or(key::GOALS_FLOOR, dollars(400))?,
-        future_housing_pct: s.get_or(key::SPLIT_FUTURE_HOUSING_PCT, Percent(30))?,
-        retirement_pct: s.get_or(key::SPLIT_RETIREMENT_PCT, Percent(20))?,
-        investment_pct: s.get_or(key::SPLIT_INVESTMENT_PCT, Percent(10))?,
+        future_housing_pct: s.get_or(key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(3_000))?,
+        retirement_pct: s.get_or(key::SPLIT_RETIREMENT_PCT, BasisPoints(2_000))?,
+        investment_pct: s.get_or(key::SPLIT_INVESTMENT_PCT, BasisPoints(1_000))?,
     })
 }
 
@@ -95,10 +95,10 @@ pub fn expense_constants(db: &Db) -> Result<Vec<Target>> {
 /// Both bounds, because a cell is not a field. The form's writer is two
 /// refusals -- `tui::planning::parse_percent` will not let a percentage
 /// outside `0..=100` be typed at all, and `write_split` refuses the set it
-/// would join -- but `import::cell::as_percent` reads whatever the sheet
+/// would join -- but `import::cell::as_rate_bp` reads whatever the sheet
 /// carries and does not clamp, so an import stating only the set would let a
 /// `150 / -60 / 5` totalling 95 through a rule written for `60 / 30 / 30`.
-/// `Percent::of` does not clamp either, so what that reaches is
+/// `BasisPoints::of` does not clamp either, so what that reaches is
 /// `calc::planning` handing a line a negative share: `transfer::plan` skips a
 /// line at zero and nothing anywhere reads its sign, so it would be written
 /// as a real transfer instruction moving money the wrong way.
@@ -111,28 +111,29 @@ pub fn expense_constants(db: &Db) -> Result<Vec<Target>> {
 /// waterfall will use rather than as nothing.
 pub fn check_splits(db: &Db) -> Result<()> {
     let s = settings_from_db(db)?;
-    let (fh, rt, inv) = (
-        s.future_housing_pct.0,
-        s.retirement_pct.0,
-        s.investment_pct.0,
-    );
+    let (fh, rt, inv) = (s.future_housing_pct, s.retirement_pct, s.investment_pct);
     for (label, pct) in [
         ("Future Housing", fh),
         ("Retirement", rt),
         ("Investment", inv),
     ] {
         anyhow::ensure!(
-            (0..=100).contains(&pct),
-            "the {label} split is {pct}%, which is not a share of anything: \
+            (BasisPoints::ZERO..=BasisPoints::ONE).contains(&pct),
+            "the {label} split is {}%, which is not a share of anything: \
              a share below zero allocates its line backwards, and one past a \
-             hundred claims what the excess never had"
+             hundred claims what the excess never had",
+            pct.exact_percent()
         );
     }
+    let total = fh + rt + inv;
     anyhow::ensure!(
-        fh + rt + inv <= 100,
+        total <= BasisPoints::ONE,
         "the three splits total {}%, which leaves Goals nothing: \
-         Future Housing {fh}%, Retirement {rt}%, Investment {inv}%",
-        fh + rt + inv
+         Future Housing {}%, Retirement {}%, Investment {}%",
+        total.exact_percent(),
+        fh.exact_percent(),
+        rt.exact_percent(),
+        inv.exact_percent()
     );
     Ok(())
 }
@@ -523,7 +524,7 @@ mod tests {
         assert_eq!(settings.target, Cents::from_dollars(10_000));
         assert_eq!(settings.buffer, Cents::from_dollars(5_000));
         assert_eq!(settings.periods_per_year, 26);
-        assert_eq!(settings.future_housing_pct, Percent(30));
+        assert_eq!(settings.future_housing_pct, BasisPoints(3_000));
 
         setting::set(&db, key::PLANNING_TARGET, Cents::from_dollars(9_000)).unwrap();
         assert_eq!(
@@ -541,15 +542,15 @@ mod tests {
     }
 
     /// A share below zero is the one the set rule cannot catch: it makes
-    /// room for another past a hundred, and `Percent::of` hands the line the
+    /// room for another past a hundred, and `BasisPoints::of` hands the line the
     /// negative unclamped -- which `transfer::plan` would write as a real
     /// instruction, since nothing downstream reads a line's sign.
     #[test]
     fn a_split_below_zero_is_refused_even_when_the_three_total_under_a_hundred() {
         let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(150)).unwrap();
-        setting::set(&db, key::SPLIT_RETIREMENT_PCT, Percent(-60)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(5)).unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(15_000)).unwrap();
+        setting::set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints(-6_000)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(500)).unwrap();
 
         let err = check_splits(&db).unwrap_err().to_string();
 
@@ -561,14 +562,14 @@ mod tests {
     }
 
     /// The same bound the form holds with `parse_percent`, on the writer that
-    /// has no field to hold it at: `cell::as_percent` reads whatever the
+    /// has no field to hold it at: `cell::as_rate_bp` reads whatever the
     /// sheet carries.
     #[test]
     fn a_split_past_a_hundred_is_refused_on_its_own() {
         let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(101)).unwrap();
-        setting::set(&db, key::SPLIT_RETIREMENT_PCT, Percent(0)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(0)).unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(10_100)).unwrap();
+        setting::set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints::ZERO).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints::ZERO).unwrap();
 
         let err = check_splits(&db).unwrap_err().to_string();
 
@@ -584,9 +585,9 @@ mod tests {
     #[test]
     fn splits_totalling_over_one_hundred_are_refused_with_all_three_named() {
         let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(60)).unwrap();
-        setting::set(&db, key::SPLIT_RETIREMENT_PCT, Percent(30)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(30)).unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(6_000)).unwrap();
+        setting::set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints(3_000)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(3_000)).unwrap();
 
         let err = check_splits(&db).unwrap_err().to_string();
 
@@ -601,9 +602,9 @@ mod tests {
     #[test]
     fn splits_landing_exactly_on_one_hundred_are_accepted() {
         let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(50)).unwrap();
-        setting::set(&db, key::SPLIT_RETIREMENT_PCT, Percent(30)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(20)).unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(5_000)).unwrap();
+        setting::set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints(3_000)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(2_000)).unwrap();
 
         check_splits(&db).unwrap();
     }

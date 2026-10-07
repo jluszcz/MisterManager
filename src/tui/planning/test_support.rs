@@ -13,7 +13,7 @@ use crate::db::bill::{Bill, Category};
 use crate::db::{AccountId, BillId};
 use crate::money::Cents;
 use crate::plan_line::Line;
-use crate::rate::Percent;
+use crate::rate::BasisPoints;
 use crate::transfer::{self, Container, Landing, Wiring};
 use chrono::NaiveDate;
 
@@ -24,12 +24,12 @@ pub(super) fn settings() -> PlanSettings {
         buffer: d(5_000),
         periods_per_year: 26,
         bill_payment_cap: d(2_000),
-        bill_payment_pct: Percent(50),
+        bill_payment_pct: BasisPoints(5_000),
         mom_and_dad_annual: d(12_000),
         goals_floor: d(500),
-        future_housing_pct: Percent(35),
-        retirement_pct: Percent(15),
-        investment_pct: Percent(15),
+        future_housing_pct: BasisPoints(3_500),
+        retirement_pct: BasisPoints(1_500),
+        investment_pct: BasisPoints(1_500),
     }
 }
 

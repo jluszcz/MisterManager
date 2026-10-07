@@ -170,7 +170,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/account_label.rs` | `Account` and `Label` — an account on its way to a display, in any medium. `render_with` is the only reader of its text, and hands the resolved color alongside. |
 | `src/money.rs` | `Cents(i64)` — the only money type. No floats anywhere in the crate. |
 | `src/palette.rs` | What a color *is*, in numbers: the eight account colors, the negative and positive colors and which side of zero wears each (`Sense` — Credit's ledger runs as debt on the screen and the page alike), and the funding ramp — how funded a goal is, red through yellow to green — and the Total line a balance chart draws over its accounts, as `(u8, u8, u8)`. `tui::style` wraps them for a terminal; `report` spells them as `#rrggbb`. |
-| `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. `BasisPoints` prints itself as a percentage with two decimals, on the type rather than beside a screen, so the Funds screen and the report cannot render one share two ways; `whole_percent` is the second spelling, on the type for the same reason, for a share read down a column rather than against the target beside it. |
+| `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. `BasisPoints` prints itself as a percentage with two decimals, on the type rather than beside a screen, so the Funds screen and the report cannot render one share two ways; `whole_percent` is the second spelling, on the type for the same reason, for a share read down a column rather than against the target beside it, and `exact_percent` the one a Planning split is drawn and prefilled in. `Percent` is a goal's funded share and an account's tax-free share; the Planning splits are `BasisPoints`. |
 | `src/gate.rs` | `Gate` — the Planning gates, each owning its setting key and goal-name substring. |
 | `src/reading.rs` | `Reading` — whether a reader refuses a row it cannot resolve or draws past it. One parameter rather than a strict function and a tolerant twin, so the two readings differ in nothing but the thing they name. Taken by `goal::all_with_balances` and by the `transfer` readers built on it. |
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the setting key naming its container account. |
@@ -624,14 +624,17 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   - **The line is drawn only when something is marked**, the way the two transfer footers are. A
     figure nobody has chosen the inputs to is not a figure, and a row reading zero on every
     unconfigured database is a row nobody reads.
+- **The Planning percentages are `BasisPoints`, not `Percent`**, so a split can be `10.5 / 20.5 / 69`.
+  `tui::planning::parse_percent` is the one place one is typed, and both sinks draw it through
+  `BasisPoints::exact_percent`, which is also what `e` prefills.
 - **The three discretionary splits are bounded as a set and one at a time, at both writers.** Goals
   takes `100 − (fh + rt + inv)`, so a set over 100 leaves it nothing and sends every discretionary
   dollar elsewhere. `tui::planning::write_split` refuses one percentage at a time — the shape the
   form writes, where `parse_percent` has already refused anything outside `0..=100` — and
-  `plan::check_splits` refuses both, the shape an import writes, because `import::cell::as_percent`
+  `plan::check_splits` refuses both, the shape an import writes, because `import::cell::as_rate_bp`
   reads whatever the sheet carries and does not clamp. Both exist because both are writers, and the
   per-field half is what makes the set half mean anything: `150 / -60 / 5` totals 95, and
-  `Percent::of` hands that negative to a line unclamped — a real transfer instruction moving money
+  `BasisPoints::of` hands that negative to a line unclamped — a real transfer instruction moving money
   the wrong way, since `transfer::plan` skips a line at zero and nothing reads its sign.
   `calc::planning` clamps each share against what the ones above it left,
   but that is a backstop for a database written before those rules, and it is deliberately silent:

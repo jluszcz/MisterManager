@@ -128,12 +128,12 @@ pub(super) fn plan_view() -> PlanView {
         buffer: dollars(5_000),
         periods_per_year: 26,
         bill_payment_cap: dollars(1_800),
-        bill_payment_pct: Percent(40),
+        bill_payment_pct: BasisPoints(4_000),
         mom_and_dad_annual: dollars(12_000),
         goals_floor: dollars(400),
-        future_housing_pct: Percent(30),
-        retirement_pct: Percent(20),
-        investment_pct: Percent(10),
+        future_housing_pct: BasisPoints(3_000),
+        retirement_pct: BasisPoints(2_000),
+        investment_pct: BasisPoints(1_000),
     };
     let inputs = PlanInputs {
         checking_at_adhoc: dollars(20_000),

@@ -188,7 +188,7 @@ impl Row {
         // The one thing this cell reports rather than states is a gap the
         // money will not cover, which is why it is the only one that colors.
         let (extra, extra_tone) = match row.extra {
-            plan_rows::Extra::Percent(pct) => (format!("{}%", pct.0), Tone::Plain),
+            plan_rows::Extra::Percent(pct) => (format!("{}%", pct.exact_percent()), Tone::Plain),
             plan_rows::Extra::Biweekly(cents) => (crate::demo::whole_figure(cents), Tone::Plain),
             plan_rows::Extra::Gap(cents) => (
                 format!("\u{394} {}", crate::demo::whole_figure(cents)),
