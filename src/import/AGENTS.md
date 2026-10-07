@@ -61,9 +61,11 @@ that kind already holds, and no color at all. The longer name, the color, the ba
 set on the Accounts screen and survive a `--replace` — `account` is not an imported table. A code already present is skipped, so
 re-running the pass is a no-op rather than an `account_code_kind` failure.
 
-`E2` is a fraction in the sheet and becomes `BasisPoints` (×10,000). The Planning split percentages
-are also fractions in the sheet but become `Percent` (×100). Two scalings, two types, so a value
-cannot be read at one scale and used at the other.
+`E2` is a fraction in the sheet and becomes `BasisPoints` (×10,000), and so do the Planning
+percentages `F19` and `F25:F27`, which the owner may set to a fraction of a point. The import reads
+nothing at `Percent` (×100); `as_percent` is what `tests/savings_from_workbook.rs` reads a goal's
+funded percentage on `Savings` with. Two scalings, two types, so a value cannot be read at one scale
+and used at the other.
 
 **`H2` is read by nothing.** The pay cadence is one fact and the sheet states it twice — a count in
 `G2` and a length in `H2` — so only the count is imported, and `calc::period_days` derives the
@@ -195,7 +197,7 @@ Excel stores money as `f64`; every real amount in this workbook is exact to the 
 at 2dp is lossless — that rounding is the last float in the pipeline and everything after it is
 `Cents`.
 
-`as_percent` and `as_i64` accept `Int` as well as `Float`, because a cell hand-edited to a whole
+`as_rate_bp`, `as_percent` and `as_i64` accept `Int` as well as `Float`, because a cell hand-edited to a whole
 number round-trips as an integer. Reading only `Float` would return `None`, which every caller with
 a default reads as "not configured" — a silent revert to a default is worse than a loud parse
 error.

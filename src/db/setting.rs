@@ -21,15 +21,15 @@
 //!
 //! ```compile_fail
 //! use mistermanager::db::{self, setting::{self, key}};
-//! use mistermanager::rate::Percent;
+//! use mistermanager::rate::BasisPoints;
 //! let db = db::open_in_memory().unwrap();
-//! setting::set(&db, key::PLANNING_TARGET, Percent(35)).unwrap();
+//! setting::set(&db, key::PLANNING_TARGET, BasisPoints(3_500)).unwrap();
 //! ```
 
 use super::date;
 use super::{AccountId, Db, GoalId};
 use crate::money::Cents;
-use crate::rate::{BasisPoints, Percent};
+use crate::rate::BasisPoints;
 use anyhow::{Context, Result, anyhow};
 use chrono::NaiveDate;
 use rusqlite::{OptionalExtension, params};
@@ -109,7 +109,6 @@ macro_rules! integer_value {
 
 integer_value!(i64, |n| n, |v: &i64| *v);
 integer_value!(Cents, Cents, |v: &Cents| v.0);
-integer_value!(Percent, Percent, |v: &Percent| v.0);
 integer_value!(BasisPoints, BasisPoints, |v: &BasisPoints| v.0);
 integer_value!(GoalId, GoalId, |v: &GoalId| v.0);
 integer_value!(AccountId, AccountId, |v: &AccountId| v.0);
@@ -268,7 +267,7 @@ pub mod key {
     use super::Key;
     use crate::db::AccountId;
     use crate::money::Cents;
-    use crate::rate::{BasisPoints, Percent};
+    use crate::rate::BasisPoints;
     use chrono::NaiveDate;
 
     /// `Constants!E2`.
@@ -321,17 +320,18 @@ pub mod key {
     pub const GOALS_FLOOR: Key<Cents> = Key::new("planning.goals_floor");
 
     /// `Planning!F19`.
-    pub const BILL_PAYMENT_PCT: Key<Percent> = Key::new("planning.bill_payment_pct");
+    pub const BILL_PAYMENT_PCT: Key<BasisPoints> = Key::new("planning.bill_payment_pct");
     /// `Planning!F25` — the Future Housing share of the remainder.
     ///
     /// The stored string still says `down_payment`. It is the key an existing
     /// database already holds this value under, and a renamed key reads as
     /// "not configured", which would silently substitute the default.
-    pub const SPLIT_FUTURE_HOUSING_PCT: Key<Percent> = Key::new("planning.split_down_payment_pct");
+    pub const SPLIT_FUTURE_HOUSING_PCT: Key<BasisPoints> =
+        Key::new("planning.split_down_payment_pct");
     /// `Planning!F26`.
-    pub const SPLIT_RETIREMENT_PCT: Key<Percent> = Key::new("planning.split_retirement_pct");
+    pub const SPLIT_RETIREMENT_PCT: Key<BasisPoints> = Key::new("planning.split_retirement_pct");
     /// `Planning!F27`.
-    pub const SPLIT_INVESTMENT_PCT: Key<Percent> = Key::new("planning.split_investment_pct");
+    pub const SPLIT_INVESTMENT_PCT: Key<BasisPoints> = Key::new("planning.split_investment_pct");
 
     /// Whether the Planning screen's Biweekly Expenses figure counts this
     /// constant.
@@ -375,10 +375,10 @@ mod tests {
         set(&db, key::PAY_PERIODS_PER_YEAR, 26).unwrap();
         assert_eq!(get(&db, key::PAY_PERIODS_PER_YEAR).unwrap(), Some(26));
 
-        set(&db, key::SPLIT_RETIREMENT_PCT, Percent(15)).unwrap();
+        set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints(1_500)).unwrap();
         assert_eq!(
             get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(),
-            Some(Percent(15))
+            Some(BasisPoints(1_500))
         );
 
         set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
@@ -471,7 +471,7 @@ mod tests {
         let d = NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
         set(&db, key::PLANNING_TARGET, Cents::from_dollars(10_000)).unwrap();
         set(&db, key::PAY_PERIODS_PER_YEAR, 26).unwrap();
-        set(&db, key::SPLIT_RETIREMENT_PCT, Percent(15)).unwrap();
+        set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints(1_500)).unwrap();
         set(&db, key::PINNED_AT, d).unwrap();
 
         let snapshot = all(&db).unwrap();
@@ -483,7 +483,7 @@ mod tests {
         assert_eq!(snapshot.get(key::PAY_PERIODS_PER_YEAR).unwrap(), Some(26));
         assert_eq!(
             snapshot.get(key::SPLIT_RETIREMENT_PCT).unwrap(),
-            Some(Percent(15))
+            Some(BasisPoints(1_500))
         );
         assert_eq!(snapshot.get(key::PINNED_AT).unwrap(), Some(d));
     }

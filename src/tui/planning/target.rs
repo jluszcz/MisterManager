@@ -11,35 +11,62 @@ use crate::db::bill;
 use crate::db::setting::{self, key};
 use crate::money::Cents;
 use crate::plan_line::Line;
-use crate::rate::Percent;
+use crate::rate::BasisPoints;
 use crate::tui::form::{parse_amount, parse_whole_amount};
 use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
 
 pub use crate::plan_rows::Target;
 
-/// A whole-percent share, with a trailing sign tolerated.
+/// A share to the hundredth of a percent, with a trailing sign tolerated:
+/// `10.5` and `10.5%` are both `BasisPoints(1_050)`.
 ///
-/// `Percent` is whole percent, so a fraction is refused rather than rounded:
-/// `0.35` accepted as `Percent(0)` would silently reroute every discretionary
-/// dollar, and accepted as `Percent(35)` would make `35` and `0.35` mean the
-/// same thing.
+/// Typed as a percentage rather than as the sheet's fraction, so `0.35` is
+/// 0.35% -- the screen draws it back as exactly that, which is what makes the
+/// reading safe to take. A third decimal is refused rather than rounded: a
+/// hundredth is the finest a share is stored at, and quietly storing `10.13`
+/// for a typed `10.125` would divide the payday by a split nobody chose.
 ///
-/// Bounded to `0..=100`: `Percent::of` does not clamp, so an unbounded value
-/// would write a negative or over-100 allocation straight into the waterfall
-/// with no error at any layer. The bound is per-field, not a sum check --
-/// `compute` already saturates the Goals plug at zero when the other three
-/// shares total over 100.
-fn parse_percent(raw: &str) -> Result<Percent> {
+/// Bounded to `0..=100`: `BasisPoints::of` does not clamp, so an unbounded
+/// value would write a negative or over-100 allocation straight into the
+/// waterfall with no error at any layer. The bound is per-field, not a sum
+/// check -- `compute` already saturates the Goals plug at zero when the other
+/// three shares total over 100.
+fn parse_percent(raw: &str) -> Result<BasisPoints> {
     let text = raw.trim().trim_end_matches('%').trim();
-    let value: i64 = text
-        .parse()
-        .with_context(|| format!("not a whole percentage: {text:?}"))?;
+    let unsigned = text.strip_prefix('-').unwrap_or(text);
+    let (whole, frac) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    let digits = |s: &str| s.chars().all(|c| c.is_ascii_digit());
     ensure!(
-        (0..=100).contains(&value),
+        !(whole.is_empty() && frac.is_empty()) && digits(whole) && digits(frac),
+        "not a percentage: {text:?}"
+    );
+    ensure!(
+        frac.len() <= 2,
+        "a percentage takes at most two decimals, got {text}"
+    );
+    let whole: i64 = match whole {
+        "" => 0,
+        w => w
+            .parse()
+            .with_context(|| format!("not a percentage: {text:?}"))?,
+    };
+    // `5` is fifty hundredths and `05` is five, so the fraction is read as
+    // though it were padded to two places.
+    let hundredths: i64 = format!("{frac:0<2}").parse()?;
+    let magnitude = whole
+        .checked_mul(100)
+        .and_then(|w| w.checked_add(hundredths))
+        .with_context(|| format!("not a percentage: {text:?}"))?;
+    let value = BasisPoints(match unsigned.len() < text.len() {
+        true => -magnitude,
+        false => magnitude,
+    });
+    ensure!(
+        (BasisPoints::ZERO..=BasisPoints::ONE).contains(&value),
         "percentage must be between 0 and 100, got {text}"
     );
-    Ok(Percent(value))
+    Ok(value)
 }
 
 /// The figure the whole waterfall then runs off.
@@ -88,18 +115,19 @@ fn parse_pinned_excess(raw: &str) -> Result<Cents> {
 /// must come down first.
 fn write_split(
     db: &Db,
-    key: crate::db::setting::Key<Percent>,
+    key: crate::db::setting::Key<BasisPoints>,
     line: Line,
     raw: &str,
-    others: impl Fn(&PlanSettings) -> i64,
+    others: impl Fn(&PlanSettings) -> BasisPoints,
 ) -> Result<()> {
     let value = parse_percent(raw)?;
     let claimed = others(&crate::plan::settings_from_db(db)?);
     ensure!(
-        value.0 + claimed <= 100,
-        "{} leaves {}% at most: the other two splits already claim {claimed}%",
+        value + claimed <= BasisPoints::ONE,
+        "{} leaves {}% at most: the other two splits already claim {}%",
         line.label(),
-        100 - claimed
+        BasisPoints::ONE.saturating_sub(claimed).exact_percent(),
+        claimed.exact_percent()
     );
     setting::set(db, key, value)
 }
@@ -148,16 +176,16 @@ impl Target {
                 key::SPLIT_FUTURE_HOUSING_PCT,
                 Line::FutureHousing,
                 raw,
-                |s| s.retirement_pct.0 + s.investment_pct.0,
+                |s| s.retirement_pct + s.investment_pct,
             ),
             Target::RetirementPct => {
                 write_split(db, key::SPLIT_RETIREMENT_PCT, Line::Retirement, raw, |s| {
-                    s.future_housing_pct.0 + s.investment_pct.0
+                    s.future_housing_pct + s.investment_pct
                 })
             }
             Target::InvestmentPct => {
                 write_split(db, key::SPLIT_INVESTMENT_PCT, Line::Investment, raw, |s| {
-                    s.future_housing_pct.0 + s.retirement_pct.0
+                    s.future_housing_pct + s.retirement_pct
                 })
             }
             // Both keys, for the reason `p` moves both: a date with no amount
@@ -206,7 +234,7 @@ mod tests {
     use crate::db::setting::{self, key};
     use crate::money::Cents;
 
-    use crate::rate::Percent;
+    use crate::rate::BasisPoints;
     use crate::test_support::day;
 
     use crate::tui::planning::test_support::*;
@@ -255,12 +283,12 @@ mod tests {
             Some(24)
         );
         assert_eq!(cents(key::BILL_PAYMENT_CAP), Cents::from_dollars(3_000));
-        assert_eq!(pct(key::BILL_PAYMENT_PCT), Percent(60));
+        assert_eq!(pct(key::BILL_PAYMENT_PCT), BasisPoints(6_000));
         assert_eq!(cents(key::MOM_AND_DAD_ANNUAL), Cents::from_dollars(4_000));
         assert_eq!(cents(key::GOALS_FLOOR), Cents::from_dollars(500));
-        assert_eq!(pct(key::SPLIT_FUTURE_HOUSING_PCT), Percent(30));
-        assert_eq!(pct(key::SPLIT_RETIREMENT_PCT), Percent(20));
-        assert_eq!(pct(key::SPLIT_INVESTMENT_PCT), Percent(10));
+        assert_eq!(pct(key::SPLIT_FUTURE_HOUSING_PCT), BasisPoints(3_000));
+        assert_eq!(pct(key::SPLIT_RETIREMENT_PCT), BasisPoints(2_000));
+        assert_eq!(pct(key::SPLIT_INVESTMENT_PCT), BasisPoints(1_000));
     }
 
     #[test]
@@ -384,8 +412,6 @@ mod tests {
         );
     }
 
-    /// `Percent` is whole percent. Accepting `0.35` would silently divide the
-    /// split by a hundred and reroute every discretionary dollar.
     #[test]
     fn a_percentage_takes_a_bare_number_or_a_trailing_sign_and_nothing_else() {
         let db = db::open_in_memory().unwrap();
@@ -394,18 +420,92 @@ mod tests {
             .unwrap();
         assert_eq!(
             setting::get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(),
-            Some(Percent(15))
+            Some(BasisPoints(1_500))
         );
 
-        let err = Target::RetirementPct
-            .write(&db, day(2026, 8, 14), "0.35")
-            .unwrap_err();
-        assert!(err.to_string().contains("0.35"), "{err}");
-        assert!(
-            Target::RetirementPct
-                .write(&db, day(2026, 8, 14), "fifteen")
-                .is_err()
+        for junk in ["fifteen", "", "%", ".", "1.2.3", "1e2", "+5", "-"] {
+            assert!(
+                Target::RetirementPct
+                    .write(&db, day(2026, 8, 14), junk)
+                    .is_err(),
+                "{junk:?} was accepted"
+            );
+        }
+    }
+
+    /// The split the owner asked for: `10.5 / 20.5 / 69` is a whole payday,
+    /// and each share is stored to the hundredth it was typed at.
+    #[test]
+    fn a_split_takes_a_fraction_of_a_percent() {
+        let db = db::open_in_memory().unwrap();
+        let write = |target: Target, raw| target.write(&db, day(2026, 8, 14), raw).unwrap();
+        write(Target::FutureHousingPct, "10.5");
+        write(Target::RetirementPct, "20.5%");
+        write(Target::InvestmentPct, "69");
+
+        let pct = |k| setting::get(&db, k).unwrap().unwrap();
+        assert_eq!(pct(key::SPLIT_FUTURE_HOUSING_PCT), BasisPoints(1_050));
+        assert_eq!(pct(key::SPLIT_RETIREMENT_PCT), BasisPoints(2_050));
+        assert_eq!(pct(key::SPLIT_INVESTMENT_PCT), BasisPoints(6_900));
+        assert_eq!(
+            crate::plan::settings_from_db(&db).unwrap().goals_pct(),
+            BasisPoints::ZERO
         );
+    }
+
+    /// `5` after the point is fifty hundredths and `05` is five, and a point
+    /// with nothing before it is a fraction of one percent -- typed as a
+    /// percentage, so `0.35` is 0.35% and draws back as exactly that.
+    #[test]
+    fn a_fraction_is_read_to_the_hundredth_it_was_typed_at() {
+        let db = db::open_in_memory().unwrap();
+        for (raw, expected) in [
+            ("12.5", 1_250),
+            ("12.05", 1_205),
+            ("12.", 1_200),
+            (".5", 50),
+            ("0.35", 35),
+            ("100.00", 10_000),
+        ] {
+            Target::BillPaymentPct
+                .write(&db, day(2026, 8, 14), raw)
+                .unwrap();
+            assert_eq!(
+                setting::get(&db, key::BILL_PAYMENT_PCT).unwrap(),
+                Some(BasisPoints(expected)),
+                "{raw:?}"
+            );
+        }
+    }
+
+    /// A hundredth is the finest a share is stored at, and rounding a third
+    /// decimal away would store a split nobody typed.
+    #[test]
+    fn a_third_decimal_is_refused_rather_than_rounded() {
+        let db = db::open_in_memory().unwrap();
+        let err = Target::RetirementPct
+            .write(&db, day(2026, 8, 14), "10.125")
+            .unwrap_err();
+        assert!(err.to_string().contains("10.125"), "{err}");
+        assert_eq!(setting::get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(), None);
+    }
+
+    /// The headroom is quoted to the hundredth too, or a refusal over a
+    /// fractional set would name a figure the owner cannot type to land on.
+    #[test]
+    fn the_headroom_is_quoted_to_the_hundredth() {
+        let db = db::open_in_memory().unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(1_050)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(6_900)).unwrap();
+
+        let err = Target::RetirementPct
+            .write(&db, day(2026, 8, 14), "20.51")
+            .unwrap_err();
+
+        assert!(err.to_string().contains("20.5%"), "the headroom: {err}");
+        Target::RetirementPct
+            .write(&db, day(2026, 8, 14), "20.5")
+            .unwrap();
     }
 
     /// Goals gets what the other three leave, so a combination over 100%
@@ -415,8 +515,8 @@ mod tests {
     #[test]
     fn a_split_pushing_the_three_over_one_hundred_is_refused() {
         let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(30)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(10)).unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(3_000)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(1_000)).unwrap();
 
         let err = Target::RetirementPct
             .write(&db, day(2026, 8, 14), "70")
@@ -435,8 +535,8 @@ mod tests {
     #[test]
     fn a_split_landing_exactly_on_one_hundred_is_accepted() {
         let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(30)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(10)).unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(3_000)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(1_000)).unwrap();
 
         Target::RetirementPct
             .write(&db, day(2026, 8, 14), "60")
@@ -444,7 +544,7 @@ mod tests {
 
         assert_eq!(
             setting::get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(),
-            Some(Percent(60))
+            Some(BasisPoints(6_000))
         );
     }
 
@@ -466,7 +566,7 @@ mod tests {
             .unwrap();
     }
 
-    /// `Percent::of` does not clamp, so a percentage outside `0..=100` would
+    /// `BasisPoints::of` does not clamp, so a percentage outside `0..=100` would
     /// write a negative or over-100 allocation straight into the waterfall
     /// with no error at any layer downstream.
     #[test]

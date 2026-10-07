@@ -1,6 +1,6 @@
 use super::biweekly;
 use crate::money::Cents;
-use crate::rate::Percent;
+use crate::rate::BasisPoints;
 use anyhow::Result;
 
 /// The tuned constants of the waterfall. Every one is editable in the UI.
@@ -15,15 +15,15 @@ pub struct PlanSettings {
     /// Ceiling on the bill-payment allocation. `Planning!E19`.
     pub bill_payment_cap: Cents,
     /// Share of remaining excess offered to bill payments. `Planning!F19`.
-    pub bill_payment_pct: Percent,
+    pub bill_payment_pct: BasisPoints,
     /// Annual Mom & Dad commitment, divided by pay periods. `Planning!E20`.
     pub mom_and_dad_annual: Cents,
     /// Below this remainder, everything goes to Goals. `Planning!E24`.
     pub goals_floor: Cents,
     /// `Planning!F25`, `F26`, `F27`. Goals takes whatever is left over.
-    pub future_housing_pct: Percent,
-    pub retirement_pct: Percent,
-    pub investment_pct: Percent,
+    pub future_housing_pct: BasisPoints,
+    pub retirement_pct: BasisPoints,
+    pub investment_pct: BasisPoints,
 }
 
 impl PlanSettings {
@@ -40,8 +40,8 @@ impl PlanSettings {
     /// `saturating_sub` rather than a plain subtraction: the three shares are
     /// user-editable and can be configured to more than 100 between them,
     /// which would otherwise allocate a negative share to Goals.
-    pub fn goals_pct(&self) -> Percent {
-        Percent::ONE_HUNDRED
+    pub fn goals_pct(&self) -> BasisPoints {
+        BasisPoints::ONE
             .saturating_sub(self.future_housing_pct + self.retirement_pct + self.investment_pct)
     }
 }
@@ -339,12 +339,12 @@ mod tests {
             buffer: d(5_000),
             periods_per_year: 26,
             bill_payment_cap: d(1_800),
-            bill_payment_pct: Percent(40),
+            bill_payment_pct: BasisPoints(4_000),
             mom_and_dad_annual: d(12_000),
             goals_floor: d(400),
-            future_housing_pct: Percent(30),
-            retirement_pct: Percent(20),
-            investment_pct: Percent(10),
+            future_housing_pct: BasisPoints(3_000),
+            retirement_pct: BasisPoints(2_000),
+            investment_pct: BasisPoints(1_000),
         }
     }
 
@@ -592,9 +592,9 @@ mod tests {
     #[test]
     fn splits_totalling_over_one_hundred_are_clamped_in_order() {
         let mut settings = plan_settings();
-        settings.future_housing_pct = Percent(60);
-        settings.retirement_pct = Percent(30);
-        settings.investment_pct = Percent(30); // 120 between them
+        settings.future_housing_pct = BasisPoints(6_000);
+        settings.retirement_pct = BasisPoints(3_000);
+        settings.investment_pct = BasisPoints(3_000); // 120 between them
         let plan = compute(&settings, &plan_inputs()).unwrap();
 
         assert_eq!(plan.goals, Cents::ZERO);

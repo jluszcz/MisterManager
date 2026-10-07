@@ -25,14 +25,14 @@ use crate::db::setting::{Key, key};
 use crate::gate::Gate;
 use crate::money::Cents;
 use crate::plan_line::Line;
-use crate::rate::Percent;
+use crate::rate::BasisPoints;
 use crate::transfer;
 use chrono::NaiveDate;
 
 /// One editable constant of the waterfall.
 ///
 /// An enum rather than the `Key<T>` being edited, because the constants have
-/// different `T` -- `Cents`, `Percent`, `i64` -- and one field cannot hold
+/// different `T` -- `Cents`, `BasisPoints`, `i64` -- and one field cannot hold
 /// them all. It sits here rather than beside the screen that edits it for the
 /// reason the rows do: which row *is* which constant is a fact about the
 /// waterfall, and a sink that paired them itself would be pairing them again.
@@ -211,7 +211,7 @@ pub enum Value {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Extra {
     /// The percentage that produced the figure beside it.
-    Percent(Percent),
+    Percent(BasisPoints),
     /// A monthly bill's biweekly figure -- what the waterfall spends.
     Biweekly(Cents),
     /// What the excess cut, drawn as a `\u{394}` in the red both sinks keep
@@ -334,11 +334,17 @@ impl Row {
     /// A figure the waterfall computed, with the percentage that produced it
     /// beside it. Editing the row edits the percentage, which is why the
     /// prefill is the share rather than the amount.
-    fn split(label: &str, value: Cents, pct: Percent, target: Option<Target>, depth: u8) -> Row {
+    fn split(
+        label: &str,
+        value: Cents,
+        pct: BasisPoints,
+        target: Option<Target>,
+        depth: u8,
+    ) -> Row {
         Row {
             extra: Extra::Percent(pct),
             target,
-            edit: pct.0.to_string(),
+            edit: pct.exact_percent(),
             ..Row::figure(label, value, depth)
         }
     }
@@ -646,12 +652,12 @@ mod tests {
             buffer: d(5_000),
             periods_per_year: 26,
             bill_payment_cap: d(2_000),
-            bill_payment_pct: Percent(50),
+            bill_payment_pct: BasisPoints(5_000),
             mom_and_dad_annual: d(12_000),
             goals_floor: d(500),
-            future_housing_pct: Percent(35),
-            retirement_pct: Percent(15),
-            investment_pct: Percent(15),
+            future_housing_pct: BasisPoints(3_500),
+            retirement_pct: BasisPoints(1_500),
+            investment_pct: BasisPoints(1_500),
         }
     }
 
@@ -825,7 +831,7 @@ mod tests {
         assert_eq!(at(&rows, "Bill Payments").edit, "50");
         assert_eq!(
             at(&rows, "Bill Payments").extra,
-            Extra::Percent(Percent(50))
+            Extra::Percent(BasisPoints(5_000))
         );
     }
 
@@ -838,7 +844,7 @@ mod tests {
         let goals = at(&rows, Line::Goals.label());
 
         assert_eq!(goals.target, None);
-        assert_eq!(goals.extra, Extra::Percent(Percent(35)));
+        assert_eq!(goals.extra, Extra::Percent(BasisPoints(3_500)));
     }
 
     /// A transfer's head names the account through [`Account`] rather than as

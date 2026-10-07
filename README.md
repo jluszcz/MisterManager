@@ -98,7 +98,7 @@ spends on the allocation it is mostly used for).
 The transfer instructions first — one per destination account — then what a pay period costs, over
 the waterfall that worked them out: the excess, the monthly bill block with its biweekly column, the
 gates, the split, and where each line lands. `↑`/`↓` move between the editable constants and skip
-everything computed.
+everything computed. A percentage takes up to two decimals, so the split can be `10.5 / 20.5 / 69`.
 
 `p` pins the excess so the plan stops moving underneath a payday; pressing it again re-pins at
 whatever the excess reads now, and `P` unpins. `Excess (Used)` is an editable constant like any

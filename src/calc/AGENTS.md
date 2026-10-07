@@ -115,11 +115,11 @@ The split percentages are user-editable, and the three are bounded **as a set** 
 time: each inside `0..=100` on its own, and still wrong between them. Both writers hold both bounds
 — at the form, `tui::planning::parse_percent` refuses a percentage outside the range and
 `write_split` refuses the set it would join; at the import, `plan::check_splits` refuses either,
-since `import::cell::as_percent` reads whatever the sheet carries and a `150 / -60 / 5` totals 95.
-A share below zero is the one the set rule cannot catch on its own: `Percent::of` does not clamp,
+since `import::cell::as_rate_bp` reads whatever the sheet carries and a `150 / -60 / 5` totals 95.
+A share below zero is the one the set rule cannot catch on its own: `BasisPoints::of` does not clamp,
 so it reaches a line as a negative allocation, and nothing downstream reads a line's sign.
 
-Goals' share is `Percent::ONE_HUNDRED.saturating_sub(sum)`, which now only ever saturates on a
+Goals' share is `BasisPoints::ONE.saturating_sub(sum)`, which now only ever saturates on a
 database written before either rule existed.
 
 ### `Excess (Fixed)` became a pin

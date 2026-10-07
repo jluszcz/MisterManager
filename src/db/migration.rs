@@ -424,7 +424,56 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // the ledger, and a fund has no history to recover.
         data: None,
     },
+    Migration {
+        version: 19,
+        // The four Planning percentages -- `Planning!F19` and `F25:F27` --
+        // are read as basis points rather than whole percent, so a split can
+        // carry a fraction of a point. A change of meaning with no change of
+        // column: a stored `30` would otherwise read as 0.30%, and the
+        // waterfall would quietly hand nearly the whole remainder to Goals.
+        //
+        // Rescaled in Rust rather than by `CAST`, so a value is read exactly
+        // the way `setting::get` would have read it: `'040'` and `'+40'` are
+        // both 40% to an `i64` parse and to neither side of a `CAST`
+        // round-trip. A value that does not parse was already a corrupt
+        // setting `get` refuses by key, and is left to go on being refused
+        // rather than turned into a plausible `0`.
+        sql: "",
+        data: Some(rescale_planning_percentages),
+    },
 ];
+
+/// Arm 19's data half: every stored Planning percentage, whole percent to
+/// basis points.
+///
+/// A fresh install replaying the chain holds none of the keys, so the loop
+/// finds nothing and the arm is where it should be.
+fn rescale_planning_percentages(conn: &Connection) -> Result<()> {
+    const KEYS: [&str; 4] = [
+        "planning.bill_payment_pct",
+        "planning.split_down_payment_pct",
+        "planning.split_retirement_pct",
+        "planning.split_investment_pct",
+    ];
+    for key in KEYS {
+        let stored: Option<String> = conn
+            .query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        let Some(percent) = stored.and_then(|v| v.parse::<i64>().ok()) else {
+            continue;
+        };
+        let Some(bp) = percent.checked_mul(100) else {
+            continue;
+        };
+        conn.execute(
+            "UPDATE setting SET value = ?2 WHERE key = ?1",
+            (key, bp.to_string()),
+        )?;
+    }
+    Ok(())
+}
 
 /// The last thing to tell an owner whose database this build will not open.
 ///
@@ -660,6 +709,50 @@ mod tests {
             )
             .unwrap();
         assert_eq!(left, 0, "the retired key outlived the arm that retires it");
+    }
+
+    /// A split stored as whole percent before the Planning percentages were
+    /// basis points has to come out of the arm meaning the same share, or a
+    /// stored `30` reads as 0.30% and Goals takes nearly everything. A value
+    /// that was never an integer is left exactly as it was, so `setting::get`
+    /// goes on refusing it by key rather than reading a rescaled `0`.
+    #[test]
+    fn the_arm_rescaling_the_planning_percentages_keeps_each_share() {
+        const RESCALED_AT: i64 = 19;
+        let at = MIGRATIONS
+            .iter()
+            .position(|arm| arm.version == RESCALED_AT)
+            .expect("the arm that rescales the Planning percentages");
+
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn, SCHEMA, &MIGRATIONS[..at]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO setting (key, value) VALUES
+               ('planning.bill_payment_pct', '40'),
+               ('planning.split_down_payment_pct', '30'),
+               ('planning.split_retirement_pct', '+020'),
+               ('planning.split_investment_pct', 'ten'),
+               ('tax.rate_bp', '625')",
+        )
+        .unwrap();
+
+        apply(&conn, SCHEMA, MIGRATIONS).unwrap();
+
+        let value = |key: &str| -> String {
+            conn.query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(value("planning.bill_payment_pct"), "4000");
+        assert_eq!(value("planning.split_down_payment_pct"), "3000");
+        assert_eq!(
+            value("planning.split_retirement_pct"),
+            "2000",
+            "a form `setting::get` read as 20 is rescaled as 20"
+        );
+        assert_eq!(value("planning.split_investment_pct"), "ten");
+        assert_eq!(value("tax.rate_bp"), "625", "a key the arm never named");
     }
 
     /// An empty file is the one version that is not "some other schema", and

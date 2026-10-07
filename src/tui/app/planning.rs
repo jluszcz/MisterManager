@@ -594,7 +594,7 @@ mod tests {
     use crate::db::{AccountId, GoalId, goal};
     use crate::money::Cents;
     use crate::plan_line::{Destination, Line};
-    use crate::rate::{BasisPoints, Percent};
+    use crate::rate::BasisPoints;
     use crate::test_support::{day, walk_until};
     use crate::tui::MIN_WIDTH;
     use crate::tui::app::Screen;
@@ -2293,9 +2293,9 @@ mod tests {
         setting::set(&db, key::PLANNING_BUFFER, Cents::ZERO).unwrap();
         setting::set(&db, key::BILL_PAYMENT_CAP, Cents::ZERO).unwrap();
         setting::set(&db, key::MOM_AND_DAD_ANNUAL, Cents::ZERO).unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, Percent(40)).unwrap();
-        setting::set(&db, key::SPLIT_RETIREMENT_PCT, Percent(30)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, Percent(30)).unwrap();
+        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(4_000)).unwrap();
+        setting::set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints(3_000)).unwrap();
+        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(3_000)).unwrap();
 
         let mut app = App::new(db, today(), None).unwrap();
         app.screen = Screen::Planning;
