@@ -177,10 +177,10 @@ fn extract_filing_href(atom: &str) -> Result<String> {
     loop {
         match reader.read_event()? {
             Event::Eof => break,
-            Event::Start(e) if e.local_name().as_ref() == b"filing-href" => pending = true,
-            Event::End(e) if e.local_name().as_ref() == b"filing-href" => pending = false,
+            Event::Start(e) if e.local_name().as_ref() == "filing-href" => pending = true,
+            Event::End(e) if e.local_name().as_ref() == "filing-href" => pending = false,
             Event::Text(e) if pending => {
-                let href = unescape(&e.decode()?)?.into_owned();
+                let href = unescape(&e.xml10_content())?.into_owned();
                 return Ok(href.trim().to_string());
             }
             _ => {}
@@ -382,19 +382,19 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
                 depth += 1;
                 let child_of_holding = current.is_some() && holding_depth == Some(depth - 1);
                 match e.local_name().as_ref() {
-                    b"genInfo" => in_gen_info = true,
-                    b"repPdDate" if in_gen_info => pending = Some(Field::ReportDate),
-                    b"seriesName" if in_gen_info => pending = Some(Field::SeriesName),
-                    b"invstOrSec" => {
+                    "genInfo" => in_gen_info = true,
+                    "repPdDate" if in_gen_info => pending = Some(Field::ReportDate),
+                    "seriesName" if in_gen_info => pending = Some(Field::SeriesName),
+                    "invstOrSec" => {
                         current = Some(PendingHolding::new());
                         holding_depth = Some(depth);
                     }
-                    b"name" if child_of_holding => pending = Some(Field::Name),
-                    b"title" if child_of_holding => pending = Some(Field::Title),
-                    b"cusip" if child_of_holding => pending = Some(Field::Cusip),
-                    b"pctVal" if child_of_holding => pending = Some(Field::PctVal),
-                    b"assetCat" if child_of_holding => pending = Some(Field::AssetCat),
-                    b"invCountry" if child_of_holding => pending = Some(Field::InvCountry),
+                    "name" if child_of_holding => pending = Some(Field::Name),
+                    "title" if child_of_holding => pending = Some(Field::Title),
+                    "cusip" if child_of_holding => pending = Some(Field::Cusip),
+                    "pctVal" if child_of_holding => pending = Some(Field::PctVal),
+                    "assetCat" if child_of_holding => pending = Some(Field::AssetCat),
+                    "invCountry" if child_of_holding => pending = Some(Field::InvCountry),
                     _ => {}
                 }
                 // Whatever the last field left behind, so a leaf starts empty.
@@ -414,13 +414,13 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
             // zero-weight row that quietly inflates `holdings.len()` --
             // which is the fund-of-funds/direct-fund fork's only input.
             Event::Empty(e) => {
-                if e.local_name().as_ref() == b"invstOrSec" {
+                if e.local_name().as_ref() == "invstOrSec" {
                     holdings.push(PendingHolding::new().finish(holdings.len() + 1)?);
                 }
             }
             Event::Text(e) => {
                 if pending.is_some() {
-                    buffer.push_str(&unescape(&e.decode()?)?);
+                    buffer.push_str(&unescape(&e.xml10_content())?);
                 }
             }
             // One entity reference, reported on its own between the text
@@ -432,7 +432,7 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
             // a name with a hole where a character was.
             Event::GeneralRef(e) => {
                 if pending.is_some() {
-                    let name = e.decode()?;
+                    let name = e.xml10_content();
                     match e.resolve_char_ref()? {
                         Some(resolved) => buffer.push(resolved),
                         None => match resolve_predefined_entity(&name) {
@@ -482,8 +482,8 @@ pub fn parse_filing(xml: &[u8]) -> Result<Filing> {
                     }
                 }
                 match e.local_name().as_ref() {
-                    b"genInfo" => in_gen_info = false,
-                    b"invstOrSec" => {
+                    "genInfo" => in_gen_info = false,
+                    "invstOrSec" => {
                         if let Some(holding) = current.take() {
                             holdings.push(holding.finish(holdings.len() + 1)?);
                         }
