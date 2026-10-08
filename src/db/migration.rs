@@ -1,4 +1,4 @@
-//! The chain of schema edits, and the runner that applies it.
+//! The chain of schema edits, which `finance-utils`' `sqlite::migrate` applies.
 //!
 //! `schema.sql` is frozen at version 1 and is never edited again. Every
 //! change since is an arm in [`MIGRATIONS`], and a fresh database takes the
@@ -21,6 +21,7 @@
 //! what would turn "frozen" into a trap.
 
 use anyhow::Result;
+use jluszcz_finance_utils::sqlite::{Migration, Schema};
 use rusqlite::{Connection, OptionalExtension};
 
 /// The frozen baseline: the schema as it stood at version 1.
@@ -32,7 +33,13 @@ use rusqlite::{Connection, OptionalExtension};
 /// and then wholesale.
 const SCHEMA: &str = include_str!("schema.sql");
 
-/// One edit to the schema, and the version it leaves a database at.
+/// Every change to the schema since version 1, in order.
+///
+/// Adding one means appending an arm and nothing else: the head version is one
+/// plus the length, so there is no separate constant to bump and therefore no
+/// way to forget to. Empty is a legitimate state rather than an unfinished
+/// one -- it is what the chain looks like just after a squash, and
+/// `schema.sql` alone is then the whole schema.
 ///
 /// Three rules, which replaying the chain from version 1 makes binding rather
 /// than advisory:
@@ -51,26 +58,6 @@ const SCHEMA: &str = include_str!("schema.sql");
 ///   can put that right. Version 2 of this schema was exactly that case:
 ///   `account` stopped being an imported table, so its name, band and order
 ///   became the owner's rather than the importer's.
-pub(super) struct Migration {
-    /// The version this arm leaves the database at. Its position in
-    /// [`MIGRATIONS`] gives the same number, and
-    /// `every_arm_declares_the_version_its_position_gives_it` is what holds
-    /// the two together.
-    pub version: i64,
-    /// Run as a batch, so several statements separated by `;` are fine.
-    pub sql: &'static str,
-    /// Run after `sql`, inside the same transaction. The column a data half
-    /// writes to does not exist until its own `sql` has made room.
-    pub data: Option<fn(&Connection) -> Result<()>>,
-}
-
-/// Every change to the schema since version 1, in order.
-///
-/// Adding one means appending an arm and nothing else: the head version is one
-/// plus the length, so there is no separate constant to bump and therefore no
-/// way to forget to. Empty is a legitimate state rather than an unfinished
-/// one -- it is what the chain looks like just after a squash, and
-/// `schema.sql` alone is then the whole schema.
 pub(super) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 2,
@@ -482,197 +469,60 @@ fn rescale_planning_percentages(conn: &Connection) -> Result<()> {
 /// `mm import` on a build whose binary has no such subcommand spends the only
 /// instruction they get on a command that cannot run.
 #[cfg(feature = "import")]
-const REBUILD: &str = "delete the file and re-run `mm import <workbook>`";
+const REMEDY: &str =
+    "delete the file and re-run `mm import <workbook>`, then re-enter the recurring transactions";
 #[cfg(not(feature = "import"))]
-const REBUILD: &str = "delete the file and rebuild it with a build carrying the `import` feature";
+const REMEDY: &str = "delete the file and rebuild it with a build carrying the `import` feature, \
+     then re-enter the recurring transactions";
 
-/// The version this build's chain leaves a database at.
+/// This build's schema, which `finance-utils`' `sqlite::migrate` brings a
+/// database up to.
 ///
-/// Nothing in production names it: [`apply`] works out the head of whatever
-/// chain it is handed, so the only readers are the tests that assert a
-/// database came out at the right version. It is here so they have one name
-/// for it rather than each recomputing the sum.
+/// The chain runs with foreign keys off and `pragma_foreign_key_check` in
+/// their place, because an arm that rebuilds a table drops one three others
+/// hold `REFERENCES` to. What an arm loses by that is `ON DELETE CASCADE`:
+/// `allocation`'s is the one the schema declares, so **an arm that means to
+/// delete a parent deletes the children itself**, in its own SQL, above the
+/// parent.
+pub(super) const DATABASE: Schema = Schema {
+    baseline: SCHEMA,
+    seed: "",
+    chain: MIGRATIONS,
+    remedy: Some(REMEDY),
+};
+
+/// The version this build's chain leaves a database at, for the tests that
+/// assert a database came out at the right one.
 #[cfg(test)]
-pub(super) const SCHEMA_VERSION: i64 = head(MIGRATIONS);
+pub(super) const SCHEMA_VERSION: i64 = DATABASE.head();
 
-/// The version a chain leaves a database at: one per arm, above the frozen
-/// baseline.
-const fn head(chain: &[Migration]) -> i64 {
-    1 + chain.len() as i64
-}
-
-/// Bring `conn` up to this build's schema.
-///
-/// Split from [`apply`] so the tests can drive the runner with a synthetic
-/// baseline and a synthetic chain. With [`MIGRATIONS`] empty there would
-/// otherwise be nothing to exercise, and the machinery would ship untested
-/// until the first arm that needed it.
+/// Bring `conn` up to this build's schema, for the tests that hold a bare
+/// `Connection`.
+#[cfg(test)]
 pub(super) fn run(conn: &Connection) -> Result<()> {
-    apply(conn, SCHEMA, MIGRATIONS)
-}
-
-/// Apply `chain` to whatever version `conn` is at.
-///
-/// Zero is the one version that is not "some other schema": it is an empty
-/// file, and filling it is the whole job, so it takes `schema` and then every
-/// arm. A version between the baseline and the head takes the arms above it
-/// and not the baseline, which it already holds. A version above the head is a
-/// database some later build wrote, and it is refused rather than
-/// best-effort opened -- the arms that produced it do not exist here, and a
-/// column that is not there surfaces as a failed query somewhere far from
-/// this function, with figures already on screen.
-///
-/// The baseline, the arms, their data halves and the version stamp are all one
-/// transaction. `PRAGMA user_version` is transactional in SQLite, so a failure
-/// partway through leaves the database at the version it came in at rather
-/// than half-migrated and stamped as though it had succeeded -- which would be
-/// permanent, since the next run would skip the arms it never finished.
-///
-/// **The chain runs with foreign keys off**, and [`check_references`] is what
-/// stands in for them. An arm that rebuilds a table drops one three others
-/// hold `REFERENCES` to, and no ordering makes that legal while the
-/// enforcement is on: SQLite's own procedure for a rebuild is to turn it off
-/// around the whole thing. `PRAGMA foreign_keys` is a no-op inside a
-/// transaction, so the switch is thrown out here, and thrown back however the
-/// chain ends -- `db::prepare` turned it on, and it is the rest of the run's
-/// guard. SQLite reports no error for ignoring the pragma, so the switch is
-/// read back and a chain that would run with enforcement on is refused
-/// outright rather than left to fail somewhere inside an arm.
-///
-/// **What an arm loses by that is `ON DELETE CASCADE`**, which is inert with
-/// the enforcement off: `allocation`'s is the one the schema declares, and an
-/// arm that deleted goals expecting their allocations to follow would leave
-/// every one of them behind. [`check_references`] then turns that into a
-/// refusal to migrate at all rather than a quiet orphan, which is the right
-/// ending but a loud one. **An arm that means to delete a parent deletes the
-/// children itself**, in its own SQL, above the parent.
-fn apply(conn: &Connection, schema: &str, chain: &[Migration]) -> Result<()> {
-    let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    let head = head(chain);
-    if current == head {
-        return Ok(());
-    }
-    if current > head {
-        anyhow::bail!(
-            "database is at schema version {current}, newer than this build ({head}); \
-             open it with the build that wrote it, or {REBUILD}, then re-enter the \
-             recurring transactions"
-        );
-    }
-    let enforcing: bool = conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?;
-    conn.pragma_update(None, "foreign_keys", false)?;
-    // SQLite ignores this pragma inside a transaction and reports no error for
-    // doing so, so the `?` above proves nothing on its own: the switch has to
-    // be read back. With enforcement still on, the first arm that rebuilds a
-    // table would fail on a `REFERENCES` three tables away, and the only
-    // signal would be a constraint error naming neither this function nor the
-    // transaction that caused it.
-    let off: bool = !conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?;
-    anyhow::ensure!(
-        off,
-        "the schema chain cannot run inside a transaction; open the database \
-         through db::open or db::open_in_memory, which migrate before anything \
-         else touches the connection"
-    );
-    let migrated = migrate(conn, schema, chain, current, head);
-    let restored = conn.pragma_update(None, "foreign_keys", enforcing);
-    // The chain's own failure first: it is the one that says what went wrong,
-    // and a switch that would not go back is the lesser news beside it.
-    migrated?;
-    restored?;
-    Ok(())
-}
-
-/// The chain itself, with the enforcement already off around it. Split from
-/// [`apply`] so the pragma is put back on the way out of either ending
-/// rather than only the one that works.
-fn migrate(
-    conn: &Connection,
-    schema: &str,
-    chain: &[Migration],
-    current: i64,
-    head: i64,
-) -> Result<()> {
-    let tx = conn.unchecked_transaction()?;
-    if current == 0 {
-        tx.execute_batch(schema)?;
-    }
-    for arm in chain.iter().filter(|arm| arm.version > current) {
-        tx.execute_batch(arm.sql)?;
-        if let Some(data) = arm.data {
-            data(&tx)?;
-        }
-    }
-    check_references(&tx, head)?;
-    tx.pragma_update(None, "user_version", head)?;
-    tx.commit()?;
-    Ok(())
-}
-
-/// Refuse a chain that has left a row pointing at one that is not there.
-///
-/// The enforcement the chain runs without refuses the statement that makes an
-/// orphan; this asks the whole database at once, at the end, which is the only
-/// question a rebuild can be asked -- it is orphaned rows the whole way
-/// through the middle of one, by construction. Inside the transaction, so a
-/// chain that fails here is taken back entire rather than leaving a database
-/// stamped at a version it is broken at.
-///
-/// **Whole-database scope cuts both ways, and the blast radius is worth
-/// knowing.** It cannot tell an orphan this chain made from one that was
-/// already there -- written by a build before the check existed, or by hand --
-/// so a database carrying one stops opening at its next upgrade, having opened
-/// fine until then. That is the right answer for a rebuild, which moves the
-/// rows an orphan would be lost among, but it is a hard stop rather than a
-/// warning: the message therefore names the remedy the way the newer-version
-/// bail above does, since the owner meeting it has a database no build of this
-/// app will migrate.
-fn check_references(conn: &Connection, head: i64) -> Result<()> {
-    let orphan: Option<(String, String)> = conn
-        .query_row(
-            "SELECT \"table\", \"parent\" FROM pragma_foreign_key_check",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
-    if let Some((table, parent)) = orphan {
-        anyhow::bail!(
-            "migrating to schema version {head} would leave a row in {table} naming a \
-             {parent} that is not there; the database is unchanged. Restore the most \
-             recent backup, or {REBUILD}"
-        );
-    }
-    Ok(())
+    jluszcz_finance_utils::sqlite::migrate(conn, &DATABASE)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A baseline small enough to read, so a test can say what the schema
-    /// looks like before and after an arm rather than asserting against the
-    /// real one.
-    const BASELINE: &str = "CREATE TABLE t (a INTEGER)";
-
-    /// One arm, which is the shortest chain that can tell "applied the
-    /// baseline" apart from "applied the baseline and then the chain".
-    const ONE_ARM: &[Migration] = &[Migration {
-        version: 2,
-        sql: "ALTER TABLE t ADD COLUMN b INTEGER",
-        data: None,
-    }];
+    /// Run `chain` over `baseline` as this build would, for a test that
+    /// stops the real chain partway or drives a synthetic one.
+    fn apply(conn: &Connection, baseline: &str, chain: &[Migration]) -> Result<()> {
+        jluszcz_finance_utils::sqlite::migrate(
+            conn,
+            &Schema {
+                baseline,
+                chain,
+                ..DATABASE
+            },
+        )
+    }
 
     fn version(conn: &Connection) -> i64 {
         conn.query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap()
-    }
-
-    fn columns(conn: &Connection) -> Vec<String> {
-        let mut stmt = conn
-            .prepare("SELECT name FROM pragma_table_info('t')")
-            .unwrap();
-        let found = stmt.query_map([], |r| r.get(0)).unwrap();
-        found.collect::<rusqlite::Result<Vec<String>>>().unwrap()
     }
 
     /// The first arm with rows of its own to put right, so the first that can
@@ -755,195 +605,9 @@ mod tests {
         assert_eq!(value("tax.rate_bp"), "625", "a key the arm never named");
     }
 
-    /// An empty file is the one version that is not "some other schema", and
-    /// filling it is the whole job: it takes the baseline and then every arm,
-    /// because the baseline is frozen at version 1 and the chain is where
-    /// every change since is written.
-    #[test]
-    fn an_empty_database_takes_the_baseline_and_then_the_whole_chain() {
-        let conn = Connection::open_in_memory().unwrap();
-        apply(&conn, BASELINE, ONE_ARM).unwrap();
-        assert_eq!(version(&conn), 2);
-        assert_eq!(columns(&conn), ["a", "b"]);
-    }
-
-    /// A database already at the head has nothing to do, and doing it anyway
-    /// fails with "table t already exists" -- which is what every run after
-    /// the first would be.
-    #[test]
-    fn a_database_at_the_head_version_is_left_alone() {
-        let conn = Connection::open_in_memory().unwrap();
-        apply(&conn, BASELINE, ONE_ARM).unwrap();
-        apply(&conn, BASELINE, ONE_ARM).unwrap();
-        assert_eq!(version(&conn), 2);
-        assert_eq!(columns(&conn), ["a", "b"]);
-    }
-
-    /// A database written before the chain existed is at version 1 and holds
-    /// the baseline already. Re-applying it would fail with "table t already
-    /// exists"; what it needs is the arms above it and nothing else.
-    #[test]
-    fn a_database_at_version_one_takes_the_chain_and_not_the_baseline() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(BASELINE).unwrap();
-        conn.pragma_update(None, "user_version", 1).unwrap();
-
-        apply(&conn, BASELINE, ONE_ARM).unwrap();
-
-        assert_eq!(version(&conn), 2);
-        assert_eq!(columns(&conn), ["a", "b"]);
-    }
-
-    /// A version above the head is a database some later build wrote, and
-    /// there is nothing this one can do with it: the arms that produced it do
-    /// not exist here. Opening it anyway would surface as a failed query
-    /// somewhere far from here, with figures already on screen.
-    #[test]
-    fn a_database_from_a_newer_build_is_refused() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(BASELINE).unwrap();
-        conn.pragma_update(None, "user_version", 3).unwrap();
-
-        let err = apply(&conn, BASELINE, ONE_ARM).unwrap_err().to_string();
-
-        assert!(err.contains("version 3"), "{err}");
-        assert!(err.contains("newer than this build"), "{err}");
-        assert_eq!(version(&conn), 3, "the database was written to anyway");
-    }
-
-    /// The chain runs with foreign keys off, and SQLite ignores the pragma
-    /// that turns them off inside a transaction without reporting anything.
-    /// So the switch is read back, and a chain that would run with enforcement
-    /// still on is refused here rather than allowed to fail three arms later
-    /// on a `REFERENCES` that names nothing to do with the real cause.
-    ///
-    /// The state is out of reach in the app -- `db::prepare` is the only
-    /// caller and runs before anything opens a transaction -- which is exactly
-    /// why the guard is worth pinning: nothing else would notice a second
-    /// caller putting one there.
-    #[test]
-    fn the_chain_refuses_to_run_with_a_transaction_already_open() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.pragma_update(None, "foreign_keys", true).unwrap();
-        conn.execute_batch("BEGIN").unwrap();
-
-        let err = apply(&conn, BASELINE, ONE_ARM).unwrap_err().to_string();
-
-        assert!(err.contains("cannot run inside a transaction"), "{err}");
-    }
-
-    fn double_a_into_b(conn: &Connection) -> Result<()> {
-        conn.execute("UPDATE t SET b = a * 2", [])?;
-        Ok(())
-    }
-
-    /// An arm's data half is the interesting one: the SQL makes room and the
-    /// data half fills it, so it has to run, and it has to run after its own
-    /// SQL rather than before it -- the column it writes to does not exist
-    /// until then.
-    #[test]
-    fn an_arms_data_half_runs_after_its_sql() {
-        const WITH_DATA: &[Migration] = &[Migration {
-            version: 2,
-            sql: "ALTER TABLE t ADD COLUMN b INTEGER",
-            data: Some(double_a_into_b),
-        }];
-
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(BASELINE).unwrap();
-        conn.execute("INSERT INTO t (a) VALUES (21)", []).unwrap();
-        conn.pragma_update(None, "user_version", 1).unwrap();
-
-        apply(&conn, BASELINE, WITH_DATA).unwrap();
-
-        let b: i64 = conn.query_row("SELECT b FROM t", [], |r| r.get(0)).unwrap();
-        assert_eq!(b, 42);
-    }
-
-    /// The whole chain is one transaction, and `PRAGMA user_version` is
-    /// transactional in SQLite, so a failure partway through leaves the
-    /// database at the version it came in at rather than half-migrated and
-    /// stamped as though it had succeeded -- which would be permanent, since
-    /// the next run would skip the arms it never finished.
-    #[test]
-    fn an_arm_that_fails_leaves_the_version_and_the_schema_untouched() {
-        const SECOND_ARM_IS_BROKEN: &[Migration] = &[
-            Migration {
-                version: 2,
-                sql: "ALTER TABLE t ADD COLUMN b INTEGER",
-                data: None,
-            },
-            Migration {
-                version: 3,
-                sql: "ALTER TABLE nonexistent ADD COLUMN c INTEGER",
-                data: None,
-            },
-        ];
-
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(BASELINE).unwrap();
-        conn.pragma_update(None, "user_version", 1).unwrap();
-
-        apply(&conn, BASELINE, SECOND_ARM_IS_BROKEN).unwrap_err();
-
-        assert_eq!(version(&conn), 1);
-        assert_eq!(columns(&conn), ["a"], "arm 2 was left half-applied");
-    }
-
-    /// [`SCHEMA_VERSION`] is one plus the number of arms, so an arm declaring
-    /// a version its position does not agree with makes the head version and
-    /// the chain disagree about what a database is at. The declared number is
-    /// still worth having -- it is what the arm's own prose names, and what
-    /// the filter in [`apply`] reads -- so this is what holds the two
-    /// together.
     #[test]
     fn every_arm_declares_the_version_its_position_gives_it() {
-        for (index, arm) in MIGRATIONS.iter().enumerate() {
-            let expected = index as i64 + 2;
-            assert_eq!(
-                arm.version, expected,
-                "the arm at index {index} declares version {}",
-                arm.version
-            );
-        }
-        assert_eq!(SCHEMA_VERSION, head(MIGRATIONS));
-    }
-
-    fn stamp_b(conn: &Connection) -> Result<()> {
-        conn.execute("UPDATE t SET b = 1", [])?;
-        Ok(())
-    }
-
-    /// A change of meaning is an arm with a data half and no SQL, so an empty
-    /// batch has to be a no-op rather than an error -- otherwise the pattern
-    /// the docs describe would fail on its first use.
-    #[test]
-    fn an_arm_may_carry_a_data_half_and_no_sql() {
-        const MEANING_ONLY: &[Migration] = &[
-            Migration {
-                version: 2,
-                sql: "ALTER TABLE t ADD COLUMN b INTEGER",
-                data: None,
-            },
-            Migration {
-                version: 3,
-                sql: "",
-                data: Some(stamp_b),
-            },
-        ];
-
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(BASELINE).unwrap();
-        conn.execute_batch("ALTER TABLE t ADD COLUMN b INTEGER")
-            .unwrap();
-        conn.execute("INSERT INTO t (a) VALUES (1)", []).unwrap();
-        conn.pragma_update(None, "user_version", 2).unwrap();
-
-        apply(&conn, BASELINE, MEANING_ONLY).unwrap();
-
-        let b: i64 = conn.query_row("SELECT b FROM t", [], |r| r.get(0)).unwrap();
-        assert_eq!(b, 1);
-        assert_eq!(version(&conn), 3);
+        DATABASE.check_versions().unwrap();
     }
 
     /// The real chain rather than the synthetic one, because this arm renames
@@ -1106,76 +770,6 @@ mod tests {
             })
             .unwrap();
         assert_eq!(named, 1, "the container the goal names is gone");
-    }
-
-    /// The enforcement is off for the chain and nothing else: `db::prepare`
-    /// turns it on and every write after this runs under it, so a runner that
-    /// left it off would hand the rest of the session a database with no
-    /// referential integrity at all.
-    #[test]
-    fn the_chain_puts_foreign_key_enforcement_back() {
-        let db = crate::db::open_in_memory().unwrap();
-        let on: bool = db
-            .conn
-            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
-            .unwrap();
-        assert!(on, "the chain left foreign key enforcement off");
-    }
-
-    /// And back on the way out of a failure too, which is the ending a
-    /// `?` would skip past.
-    #[test]
-    fn a_failing_chain_puts_foreign_key_enforcement_back() {
-        const BROKEN: &[Migration] = &[Migration {
-            version: 2,
-            sql: "ALTER TABLE nonexistent ADD COLUMN c INTEGER",
-            data: None,
-        }];
-
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(BASELINE).unwrap();
-        conn.pragma_update(None, "foreign_keys", true).unwrap();
-        conn.pragma_update(None, "user_version", 1).unwrap();
-
-        apply(&conn, BASELINE, BROKEN).unwrap_err();
-
-        let on: bool = conn
-            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
-            .unwrap();
-        assert!(on, "a failed chain left foreign key enforcement off");
-    }
-
-    /// What stands in for the enforcement while it is off. An arm that drops
-    /// the row another table names would otherwise commit, and the database
-    /// would be stamped at a version it is broken at -- which is permanent,
-    /// since the next run skips every arm below the stamp.
-    #[test]
-    fn a_chain_that_orphans_a_row_is_refused() {
-        const PARENT_AND_CHILD: &str = "CREATE TABLE t (a INTEGER PRIMARY KEY);
-             CREATE TABLE u (b INTEGER NOT NULL REFERENCES t(a))";
-        const DROPS_THE_PARENT: &[Migration] = &[Migration {
-            version: 2,
-            sql: "DELETE FROM t",
-            data: None,
-        }];
-
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(PARENT_AND_CHILD).unwrap();
-        conn.execute_batch("INSERT INTO t VALUES (1); INSERT INTO u VALUES (1);")
-            .unwrap();
-        conn.pragma_update(None, "user_version", 1).unwrap();
-
-        let err = apply(&conn, PARENT_AND_CHILD, DROPS_THE_PARENT)
-            .unwrap_err()
-            .to_string();
-
-        assert!(err.contains("row in u"), "{err}");
-        assert!(err.contains("t"), "{err}");
-        assert_eq!(version(&conn), 1, "the broken chain was stamped anyway");
-        let left: i64 = conn
-            .query_row("SELECT count(*) FROM t", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(left, 1, "the refused chain was written anyway");
     }
 
     /// The same rebuild against a database that is actually *at* the version

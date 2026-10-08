@@ -182,7 +182,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/description.rs` | What a transaction's description reads as, in any medium: the stored text, or `—` when there is none. One rule rather than one per sink, the same split `palette` makes for color — `tui`'s ledger, status line and delete confirmation read it, and so does `report::html::ledger`. |
 | `src/demo/` | `mm --demo`: the mask every absolute figure and owner-entered name is drawn through, and the once-per-run salt that turns it on. `mask` is the pure scrambling and pseudoword rules; `mod.rs` is the API every layer that puts a figure or a name in front of a human calls — `tui`, `transfer`'s prose, and the refusals `goal` and `db` build for a screen to print verbatim. Compiles only under the `demo` Cargo feature. |
 | `src/db/` | Schema and queries — one module per aggregate. |
-| `src/db/migration.rs` | The frozen v1 baseline, the chain of arms above it, and the runner that applies whichever of them a database is missing. |
+| `src/db/migration.rs` | The frozen v1 baseline and the chain of arms above it, as the `DATABASE` schema `finance-utils`' `sqlite::migrate` applies, with what the owner is told when it cannot. |
 | `src/db/date.rs` | The stored date format, in one place: `iso` writes it, `parse`/`parse_opt` read it back for a `from_row`. |
 | `src/db/bill.rs` | The monthly bill block, labelled — the `Planning!C6:E12` rows, and the owner's mark saying which of them the Biweekly Expenses figure counts. |
 | `src/db/holding.rs` | The `holding` table — a fund held in an investment account, and the balance the owner typed. |
@@ -244,7 +244,7 @@ Every change since version 1 is an arm in `db::migration::MIGRATIONS` — a fres
 baseline and then the whole chain, an existing one takes the tail — so adding a schema change means
 appending an arm and nothing else. What binds an arm, why one code path is the point, and why the
 chain is periodically squashed back into `schema.sql` are stated on `db::migration` and on
-`Migration` itself; read them before writing one.
+`MIGRATIONS`; read them before writing one. The runner is `finance-utils`' `sqlite::migrate`.
 
 Anything the schema constrains has a Rust type that says the same thing, so the
 `CHECK` is a backstop rather than the only guard: `account::Kind`, `account::Group`,
