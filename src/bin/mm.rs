@@ -88,11 +88,9 @@ enum Command {
     Backup(BackupArgs),
 }
 
+/// `~/.local/share/mistermanager/money.db`.
 fn default_db() -> Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME is not set")?;
-    let dir = PathBuf::from(home).join(".local/share/mistermanager");
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("money.db"))
+    jluszcz_finance_utils::config::data_path(config::APP, "money.db")
 }
 
 fn main() -> Result<()> {
@@ -100,18 +98,12 @@ fn main() -> Result<()> {
     let demo = cli.demo();
     let scratch = cli.common.scratch;
     let is_explicit_backup = matches!(cli.command, Some(Command::Backup(_)));
-    // Refused before the copy is made: a throwaway copy has nothing worth
-    // restoring, and an upload of one would sit in the bucket beside the
-    // real backups looking like one.
-    if scratch && is_explicit_backup {
-        anyhow::bail!("--scratch cannot be backed up: drop the flag to back up the real database");
+    if is_explicit_backup {
+        cli.common.refuse_scratch_backup()?;
     }
-    // A scratch copy is no more the default database than a `--db` is.
-    let is_default_db = cli.common.is_default_db();
     // `db::snapshot` opens nothing through `db::open`, so a scratch copy keeps
     // the schema version the original has and this run is the one that
-    // migrates it. `default_db` creates the data directory, so it runs only
-    // when that directory's database is the one this run uses.
+    // migrates it.
     let path = cli.common.db_path(BACKUP.app, default_db, db::snapshot)?;
     if scratch {
         eprintln!("scratch database: {}", path.display());
@@ -246,17 +238,12 @@ fn main() -> Result<()> {
         }
     }
 
-    // Both of the other arms fall through to here. An `mm import` gets the
-    // same scheduled check the TUI does, for free.
-    //
-    // Only ever the default database, though. `--db` names a copy -- the
-    // importer's own documented dry-run points it at a scratch file -- and one
-    // of those reaching S3 would land under a key indistinguishable from a real
-    // backup *and* stamp the one state file, suppressing the real database's
-    // next upload for a whole interval. An explicit `mm backup` still uploads
-    // whatever it was pointed at, because it was asked to.
-    if !is_explicit_backup && is_default_db {
-        backup::scheduled(&BACKUP, &path, cfg.backup.as_ref(), db::snapshot);
+    // Both of the other arms fall through to here, so an `mm import` gets the
+    // same scheduled check the TUI does. It skips a `--db` run, which matters
+    // here: the importer's documented dry-run points `--db` at a scratch file.
+    if !is_explicit_backup {
+        cli.common
+            .scheduled_backup(&BACKUP, &path, cfg.backup.as_ref(), db::snapshot);
     }
     Ok(())
 }
