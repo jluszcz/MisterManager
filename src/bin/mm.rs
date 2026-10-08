@@ -110,14 +110,18 @@ fn main() -> Result<()> {
     }
     // The copy's own directory: a scratch run's page goes there, beside the
     // database it was rendered from, never over the real one.
-    let scratch_dir = path.parent().filter(|_| scratch).map(PathBuf::from);
+    let scratch_dir = cli.common.scratch_dir(&path);
     let today = cli.common.today_or_local();
     let real_today = cli.common.today.is_none().then_some(today);
 
     let config_path = cli.common.config_path(config::APP)?;
     // Before the TUI opens: a config file that does not parse should say so
-    // on a terminal that is still in its normal mode.
-    let cfg = config::load(&config_path)?;
+    // on a terminal that is still in its normal mode. `mm report --dir` reads
+    // nothing from it, so a broken file does not stop that run.
+    let cfg = match &cli.command {
+        Some(Command::Report(ReportArgs { dir: Some(_) })) => config::Config::default(),
+        _ => config::load(&config_path)?,
+    };
 
     match cli.command {
         // No subcommand launches the application. `--db` and `--today` are
@@ -132,12 +136,15 @@ fn main() -> Result<()> {
             // Again on the way out, so this month holds what the session left
             // it at rather than what it opened on.
             take_snapshot(&db, real_today);
-            // The configured page belongs to the real database, so a scratch
-            // run writes its own into the scratch directory instead.
-            match &scratch_dir {
-                Some(dir) => write_scratch_report(&db, dir, today, demo),
-                None => write_report(&db, &cfg, today, demo),
-            }
+            // Never fatal: someone who has already quit should not be told the
+            // application broke because a synced folder was unmounted. A demo
+            // run writes no page anywhere, scratch directory included.
+            report_cli::after_quit(report_cli::on_quit(
+                demo,
+                scratch_dir.as_deref(),
+                |dir| report::write(&db, dir, today),
+                || report::write_if_enabled(&db, &cfg, today, demo),
+            ));
         }
         #[cfg(feature = "import")]
         Some(Command::Import { workbook, replace }) => {
@@ -264,24 +271,6 @@ fn take_snapshot(db: &db::Db, real_today: Option<NaiveDate>) {
     if let Err(e) = balance_history::take(db, today) {
         eprintln!("snapshot failed: {e:#}");
     }
-}
-
-/// Never fatal, for the reason a scheduled backup is not: someone who has
-/// already quit should not be told the application broke because a synced
-/// folder was unmounted, and the next quit writes it again.
-fn write_report(db: &db::Db, cfg: &config::Config, today: NaiveDate, demo: bool) {
-    report_cli::after_quit(report::write_if_enabled(db, cfg, today, demo));
-}
-
-/// The scratch run's page, written whether or not it is due and whatever the
-/// config says: the directory is fresh, and the page is there to be compared
-/// with the real one. Skipped under `--demo` for the reason
-/// `report::write_if_enabled` gives.
-fn write_scratch_report(db: &db::Db, dir: &std::path::Path, today: NaiveDate, demo: bool) {
-    if demo {
-        return;
-    }
-    report_cli::after_quit(report::write(db, dir, today).map(report::Outcome::Written));
 }
 
 fn print_refreshed(refreshed: &mix::Refreshed) {
