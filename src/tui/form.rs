@@ -23,7 +23,8 @@ use chrono::NaiveDate;
 /// What `←`/`→`, `Shift` with them, and `[`/`]` do to a date, and the
 /// direction a selector reads from the same keys.
 pub use jluszcz_finance_utils::tui::date::Step;
-use jluszcz_finance_utils::tui::date::{iso, parse_shorthand};
+use jluszcz_finance_utils::tui::date::{self, iso};
+pub(super) use jluszcz_finance_utils::tui::{next_in, step_index};
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 
@@ -156,8 +157,8 @@ impl Field {
 /// A date field: the text, and how that text is read back as a date.
 ///
 /// A date is the one kind of field whose reading depends on *when* it is
-/// being typed, and every form used to pair a bare [`Field`] with a free
-/// `parse_date` to say so. Pairing them here means the buffer and the reading
+/// being typed, so a bare [`Field`] needs `finance-utils`' `tui::date::parse`
+/// beside it to say so. Pairing them here means the buffer and the reading
 /// cannot come apart, and that a form asks for a date rather than assembling
 /// one out of two halves it has to keep in step itself.
 #[derive(Clone, Debug)]
@@ -254,13 +255,9 @@ impl DateField {
     /// arrived at by pressing a key is not a prefill for a suggestion to
     /// overwrite.
     pub(super) fn step(&mut self, step: Step) {
-        let Ok(date) = self.parse() else {
-            return;
-        };
-        let Some(stepped) = step.apply(date) else {
-            return;
-        };
-        self.field.retype(iso(stepped));
+        if let Some(text) = date::stepped(self.field.value(), self.shorthand_from, step) {
+            self.field.retype(text);
+        }
     }
 
     /// The date this field means, when the text does not already say it --
@@ -272,27 +269,19 @@ impl DateField {
     /// echoed back, and for text that is not a date at all, which has nothing
     /// to resolve to -- a guess there would be a date the dialog never writes.
     pub(super) fn resolved(&self) -> Option<String> {
-        let text = iso(self.parse().ok()?);
-        (text != self.field.value().trim()).then_some(text)
+        date::resolved(self.field.value(), self.shorthand_from)
     }
 
     /// The date this field holds, or the error naming the text that would not
     /// parse.
     pub(super) fn parse(&self) -> Result<NaiveDate> {
-        let raw = self.field.value().trim();
-        match raw.contains('/') {
-            true => parse_shorthand(raw, self.shorthand_from),
-            false => parse_date(raw),
-        }
+        date::parse(self.field.value(), self.shorthand_from)
     }
 
     /// The same, where blank is a supported answer rather than a refusal --
     /// an undated goal, a rule that does not end.
     pub(super) fn parse_opt(&self) -> Result<Option<NaiveDate>> {
-        if self.field.value().trim().is_empty() {
-            return Ok(None);
-        }
-        self.parse().map(Some)
+        date::parse_opt(self.field.value(), self.shorthand_from)
     }
 }
 
@@ -375,28 +364,6 @@ pub(super) fn char_key(c: char) -> KeyEvent {
 pub(super) fn backspace_key() -> KeyEvent {
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)
-}
-
-/// Step `focus` around `order` by `step`, wrapping. Every form's tab order is
-/// this, written once.
-pub(super) fn next_in<T: Copy + PartialEq>(order: &[T], focus: T, step: isize) -> T {
-    let len = order.len() as isize;
-    let i = order.iter().position(|f| *f == focus).unwrap_or(0) as isize;
-    order[((i + step).rem_euclid(len)) as usize]
-}
-
-/// Step an index into a list of `len` choices by `step`, wrapping. The
-/// counterpart of [`next_in`] for a selector whose choices are values rather
-/// than a fixed set of variants -- the accounts a form was handed, the
-/// destinations a goal may close out into.
-///
-/// An empty list has no index to step to, so it stays at zero rather than
-/// dividing by zero.
-pub(super) fn step_index(index: usize, len: usize, step: isize) -> usize {
-    if len == 0 {
-        return 0;
-    }
-    ((index as isize + step).rem_euclid(len as isize)) as usize
 }
 
 /// The account selector a form carries: the accounts it may pick from, which
@@ -491,12 +458,6 @@ impl AccountChoice {
             self.index = index;
         }
     }
-}
-
-/// Dates are typed in the format they are stored in.
-pub(super) fn parse_date(raw: &str) -> Result<NaiveDate> {
-    NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d")
-        .with_context(|| format!("not a YYYY-MM-DD date: {:?}", raw.trim()))
 }
 
 /// The amount as `Cents::from_str` reads it: `$`, commas, and `.5` all work.
@@ -1008,23 +969,6 @@ mod tests {
         let mut leap = DateField::on(day(2028, 1, 30), day(2028, 1, 30));
         leap.step(Step::NEXT_MONTH);
         assert_eq!(leap.value(), "2028-02-29");
-    }
-
-    #[test]
-    fn stepping_an_index_wraps_at_both_ends() {
-        assert_eq!(step_index(0, 3, 1), 1);
-        assert_eq!(step_index(2, 3, 1), 0);
-        assert_eq!(step_index(0, 3, -1), 2);
-        assert_eq!(step_index(1, 3, -1), 0);
-    }
-
-    /// A form handed no choices at all still answers the arrow keys: the
-    /// selector has nowhere to go, and a modulo by zero would take the whole
-    /// app down with it.
-    #[test]
-    fn stepping_an_index_into_an_empty_list_stays_at_zero() {
-        assert_eq!(step_index(0, 0, 1), 0);
-        assert_eq!(step_index(0, 0, -1), 0);
     }
 
     #[test]
