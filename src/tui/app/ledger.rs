@@ -339,6 +339,7 @@ mod tests {
     use crate::tui::ledger_form::{TransferField, TxnField};
     use crate::tui::modal::{Modal, ValueTarget};
     use crate::tui::search::Search;
+    use jluszcz_finance_utils::tui::app::App as _;
     use ratatui::crossterm::event::KeyCode;
 
     /// Add a row through the keyboard, stepping the date `days` from wherever

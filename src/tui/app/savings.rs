@@ -392,6 +392,7 @@ mod tests {
     use crate::tui::modal::Modal;
     use crate::tui::planning::Target;
     use crate::tui::search::Search;
+    use jluszcz_finance_utils::tui::app::App as _;
     use ratatui::crossterm::event::KeyCode;
 
     /// `PAY_PERIODS_PER_YEAR` is the only thing `$/Pay` divides a runway by,

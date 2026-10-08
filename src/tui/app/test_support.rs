@@ -21,6 +21,7 @@ use crate::tui::ledger_form::{TxnField, TxnForm};
 use crate::tui::picker::Picker;
 use crate::tui::planning::{Target, TransferConfirm};
 use crate::tui::worksheet::Worksheet;
+use jluszcz_finance_utils::tui::app::App as _;
 
 pub(super) fn today() -> NaiveDate {
     day(2026, 8, 15)
