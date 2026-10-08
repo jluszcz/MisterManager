@@ -428,6 +428,7 @@ mod tests {
     use crate::tui::planning::Target;
     use crate::{db, goal as goal_engine};
     use chrono::NaiveDate;
+    use jluszcz_finance_utils::tui::app::App as _;
     use ratatui::crossterm::event::KeyCode;
 
     /// `s` creates every selected entry at once, dating each one and recording

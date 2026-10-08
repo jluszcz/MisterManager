@@ -379,8 +379,8 @@ mod tests {
     /// declaration, so the scan never sees a test module. The cut is the
     /// module, not the first `#[cfg(test)]` line: `mod.rs` gates two helper
     /// functions, `ends_in_order` and `column_of`, the same way ahead of its
-    /// own test module, and cutting at the first would have left `run` and
-    /// `event_loop` -- the event loop itself -- unscanned along with them.
+    /// own test module, and cutting at the first would have left `run`
+    /// unscanned along with them.
     /// Without the cut landing at the module at all, this test fails on its
     /// own fixtures: `app/`, `savings.rs`, `worksheet.rs`, `picker.rs` and
     /// `recurring_goal.rs` all have test helpers that read `.name.as_str()` on

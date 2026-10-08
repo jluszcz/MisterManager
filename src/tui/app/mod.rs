@@ -235,8 +235,8 @@ fn month_step(key: KeyEvent) -> Option<Step> {
 ///
 /// Long enough to read a written-transfer count or a parse error, short enough
 /// that the keys are back before the next thing is typed. The event loop
-/// checks for expiry once per `tui::TICK`, so the fade lands within a quarter
-/// second of this.
+/// checks for expiry every quarter second, so the fade lands within that of
+/// this.
 pub const STATUS_TTL: Duration = Duration::from_secs(4);
 
 /// What a key that acts on a row says when the screen has no row under the
@@ -452,50 +452,15 @@ impl App {
         self.db
     }
 
-    pub fn should_quit(&self) -> bool {
-        self.quit
-    }
-
-    /// A failed write renders in the status line and the app keeps running:
-    /// losing an hour of navigation because a date did not parse is not
-    /// acceptable.
-    pub fn on_key(&mut self, key: KeyEvent) {
-        self.status.clear();
-        if let Err(err) = self.dispatch(key) {
-            self.status = format!("{err:#}");
-        }
-        self.start_status_clock();
-    }
-
     /// Hand work to the loop, to run once the frame announcing it is drawn.
     fn defer(&mut self, work: Deferred) {
         self.deferred = Some(work);
     }
 
     /// Whether a key left work for the loop to run after the next draw.
+    #[cfg(test)]
     pub fn has_deferred(&self) -> bool {
         self.deferred.is_some()
-    }
-
-    /// Run that work, and report it the way a key press reports its own.
-    ///
-    /// Called by the event loop immediately after the draw, which is the
-    /// whole point -- see [`Deferred`] for what the one frame between the
-    /// keystroke and the work buys. The status clock restarts here rather
-    /// than running from the announcement: the fetch can block for half a
-    /// minute, and a result inheriting a clock started before it would expire
-    /// on the frame it appeared in.
-    pub fn run_deferred(&mut self) {
-        let Some(work) = self.deferred.take() else {
-            return;
-        };
-        let result = match work {
-            Deferred::RefreshMixes(tickers) => self.refresh_mixes(&tickers),
-        };
-        if let Err(err) = result {
-            self.status = format!("{err:#}");
-        }
-        self.start_status_clock();
     }
 
     /// Start the clock on whatever `status` now holds.
@@ -525,22 +490,6 @@ impl App {
     fn nothing_selected(&mut self) -> Result<()> {
         self.status = NOTHING_SELECTED.to_string();
         Ok(())
-    }
-
-    /// Drop a status message that has outlived [`STATUS_TTL`], and say
-    /// whether one was dropped.
-    ///
-    /// Called by the event loop rather than by `footer`, which only reads:
-    /// the message is gone from the app, not merely hidden, so the next thing
-    /// to consult `status` sees what the footer shows. A key press clears it
-    /// sooner -- this is only what happens when none arrives.
-    ///
-    /// The answer is what the loop redraws on: an expiry is the one thing
-    /// that changes the footer with no event behind it, so a loop that drew
-    /// only on events would leave a faded message on screen until the next
-    /// keystroke.
-    pub fn expire_status(&mut self) -> bool {
-        self.expire_status_at(Instant::now())
     }
 
     fn expire_status_at(&mut self, now: Instant) -> bool {
@@ -1126,8 +1075,63 @@ impl App {
         }
         Ok(())
     }
+}
 
-    pub fn render(&mut self, frame: &mut Frame) {
+impl jluszcz_finance_utils::tui::app::App for App {
+    fn should_quit(&self) -> bool {
+        self.quit
+    }
+
+    /// A failed write renders in the status line and the app keeps running:
+    /// losing an hour of navigation because a date did not parse is not
+    /// acceptable.
+    fn on_key(&mut self, key: KeyEvent) {
+        self.status.clear();
+        if let Err(err) = self.dispatch(key) {
+            self.status = format!("{err:#}");
+        }
+        self.start_status_clock();
+    }
+
+    /// Run that work, and report it the way a key press reports its own.
+    ///
+    /// Called by the event loop immediately after the draw, which is the
+    /// whole point -- see [`Deferred`] for what the one frame between the
+    /// keystroke and the work buys. The status clock restarts here rather
+    /// than running from the announcement: the fetch can block for half a
+    /// minute, and a result inheriting a clock started before it would expire
+    /// on the frame it appeared in.
+    fn run_deferred(&mut self) -> bool {
+        let Some(work) = self.deferred.take() else {
+            return false;
+        };
+        let result = match work {
+            Deferred::RefreshMixes(tickers) => self.refresh_mixes(&tickers),
+        };
+        if let Err(err) = result {
+            self.status = format!("{err:#}");
+        }
+        self.start_status_clock();
+        true
+    }
+
+    /// Drop a status message that has outlived [`STATUS_TTL`], and say
+    /// whether one was dropped.
+    ///
+    /// Called by the event loop rather than by `footer`, which only reads:
+    /// the message is gone from the app, not merely hidden, so the next thing
+    /// to consult `status` sees what the footer shows. A key press clears it
+    /// sooner -- this is only what happens when none arrives.
+    ///
+    /// The answer is what the loop redraws on: an expiry is the one thing
+    /// that changes the footer with no event behind it, so a loop that drew
+    /// only on events would leave a faded message on screen until the next
+    /// keystroke.
+    fn expire_status(&mut self) -> bool {
+        self.expire_status_at(Instant::now())
+    }
+
+    fn render(&mut self, frame: &mut Frame) {
         let [tab_area, body, footer] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(1),
@@ -1234,6 +1238,7 @@ mod tests {
     use crate::tui::modal::{Confirm, Modal};
     use crate::tui::search::Search;
     use crate::tui::{MIN_WIDTH, worksheet as worksheet_screen};
+    use jluszcz_finance_utils::tui::app::App as _;
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::time::Instant;
 

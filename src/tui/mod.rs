@@ -47,10 +47,7 @@ use anyhow::{Result, ensure};
 use app::App;
 use chrono::NaiveDate;
 use cursor::{Scroll, Viewport};
-use jluszcz_finance_utils::tui::is_press;
-use ratatui::DefaultTerminal;
 use ratatui::Frame;
-use ratatui::crossterm::event::{self, Event};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
@@ -58,14 +55,7 @@ use ratatui::widgets::{
     Block, Cell, Padding, Row as TableRow, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
     TableState,
 };
-use std::time::Duration;
 use style::Color;
-
-/// How long the loop waits for an event before looking at the clock again.
-/// Nothing animates and every other change arrives as an event, so this
-/// decides one thing: how closely a status message's expiry follows
-/// [`app::STATUS_TTL`].
-const TICK: Duration = Duration::from_millis(250);
 
 /// The narrowest terminal the screens are laid out for.
 ///
@@ -656,86 +646,8 @@ fn column_of(line: &str, needle: &str) -> u16 {
 /// second read site is a second place for the two to drift.
 pub fn run(db: Db, today: NaiveDate, demo: bool, sec_contact: Option<String>) -> Result<Db> {
     crate::demo::install(demo);
-    let mut app = App::new(db, today, sec_contact)?;
-    // `try_init` enables raw mode, enters the alternate screen, and installs
-    // a panic hook that restores the terminal before unwinding -- so a bug
-    // leaves a working shell rather than a dead one.
-    let mut terminal = ratatui::try_init()?;
-    let result = event_loop(&mut terminal, &mut app);
-    ratatui::try_restore()?;
-    result?;
+    let app = jluszcz_finance_utils::tui::app::run(App::new(db, today, sec_contact)?)?;
     Ok(app.into_db())
-}
-
-/// Whether an event leaves the screen owing a redraw.
-///
-/// A key press always does, and deliberately without asking what the app did
-/// with it: [`App::on_key`] clears the status message before it dispatches, so
-/// even a key nothing is bound to takes the footer back. Answering per handler
-/// would be a list to keep in step with every screen, and the cost of the
-/// over-approximation is one wasted frame per unbound keystroke.
-///
-/// A resize does because every screen's layout is computed per frame.
-/// Everything else -- a key release, a mouse event, focus crossing the
-/// window -- reaches no handler here, so the frame it would earn would be the
-/// frame already on screen.
-///
-/// Both this and the dispatch in the loop ask [`is_press`], because the two
-/// must widen together: a key the app answers and the loop draws no frame for
-/// is a stale screen, which is the failure the owed draw is not worth risking.
-fn redraws(event: &Event) -> bool {
-    match event {
-        Event::Key(key) => is_press(key),
-        Event::Resize(..) => true,
-        _ => false,
-    }
-}
-
-/// The loop that draws and reads keys, in that order.
-///
-/// The draw is owed rather than unconditional: at four frames a second an
-/// idle app rebuilds every visible row's strings for a buffer ratatui is
-/// about to find unchanged. What owes one is a key press, a resize, a status
-/// message reaching its expiry, and work a key deferred -- which is why the
-/// tick goes on firing whether or not anything is drawn.
-///
-/// Deferred work runs between the two: a key that starts a blocking fetch
-/// sets a status saying so and hands the fetch here, so the sentence is drawn
-/// before the loop stops answering. See [`app::App::run_deferred`].
-fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
-    // The first frame is owed to nothing in particular: there is no screen yet.
-    let mut dirty = true;
-    while !app.should_quit() {
-        // Before the draw, so a message that has run out of time is gone from
-        // the frame it would otherwise appear in for one more tick. It is the
-        // one thing that changes the screen with no event behind it, which is
-        // why it reports whether it did.
-        dirty |= app.expire_status();
-        if dirty {
-            terminal.draw(|frame| app.render(frame))?;
-            dirty = false;
-        }
-        // After the draw, which is the whole point: the work here blocks this
-        // loop, so the status line announcing it has to reach the screen
-        // first. `App::Deferred` is where that is argued. The `continue` is
-        // what puts the result on screen without waiting out a `poll`.
-        if app.has_deferred() {
-            app.run_deferred();
-            dirty = true;
-            continue;
-        }
-        if !event::poll(TICK)? {
-            continue;
-        }
-        let event = event::read()?;
-        dirty |= redraws(&event);
-        if let Event::Key(key) = event
-            && is_press(&key)
-        {
-            app.on_key(key);
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -817,43 +729,6 @@ mod tests {
         let list = List::of(0);
         assert_eq!(table_state(&list, 0, 10).0.selected(), None);
         assert_eq!(table_state(&list, 1, 10).0.selected(), Some(0));
-    }
-
-    /// The draw is owed rather than unconditional, so a missed redraw is a
-    /// stale screen -- which is worse than the wasted one this exists to
-    /// avoid. A key press earns a frame whatever it turns out to mean,
-    /// because `on_key` clears the footer's message before it dispatches.
-    #[test]
-    fn a_key_press_and_a_resize_owe_a_frame_and_nothing_else_does() {
-        use ratatui::crossterm::event::{
-            KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseEvent,
-            MouseEventKind,
-        };
-
-        let key = |kind| {
-            Event::Key(KeyEvent {
-                // A letter no screen binds: an unanswered key still takes the
-                // status message away, so it still owes a frame.
-                code: KeyCode::Char('~'),
-                modifiers: KeyModifiers::NONE,
-                kind,
-                state: KeyEventState::NONE,
-            })
-        };
-        assert!(redraws(&key(KeyEventKind::Press)));
-        assert!(redraws(&Event::Resize(80, 24)));
-
-        assert!(!redraws(&key(KeyEventKind::Release)));
-        assert!(!redraws(&key(KeyEventKind::Repeat)));
-        assert!(!redraws(&Event::FocusGained));
-        assert!(!redraws(&Event::FocusLost));
-        assert!(!redraws(&Event::Paste("pasted".to_string())));
-        assert!(!redraws(&Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Moved,
-            column: 0,
-            row: 0,
-            modifiers: KeyModifiers::NONE,
-        })));
     }
 
     /// The list drawn into `area`, as one string per line of the terminal.

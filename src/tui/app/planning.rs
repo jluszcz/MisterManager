@@ -608,6 +608,7 @@ mod tests {
     use crate::tui::search::Search;
     use crate::{db, plan, transfer};
     use chrono::{Datelike, NaiveDate};
+    use jluszcz_finance_utils::tui::app::App as _;
     use ratatui::crossterm::event::KeyCode;
 
     /// The waterfall the screen is showing, run the way the screen runs it:
