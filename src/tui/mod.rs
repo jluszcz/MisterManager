@@ -77,6 +77,7 @@ pub const MIN_WIDTH: u16 = 120;
 pub const WEEK: i64 = 7;
 
 use crate::money::Cents;
+use jluszcz_finance_utils::money::dollar_sign;
 
 /// One share of `pot`, floored to a whole dollar.
 ///
@@ -299,7 +300,7 @@ fn money_span(cents: Cents) -> Span<'static> {
 /// with `Cents`'s own formatting, and there is one place that decides where the
 /// digits and their separators go.
 fn money_text(cents: Cents) -> String {
-    dollar(crate::demo::figure(cents))
+    dollar_sign(&crate::demo::figure(cents))
 }
 
 /// [`money_span`] with the cents dropped, for a title over a table whose own
@@ -311,18 +312,10 @@ fn money_text(cents: Cents) -> String {
 /// The color comes off the truncated figure and the text off
 /// [`crate::demo::truncated_figure`], for [`whole_amount`]'s reasons.
 fn whole_money_span(cents: Cents) -> Span<'static> {
-    let span = Span::raw(dollar(crate::demo::truncated_figure(cents)));
+    let span = Span::raw(dollar_sign(&crate::demo::truncated_figure(cents)));
     match style::amount_color(cents.trunc_to_dollar()) {
         Some(color) => span.style(Style::default().fg(color)),
         None => span,
-    }
-}
-
-/// A figure with the `$` inside whatever sign it already carries.
-fn dollar(figure: String) -> String {
-    match figure.strip_prefix('-') {
-        Some(magnitude) => format!("-${magnitude}"),
-        None => format!("${figure}"),
     }
 }
 

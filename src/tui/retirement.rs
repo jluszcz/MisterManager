@@ -15,6 +15,7 @@ use crate::money::Cents;
 use crate::retirement::Retirement;
 use anyhow::{Result, ensure};
 use chrono::NaiveDate;
+use jluszcz_finance_utils::money::dollar_sign;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -29,11 +30,11 @@ use ratatui::widgets::{
 const ABSENT: &str = "--";
 
 fn dollars(cents: Cents) -> String {
-    super::dollar(crate::demo::whole_figure(cents))
+    dollar_sign(&crate::demo::whole_figure(cents))
 }
 
 fn compact(cents: Cents) -> String {
-    super::dollar(crate::demo::compact_figure(cents))
+    dollar_sign(&crate::demo::compact_figure(cents))
 }
 
 fn dollar_band(band: Band<Cents>) -> String {
