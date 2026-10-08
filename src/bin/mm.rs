@@ -10,20 +10,7 @@ use mistermanager::{BACKUP, balance_history, config, db, mix, report, tui};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(
-    name = "mm",
-    about = "MisterManager",
-    mut_arg("db", |a| a.help("Database file. Defaults to ~/.local/share/mistermanager/money.db")),
-    mut_arg("scratch", |a| a.help(
-        "Run against a copy of the default database in a fresh temporary \
-         directory, leaving the real one untouched -- for trying a migration \
-         before it reaches the file that matters. The copy is left behind and \
-         its path printed, so it can be inspected afterwards, and the report is \
-         written beside it rather than into the configured directory"
-    )),
-    mut_arg("today", |a| a.help("Treat this date as today. Defaults to the system date")),
-    mut_arg("config", |a| a.help("Config file. Defaults to ~/.config/mistermanager/config.toml"))
-)]
+#[command(name = "mm", about = "MisterManager")]
 struct Cli {
     #[command(flatten)]
     common: CommonArgs,
@@ -88,13 +75,8 @@ enum Command {
     Backup(BackupArgs),
 }
 
-/// `~/.local/share/mistermanager/money.db`.
-fn default_db() -> Result<PathBuf> {
-    jluszcz_finance_utils::config::data_path(config::APP, "money.db")
-}
-
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli: Cli = jluszcz_finance_utils::cli::parse(config::APP, db::FILE_NAME, true);
     let demo = cli.demo();
     let scratch = cli.common.scratch;
     let is_explicit_backup = matches!(cli.command, Some(Command::Backup(_)));
@@ -104,7 +86,11 @@ fn main() -> Result<()> {
     // `db::snapshot` opens nothing through `db::open`, so a scratch copy keeps
     // the schema version the original has and this run is the one that
     // migrates it.
-    let path = cli.common.db_path(BACKUP.app, default_db, db::snapshot)?;
+    let path = cli.common.db_path(
+        BACKUP.app,
+        || jluszcz_finance_utils::config::data_path(config::APP, db::FILE_NAME),
+        db::snapshot,
+    )?;
     if scratch {
         eprintln!("scratch database: {}", path.display());
     }

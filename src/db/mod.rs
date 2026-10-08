@@ -109,6 +109,9 @@ use std::path::Path;
 #[cfg(test)]
 use migration::SCHEMA_VERSION;
 
+/// The database's file name under the data directory.
+pub const FILE_NAME: &str = "money.db";
+
 /// An open database.
 ///
 /// The connection is private, and deliberately not reachable through `Deref`:
