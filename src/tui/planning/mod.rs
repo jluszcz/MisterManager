@@ -438,8 +438,7 @@ mod tests {
     /// fits. Drawn at `MIN_WIDTH`, where the column is narrowest.
     #[test]
     fn a_scrubbed_date_is_whole_at_the_minimum_width() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut v = view(None, None);
         v.scrubbed_adhoc = Some(day(2026, 8, 29));
@@ -447,13 +446,9 @@ mod tests {
         planning.set_view(v).unwrap();
 
         let height = planning.rows().len() as u16 + 5;
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &planning);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, height, |frame| {
+            render(frame, frame.area(), &planning);
+        });
         let drawn: String = (0..height)
             .map(|y| {
                 (0..MIN_WIDTH)
@@ -473,8 +468,7 @@ mod tests {
     /// landing carrying an account is one that resolved.
     #[test]
     fn a_container_is_drawn_in_its_accounts_color() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         // A dangling account key: red, and naming nothing that exists.
         let mut v = view(None, None);
@@ -483,13 +477,9 @@ mod tests {
         planning.set_view(v).unwrap();
 
         let height = planning.rows().len() as u16 + 5;
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &planning);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, height, |frame| {
+            render(frame, frame.area(), &planning);
+        });
 
         // The destination row, located by its label: the screen leads with
         // the transfers, which name accounts of their own, so a search over
@@ -527,8 +517,7 @@ mod tests {
     /// `MIN_WIDTH`, where it is narrowest.
     #[test]
     fn the_gap_on_a_cut_line_is_whole_at_the_minimum_width() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut planning = Planning::new();
         planning
@@ -538,13 +527,9 @@ mod tests {
         assert!(!gap.is_empty(), "the fixture covers its bills after all");
 
         let height = planning.rows().len() as u16 + 5;
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &planning);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, height, |frame| {
+            render(frame, frame.area(), &planning);
+        });
         let drawn = (0..height)
             .map(|y| {
                 (0..MIN_WIDTH)
@@ -562,8 +547,7 @@ mod tests {
     /// right, and the gap below it is what is not.
     #[test]
     fn the_gap_below_the_goals_line_is_drawn_in_the_negative_color() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut v = view(None, None);
         v.spread_ask_total = v.plan.lines.goals + Cents::from_dollars(220);
@@ -571,13 +555,9 @@ mod tests {
         planning.set_view(v).unwrap();
 
         let height = planning.rows().len() as u16 + 5;
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &planning);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, height, |frame| {
+            render(frame, frame.area(), &planning);
+        });
 
         let drawn = |needle: &str| {
             (0..height)
@@ -618,18 +598,13 @@ mod tests {
     /// a block of background sitting in front of the name.
     #[test]
     fn a_transfer_label_is_tinted_from_its_first_glyph() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let planning = screen();
         let height = planning.rows().len() as u16 + 5;
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &planning);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, height, |frame| {
+            render(frame, frame.area(), &planning);
+        });
 
         let (y, line) = (0..height)
             .map(|y| {
@@ -800,8 +775,7 @@ mod tests {
     /// once, which is what an anchor has to be.
     #[test]
     fn every_row_renders_whole_at_the_minimum_width() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let v = view(Some(Cents::from_dollars(17_500)), None);
         let mut planning = Planning::new();
@@ -810,13 +784,9 @@ mod tests {
         // Tall enough for every row plus both borders and the pinned footer,
         // so nothing scrolls out of view before the assertions below run.
         let height = planning.rows().len() as u16 + 5;
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &planning);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, height, |frame| {
+            render(frame, frame.area(), &planning);
+        });
         let lines: Vec<String> = (0..height)
             .map(|y| {
                 (0..MIN_WIDTH)
@@ -931,21 +901,16 @@ mod tests {
     #[cfg(feature = "demo")]
     #[test]
     fn a_demo_scrambles_the_waterfall_and_keeps_its_percentages() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         crate::demo::install_with_salt(7);
         let mut planning = Planning::new();
         planning.set_view(view(None, None)).unwrap();
 
         let height = planning.rows().len() as u16 + 5;
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &planning);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, height, |frame| {
+            render(frame, frame.area(), &planning);
+        });
         let drawn: String = (0..height)
             .map(|y| {
                 (0..MIN_WIDTH)
@@ -974,8 +939,7 @@ mod tests {
     #[cfg(feature = "demo")]
     #[test]
     fn a_demo_scrambles_the_goal_names_the_destinations_block_draws() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         crate::demo::install_with_salt(7);
         let mut planning = Planning::new();
@@ -984,13 +948,9 @@ mod tests {
             .unwrap();
 
         let height = planning.rows().len() as u16 + 5;
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &planning);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, height, |frame| {
+            render(frame, frame.area(), &planning);
+        });
         let drawn: String = (0..height)
             .map(|y| {
                 (0..MIN_WIDTH)
@@ -1030,20 +990,17 @@ mod tests {
     /// viewport each draw reports is what the next one scrolls from.
     #[test]
     fn walking_down_to_the_pin_leaves_the_transfers_on_screen() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut planning = Planning::new();
         planning.set_view(view(None, None)).unwrap();
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 32)).unwrap();
-        let mut draw = |planning: &mut Planning| {
+        let draw = |planning: &mut Planning| {
             let mut viewport = Viewport::default();
-            terminal
-                .draw(|frame| viewport = render(frame, frame.area(), planning))
-                .unwrap();
+            let buffer = draw_buffer(MIN_WIDTH, 32, |frame| {
+                viewport = render(frame, frame.area(), planning)
+            });
             planning.record_viewport(viewport);
-            let buffer = terminal.backend().buffer();
             (0..32)
                 .map(|y| {
                     (0..MIN_WIDTH)
@@ -1074,20 +1031,17 @@ mod tests {
     /// forever, and nothing but the view can reach them.
     #[test]
     fn walking_back_up_brings_the_transfers_into_view() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut planning = Planning::new();
         planning.set_view(view(None, None)).unwrap();
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 32)).unwrap();
-        let mut draw = |planning: &mut Planning| {
+        let draw = |planning: &mut Planning| {
             let mut viewport = Viewport::default();
-            terminal
-                .draw(|frame| viewport = render(frame, frame.area(), planning))
-                .unwrap();
+            let buffer = draw_buffer(MIN_WIDTH, 32, |frame| {
+                viewport = render(frame, frame.area(), planning)
+            });
             planning.record_viewport(viewport);
-            let buffer = terminal.backend().buffer();
             (0..32)
                 .map(|y| {
                     (0..MIN_WIDTH)
@@ -1126,8 +1080,7 @@ mod tests {
     /// good.
     #[test]
     fn walking_down_brings_the_last_destinations_into_view() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut planning = Planning::new();
         planning.set_view(view(None, None)).unwrap();
@@ -1135,14 +1088,12 @@ mod tests {
         let last = planning.rows().last().expect("no rows").label.clone();
         assert_eq!(last.trim(), Line::Investment.label());
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
-        let mut draw = |planning: &mut Planning| {
+        let draw = |planning: &mut Planning| {
             let mut viewport = Viewport::default();
-            terminal
-                .draw(|frame| viewport = render(frame, frame.area(), planning))
-                .unwrap();
+            let buffer = draw_buffer(MIN_WIDTH, 8, |frame| {
+                viewport = render(frame, frame.area(), planning)
+            });
             planning.record_viewport(viewport);
-            let buffer = terminal.backend().buffer();
             (0..8)
                 .map(|y| {
                     (0..MIN_WIDTH)

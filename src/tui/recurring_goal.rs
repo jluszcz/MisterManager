@@ -1282,16 +1282,11 @@ mod tests {
     }
 
     fn drawn(list: &RecurringGoals) -> Vec<String> {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), list);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, 8, |frame| {
+            render(frame, frame.area(), list);
+        });
         (0..8)
             .map(|y| (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect())
             .collect()

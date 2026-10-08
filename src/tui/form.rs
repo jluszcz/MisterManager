@@ -1235,18 +1235,13 @@ mod tests {
     /// before drawing it, which is exactly how that happened.
     #[test]
     fn the_value_forms_field_label_draws_its_account_in_the_accounts_color() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let all = accounts();
         let label = Label::plain("Target · ").account(Account::named(&all, AccountId(1)));
         let mut form = ValueForm::new(label, "1,200.00");
 
-        let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
-        terminal
-            .draw(|frame| render_value(frame, &mut form))
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(80, 10, |frame| render_value(frame, &mut form));
 
         // The field label, not the border title: the title also says
         // "Everyday" but is the only row carrying "Edit".

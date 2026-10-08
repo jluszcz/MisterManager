@@ -326,24 +326,14 @@ mod tests {
     #[cfg(feature = "demo")]
     #[test]
     fn a_demo_scrambles_a_goals_name_in_the_destination_list() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         crate::demo::install_with_salt(7);
         let chooser = chooser(None, None);
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, &chooser);
-            })
-            .unwrap();
-        let text: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
+        let buffer = draw_buffer(80, 20, |frame| {
+            render(frame, &chooser);
+        });
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
 
         assert!(
             !text.contains("Bill Payments"),

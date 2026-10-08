@@ -343,8 +343,7 @@ mod tests {
     /// year lands two calendars out, and the reseed has to show which.
     #[test]
     fn the_picker_draws_the_year_each_goal_lands_in() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let picker = Picker::new(
             dated(vec![
@@ -355,19 +354,10 @@ mod tests {
             &HashSet::new(),
             Account::named(&accounts(), AccountId(1)),
         );
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, &picker);
-            })
-            .unwrap();
-        let text: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
+        let buffer = draw_buffer(80, 20, |frame| {
+            render(frame, &picker);
+        });
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
         assert!(text.contains("Sep 2027"), "{text}");
         assert!(text.contains("Mar 2028"), "{text}");
     }
@@ -473,8 +463,7 @@ mod tests {
     #[cfg(feature = "demo")]
     #[test]
     fn a_demo_scrambles_a_recurring_goals_name_in_the_picker() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         crate::demo::install_with_salt(7);
         let picker = Picker::new(
@@ -483,19 +472,10 @@ mod tests {
             &HashSet::new(),
             Account::named(&accounts(), AccountId(2)),
         );
-        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, &picker);
-            })
-            .unwrap();
-        let text: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
+        let buffer = draw_buffer(80, 20, |frame| {
+            render(frame, &picker);
+        });
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
 
         assert!(!text.contains("Dropbox"), "the entry name survived: {text}");
         assert!(

@@ -914,8 +914,7 @@ mod tests {
     #[cfg(feature = "demo")]
     #[test]
     fn a_demo_scrambles_the_figures_and_keeps_the_percentages() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         crate::demo::install_with_salt(7);
         let mut savings = savings();
@@ -924,19 +923,10 @@ mod tests {
         // showing the fixture's own drift would pass this test by arithmetic
         // rather than by being scrambled.
         savings.set_excess(vec![(AccountId(1), Cents(250_000))]);
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &savings);
-            })
-            .unwrap();
-        let text: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
+        let buffer = draw_buffer(MIN_WIDTH, 12, |frame| {
+            render(frame, frame.area(), &savings);
+        });
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
 
         assert!(!text.contains("13,000"), "a balance survived: {text}");
         assert!(!text.contains("15,000"), "a target survived: {text}");
@@ -981,25 +971,15 @@ mod tests {
     #[cfg(feature = "demo")]
     #[test]
     fn a_demo_draws_whole_dollars_as_the_full_figures_own_dollars() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         crate::demo::install_with_salt(7);
         let mut savings = savings();
         savings.set_excess(vec![(AccountId(1), Cents(250_017))]);
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &savings);
-            })
-            .unwrap();
-        let text: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
+        let buffer = draw_buffer(MIN_WIDTH, 12, |frame| {
+            render(frame, frame.area(), &savings);
+        });
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
 
         // The fixture's Emergency Savings sits at $106,001.95.
         let dollars = |cents| {
@@ -1038,8 +1018,7 @@ mod tests {
 
     #[test]
     fn the_goal_date_column_is_not_truncated_at_the_minimum_width() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut savings = Savings::new(accounts(), today());
         savings.set_containers(vec![AccountId(1)]);
@@ -1053,21 +1032,11 @@ mod tests {
             )
             .unwrap();
 
-        let backend = TestBackend::new(MIN_WIDTH, 12);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &savings);
-            })
-            .unwrap();
+        let buffer = draw_buffer(MIN_WIDTH, 12, |frame| {
+            render(frame, frame.area(), &savings);
+        });
 
-        let text: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
         assert!(text.contains("2026-11-27"), "{text}");
         assert!(text.contains("2026-07-01!"), "{text}");
     }
@@ -1078,8 +1047,7 @@ mod tests {
     /// column say nothing.
     #[test]
     fn the_account_column_is_colored_by_the_container_not_the_goal() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut savings = Savings::new(accounts(), today());
         savings.set_containers(vec![AccountId(1), AccountId(2)]);
@@ -1093,16 +1061,12 @@ mod tests {
             )
             .unwrap();
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &savings);
-            })
-            .unwrap();
+        let buffer = draw_buffer(MIN_WIDTH, 8, |frame| {
+            render(frame, frame.area(), &savings);
+        });
 
         // Left border, then the two-column highlight symbol, then `Acct`.
         // Row 0 is the border, row 1 the header.
-        let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(3, 2)].symbol(), "R", "{:?}", buffer[(3, 2)]);
         assert_eq!(
             buffer[(3, 2)].fg,
@@ -1120,8 +1084,7 @@ mod tests {
     /// on a goal that has no target rather than no money.
     #[test]
     fn the_percent_column_is_colored_by_the_funding_ramp() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
         use ratatui::style::Color;
 
         let mut savings = Savings::new(accounts(), today());
@@ -1137,13 +1100,9 @@ mod tests {
             )
             .unwrap();
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 9)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &savings);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, 9, |frame| {
+            render(frame, frame.area(), &savings);
+        });
 
         // The `%` sign ends each figure, so the cell before it is colored too;
         // finding the sign locates the column without restating the widths.
@@ -1245,16 +1204,11 @@ mod tests {
     }
 
     fn band_buffer(savings: &Savings) -> ratatui::buffer::Buffer {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 9)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), savings);
-            })
-            .unwrap();
-        terminal.backend().buffer().clone()
+        draw_buffer(MIN_WIDTH, 9, |frame| {
+            render(frame, frame.area(), savings);
+        })
     }
 
     /// A band, not a tint: it runs the row's whole width, padding and gaps
@@ -1344,16 +1298,11 @@ mod tests {
 
     /// Every rendered line of the four-goal fixture, inside the border.
     fn drawn(savings: &Savings) -> Vec<String> {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), savings);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, 12, |frame| {
+            render(frame, frame.area(), savings);
+        });
         (0..12)
             .map(|y| (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect())
             .collect()
@@ -1544,16 +1493,11 @@ mod tests {
     /// The drawn buffer, for the tests that read the footer's colors back
     /// rather than its text.
     fn footer_buffer(savings: &Savings) -> ratatui::buffer::Buffer {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), savings);
-            })
-            .unwrap();
-        terminal.backend().buffer().clone()
+        draw_buffer(MIN_WIDTH, 12, |frame| {
+            render(frame, frame.area(), savings);
+        })
     }
 
     /// The footer's one line of text, found by its border title rather than
@@ -1608,8 +1552,7 @@ mod tests {
     /// figure. Every filter on at once, which is the widest this title gets.
     #[test]
     fn the_whole_title_fits_the_minimum_width() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut savings = dated();
         savings.next_container();
@@ -1619,13 +1562,9 @@ mod tests {
         let title = savings.title().plain_text();
         assert_eq!(title, "Savings · Rainy Day · Aug 2026 · /a · $14/paycheck");
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &savings);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, 12, |frame| {
+            render(frame, frame.area(), &savings);
+        });
         let border: String = (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect();
         assert!(border.contains(&title), "{border}");
     }

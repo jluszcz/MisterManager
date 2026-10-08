@@ -1371,16 +1371,11 @@ mod tests {
     }
 
     fn drawn(funds: &Funds, height: u16) -> Vec<String> {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), funds);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer().clone();
+        let buffer = draw_buffer(MIN_WIDTH, height, |frame| {
+            render(frame, frame.area(), funds);
+        });
         (0..height)
             .map(|y| (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect())
             .collect()
@@ -1725,17 +1720,12 @@ mod tests {
     /// the bars sit on are the bars and their names.
     #[test]
     fn each_class_label_carries_its_own_segments_color_and_the_bars_have_no_legend() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let funds = funds_fully_priced();
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 24)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &funds);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer().clone();
+        let buffer = draw_buffer(MIN_WIDTH, 24, |frame| {
+            render(frame, frame.area(), &funds);
+        });
         let line = |y: u16| {
             (0..MIN_WIDTH)
                 .map(|x| buffer[(x, y)].symbol())
@@ -2065,17 +2055,12 @@ mod tests {
     /// reading the column is not allowed to have.
     #[test]
     fn a_shortfall_in_the_delta_column_is_drawn_in_the_negative_color() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let funds = funds_with_mixes();
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 24)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &funds);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer().clone();
+        let buffer = draw_buffer(MIN_WIDTH, 24, |frame| {
+            render(frame, frame.area(), &funds);
+        });
 
         // The Bonds row runs over target, so its Δ is positive; U.S. Stock
         // holds nothing against a target of nearly half the portfolio, so

@@ -1115,22 +1115,15 @@ mod tests {
     #[cfg(feature = "demo")]
     fn rendered(form: &mut AllocationForm) -> String {
         use crate::tui::MIN_WIDTH;
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_allocation(frame, form);
-            })
-            .unwrap();
-        terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect()
+        draw_buffer(MIN_WIDTH, 12, |frame| {
+            render_allocation(frame, form);
+        })
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
     }
 
     /// A divisor is not a figure, so the form resolves it on screen rather
@@ -1700,22 +1693,15 @@ mod tests {
 
     fn rendered_goal(form: &mut GoalForm) -> String {
         use crate::tui::MIN_WIDTH;
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_goal(frame, form);
-            })
-            .unwrap();
-        terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect()
+        draw_buffer(MIN_WIDTH, 12, |frame| {
+            render_goal(frame, form);
+        })
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
     }
 
     /// What bounds [`NOTE_LIMIT`]: the field has no horizontal scrolling, so a

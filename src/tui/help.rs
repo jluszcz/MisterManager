@@ -1781,8 +1781,7 @@ mod tests {
         }
     }
 
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
+    use jluszcz_finance_utils::tui::testing::draw_buffer;
 
     /// Draw the panel and hand back what landed in the buffer.
     ///
@@ -1790,17 +1789,10 @@ mod tests {
     /// does: the panel cannot know how many rows a wrap produced until it has
     /// drawn once, and `bottom()` is meaningless before then.
     fn drawn(help: &mut Help, width: u16, height: u16) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let mut extent = (0, 0);
-        terminal.draw(|frame| extent = render(frame, help)).unwrap();
+        let buffer = draw_buffer(width, height, |frame| extent = render(frame, help));
         help.set_extent(extent.0, extent.1);
-        terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect()
+        buffer.content.iter().map(|cell| cell.symbol()).collect()
     }
 
     /// A detail longer than the panel is wide wraps onto a second line rather than

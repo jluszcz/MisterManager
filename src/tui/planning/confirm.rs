@@ -209,16 +209,11 @@ mod tests {
     }
 
     fn drawn_confirm(confirm: &TransferConfirm) -> String {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 12)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_transfers(frame, confirm);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, 12, |frame| {
+            render_transfers(frame, confirm);
+        });
         (0..8)
             .map(|y| {
                 (0..MIN_WIDTH)

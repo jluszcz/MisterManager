@@ -1582,16 +1582,11 @@ mod tests {
     }
 
     fn drawn(accounts: &Accounts) -> Vec<String> {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 10)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), accounts);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, 10, |frame| {
+            render(frame, frame.area(), accounts);
+        });
         (0..10)
             .map(|y| (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect())
             .collect()
@@ -1861,20 +1856,15 @@ mod tests {
     /// are the form's chrome.
     #[test]
     fn the_color_field_draws_its_value_in_the_color_it_names() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut account = account(2, "Rainy Day", Kind::Cash, Group::Savings);
         account.color = Some(AccountColor::Violet);
         let mut form = AccountForm::edit(&account, InterestPolicy::Manual, None, &[], false);
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 16)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_form(frame, &mut form);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, 16, |frame| {
+            render_form(frame, &mut form);
+        });
 
         let (y, line) = (0..16u16)
             .map(|y| {
