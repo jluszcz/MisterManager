@@ -1,6 +1,7 @@
 use super::{Db, RecurringGoalId};
 use crate::money::Cents;
 use anyhow::{Context, Result, ensure};
+use jluszcz_finance_utils::text_enum;
 use rusqlite::{OptionalExtension, Row, params};
 use std::collections::HashMap;
 
