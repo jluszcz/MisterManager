@@ -3,6 +3,7 @@ use chrono::NaiveDate;
 use clap::{Parser, Subcommand};
 use jluszcz_finance_utils::backup::cli::{self as backup, BackupArgs};
 use jluszcz_finance_utils::cli::CommonArgs;
+use jluszcz_finance_utils::report::cli::{self as report_cli, ReportArgs};
 #[cfg(feature = "import")]
 use mistermanager::import;
 use mistermanager::{BACKUP, balance_history, config, db, mix, report, tui};
@@ -71,13 +72,7 @@ enum Command {
         replace: bool,
     },
     /// Write the HTML report without opening the application.
-    Report {
-        /// Directory to write `Money.html` into. Defaults to the config
-        /// file's `[report] dir`, and is what makes the section optional
-        /// for a one-off export.
-        #[arg(long)]
-        dir: Option<PathBuf>,
-    },
+    Report(ReportArgs),
     /// Refresh fund compositions from SEC's latest N-PORT filings.
     ///
     /// Not behind a feature, unlike `import`: fetching a public filing is an
@@ -176,7 +171,7 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Some(Command::Report { dir }) => {
+        Some(Command::Report(args)) => {
             // The mask lives in the TUI and nothing here installs it, so the
             // flag would silently write the real figures it exists to mask.
             if demo {
@@ -190,22 +185,18 @@ fn main() -> Result<()> {
             // Never the config's "off": an unset `[report]` section means the
             // owner does not want a page written behind every quit, which is
             // a different question from the one `mm report` asks.
-            let dir = match dir.or(scratch_dir) {
-                Some(dir) => dir,
-                None => cfg
-                    .report
-                    .as_ref()
-                    .with_context(|| {
-                        format!(
-                            "no --dir given, and no [report] section naming one in {}",
-                            config_path.display()
-                        )
-                    })?
-                    .dir()?,
-            };
+            let dir = report_cli::dir(
+                &args,
+                scratch_dir.as_deref(),
+                cfg.report.as_ref(),
+                &config_path,
+            )?;
             // Asked for outright, so a failure is an error exit rather than a
             // line on stderr, exactly as an explicit `mm backup` is.
-            print_written(&report::write(&db, &dir, today)?);
+            println!(
+                "{}",
+                report_cli::describe(&report::write(&db, &dir, today)?)
+            );
         }
         Some(Command::Mixes { ticker }) => {
             let db = db::open(&path)?;
@@ -292,12 +283,7 @@ fn take_snapshot(db: &db::Db, real_today: Option<NaiveDate>) {
 /// already quit should not be told the application broke because a synced
 /// folder was unmounted, and the next quit writes it again.
 fn write_report(db: &db::Db, cfg: &config::Config, today: NaiveDate, demo: bool) {
-    match report::write_if_enabled(db, cfg, today, demo) {
-        Ok(report::Outcome::Written(written)) => print_written(&written),
-        // Silent: nothing happened, and this runs after every single quit.
-        Ok(_) => {}
-        Err(e) => eprintln!("report failed: {e:#}"),
-    }
+    report_cli::after_quit(report::write_if_enabled(db, cfg, today, demo));
 }
 
 /// The scratch run's page, written whether or not it is due and whatever the
@@ -308,18 +294,7 @@ fn write_scratch_report(db: &db::Db, dir: &std::path::Path, today: NaiveDate, de
     if demo {
         return;
     }
-    match report::write(db, dir, today) {
-        Ok(written) => print_written(&written),
-        Err(e) => eprintln!("report failed: {e:#}"),
-    }
-}
-
-fn print_written(written: &report::Written) {
-    println!(
-        "wrote {} to {}",
-        jluszcz_finance_utils::human_bytes(written.bytes),
-        written.path.display()
-    );
+    report_cli::after_quit(report::write(db, dir, today).map(report::Outcome::Written));
 }
 
 fn print_refreshed(refreshed: &mix::Refreshed) {
