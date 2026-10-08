@@ -1045,16 +1045,11 @@ mod tests {
 
     /// Every column at `MIN_WIDTH`, all read for one test.
     fn drawn(list: &RecurringTxns) -> Vec<String> {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), list);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, 8, |frame| {
+            render(frame, frame.area(), list);
+        });
         (0..8)
             .map(|y| (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect())
             .collect()
@@ -1075,8 +1070,7 @@ mod tests {
     /// for the columns that abut and for the ones that do not.
     #[test]
     fn the_cursor_row_tints_its_characters_and_not_its_padding() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
         use ratatui::style::Color;
 
         let mut list = screen();
@@ -1084,13 +1078,9 @@ mod tests {
         list.select_next();
         assert!(list.selected().unwrap().cents < Cents::ZERO);
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &list);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, 8, |frame| {
+            render(frame, frame.area(), &list);
+        });
 
         // Row 0 is the border and row 1 the header, so the cursor sits on
         // row 3 -- the second data row.
@@ -1131,8 +1121,7 @@ mod tests {
     /// ledger. A screen-wide `Natural` drew both red.
     #[test]
     fn a_negative_rule_is_colored_by_its_own_accounts_kind() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut list = RecurringTxns::new(vec![cash(1, "CHK"), credit(2, "CC1")]);
         list.set_recurring_txns(
@@ -1147,13 +1136,9 @@ mod tests {
             HashMap::new(),
         );
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &list);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, 8, |frame| {
+            render(frame, frame.area(), &list);
+        });
         let color_of_amount = |y: u16| {
             let row: String = (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect();
             buffer[(super::super::column_of(&row, "-200.00"), y)].fg

@@ -1525,11 +1525,9 @@ mod tests {
         press(&mut app, KeyCode::Char('e'));
         // The viewport height is a render-time measurement, so the list has
         // to be drawn once before a page means anything.
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 40)).unwrap();
-        terminal.draw(|frame| app.render(frame)).unwrap();
+        draw_buffer(MIN_WIDTH, 40, |frame| app.render(frame));
 
         press(&mut app, KeyCode::PageDown);
 

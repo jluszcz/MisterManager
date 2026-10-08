@@ -566,8 +566,7 @@ mod tests {
     use super::*;
     use crate::account_label::Account;
     use crate::test_support::{cash, day};
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
+    use jluszcz_finance_utils::tui::testing::draw_buffer;
     use ratatui::buffer::Buffer;
 
     const WIDTH: u16 = 60;
@@ -584,25 +583,21 @@ mod tests {
     }
 
     fn drawn(series: &[Series]) -> Buffer {
-        let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).unwrap();
-        terminal
-            .draw(|frame| {
-                let history = History {
-                    cash: series.to_vec(),
-                    ..History::default()
-                };
-                let charts = Charts::new(&history, (month(7), month(8)));
-                render_chart(
-                    frame,
-                    frame.area(),
-                    "Chart",
-                    &charts.cash,
-                    &charts,
-                    NO_HISTORY,
-                )
-            })
-            .unwrap();
-        terminal.backend().buffer().clone()
+        draw_buffer(WIDTH, HEIGHT, |frame| {
+            let history = History {
+                cash: series.to_vec(),
+                ..History::default()
+            };
+            let charts = Charts::new(&history, (month(7), month(8)));
+            render_chart(
+                frame,
+                frame.area(),
+                "Chart",
+                &charts.cash,
+                &charts,
+                NO_HISTORY,
+            )
+        })
     }
 
     fn row(buffer: &Buffer, y: u16) -> String {

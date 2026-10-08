@@ -188,18 +188,13 @@ mod tests {
     /// The trimmed text of each line inside the border, from the row under
     /// the top border down.
     fn draw(db: &Db, height: u16) -> Vec<String> {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let overview = Overview::load(db, dates()).unwrap();
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &overview, false);
-            })
-            .unwrap();
+        let buffer = draw_buffer(MIN_WIDTH, height, |frame| {
+            render(frame, frame.area(), &overview, false);
+        });
 
-        let buffer = terminal.backend().buffer();
         // Row 0 is the top border, and the first and last columns are the sides.
         (1..height - 1)
             .map(|y| {

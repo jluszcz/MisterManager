@@ -316,16 +316,11 @@ mod tests {
     /// Every rendered line of the fixture, at the width the screens are laid
     /// out for.
     fn drawn(history: &History) -> Vec<String> {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 14)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, history);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(MIN_WIDTH, 14, |frame| {
+            render(frame, history);
+        });
         (0..14)
             .map(|y| (0..MIN_WIDTH).map(|x| buffer[(x, y)].symbol()).collect())
             .collect()

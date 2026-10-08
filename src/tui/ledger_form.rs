@@ -1472,8 +1472,7 @@ mod tests {
     #[test]
     fn a_form_draws_its_caret_on_the_focused_field_and_nowhere_else() {
         use crate::tui::MIN_WIDTH;
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
         form.focus = TxnField::Description;
@@ -1483,13 +1482,9 @@ mod tests {
         form.edit(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
         form.edit(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 8)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_txn(frame, &mut form, &Autocomplete::default());
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer().clone();
+        let buffer = draw_buffer(MIN_WIDTH, 8, |frame| {
+            render_txn(frame, &mut form, &Autocomplete::default());
+        });
         let drawn: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
         let under_caret: String = buffer
             .content
@@ -1535,18 +1530,13 @@ mod tests {
     /// tab key from disagreeing -- so the drawn rows are worth reading back.
     #[test]
     fn the_form_draws_its_fields_in_the_order_tab_visits_them() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut form = TxnForm::add(accounts(), DateField::today(day(2026, 8, 15)), None).unwrap();
 
-        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_txn(frame, &mut form, &Autocomplete::default());
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(80, 24, |frame| {
+            render_txn(frame, &mut form, &Autocomplete::default());
+        });
 
         // The border title also carries "transaction", so the labels are
         // found by their own rows rather than by the first line matching.
