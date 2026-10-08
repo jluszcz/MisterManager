@@ -7,8 +7,9 @@
 //! row. Fresh tables make that easy to hit, since the first row of each is
 //! id 1.
 //!
-//! `ToSql`/`FromSql` live here so the conversion stays inside `src/db/` and
-//! these types can cross the boundary without dragging `rusqlite` with them.
+//! `row_id!` supplies `ToSql`/`FromSql`, so the conversion stays inside
+//! `src/db/` and these types can cross the boundary without dragging
+//! `rusqlite` with them.
 //!
 //! A container lookup takes the account id it means:
 //!
@@ -28,37 +29,7 @@
 //! db::goal::container_excess(&db, db::GoalId(1)).unwrap();
 //! ```
 
-use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
-use rusqlite::{Result as SqlResult, ToSql};
-use std::fmt;
-
-macro_rules! row_id {
-    ($name:ident, $table:literal) => {
-        #[doc = concat!("A `", $table, "` row id.")]
-        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-        pub struct $name(pub i64);
-
-        impl ToSql for $name {
-            fn to_sql(&self) -> SqlResult<ToSqlOutput<'_>> {
-                Ok(ToSqlOutput::from(self.0))
-            }
-        }
-
-        impl FromSql for $name {
-            fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
-                i64::column_result(value).map($name)
-            }
-        }
-
-        /// Prints the bare number, so ids read the same in error messages as
-        /// they do in the database.
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "{}", self.0)
-            }
-        }
-    };
-}
+use jluszcz_finance_utils::row_id;
 
 row_id!(AccountId, "account");
 row_id!(TxnId, "txn");
