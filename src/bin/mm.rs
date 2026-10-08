@@ -7,7 +7,6 @@ use jluszcz_finance_utils::report::cli::{self as report_cli, ReportArgs};
 #[cfg(feature = "import")]
 use mistermanager::import;
 use mistermanager::{BACKUP, balance_history, config, db, mix, report, tui};
-use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "mm", about = "MisterManager")]
@@ -51,7 +50,7 @@ enum Command {
     /// call, so it offers no subcommand that would only fail.
     #[cfg(feature = "import")]
     Import {
-        workbook: PathBuf,
+        workbook: std::path::PathBuf,
         /// Overwrite previously imported data instead of refusing to run.
         /// Without this flag, importing into a database that already holds
         /// transactions or goals fails rather than doubling every row.
