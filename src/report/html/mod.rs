@@ -34,6 +34,7 @@ use crate::palette;
 // text inside a single-quoted attribute reopens the injection it exists to
 // close.
 use jluszcz_finance_utils::report::escape;
+use jluszcz_finance_utils::report::html::{self as shared, Tab};
 
 /// A money cell in a naturally signed column -- every one on the page but
 /// the Credit tab's Amount.
@@ -130,46 +131,34 @@ const NARROW: &str = "38rem";
 /// until a tab is chosen, which is what a menu with no way to close itself
 /// but a choice has to be.
 fn tab_bar() -> String {
-    let inputs: String = TABS
-        .iter()
-        .enumerate()
-        .map(|(i, (id, _))| {
-            // The first tab is the one the page opens on.
-            let checked = if i == 0 { " checked" } else { "" };
-            format!("<input class=\"tab\" type=\"radio\" name=\"tab\" id=\"{id}\"{checked}>")
-        })
-        .collect();
-    let labels: String = TABS
-        .iter()
-        .map(|(id, name)| format!("<label for=\"{id}\">{name}</label>"))
-        .collect();
     let current: String = TABS
         .iter()
         .map(|(id, name)| format!("<span id=\"{id}-cur\">{name}</span>"))
         .collect();
+    let tabs = tabs();
     format!(
-        "{inputs}<input class=\"tab\" type=\"radio\" name=\"tab\" id=\"{MENU}\">\
+        "{}<input class=\"tab\" type=\"radio\" name=\"tab\" id=\"{MENU}\">\
          <div class=\"menubar\"><label for=\"{MENU}\" aria-label=\"Tabs\">\u{2630}</label>\
-         {current}</div><nav>{labels}</nav>"
+         {current}</div>{}",
+        shared::tab_inputs(&tabs, Some(0)),
+        shared::tab_nav(&tabs),
     )
+}
+
+/// The tabs, in `TABS` order.
+fn tabs() -> Vec<Tab> {
+    TABS.iter().map(|(id, name)| Tab::new(*id, *name)).collect()
 }
 
 /// Which panel is shown, which label is lit, where the focus ring goes, and
 /// which name the narrow page's menu bar reads -- one rule set per tab,
 /// generated so that the list above stays the only place a tab is named.
 fn tab_rules() -> String {
-    TABS.iter()
-        .map(|(id, _)| {
-            format!(
-                "#{id}:checked~nav label[for={id}]\
-                 {{color:inherit;border-bottom-color:currentColor}}\
-                 #{id}:focus-visible~nav label[for={id}]\
-                 {{outline:2px solid currentColor;outline-offset:-2px}}\
-                 #{id}:checked~#{id}-panel{{display:block}}\
-                 #{id}:checked~.menubar #{id}-cur{{display:inline}}"
-            )
-        })
-        .collect()
+    let current: String = TABS
+        .iter()
+        .map(|(id, _)| format!("#{id}:checked~.menubar #{id}-cur{{display:inline}}"))
+        .collect();
+    format!("{}{current}", shared::tab_rules(&tabs()))
 }
 
 /// Everything that changes below [`NARROW`]: the tab bar traded for the
@@ -347,16 +336,11 @@ pub fn page(snapshot: &Snapshot) -> String {
         ledger::month_rules(&snapshot.credit),
         planning::depth_rules(&snapshot.planning),
     );
-    format!(
-        "<!DOCTYPE html>\n<html lang=\"en\"><head>\
-         <meta charset=\"utf-8\">\
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>Money</title><style>{STYLE}{rules}</style></head><body>\
-         {}{body}\
-         <footer><p class=\"stamp\">Generated {}</p></footer>\
-         </body></html>",
-        tab_bar(),
-        snapshot.generated_at.format(STAMP_FORMAT),
+    shared::page(
+        "Money",
+        &format!("{STYLE}{rules}"),
+        &format!("{}{body}", tab_bar()),
+        &format!("Generated {}", snapshot.generated_at.format(STAMP_FORMAT)),
     )
 }
 
