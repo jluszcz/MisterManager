@@ -102,7 +102,8 @@ pub use id::{
 };
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OpenFlags};
+use jluszcz_finance_utils::sqlite;
+use rusqlite::Connection;
 use std::path::Path;
 
 #[cfg(test)]
@@ -164,42 +165,21 @@ impl Db {
 }
 
 pub fn open(path: &Path) -> Result<Db> {
-    let conn = Connection::open(path)
-        .with_context(|| format!("opening database at {}", path.display()))?;
-    prepare(&conn).with_context(|| format!("preparing database at {}", path.display()))?;
-    Ok(Db { conn })
+    Ok(Db {
+        conn: sqlite::open(path, &migration::DATABASE)?,
+    })
 }
 
 pub fn open_in_memory() -> Result<Db> {
-    let conn = Connection::open_in_memory()?;
-    prepare(&conn)?;
-    Ok(Db { conn })
+    Ok(Db {
+        conn: sqlite::open_in_memory(&migration::DATABASE)?,
+    })
 }
 
 /// Write a consistent copy of the database at `src` to `dest`, which must not
-/// already exist.
-///
-/// `VACUUM INTO` rather than a file copy: the database runs in WAL mode, so
-/// the `.db` file on its own is a torn read of whatever had not been
-/// checkpointed. This writes a checkpointed, compacted copy in one statement.
-///
-/// Deliberately opens the connection without `prepare`: taking a backup
-/// must not migrate the database as a side effect. `src` is opened without
-/// the create flag, so a wrong path is an error rather than an empty database
-/// copied as though it were the real one.
-pub fn snapshot(src: &Path, dest: &Path) -> Result<()> {
-    let dest = dest
-        .to_str()
-        .with_context(|| format!("{} is not valid UTF-8", dest.display()))?;
-    let conn = Connection::open_with_flags(
-        src,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .with_context(|| format!("opening database at {}", src.display()))?;
-    conn.execute("VACUUM INTO ?1", [dest])
-        .with_context(|| format!("snapshotting to {dest}"))?;
-    Ok(())
-}
+/// already exist, without migrating it: taking a backup must not migrate the
+/// database as a side effect.
+pub use jluszcz_finance_utils::sqlite::snapshot;
 
 /// Tables an import writes to, in foreign-key-safe delete order.
 ///
@@ -324,12 +304,6 @@ where
         db.conn.execute(&sql, rusqlite::params![id, sort as i64])?;
     }
     Ok(())
-}
-
-fn prepare(conn: &Connection) -> Result<()> {
-    conn.pragma_update(None, "foreign_keys", "ON")?;
-    conn.execute_batch("PRAGMA journal_mode=WAL;")?;
-    migration::run(conn)
 }
 
 #[cfg(test)]
