@@ -109,9 +109,7 @@ pub(super) fn footer(app: &App) -> String {
         .collect()
 }
 
-pub(super) fn press(app: &mut App, code: KeyCode) {
-    app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
-}
+pub(super) use jluszcz_finance_utils::tui::testing::{press, type_text as type_str};
 
 /// The same key with Shift held, which crossterm reports as the arrow
 /// plus a modifier rather than a code of its own.
@@ -122,12 +120,6 @@ pub(super) fn shift_press(app: &mut App, code: KeyCode) {
 /// A `Ctrl` combination -- the editing keys, and nothing else in the app.
 pub(super) fn ctrl_press(app: &mut App, c: char) {
     app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
-}
-
-pub(super) fn type_str(app: &mut App, text: &str) {
-    for c in text.chars() {
-        press(app, KeyCode::Char(c));
-    }
 }
 
 pub(super) fn savings_favorites(app: &App) -> Vec<bool> {

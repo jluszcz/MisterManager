@@ -16,12 +16,8 @@
 
 use crate::db::AccountId;
 use crate::db::account::{Account, Group, Kind, TaxTreatment};
-use chrono::NaiveDate;
 
-/// A date, without the `unwrap` at every call site.
-pub fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-    NaiveDate::from_ymd_opt(y, m, d).unwrap_or_else(|| panic!("{y}-{m}-{d} is not a date"))
-}
+pub use jluszcz_finance_utils::testing::day;
 
 /// The name `AGENTS.md`'s fixture vocabulary pairs with a code, by kind.
 ///
