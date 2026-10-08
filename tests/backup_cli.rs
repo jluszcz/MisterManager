@@ -46,3 +46,44 @@ fn backing_up_a_database_path_that_does_not_exist_creates_nothing() {
     assert!(!dir.join("state").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_help_names_the_default_database_and_config_paths() {
+    let output = Command::new(env!("CARGO_BIN_EXE_mm"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        help.contains("~/.local/share/mistermanager/money.db"),
+        "{help}"
+    );
+    assert!(
+        help.contains("~/.config/mistermanager/config.toml"),
+        "{help}"
+    );
+}
+
+/// With `--db` given, the default data directory is never computed, so it is
+/// never created.
+#[test]
+fn a_db_flag_does_not_create_the_default_data_directory() {
+    let dir = scratch("db_flag_home");
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let db = dir.join("given.db");
+    let output = Command::new(env!("CARGO_BIN_EXE_mm"))
+        .args(["--db", db.to_str().unwrap(), "backup", "--status"])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", dir.join("config"))
+        .env("XDG_STATE_HOME", dir.join("state"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!home.join(".local/share/mistermanager").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}

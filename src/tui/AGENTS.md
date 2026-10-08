@@ -110,7 +110,7 @@ status message withholds the chrome for an unrelated reason: it borrows the whol
 **The shared filter keys lead every footer that has them but the Overview's, in one order, under one
 word each.**
 `Tab acct`, `[ ] month`, `Esc clear`, `/ search` — `help::FILTERS` states the order and the four
-words, and a table reaches them through `Entry::filter` rather than writing a `Label::Own` of its
+words, and a table reaches them through `help::filter_entry` rather than writing a `Label::Own` of its
 own, so a filter over the same thing cannot be called two names by two screens. What a screen still
 writes is the `detail`: `Esc` genuinely clears to different places — All and today's window on the
 ledgers, All on Savings and Recurring Goals, the derived Paycheck-Eve on the Overview — and the panel is where that difference belongs, which is why
@@ -557,7 +557,8 @@ deferred to nothing.
     still parsed at commit rather than only ever assembled by arrow.
   - **One step type, so a modifier cannot mean a week on one handler and nothing on the next.**
     `form::Step` carries an amount *and the unit it counts*, and hands a selector `direction()`
-    alone; `tui::WEEK` is the only place `7` is written; and `app::week_step` and `app::month_step`
+    alone; the week step itself is finance-utils' `Step::NEXT_WEEK`, and `tui::WEEK` is what the
+    rest of the app counts a week in; and `app::week_step` and `app::month_step`
     are how the three handlers that answer a step key themselves — the Overview scrub, the
     worksheet, and `t`'s confirmation — read the modifier and the brackets. A selector steps **one**
     choice under `Shift` rather than none: it has no week to move, and a modified arrow the terminal
