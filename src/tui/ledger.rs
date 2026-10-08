@@ -763,16 +763,11 @@ mod tests {
     /// two cells is making a claim about *a* rendering, and two frames cannot
     /// carry it.
     fn drawn(ledger: &Ledger, today: NaiveDate) -> ratatui::buffer::Buffer {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), ledger, today);
-            })
-            .unwrap();
-        terminal.backend().buffer().clone()
+        draw_buffer(MIN_WIDTH, 6, |frame| {
+            render(frame, frame.area(), ledger, today);
+        })
     }
 
     /// The title's own row, which the border is drawn flush into -- row 0.
@@ -1173,9 +1168,6 @@ mod tests {
     /// read as an account that does not exist.
     #[test]
     fn the_account_column_names_the_account_in_full_at_the_minimum_width() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         ledger.set_rows(vec![Txn {
@@ -1183,14 +1175,8 @@ mod tests {
             ..dated_row(1, today)
         }]);
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
-        let buffer = terminal.backend().buffer();
         let text: String = buffer.content.iter().map(|c| c.symbol()).collect();
         assert!(text.contains("Brokerage"), "{text}");
         assert!(
@@ -1204,21 +1190,12 @@ mod tests {
     /// a column that failed to render.
     #[test]
     fn a_row_with_no_description_draws_an_em_dash_in_that_column() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         ledger.set_rows(vec![described(1, "", 450)]);
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
-        let buffer = terminal.backend().buffer();
         let text: String = buffer.content.iter().map(|c| c.symbol()).collect();
         assert!(text.contains("—"), "{text}");
     }
@@ -1245,23 +1222,14 @@ mod tests {
     /// it would draw a smaller figure.
     #[test]
     fn the_scroll_indicator_costs_the_amount_column_nothing() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         // Three rows fit the viewport a six-line terminal leaves; twenty do
         // not.
         ledger.set_rows((1..=20).map(|n| dated_row(n, today)).collect());
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
-        let buffer = terminal.backend().buffer();
         let border = MIN_WIDTH - 1;
         assert_eq!(
             (2..5)
@@ -1282,24 +1250,15 @@ mod tests {
     /// right put `Amount` at the far side of the column from its own figures.
     #[test]
     fn the_amount_header_sits_over_its_own_column() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         ledger.set_rows(vec![dated_row(1, today)]);
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
         // Row 1 is the header. Both the word and the figure below it end at
         // the last column the rows are given: inside the right border, and
         // inside the gutter that holds them off it.
-        let buffer = terminal.backend().buffer();
         let last = MIN_WIDTH - 2 - super::super::GUTTER;
         assert_eq!(buffer[(last, 1)].symbol(), "t", "end of `Amount`");
         assert_eq!(buffer[(last + 1 - "Amount".len() as u16, 1)].symbol(), "A");
@@ -1437,22 +1396,13 @@ mod tests {
     /// what says so, with `Aug 2026` two terms to its left.
     #[test]
     fn the_title_carries_the_balance_to_date_after_the_filter_chain() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         ledger.set_rows(vec![dated_row(1, today)]);
         ledger.set_total(Cents(4_200_000));
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
-        let buffer = terminal.backend().buffer();
         let text: String = buffer.content.iter().map(|c| c.symbol()).collect();
         assert!(
             text.contains("Cash · Aug 2026 · All · Today $42,000.00"),
@@ -1464,22 +1414,13 @@ mod tests {
     /// spans rather than being the one string `title()` returns.
     #[test]
     fn a_negative_total_reads_red_in_the_title() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         ledger.set_total(Cents(-4_200));
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
         // The title runs along the top border, so its row is 0.
-        let buffer = terminal.backend().buffer();
         let row: String = (0..MIN_WIDTH)
             .map(|x| buffer[(x, 0)].symbol())
             .collect::<String>();
@@ -1504,21 +1445,12 @@ mod tests {
     /// is the other reading, and it is the one nothing else prints.
     #[test]
     fn a_negative_total_carries_its_sign_outside_the_dollar_sign() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         ledger.set_total(Cents(-4_200));
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
-        let buffer = terminal.backend().buffer();
         let row: String = (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect();
         assert!(row.contains("Today -$42.00"), "{row}");
     }
@@ -1527,9 +1459,6 @@ mod tests {
     /// always in the same place whether or not a search is running.
     #[test]
     fn a_search_leaves_the_total_last_in_the_title() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         ledger.next_account();
@@ -1537,14 +1466,8 @@ mod tests {
         ledger.push_search('F');
         ledger.set_total(Cents(95_000));
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
-        let buffer = terminal.backend().buffer();
         let text: String = buffer.content.iter().map(|c| c.symbol()).collect();
         assert!(
             text.contains("Cash · Aug 2026 · CHK · /F · Today $950.00"),
@@ -1557,23 +1480,14 @@ mod tests {
     /// should I have, how far off am I".
     #[test]
     fn a_target_follows_the_balance_with_the_delta_after_it() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         ledger.next_account();
         ledger.set_total(Cents(116_000));
         ledger.set_target(Some(Cents(120_000)));
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
-        let buffer = terminal.backend().buffer();
         let text: String = buffer.content.iter().map(|c| c.symbol()).collect();
         assert!(
             text.contains("Today $1,160.00 · Target $1,200.00 · Δ -$40.00"),
@@ -1633,23 +1547,14 @@ mod tests {
     /// the title, and the title is drawn flush into the block's top border.
     #[test]
     fn a_reconciled_balance_draws_a_check_clear_of_the_border() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         ledger.next_account();
         ledger.set_total(Cents(120_000));
         ledger.set_target(Some(Cents(120_000)));
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
-        let buffer = terminal.backend().buffer();
         let row: String = (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect();
         assert!(row.contains("Target $1,200.00 · Δ ✓ ─"), "{row}");
         assert!(!row.contains("$0.00"), "not a figure: {row}");
@@ -1659,22 +1564,13 @@ mod tests {
     /// border it draws is the one the screen has always drawn.
     #[test]
     fn a_ledger_with_no_target_keeps_the_border_it_had() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 8, 15);
         let mut ledger = ledger(today);
         ledger.next_account();
         ledger.set_total(Cents(116_000));
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
-        let buffer = terminal.backend().buffer();
         let row: String = (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect();
         assert!(row.contains("· CHK · Today $1,160.00"), "{row}");
         assert!(!row.contains("Target"), "{row}");
@@ -1685,9 +1581,6 @@ mod tests {
     /// end of it — so the digits that go missing are the whole total, silently.
     #[test]
     fn the_widest_plausible_title_fits_the_minimum_width() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 12, 28);
         let mut ledger = ledger(today);
         ledger.next_account();
@@ -1698,14 +1591,8 @@ mod tests {
         }
         ledger.set_total(Cents(-123_456_789));
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
-        let buffer = terminal.backend().buffer();
         let row: String = (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect();
         assert!(row.contains("-$1,234,567.89"), "truncated: {row}");
     }
@@ -1715,9 +1602,6 @@ mod tests {
     /// The delta is last now, so it is the digits that go missing first.
     #[test]
     fn the_widest_plausible_title_with_a_target_fits_the_minimum_width() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
         let today = day(2026, 12, 28);
         let mut ledger = ledger(today);
         ledger.next_account();
@@ -1729,14 +1613,8 @@ mod tests {
         ledger.set_total(Cents(-123_456_789));
         ledger.set_target(Some(Cents(123_456_789)));
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 6)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, frame.area(), &ledger, today);
-            })
-            .unwrap();
+        let buffer = drawn(&ledger, today);
 
-        let buffer = terminal.backend().buffer();
         let row: String = (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect();
         assert!(
             row.contains("Today -$1,234,567.89 · Target $1,234,567.89 · Δ -$2,469,135.78"),

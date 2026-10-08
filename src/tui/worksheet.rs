@@ -1501,16 +1501,11 @@ mod tests {
     }
 
     fn drawn(sheet: &Worksheet) -> ratatui::buffer::Buffer {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
-        terminal
-            .draw(|frame| {
-                render(frame, sheet);
-            })
-            .unwrap();
-        terminal.backend().buffer().clone()
+        draw_buffer(80, 12, |frame| {
+            render(frame, sheet);
+        })
     }
 
     fn row_text(buffer: &ratatui::buffer::Buffer, y: u16) -> String {

@@ -737,8 +737,7 @@ mod tests {
     /// a titled list and an already-inset rectangle for a bare one -- the
     /// difference the scroll track's rule exists to absorb.
     fn drawn(list: &List, chrome: Chrome, area: Rect, width: u16, height: u16) -> Vec<String> {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         // Long enough to fill the one flexible column, since a row that
         // stops short of the gutter would not notice one that was never
@@ -747,21 +746,17 @@ mod tests {
             .map(|i| TableRow::new(vec![Cell::from(format!("row {i} {}", "x".repeat(80)))]))
             .collect();
         let drawn = list.row_count();
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                render_table(
-                    frame,
-                    area,
-                    list,
-                    chrome,
-                    &[Constraint::Min(10)],
-                    rows,
-                    drawn,
-                );
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
+        let buffer = draw_buffer(width, height, |frame| {
+            render_table(
+                frame,
+                area,
+                list,
+                chrome,
+                &[Constraint::Min(10)],
+                rows,
+                drawn,
+            );
+        });
         (0..height)
             .map(|y| {
                 (0..width)

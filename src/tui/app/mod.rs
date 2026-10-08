@@ -1498,14 +1498,11 @@ mod tests {
     /// the last tab is fully drawn is what keeps that from happening quietly.
     #[test]
     fn every_tab_fits_the_minimum_width() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         let mut app = app();
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 24)).unwrap();
-        terminal.draw(|frame| app.render(frame)).unwrap();
+        let buffer = draw_buffer(MIN_WIDTH, 24, |frame| app.render(frame));
 
-        let buffer = terminal.backend().buffer();
         let bar: String = (0..MIN_WIDTH).map(|x| buffer[(x, 0)].symbol()).collect();
         for tab in Screen::ALL.map(Screen::tab_label) {
             assert!(bar.contains(tab), "{tab:?} is cut off: {bar:?}");
@@ -2097,12 +2094,9 @@ mod tests {
 
     /// The footer row as the terminal receives it, trailing spaces and all.
     fn footer_row(app: &mut App) -> String {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
-        let mut terminal = Terminal::new(TestBackend::new(MIN_WIDTH, 24)).unwrap();
-        terminal.draw(|frame| app.render(frame)).unwrap();
-        let buffer = terminal.backend().buffer().clone();
+        let buffer = draw_buffer(MIN_WIDTH, 24, |frame| app.render(frame));
         (0..MIN_WIDTH).map(|x| buffer[(x, 23)].symbol()).collect()
     }
 

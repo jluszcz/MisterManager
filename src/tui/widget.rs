@@ -334,32 +334,22 @@ mod tests {
     #[cfg(feature = "demo")]
     #[test]
     fn a_demo_scrambles_the_amounts_and_descriptions_the_autocomplete_list_offers() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         crate::demo::install_with_salt(7);
         let mut popup = Autocomplete::default();
         popup.set(vec![suggestion("Whole Foods", AccountId(1), 12_345)]);
 
-        let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
-        terminal
-            .draw(|frame| {
-                let area = Rect {
-                    x: 0,
-                    y: 0,
-                    width: 60,
-                    height: 3,
-                };
-                render_popup(frame, area, &popup);
-            })
-            .unwrap();
-        let text: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
+        let buffer = draw_buffer(60, 8, |frame| {
+            let area = Rect {
+                x: 0,
+                y: 0,
+                width: 60,
+                height: 3,
+            };
+            render_popup(frame, area, &popup);
+        });
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
 
         assert!(!text.contains("123.45"), "the amount survived: {text}");
         assert!(
@@ -505,25 +495,23 @@ mod tests {
     /// row taller without saying so.
     #[test]
     fn a_form_is_as_tall_as_its_lines_plus_its_border() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
+        use jluszcz_finance_utils::tui::testing::{buffer_text, draw_buffer};
 
         for count in [1usize, 3, 6] {
             let lines: Vec<TextLine> = (0..count)
                 .map(|i| field_line("Label", Label::from(i.to_string()), None))
                 .collect();
-            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
             let mut drawn = Rect::default();
-            terminal
-                .draw(|frame| drawn = render_fields(frame, "Title", lines.clone()))
-                .unwrap();
+            let buffer = draw_buffer(80, 24, |frame| {
+                drawn = render_fields(frame, "Title", lines.clone())
+            });
 
             assert_eq!(drawn.height, count as u16 + 2, "{count} lines");
             assert_eq!(drawn.width, FORM_WIDTH);
             // Centered: the margins either side are equal.
             assert_eq!(drawn.x, (80 - FORM_WIDTH) / 2);
 
-            let rendered = terminal.backend().to_string();
+            let rendered = buffer_text(&buffer);
             assert!(rendered.contains("Title"), "the border lost its title");
             assert!(
                 rendered.contains(&(count - 1).to_string()),
