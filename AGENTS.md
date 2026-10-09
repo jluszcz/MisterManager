@@ -653,8 +653,8 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   their asks are then all zero and the money ends up unallocated, which is the right answer when
   everything is funded.
   - **The set is not `unclaimed_goals`, and the two must not be collapsed.** A met goal is still a
-    perfectly good destination for a line, so it stays suggestible: that is exactly what makes
-    `Home Down Payment?` worth offering on a Future Housing row that no longer funds it.
+    perfectly good destination for a line, and the destination chooser, which offers every open
+    goal, keeps offering it.
   - The reading reaching the set differs by caller — `plan` refuses a dangling key, `wiring` has to
     report one and draw the screen anyway — so it arrives as a `Reading` and `shares_of` takes an
     already-filtered set rather than reaching for the database itself.
@@ -708,13 +708,10 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   same rules" a property of there being one reader rather than a promise two of them keep. What the
   two states mean does not change — the block renders the unset one as the withdrawal it is, in no
   color at all, and the dangling one in the red it shares with a plan that cannot run.
-- **A suggestion beside an unset destination is advisory, and is the one place a goal name is read
-  after import.** `transfer::suggest` offers the goal a line's `Line::import_substring` names, and
-  only when *exactly one* unclaimed open goal matches: "Lego" names several goals, and offering the
-  first would be the pick-by-luck that confines name matching to import in the first place. Nothing
-  resolves through it. What a human accepts is written as an **id**, which is what every later read
-  uses, so the rule stands — names are matched once at import, and once more only to ask a question
-  the owner answers.
+- **An unset destination offers no goal by name.** Unset is a withdrawal the owner may well have
+  chosen — Future Housing paying principal outside the tracked system — so the Destinations block
+  draws it plain and the chooser opens on the withdrawal. A line's goal-name substring is read at
+  import and nowhere else, which keeps name matching confined there.
 - **`Line::FutureHousing`'s key is the down-payment/mortgage switch, and its stored string still says
   `down_payment` on purpose.** Set, the line's money lands in the bucket-block goal it names — a down
   payment. Unset, it leaves as a withdrawal — a mortgage payment made outside the tracked system. It

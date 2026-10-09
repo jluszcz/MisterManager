@@ -316,9 +316,8 @@ impl App {
             },
             _ => None,
         };
-        let suggestion = transfer::suggest(&self.db, line)?.map(offer);
         self.modal = Some(Modal::Destination(destination::Chooser::new(
-            line, offered, current, suggestion,
+            line, offered, current,
         )));
         Ok(())
     }
@@ -1563,24 +1562,47 @@ mod tests {
             .id
     }
 
+    /// Opens the destination list on the row under the cursor and picks the
+    /// goal `name` out of it by searching -- the withdrawal stays visible
+    /// through any search, so it is the row above the one match.
+    fn choose_destination(app: &mut App, name: &str) {
+        press(app, KeyCode::Char('e'));
+        assert!(
+            matches!(app.modal, Some(Modal::Destination(_))),
+            "no destination list opened: {}",
+            app.status
+        );
+        press(app, KeyCode::Char('/'));
+        type_str(app, name);
+        press(app, KeyCode::Enter);
+        press(app, KeyCode::Down);
+        // A lifted current goal or a second match would put another row
+        // here, and `Enter` would then write it without a word.
+        let Some(Modal::Destination(chooser)) = &app.modal else {
+            panic!("the destination list closed during the search");
+        };
+        assert!(
+            matches!(
+                chooser.selected(),
+                Some(destination::Choice::Goal { name: n, .. }) if n == name
+            ),
+            "the cursor is not on {name}: {:?}",
+            chooser.selected()
+        );
+        press(app, KeyCode::Enter);
+    }
+
     /// The whole feature, end to end: a line whose key an older import never
-    /// wrote, pointed at the goal it names without leaving the app.
+    /// wrote, pointed at a goal without leaving the app.
     #[test]
-    fn e_then_enter_points_an_unset_line_at_the_goal_its_name_suggests() {
+    fn e_then_choosing_a_goal_points_an_unset_line_at_it() {
         let mut app = planning_app();
         setting::clear(&app.db, destination_key(Line::MomAndDad)).unwrap();
         app.reload().unwrap();
         press(&mut app, KeyCode::Char('5'));
         cursor_to(&mut app, Line::MomAndDad);
 
-        press(&mut app, KeyCode::Char('e'));
-        assert!(
-            matches!(app.modal, Some(Modal::Destination(_))),
-            "no destination list opened: {}",
-            app.status
-        );
-
-        press(&mut app, KeyCode::Enter);
+        choose_destination(&mut app, "Mom & Dad");
 
         assert_eq!(
             setting::get(&app.db, destination_key(Line::MomAndDad)).unwrap(),
@@ -1621,8 +1643,7 @@ mod tests {
         app.reload().unwrap();
         press(&mut app, KeyCode::Char('5'));
         cursor_to(&mut app, Line::MomAndDad);
-        press(&mut app, KeyCode::Char('e'));
-        press(&mut app, KeyCode::Enter);
+        choose_destination(&mut app, "Mom & Dad");
 
         let row = app
             .planning

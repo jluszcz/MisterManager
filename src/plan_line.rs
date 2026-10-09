@@ -198,10 +198,10 @@ mod tests {
         assert_eq!(Line::ALL.len(), 9);
     }
 
-    /// The suggestion the Planning screen offers for an unset line is only
-    /// as good as this: a line with a goal behind it and no substring can
-    /// never be suggested, and the miss looks like "nothing to suggest"
-    /// rather than a bug.
+    /// The import matches a goal-backed line's destination by this
+    /// substring: a line with a goal behind it and none would never be
+    /// wired by an import, and the miss looks like an unset key rather than
+    /// a bug.
     #[test]
     fn every_goal_backed_line_has_an_import_substring() {
         for line in Line::ALL {

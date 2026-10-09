@@ -19,22 +19,6 @@ pub struct Offered {
     pub container: String,
 }
 
-/// Why one goal was lifted to the top of the list.
-///
-/// At most one is, and it is the row the list opens on -- which is what keeps
-/// the withdrawal beneath it on screen. Eighty-three goals in this database
-/// sort before "Home Down Payment", so a list that opened where that goal
-/// falls naturally would put the one row that clears the key off the top of
-/// the screen, with nothing to say it was ever there.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Lifted {
-    /// This line's import substring names it and nothing else claims it:
-    /// one keystroke for the case that brought the owner here.
-    Suggested,
-    /// This line already points at it.
-    Current,
-}
-
 /// One row of the list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Choice {
@@ -46,7 +30,14 @@ pub enum Choice {
         id: GoalId,
         name: String,
         container: String,
-        lifted: Option<Lifted>,
+        /// This line already points at it, so it is lifted to the top of the
+        /// list. At most one is, and it is the row the list opens on --
+        /// which is what keeps the withdrawal beneath it on screen. Eighty-three
+        /// goals in this database sort before "Home Down Payment", so a list
+        /// that opened where that goal falls naturally would put the one row
+        /// that clears the key off the top of the screen, with nothing to say
+        /// it was ever there.
+        current: bool,
     },
 }
 
@@ -70,48 +61,33 @@ pub struct Chooser {
 }
 
 impl Chooser {
-    /// The list in the order it opens: the one lifted goal if there is one,
-    /// then the withdrawal, then every open goal in the order the Savings
-    /// screen lists them.
+    /// The list in the order it opens: the line's current goal if there is
+    /// one, then the withdrawal, then every open goal in the order the
+    /// Savings screen lists them.
     ///
-    /// It always opens at the top, which is the whole reason anything is
-    /// lifted: the row the owner most likely wants is under the cursor, and
-    /// the withdrawal is beside it rather than eighty-three goals above.
-    /// `Enter` straight away is therefore agreement or a no-op, never a
-    /// silent re-pointing.
+    /// It always opens at the top, which is the whole reason the current goal
+    /// is lifted: the row the owner most likely wants is under the cursor,
+    /// and the withdrawal is beside it rather than eighty-three goals above.
+    /// `Enter` straight away is therefore a no-op, never a silent re-pointing.
     ///
-    /// The suggestion wins the lift when both could claim it, though both
-    /// never do: a suggestion is only offered for a line pointing at no live
-    /// goal, which is a line with no current goal to lift.
-    /// `current` and `suggestion` are goals rather than ids because the goal
-    /// a line names need not be among those on offer: a **closed** goal is
+    /// `current` is a goal rather than an id because the goal a line names
+    /// need not be among those on offer: a **closed** goal is
     /// still a real row the key still points at, and `offered` holds open
     /// goals only. Lifting it by id alone would find nothing, drop the
     /// cursor onto the withdrawal, and let a stray `Enter` clear a
     /// destination that was never in question.
-    pub fn new(
-        line: Line,
-        offered: Vec<Offered>,
-        current: Option<Offered>,
-        suggestion: Option<Offered>,
-    ) -> Chooser {
-        let lifted = match (suggestion, current) {
-            (Some(o), _) => Some((o, Lifted::Suggested)),
-            (None, Some(o)) => Some((o, Lifted::Current)),
-            (None, None) => None,
-        };
-
+    pub fn new(line: Line, offered: Vec<Offered>, current: Option<Offered>) -> Chooser {
         let mut choices = Vec::with_capacity(offered.len() + 1);
-        if let Some((o, why)) = &lifted {
+        if let Some(o) = &current {
             choices.push(Choice::Goal {
                 id: o.id,
                 name: o.name.clone(),
                 container: o.container.clone(),
-                lifted: Some(*why),
+                current: true,
             });
         }
         choices.push(Choice::Unset);
-        let promoted = lifted.map(|(o, _)| o.id);
+        let promoted = current.map(|o| o.id);
         choices.extend(
             offered
                 .into_iter()
@@ -120,7 +96,7 @@ impl Chooser {
                     id: o.id,
                     name: o.name,
                     container: o.container,
-                    lifted: None,
+                    current: false,
                 }),
         );
 
@@ -208,7 +184,6 @@ use super::widget::centered;
 use super::{Chrome, render_table};
 use ratatui::Frame;
 use ratatui::layout::Constraint;
-use ratatui::style::Style;
 use ratatui::widgets::{Block, Cell, Clear, Row};
 
 /// One row per goal, its container beside it, and the withdrawal among them.
@@ -224,7 +199,6 @@ pub(super) fn render(frame: &mut Frame, chooser: &Chooser) -> Viewport {
     frame.render_widget(Block::bordered().title(chooser.title()), area);
     let inner = area.inner(ratatui::layout::Margin::new(1, 1));
 
-    let suggested_style = Style::default().fg(super::style::WARNING);
     let choices = chooser.choices();
     let rows: Vec<Row> = choices
         .iter()
@@ -237,26 +211,13 @@ pub(super) fn render(frame: &mut Frame, chooser: &Chooser) -> Viewport {
             Choice::Goal {
                 name,
                 container,
-                lifted,
+                current,
                 ..
-            } => {
-                let row = Row::new(vec![
-                    Cell::from(crate::demo::text(name).into_owned()),
-                    Cell::from(crate::demo::text(container).into_owned()),
-                    Cell::from(match lifted {
-                        Some(Lifted::Suggested) => "suggested",
-                        Some(Lifted::Current) => "current",
-                        None => "",
-                    }),
-                ]);
-                // Amber for the suggestion only: it is a prompt. Where the
-                // line already points is a statement of fact, and drawing it
-                // like a prompt would ask a question nobody asked.
-                match lifted {
-                    Some(Lifted::Suggested) => row.style(suggested_style),
-                    _ => row,
-                }
-            }
+            } => Row::new(vec![
+                Cell::from(crate::demo::text(name).into_owned()),
+                Cell::from(crate::demo::text(container).into_owned()),
+                Cell::from(if *current { "current" } else { "" }),
+            ]),
         })
         .collect();
     let widths = [
@@ -308,8 +269,8 @@ mod tests {
         }))
     }
 
-    fn chooser(current: Option<i64>, suggestion: Option<i64>) -> Chooser {
-        Chooser::new(Line::MomAndDad, offered(), one(current), one(suggestion))
+    fn chooser(current: Option<i64>) -> Chooser {
+        Chooser::new(Line::MomAndDad, offered(), one(current))
     }
 
     fn selected_name(chooser: &Chooser) -> String {
@@ -329,7 +290,7 @@ mod tests {
         use jluszcz_finance_utils::tui::testing::draw_buffer;
 
         crate::demo::install_with_salt(7);
-        let chooser = chooser(None, None);
+        let chooser = chooser(None);
         let buffer = draw_buffer(80, 20, |frame| {
             render(frame, &chooser);
         });
@@ -353,35 +314,6 @@ mod tests {
         );
     }
 
-    /// The whole point of the suggestion: the line that brought the owner
-    /// here is one keystroke from being pointed at the goal it names.
-    #[test]
-    fn the_suggestion_opens_at_the_top_and_under_the_cursor() {
-        let chooser = chooser(None, Some(5));
-        assert_eq!(selected_name(&chooser), "Mom & Dad");
-        assert!(matches!(
-            chooser.choices().first(),
-            Some(Choice::Goal {
-                lifted: Some(Lifted::Suggested),
-                ..
-            })
-        ));
-    }
-
-    /// A goal promoted to the top would otherwise appear again further down,
-    /// and choosing between two rows that write the same id is a choice with
-    /// no meaning.
-    #[test]
-    fn a_suggested_goal_is_not_also_listed_in_its_own_place() {
-        let chooser = chooser(None, Some(5));
-        let times = chooser
-            .choices()
-            .iter()
-            .filter(|c| matches!(c, Choice::Goal { id, .. } if *id == GoalId(5)))
-            .count();
-        assert_eq!(times, 1);
-    }
-
     /// Eighty-three goals below the fold is where the withdrawal was: the
     /// list opened on a goal near the bottom, and the one row that clears
     /// the key sat off the top of the screen with nothing to say it existed.
@@ -389,7 +321,7 @@ mod tests {
     fn the_withdrawal_stays_on_screen_whatever_the_line_already_names() {
         // Mom & Dad is the last goal offered -- the worst case, and the one
         // Future Housing hits against the real database.
-        let chooser = chooser(Some(5), None);
+        let chooser = chooser(Some(5));
 
         assert_eq!(chooser.selected_index(), 0, "the list opened scrolled away");
         assert!(
@@ -399,11 +331,12 @@ mod tests {
         );
     }
 
-    /// The same reason the suggestion is not listed twice: two rows writing
-    /// the same id is a choice with no meaning.
+    /// A goal promoted to the top would otherwise appear again further down,
+    /// and choosing between two rows that write the same id is a choice with
+    /// no meaning.
     #[test]
     fn the_goal_a_line_already_names_is_not_also_listed_in_its_own_place() {
-        let chooser = chooser(Some(5), None);
+        let chooser = chooser(Some(5));
         let times = chooser
             .choices()
             .iter()
@@ -416,15 +349,15 @@ mod tests {
     /// silent re-pointing at whatever happened to be first.
     #[test]
     fn a_line_already_pointed_somewhere_opens_on_the_goal_it_names() {
-        let chooser = chooser(Some(3), None);
+        let chooser = chooser(Some(3));
         assert_eq!(selected_name(&chooser), "Vacation 2026");
     }
 
-    /// Nothing stored and nothing to suggest: the cursor sits on the state
-    /// the line is already in, so `Enter` changes nothing by accident.
+    /// Nothing stored: the cursor sits on the state the line is already in,
+    /// so `Enter` changes nothing by accident.
     #[test]
-    fn an_unset_line_with_no_suggestion_opens_on_the_withdrawal() {
-        let chooser = chooser(None, None);
+    fn an_unset_line_opens_on_the_withdrawal() {
+        let chooser = chooser(None);
         assert_eq!(selected_name(&chooser), "<unset>");
     }
 
@@ -440,7 +373,7 @@ mod tests {
             name: "Peak Design".to_string(),
             container: "Rainy Day".to_string(),
         };
-        let chooser = Chooser::new(Line::MomAndDad, offered(), Some(closed), None);
+        let chooser = Chooser::new(Line::MomAndDad, offered(), Some(closed));
         assert_eq!(selected_name(&chooser), "Peak Design");
         assert_eq!(chooser.selected_index(), 0);
     }
@@ -449,13 +382,13 @@ mod tests {
     /// the list still has to open somewhere.
     #[test]
     fn a_dangling_current_goal_opens_at_the_top_rather_than_nowhere() {
-        let chooser = chooser(Some(9_999), None);
+        let chooser = chooser(Some(9_999));
         assert!(chooser.selected().is_some());
     }
 
     #[test]
     fn searching_narrows_to_the_goals_that_match() {
-        let mut chooser = chooser(None, None);
+        let mut chooser = chooser(None);
         chooser.begin_search();
         for c in "vac".chars() {
             chooser.push_search(c);
@@ -474,7 +407,7 @@ mod tests {
     /// would find, and the same `/` does the same thing on three other lists.
     #[test]
     fn searching_matches_case_insensitively() {
-        let mut chooser = chooser(None, None);
+        let mut chooser = chooser(None);
         for c in "MOM".chars() {
             chooser.push_search(c);
         }
@@ -491,7 +424,7 @@ mod tests {
     /// Clearing a key must not depend on what the goals are called.
     #[test]
     fn the_withdrawal_survives_a_search_that_matches_nothing() {
-        let mut chooser = chooser(None, None);
+        let mut chooser = chooser(None);
         for c in "zzzz".chars() {
             chooser.push_search(c);
         }
@@ -500,7 +433,7 @@ mod tests {
 
     #[test]
     fn clearing_the_search_shows_every_goal_again() {
-        let mut chooser = chooser(None, None);
+        let mut chooser = chooser(None);
         chooser.begin_search();
         chooser.push_search('z');
         chooser.clear_search();
@@ -514,7 +447,7 @@ mod tests {
     /// than select nothing.
     #[test]
     fn a_search_that_shortens_the_list_moves_the_cursor_into_it() {
-        let mut chooser = chooser(None, None);
+        let mut chooser = chooser(None);
         chooser.select_last();
         for c in "vac".chars() {
             chooser.push_search(c);
@@ -524,7 +457,7 @@ mod tests {
 
     #[test]
     fn backspace_widens_the_search_again() {
-        let mut chooser = chooser(None, None);
+        let mut chooser = chooser(None);
         for c in "vacation 2026".chars() {
             chooser.push_search(c);
         }
@@ -540,7 +473,7 @@ mod tests {
     /// nothing on screen says which of the six destinations is being pointed.
     #[test]
     fn the_title_names_the_line_and_the_live_search() {
-        let mut chooser = chooser(None, None);
+        let mut chooser = chooser(None);
         assert!(title(&chooser).contains("Mom & Dad"));
 
         chooser.push_search('v');
@@ -554,7 +487,7 @@ mod tests {
     fn the_title_carries_a_caret_only_while_the_box_is_open() {
         use ratatui::style::Modifier;
 
-        let mut chooser = chooser(None, None);
+        let mut chooser = chooser(None);
         chooser.begin_search();
         chooser.push_search('v');
         chooser.push_search('a');
@@ -586,7 +519,7 @@ mod tests {
     fn the_title_shows_the_box_as_soon_as_it_opens() {
         use ratatui::style::Modifier;
 
-        let mut chooser = chooser(None, None);
+        let mut chooser = chooser(None);
         assert!(!title(&chooser).contains(" · /"), "{}", title(&chooser));
 
         chooser.begin_search();

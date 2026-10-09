@@ -368,21 +368,11 @@ pub struct Container {
     pub color: Option<AccountColor>,
 }
 
-/// One line, where it lands, and what its name would suggest if it landed
-/// nowhere.
+/// One line and where it lands.
 #[derive(Debug, Clone)]
 pub struct Wiring {
     pub line: Line,
     pub landing: Landing,
-    /// The goal this line's import substring matches today, offered only when
-    /// the line points at no live goal and exactly one unclaimed goal
-    /// matches.
-    ///
-    /// **Advisory, and never a resolution.** Name matching that decides where
-    /// money goes happens once, at import, because goal names are not unique;
-    /// this is a prompt a human answers by pressing a key, and the id it
-    /// writes is what every later read resolves by.
-    pub suggestion: Option<Goal>,
 }
 
 /// Every line's destination, and the plug's own set behind them.
@@ -461,9 +451,7 @@ pub fn wiring(db: &Db) -> Result<Wired> {
     // list inside the loop above would be a second copy of one rule, and the
     // plug's landing disagreeing with the panel's breakdown is precisely the
     // failure that costs.
-    let with_balances = unclaimed_with_balances(db, Reading::Tolerant)?;
-    let unclaimed: Vec<Goal> = with_balances.iter().map(|g| g.goal.clone()).collect();
-    let spread = cloned(shares_of(&with_balances));
+    let spread = spread_goals(db, Reading::Tolerant)?;
     let containers = spread_containers(&spread);
     let plug = match containers.len() {
         0 => Landing::Nowhere,
@@ -487,46 +475,14 @@ pub fn wiring(db: &Db) -> Result<Wired> {
                     .map(|(_, landing)| landing.clone())
                     .expect("every non-plug line was resolved in the first pass"),
             };
-            let suggestion = match landing {
-                // A line pointing at a live goal is not asking, and the plug
-                // is not matched by name at all.
-                Landing::Withdrawal | Landing::Dangling { .. } => {
-                    suggestion_for(*line, &unclaimed).cloned()
-                }
-                _ => None,
-            };
-            Ok(Wiring {
+            Wiring {
                 line: *line,
                 landing,
-                suggestion,
-            })
+            }
         })
-        .collect::<Result<Vec<Wiring>>>()?;
+        .collect();
 
     Ok(Wired { lines, spread })
-}
-
-/// The one unclaimed goal `line`'s import substring matches, or `None` when
-/// none does -- or when several do.
-///
-/// Several is the case that matters: "Lego" names several goals in the
-/// workbook, and offering the first would be choosing between them by luck.
-fn suggestion_for(line: Line, unclaimed: &[Goal]) -> Option<&Goal> {
-    let substring = line.import_substring()?;
-    let mut matches = unclaimed.iter().filter(|g| g.name.contains(substring));
-    match (matches.next(), matches.next()) {
-        (Some(goal), None) => Some(goal),
-        _ => None,
-    }
-}
-
-/// What one line's name would suggest, for the picker that opens on it.
-pub fn suggest(db: &Db, line: Line) -> Result<Option<Goal>> {
-    Ok(wiring(db)?
-        .lines
-        .into_iter()
-        .find(|w| w.line == line)
-        .and_then(|w| w.suggestion))
 }
 
 /// Why [`plan`] refuses, at the length a panel can hold rather than the
@@ -1409,71 +1365,6 @@ mod tests {
             vec!["Lego".to_string(), "Dropbox".to_string()]
         );
         assert_eq!(spread_container(&db).unwrap(), Some(savings));
-    }
-
-    /// The two sets are not the same set. A met goal is still a perfectly
-    /// good destination for a line -- which is exactly what makes "Home Down
-    /// Payment?" worth offering on a Future Housing row that funds it no
-    /// longer.
-    #[test]
-    fn a_met_goal_is_still_offered_as_a_suggestion() {
-        let (db, _, _) = configured();
-        let done = setting::get(&db, key_of(Line::FutureHousing))
-            .unwrap()
-            .unwrap();
-        fund(&db, done, 1_000);
-        setting::clear(&db, key_of(Line::FutureHousing)).unwrap();
-
-        assert_eq!(
-            suggest(&db, Line::FutureHousing).unwrap().map(|g| g.name),
-            Some("Home Down Payment".to_string())
-        );
-    }
-
-    /// The suggestion is what makes an unset line one keystroke to fix
-    /// rather than a database nobody can read.
-    #[test]
-    fn an_unset_line_is_suggested_the_unclaimed_goal_its_name_matches() {
-        let (db, _, _) = configured();
-        setting::clear(&db, key_of(Line::Bills)).unwrap();
-
-        let suggestion = suggest(&db, Line::Bills).unwrap();
-        assert_eq!(
-            suggestion.map(|g| g.name),
-            Some("Bill Payments".to_string())
-        );
-    }
-
-    /// "Lego" appears three times in the workbook. Offering the first would
-    /// be picking between them by luck, and the whole reason name matching
-    /// happens once, at import, is that nothing downstream may do that.
-    #[test]
-    fn a_suggestion_is_refused_when_two_unclaimed_goals_match() {
-        let (db, savings, _) = configured();
-        setting::clear(&db, key_of(Line::Bills)).unwrap();
-        insert_goal(&db, savings, "Bill Payments (old)");
-
-        assert!(suggest(&db, Line::Bills).unwrap().is_none());
-    }
-
-    /// A goal two lines both fund is funded twice, and the plug stops
-    /// spreading over it as well -- so a claimed goal is never offered.
-    #[test]
-    fn a_goal_another_line_already_claims_is_never_suggested() {
-        let (db, _, _) = configured();
-        let bill_payments = setting::get(&db, key_of(Line::Bills)).unwrap().unwrap();
-        setting::clear(&db, key_of(Line::Bills)).unwrap();
-        setting::set(&db, key_of(Line::MomAndDad), bill_payments).unwrap();
-
-        assert!(suggest(&db, Line::Bills).unwrap().is_none());
-    }
-
-    /// A suggestion answers "this line is unset"; a line already pointed
-    /// somewhere is not asking.
-    #[test]
-    fn a_line_already_pointed_at_a_goal_is_offered_no_suggestion() {
-        let (db, _, _) = configured();
-        assert!(suggest(&db, Line::Bills).unwrap().is_none());
     }
 
     /// `diagnose` the way the Planning screen calls it: the wiring and the

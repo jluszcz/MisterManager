@@ -865,13 +865,11 @@ deferred to nothing.
       it is why `App::planning_view` reads `View::spread_ask_total` on its own rather than through
       `transfer::plan`: asks chained to that call are zero on exactly the payday `Unmet Asks` was
       put outside the `match` to reach, and the row would be silent there whatever the block did.
-- **The two colors on the Destinations block carry opposite instructions.** Red
-  (`style::Tone::Negative`, through `Landing::breaks_the_plan`) means this plan will not run: an
-  ambiguous plug, a plug with nowhere to spread, a key naming a row that is gone. Amber
-  (`style::Tone::Warning`) means a gap with something on offer to fill it, which breaks nothing —
-  the money leaves the tracked system, which is how Retirement and Investment are meant to stand. An
-  unset line with nothing to suggest is drawn plain, because a warning that is always on is a
-  warning nobody reads.
+- **Red on the Destinations block means this plan will not run.** `style::Tone::Negative`, through
+  `Landing::breaks_the_plan`: an ambiguous plug, a plug with nowhere to spread, a key naming a row
+  that is gone. An unset line is drawn plain — the money leaves the tracked system, which is how
+  Retirement and Investment are meant to stand and how Future Housing stands when principal is paid
+  outside it.
 - **Which side of zero wears a color is the column's, not the app's.** `palette::Sense` is the two
   answers — `Natural`, where positive is money held, and `Debt`, where positive is money owed —
   re-exported as `style::Sense`, and `palette::amount` and `style::delta_color_of` are the one
@@ -1073,12 +1071,11 @@ deferred to nothing.
   a transfer, which heads its own account; the value for the two account-backed destination lines;
   the extra for a goal's container or the plug's. One field rather than one per column because a
   row naming *two* accounts is not a state this screen has, and making that unrepresentable is
-  cheaper than checking it. Red and amber carry *instructions* where a tint only says which
-  account, so `render` reads the tone first; `Row::extra_tone` is a second field for the same
-  reason and says so at its declaration. Three states carry no tint at all, each because nothing
-  single is named: an ambiguous plug, a withdrawal, and a suggestion, which displaces the
-  container. The lines *under* a transfer are plain too — the account is said once, at the head of
-  the group it heads.
+  cheaper than checking it. Red carries an *instruction* where a tint only says which account, so
+  `render` reads the tone first; `Row::extra_tone` is a second field for the same reason and says
+  so at its declaration. Two states carry no tint at all, each because nothing single is named: an
+  ambiguous plug and a withdrawal. The lines *under* a transfer are plain too — the account is said
+  once, at the head of the group it heads.
 - **A section of one band draws no band subtotals.** The Overview stacks accounts in bands
   (`account::Group`) inside sections (`account::Kind`): cash breaks into Checking and Savings,
   credit does not break at all. A single band's subtotal and its section's total are the same
