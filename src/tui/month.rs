@@ -10,6 +10,7 @@
 //! month span clamped to the data's range and pushed down into the SQL, with
 //! no All to return to; see [`super::ledger::Window`].
 
+use super::form::step_index;
 use chrono::{Datelike, NaiveDate};
 
 /// One calendar month, as Savings filters by: a `goal_date` carries a year,
@@ -130,10 +131,7 @@ impl<M: Copy + PartialEq> MonthCycle<M> {
             .and_then(|m| self.months.iter().position(|x| *x == m));
         self.selected = Some(match position {
             None => self.entry,
-            Some(i) => {
-                let len = self.months.len() as isize;
-                self.months[(i as isize + delta).rem_euclid(len) as usize]
-            }
+            Some(i) => self.months[step_index(i, self.months.len(), delta)],
         });
     }
 
