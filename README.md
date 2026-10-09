@@ -70,7 +70,7 @@ Nothing is written: quitting forgets every target.
 
 Every open goal with the container it belongs to. `Tab` filters by container, `[` and `]` by goal
 date, `a` allocates against the selected goal, `e` edits it, `t` moves part of its value to another
-goal in the same container, and `c` ends it — returning its value to unallocated, or moving it to
+goal in the same container — with an optional note recorded on both goals' histories — and `c` ends it — returning its value to unallocated, or moving it to
 another goal in that container.
 
 Goals with no date lead the list, in an order you set with `Shift`+`↑`/`↓`; goals with one follow,

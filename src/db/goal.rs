@@ -744,6 +744,9 @@ pub fn move_value(db: &Db, from: GoalId, to: Option<GoalId>, date: NaiveDate) ->
 /// positive: a negative one is this same move written backwards, and zero
 /// writes two rows that say nothing.
 ///
+/// `note` is the owner's reason, appended to both rows so either goal's
+/// history says why the value moved.
+///
 /// The pair is one [`BatchKind::Adhoc`] batch, so `U` reverses a fumbled
 /// transfer whole. An ending is deliberately no batch, because an undo could
 /// not reopen the goal it closed; a transfer closes nothing, so nothing here
@@ -756,6 +759,7 @@ pub fn transfer_value(
     to: GoalId,
     amount: Cents,
     date: NaiveDate,
+    note: Option<&str>,
 ) -> Result<()> {
     ensure!(
         amount > Cents::ZERO,
@@ -767,8 +771,15 @@ pub fn transfer_value(
     // read by a person, like the ones typed by hand. Unmasked for the sharper
     // reason `move_value`'s note gives -- the string is written to the row,
     // and a pseudonym reaching a write is the one thing a demo must never do.
-    let out = format!("moved to {}", destination.name);
-    let into = format!("moved from {}", source.name);
+    // A blank note is no note, whoever passed it, or both rows would end in
+    // a colon that says nothing.
+    let suffix = note
+        .map(str::trim)
+        .filter(|note| !note.is_empty())
+        .map(|note| format!(": {note}"))
+        .unwrap_or_default();
+    let out = format!("moved to {}{suffix}", destination.name);
+    let into = format!("moved from {}{suffix}", source.name);
     db.transaction(|db| {
         let batch = insert_batch(db, BatchKind::Adhoc, date)?;
         insert_allocation(db, from, date, -amount, Some(&out), Some(batch))?;
@@ -1573,7 +1584,7 @@ mod tests {
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
         let before = container_excess(&db, savings).unwrap();
 
-        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16)).unwrap();
+        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), None).unwrap();
 
         assert_eq!(balance(&db, couch).unwrap(), Cents(35_000));
         assert_eq!(balance(&db, rug).unwrap(), Cents(25_000));
@@ -1593,7 +1604,7 @@ mod tests {
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
 
-        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16)).unwrap();
+        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), None).unwrap();
 
         let batch = last_batch(&db, BatchKind::Adhoc, savings)
             .unwrap()
@@ -1625,7 +1636,7 @@ mod tests {
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
 
-        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16)).unwrap();
+        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), None).unwrap();
 
         let note = |goal: GoalId| -> String {
             db.conn
@@ -1640,6 +1651,51 @@ mod tests {
         assert_eq!(note(rug), "moved from Couch");
     }
 
+    /// The owner's reason lands on both rows, after the goal at the other end.
+    #[test]
+    fn a_transfer_with_a_note_suffixes_it_to_both_rows() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
+
+        transfer_value(
+            &db,
+            couch,
+            rug,
+            Cents(25_000),
+            day(2026, 8, 16),
+            Some("couch came in under"),
+        )
+        .unwrap();
+
+        let note = |goal: GoalId| -> String {
+            db.conn
+                .query_row(
+                    "SELECT note FROM allocation WHERE goal_id = ?1",
+                    rusqlite::params![goal],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(note(couch), "moved to Rug: couch came in under");
+        assert_eq!(note(rug), "moved from Couch: couch came in under");
+    }
+
+    #[test]
+    fn a_transfer_with_a_blank_note_writes_the_rows_it_would_with_none() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
+
+        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), Some("  ")).unwrap();
+
+        let note = |goal| allocations(&db, goal).unwrap().pop().unwrap().note;
+        assert_eq!(note(couch).as_deref(), Some("moved to Rug"));
+        assert_eq!(note(rug).as_deref(), Some("moved from Couch"));
+    }
+
     /// No cash crossed between the accounts, so a transfer across containers
     /// would break both reconciliations at once. The form restricts the
     /// destination; this is the backstop.
@@ -1652,8 +1708,8 @@ mod tests {
         let emergency = insert(&db, &new_goal("Emergency Savings", brokerage, 1_066)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
 
-        let err =
-            transfer_value(&db, couch, emergency, Cents(25_000), day(2026, 8, 16)).unwrap_err();
+        let err = transfer_value(&db, couch, emergency, Cents(25_000), day(2026, 8, 16), None)
+            .unwrap_err();
         assert!(err.to_string().contains("different containers"), "{err}");
         assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
         assert_eq!(balance(&db, emergency).unwrap(), Cents::ZERO);
@@ -1670,7 +1726,8 @@ mod tests {
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
         close(&db, rug).unwrap();
 
-        let err = transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16)).unwrap_err();
+        let err =
+            transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), None).unwrap_err();
         assert!(err.to_string().contains("closed"), "{err}");
         assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
         assert_eq!(balance(&db, rug).unwrap(), Cents::ZERO);
@@ -1688,7 +1745,8 @@ mod tests {
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
         close(&db, couch).unwrap();
 
-        let err = transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16)).unwrap_err();
+        let err =
+            transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), None).unwrap_err();
         assert!(err.to_string().contains("closed"), "{err}");
         assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
         assert_eq!(balance(&db, rug).unwrap(), Cents::ZERO);
@@ -1701,7 +1759,7 @@ mod tests {
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
 
-        assert!(transfer_value(&db, couch, couch, Cents(25_000), day(2026, 8, 16)).is_err());
+        assert!(transfer_value(&db, couch, couch, Cents(25_000), day(2026, 8, 16), None).is_err());
         assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
     }
 
@@ -1717,7 +1775,7 @@ mod tests {
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
 
         for amount in [Cents::ZERO, Cents(-25_000)] {
-            let err = transfer_value(&db, couch, rug, amount, day(2026, 8, 16)).unwrap_err();
+            let err = transfer_value(&db, couch, rug, amount, day(2026, 8, 16), None).unwrap_err();
             assert!(err.to_string().contains("positive"), "{err}");
         }
         assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
