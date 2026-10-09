@@ -340,7 +340,14 @@ impl App {
             return Ok(());
         };
         let moved = form.commit()?;
-        goal::transfer_value(&self.db, form.goal_id, moved.to, moved.cents, moved.date)?;
+        goal::transfer_value(
+            &self.db,
+            form.goal_id,
+            moved.to,
+            moved.cents,
+            moved.date,
+            moved.note.as_deref(),
+        )?;
         self.status = format!("moved {} · U undoes it", crate::demo::figure(moved.cents));
         self.close_modal();
         self.reload()
@@ -1039,7 +1046,7 @@ mod tests {
     }
 
     /// The form draws what it is about to do: which goal the value is
-    /// leaving, the three fields, and the goal it would land in.
+    /// leaving, its fields, and the goal it would land in.
     #[test]
     fn t_draws_the_transfer_form_over_the_screen() {
         let mut app = app();
@@ -1051,7 +1058,45 @@ mod tests {
         assert!(drawn.contains("Vacation 2027"), "{drawn}");
         assert!(drawn.contains("Amount"), "{drawn}");
         assert!(drawn.contains("To"), "{drawn}");
+        assert!(drawn.contains("Note"), "{drawn}");
         assert!(drawn.contains("Couch"), "{drawn}");
+    }
+
+    /// A note typed on the form reaches both rows the transfer writes,
+    /// after the goal at the other end of each.
+    #[test]
+    fn t_writes_a_typed_note_onto_both_rows_of_the_transfer() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
+        let from = app.savings.rows()[1].goal_id;
+        let to = app.savings.rows()[0].goal_id;
+
+        press(&mut app, KeyCode::Char('t'));
+        type_str(&mut app, "250");
+        walk_until!(
+            matches!(
+                &app.modal,
+                Some(Modal::GoalTransfer(form)) if form.focus == goal_form::GoalTransferField::Note
+            ),
+            press(&mut app, KeyCode::Tab)
+        );
+        type_str(&mut app, "trip moved");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        let last_note = |goal| {
+            goal::allocations(&app.db, goal)
+                .unwrap()
+                .pop()
+                .unwrap()
+                .note
+        };
+        assert_eq!(last_note(from).as_deref(), Some("To Couch: trip moved"));
+        assert_eq!(
+            last_note(to).as_deref(),
+            Some("From Vacation 2027: trip moved")
+        );
     }
 
     /// The pair is one batch, so a fumbled amount is one keystroke back

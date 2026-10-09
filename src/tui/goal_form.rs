@@ -693,13 +693,15 @@ pub enum GoalTransferField {
     Date,
     Amount,
     Destination,
+    Note,
 }
 
 impl GoalTransferField {
-    pub const ORDER: [GoalTransferField; 3] = [
+    pub const ORDER: [GoalTransferField; 4] = [
         GoalTransferField::Date,
         GoalTransferField::Amount,
         GoalTransferField::Destination,
+        GoalTransferField::Note,
     ];
 
     pub fn label(self) -> &'static str {
@@ -707,6 +709,7 @@ impl GoalTransferField {
             GoalTransferField::Date => "Date",
             GoalTransferField::Amount => "Amount",
             GoalTransferField::Destination => "To",
+            GoalTransferField::Note => "Note",
         }
     }
 }
@@ -717,6 +720,7 @@ pub struct GoalTransfer {
     pub date: NaiveDate,
     pub cents: Cents,
     pub to: GoalId,
+    pub note: Option<String>,
 }
 
 /// Moving part of a goal's value to another goal. Backs `t` on Savings.
@@ -742,6 +746,7 @@ pub struct GoalTransferForm {
     /// container whose only open goal is the one the cursor is on.
     destinations: Vec<(GoalId, String)>,
     destination: usize,
+    note: Field,
 }
 
 impl GoalTransferForm {
@@ -767,6 +772,7 @@ impl GoalTransferForm {
             amount: Field::default(),
             destinations: siblings,
             destination: 0,
+            note: Field::default(),
         }
     }
 
@@ -787,6 +793,7 @@ impl GoalTransferForm {
                 .get(self.destination)
                 .map(|(_, name)| crate::demo::text(name).into_owned())
                 .unwrap_or_default(),
+            GoalTransferField::Note => crate::demo::text(self.note.value()).into_owned(),
         })
     }
 
@@ -795,10 +802,13 @@ impl GoalTransferForm {
             .destinations
             .get(self.destination)
             .context("a transfer form opens only over a container with another open goal")?;
+        let note = self.note.value().trim().to_string();
         Ok(GoalTransfer {
             date: self.date.parse()?,
             cents: parse_whole_amount(self.amount.value())?,
             to: *to,
+            // An empty note is no note, the reading the allocation form takes.
+            note: (!note.is_empty()).then_some(note),
         })
     }
 }
@@ -819,6 +829,7 @@ impl FormFields for GoalTransferForm {
             GoalTransferField::Date => Focused::Date(&mut self.date),
             GoalTransferField::Amount => Focused::Text(&mut self.amount),
             GoalTransferField::Destination => Focused::Selector,
+            GoalTransferField::Note => Focused::Text(&mut self.note),
         }
     }
 }
@@ -2073,6 +2084,26 @@ mod tests {
         let mut form = transfer();
         typed_transfer(&mut form, GoalTransferField::Amount, "250.50");
         assert!(form.commit().is_err(), "cents are a typo in a whole field");
+    }
+
+    /// The note is optional, and blank or whitespace reads as none, so a
+    /// transfer nobody explained writes the same row it always did.
+    #[test]
+    fn a_goal_transfer_commits_a_trimmed_note_and_reads_a_blank_one_as_none() {
+        let mut form = transfer();
+        typed_transfer(&mut form, GoalTransferField::Amount, "250");
+        assert_eq!(form.commit().unwrap().note, None);
+
+        typed_transfer(&mut form, GoalTransferField::Note, "  ");
+        assert_eq!(form.commit().unwrap().note, None);
+
+        typed_transfer(&mut form, GoalTransferField::Note, "rug first ");
+        assert_eq!(
+            form.commit().unwrap().note.as_deref(),
+            Some("rug first"),
+            "{}",
+            form.display(GoalTransferField::Note).plain_text()
+        );
     }
 
     /// A transfer needs somewhere for the value to land, so the selector
