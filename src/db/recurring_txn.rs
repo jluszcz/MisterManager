@@ -14,6 +14,7 @@ use super::{AccountId, Db, RecurringTxnId};
 use crate::money::Cents;
 use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
+use jluszcz_finance_utils::text_enum;
 use rusqlite::{OptionalExtension, Row, params};
 use std::collections::HashMap;
 

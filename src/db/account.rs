@@ -2,6 +2,7 @@ use super::{AccountId, Db};
 use crate::money::Cents;
 use crate::rate::{BasisPoints, Percent};
 use anyhow::{Context, Result, bail, ensure};
+use jluszcz_finance_utils::text_enum;
 use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::{OptionalExtension, Result as SqlResult, Row, ToSql, params};
 

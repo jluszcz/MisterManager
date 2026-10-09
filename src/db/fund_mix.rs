@@ -12,6 +12,7 @@ use super::date::{self, iso};
 use crate::rate::BasisPoints;
 use anyhow::Result;
 use chrono::NaiveDate;
+use jluszcz_finance_utils::text_enum;
 use rusqlite::{Row, params};
 
 /// What a slice of a fund's composition is invested in.

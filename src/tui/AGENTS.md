@@ -526,7 +526,8 @@ deferred to nothing.
 - **A date field is `form::DateField`, and that is where every rule about one lives.** The text and
   the reading of it are one value, because a date is the one field whose meaning depends on *when*
   it is being typed — the `M/D` shorthand needs a `today` to resolve against — and a bare `Field`
-  beside a free `parse_date` is two halves a form has to keep in step itself. Every date in the app
+  beside `finance-utils`' `tui::date::parse` is two halves a form has to keep in step itself;
+  `DateField::parse` is that call over the field's own text. Every date in the app
   is one: both ledger forms, the allocation, goal and close-out forms, the worksheet, both dates on
   a recurring transaction, and `t`'s confirmation. A new form asks for a `DateField` rather than
   assembling one.

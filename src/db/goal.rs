@@ -4,6 +4,7 @@ use crate::db::txn;
 use crate::money::Cents;
 use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
+use jluszcz_finance_utils::text_enum;
 use rusqlite::{OptionalExtension, Row, params};
 
 /// What produced a group of allocations.
