@@ -104,30 +104,8 @@ pub(super) fn transfers(plan: &Plan) -> Vec<transfer::Row> {
     ]
 }
 
-pub(super) fn goal(name: &str, container: i64) -> crate::db::goal::Goal {
-    crate::db::goal::Goal {
-        id: crate::db::GoalId(1),
-        name: name.to_string(),
-        container_account_id: crate::db::AccountId(container),
-        base_cents: Cents::from_dollars(1_000),
-        goal_date: None,
-        recurring_goal_id: None,
-        interest_eligible: true,
-        closed: false,
-        sort: 0,
-        favorite: false,
-        taxed: false,
-        floating: false,
-        note: None,
-    }
-}
-
 pub(super) fn wired(line: Line, landing: Landing) -> Wiring {
-    Wiring {
-        line,
-        landing,
-        suggestion: None,
-    }
+    Wiring { line, landing }
 }
 
 /// A container by name, with an invented id so the two in this fixture
@@ -148,10 +126,8 @@ pub(super) fn in_goal(name: &str, container_name: &str) -> Landing {
     }
 }
 
-/// The owner's own database, a fortnight after the destination keys were
-/// added: everything the import matched is pointed somewhere, and the one
-/// line whose key that import predates is unset with its goal sitting
-/// there unclaimed.
+/// The owner's own database: everything the import matched is pointed
+/// somewhere, and Future Housing is left as a withdrawal.
 pub(super) fn wiring() -> Vec<Wiring> {
     vec![
         wired(Line::Bills, in_goal("Bill Payments", "Rainy Day")),
@@ -163,11 +139,7 @@ pub(super) fn wiring() -> Vec<Wiring> {
             },
         ),
         wired(Line::Roth, in_goal("Roth IRA", "Rainy Day")),
-        Wiring {
-            line: Line::FutureHousing,
-            landing: Landing::Withdrawal,
-            suggestion: Some(goal("Home Down Payment", 2)),
-        },
+        wired(Line::FutureHousing, Landing::Withdrawal),
         wired(Line::MomAndDad, in_goal("Mom & Dad", "Brokerage")),
         wired(
             Line::EmergencyFund,
@@ -219,7 +191,6 @@ pub(super) fn screen_with(line: Line, landing: Landing) -> Planning {
         .find(|w| w.line == line)
         .expect("every line is wired");
     row.landing = landing;
-    row.suggestion = None;
     let mut planning = Planning::new();
     planning.set_view(v).unwrap();
     planning

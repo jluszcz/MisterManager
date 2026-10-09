@@ -366,9 +366,8 @@ pub(super) fn render(frame: &mut Frame, area: Rect, planning: &Planning) -> View
                 super::tinted(TextLine::from(r.label.clone()), tint(Column::Label)),
                 super::tinted(
                     TextLine::from(r.value.clone()).right_aligned(),
-                    // Tone first: red says this plan will not run and amber
-                    // says there is a gap worth filling, and neither may be
-                    // displaced by a tint that only says which account.
+                    // Tone first: red says this plan will not run, and may
+                    // not be displaced by a tint that only says which account.
                     super::style::tone_color(r.tone).or_else(|| tint(Column::Value)),
                 ),
                 super::tinted(
@@ -384,11 +383,10 @@ pub(super) fn render(frame: &mut Frame, area: Rect, planning: &Planning) -> View
         .collect();
     // Both fixed columns are sized for names rather than for figures: the
     // value column carries a goal's ("Home Down Payment"), and the extra
-    // column carries either its container or a suggested goal's name with a
-    // question mark after it -- two characters longer again. Truncation here
-    // is not a visible ellipsis but a silently missing prefix, so the room
-    // comes out of the label column, which has the `Min` and every spare
-    // column the terminal is wider than.
+    // column its container's, or the containers of an ambiguous plug.
+    // Truncation here is not a visible ellipsis but a silently missing
+    // prefix, so the room comes out of the label column, which has the `Min`
+    // and every spare column the terminal is wider than.
     let widths = [
         Constraint::Min(22),
         Constraint::Length(24),
@@ -463,8 +461,8 @@ mod tests {
 
     /// The tint reaches the screen, and reaches the container's name rather
     /// than the goal's. `render` puts the tone ahead of it on the value
-    /// column -- red and amber carry instructions where a tint only says
-    /// which account -- which no landing currently exercises, because every
+    /// column -- red carries an instruction where a tint only says which
+    /// account -- which no landing currently exercises, because every
     /// landing carrying an account is one that resolved.
     #[test]
     fn a_container_is_drawn_in_its_accounts_color() {
@@ -930,10 +928,9 @@ mod tests {
         assert!(drawn.contains("Bills"), "the labels must stay: {drawn}");
     }
 
-    /// The Destinations block draws two more owner-text cells this way: a
-    /// goal-backed line's value is the goal's own name (`wiring` hands it
-    /// over real, in `Landing::Goal`), and the suggestion beside an unset
-    /// line is too, `?` and all. Rendered end to end, the same way
+    /// The Destinations block draws owner text this way too: a goal-backed
+    /// line's value is the goal's own name (`wiring` hands it over real, in
+    /// `Landing::Goal`). Rendered end to end, the same way
     /// `a_demo_scrambles_the_waterfall_and_keeps_its_percentages` checks the
     /// waterfall above it, so this cannot pass over a cell nothing draws.
     #[cfg(feature = "demo")]
@@ -970,14 +967,6 @@ mod tests {
         assert!(
             drawn.contains(&crate::demo::text("Emergency Savings").to_string()),
             "no scrambled goal name found: {drawn}"
-        );
-        assert!(
-            !drawn.contains("Home Down Payment?"),
-            "a suggestion survived: {drawn}"
-        );
-        assert!(
-            drawn.contains(&format!("{}?", crate::demo::text("Home Down Payment"))),
-            "no scrambled suggestion found: {drawn}"
         );
     }
     /// The complaint this scroll rule was written for: on a terminal a dozen

@@ -248,18 +248,12 @@ impl Row {
 
     /// Where one line's money lands: the goal or account in the value
     /// column, and its container beside it.
-    ///
-    /// A suggestion displaces the container, which is empty for every state
-    /// that can carry one -- an unset key and a dangling one both name
-    /// nothing to put there. The trailing `?` is the whole of what marks it
-    /// as a question rather than a setting: nothing is stored until the
-    /// owner answers it.
     fn destination(w: &Wiring) -> Row {
         // Which of the two right-hand cells names an account, if either.
         // The account-backed lines name theirs in `value`; every other
         // landing that names one at all puts its container in `extra`.
         let mut tint = None;
-        let (value, mut extra) = match &w.landing {
+        let (value, extra) = match &w.landing {
             Landing::Goal { goal, container } => {
                 tint = Some(Tint::of(container, Column::Extra));
                 (
@@ -300,29 +294,12 @@ impl Row {
                 _ => ("no such goal".to_string(), String::new()),
             },
         };
-        if let Some(goal) = &w.suggestion {
-            extra = format!("{}?", crate::demo::text(&goal.name));
-            // The cell is a goal's name now, not a container's.
-            if matches!(
-                tint,
-                Some(Tint {
-                    column: Column::Extra,
-                    ..
-                })
-            ) {
-                tint = None;
-            }
-        }
         Row {
             label: format!("  {}", w.line.label()),
             value,
             extra,
-            // Red outranks amber: a line that stops the plan is not also a
-            // suggestion worth browsing.
             tone: if w.landing.breaks_the_plan() {
                 Tone::Negative
-            } else if w.suggestion.is_some() {
-                Tone::Warning
             } else {
                 Tone::Plain
             },
@@ -822,26 +799,15 @@ mod tests {
         assert_eq!(destination(&planning, Line::Retirement).tone, Tone::Plain);
     }
 
-    /// The question mark is the whole of what says this is a question:
-    /// nothing is stored until it is answered.
+    /// An unset line is a withdrawal the owner chose, not a gap to fill,
+    /// so it is drawn plain and names no goal beside it.
     #[test]
-    fn an_unset_line_with_a_match_shows_it_as_a_question() {
+    fn an_unset_goal_line_is_drawn_as_a_plain_withdrawal() {
         let planning = screen();
         let row = destination(&planning, Line::FutureHousing);
         assert_eq!(row.value, "withdrawal");
-        assert_eq!(row.extra, "Home Down Payment?");
-    }
-
-    /// Amber, not red. The plan below still resolves -- the money goes out
-    /// rather than nowhere -- so a suggestion must not wear the color of a
-    /// plan that cannot run.
-    #[test]
-    fn a_suggestion_is_toned_as_a_prompt_rather_than_a_failure() {
-        let planning = screen();
-        assert_eq!(
-            destination(&planning, Line::FutureHousing).tone,
-            Tone::Warning
-        );
+        assert_eq!(row.extra, "");
+        assert_eq!(row.tone, Tone::Plain);
     }
 
     #[test]
@@ -1057,34 +1023,6 @@ mod tests {
                 id: AccountId(1),
                 color: None
             })
-        );
-    }
-
-    /// A suggestion *displaces* the container, so what is in that cell is a
-    /// goal's name. Leaving the tint behind would paint a goal in an
-    /// account's color and claim a relationship that is not there.
-    #[test]
-    fn a_suggestion_leaves_no_container_tint_behind_it() {
-        let planning = screen();
-        let row = destination(&planning, Line::FutureHousing);
-        assert_eq!(row.extra, "Home Down Payment?");
-        assert_eq!(row.account, None);
-    }
-
-    /// The suggestion keeps its `?`, and the goal name ahead of it is
-    /// masked -- the same rule the configured destinations follow, so a
-    /// prompt does not publish the one goal name a resolved line would
-    /// have hidden.
-    #[cfg(feature = "demo")]
-    #[test]
-    fn a_demo_scrambles_the_goal_a_suggestion_names_but_keeps_its_question_mark() {
-        crate::demo::install_with_salt(7);
-        let planning = screen();
-        let row = destination(&planning, Line::FutureHousing);
-        assert_ne!(row.extra, "Home Down Payment?");
-        assert_eq!(
-            row.extra,
-            format!("{}?", crate::demo::text("Home Down Payment"))
         );
     }
 

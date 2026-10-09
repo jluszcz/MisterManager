@@ -19,9 +19,9 @@
 //! positive green and which side of zero wears each, and the funding ramp all
 //! reach a screen through a wrapper here, so the report cannot come to a
 //! second opinion about what half funded looks like. What is
-//! chosen in this file is what nothing outside a terminal draws: the warning
-//! amber, the favorite band and the foreground it has to bring with it, and,
-//! for all of them, which value wears which color.
+//! chosen in this file is what nothing outside a terminal draws: the favorite
+//! band and the foreground it has to bring with it, and, for all of them,
+//! which value wears which color.
 
 use crate::db::AccountId;
 use crate::db::account::AccountColor;
@@ -68,15 +68,6 @@ pub const POSITIVE: Color = rgb(crate::palette::POSITIVE);
 /// report's, which can re-ink it under a dark scheme where a terminal cannot.
 pub const TOTAL: Color = Color::Reset;
 
-/// Something the owner probably meant to configure and has not.
-///
-/// Amber rather than red: [`NEGATIVE`] means a figure below zero and, on the
-/// Planning screen, a plan that cannot be resolved at all. A Planning line
-/// with no destination is neither -- the money leaves the tracked system,
-/// which is exactly how the account-backed lines are meant to stand -- so a
-/// suggestion worth looking at must not wear the color of a failure.
-pub const WARNING: Color = Color::Rgb(230, 160, 30);
-
 /// The band behind a favorited row on the Savings screen.
 ///
 /// A pale slate, and the lightest thing the app draws. Every other color here
@@ -122,8 +113,6 @@ pub enum Tone {
     Plain,
     /// A figure below zero, or a state that stops the plan resolving.
     Negative,
-    /// Configuration missing where something is on offer to fill it.
-    Warning,
 }
 
 /// The color a tone draws in, or `None` to leave the surrounding style alone.
@@ -131,7 +120,6 @@ pub fn tone_color(tone: Tone) -> Option<Color> {
     match tone {
         Tone::Plain => None,
         Tone::Negative => Some(NEGATIVE),
-        Tone::Warning => Some(WARNING),
     }
 }
 
@@ -281,7 +269,7 @@ mod tests {
         for color in AccountColor::ALL {
             assert!(luma(palette(color)) < band, "{color:?}");
         }
-        for on_band in [NEGATIVE, POSITIVE, WARNING, FAVORITE_FG] {
+        for on_band in [NEGATIVE, POSITIVE, FAVORITE_FG] {
             assert!(luma(on_band) < band, "{on_band:?}");
         }
         for percent in [Percent::ZERO, Percent(50), Percent::ONE_HUNDRED] {
@@ -323,7 +311,7 @@ mod tests {
         let on_band = AccountColor::ALL
             .iter()
             .map(|c| palette(*c))
-            .chain([NEGATIVE, POSITIVE, WARNING, FAVORITE_FG])
+            .chain([NEGATIVE, POSITIVE, FAVORITE_FG])
             .chain([Percent::ZERO, Percent::ONE_HUNDRED].map(percent_color));
         for color in on_band {
             assert!(
@@ -485,16 +473,6 @@ mod tests {
     fn a_reconciled_delta_takes_no_color_in_either_sense() {
         assert_eq!(delta_color_of(Sense::Debt, Cents::ZERO), None);
         assert_eq!(delta_color_of(Sense::Natural, Cents::ZERO), None);
-    }
-
-    /// The two carry opposite instructions -- "this plan will not run" and
-    /// "this looks unfinished, have a look" -- so one drawn as the other
-    /// turns a prompt into an alarm or an alarm into a prompt.
-    #[test]
-    fn a_warning_is_not_drawn_in_the_negative_red() {
-        assert_ne!(WARNING, NEGATIVE);
-        assert_eq!(tone_color(Tone::Negative), Some(NEGATIVE));
-        assert_eq!(tone_color(Tone::Warning), Some(WARNING));
     }
 
     /// `None` rather than a color, so a plain cell composes with whatever

@@ -771,7 +771,7 @@ const DESTINATION: [Entry; 3] = [
     Entry {
         key: "Enter",
         label: Label::Hidden,
-        detail: "Point this line at the goal under the cursor, storing its id rather than its name. The list opens on the suggested goal when there is one, and otherwise on the goal the line already names.",
+        detail: "Point this line at the goal under the cursor, storing its id rather than its name. The list opens on the goal the line already names, or on the withdrawal when it names none.",
     },
     Entry {
         key: "Esc",
