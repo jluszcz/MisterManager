@@ -203,9 +203,10 @@ order it was entered in rather than an arrangement worth making, which is why `d
 by asset class against what the age rule asks for, over whatever the filters have left — whose rows
 and apportioning are `crate::allocation`'s rather than this module's, the report's Funds tab
 spelling the same ones. The panel also names where this payday's `Investment` line is best
-spent — `invest $N in TICKER, $M in TICKER` in its title and a `Δ After` column beside the `Δ` —
-and draws both only while no filter narrows the rows: the purchases are judged against the whole
-portfolio, so beside one account's `Δ` the figure would be on another denominator.
+spent — `$TOTAL · TICKER: $N · TICKER: $M` in its title, the total left off when there is one
+purchase, and a `Δ After` column beside the `Δ` — and draws both only while no filter narrows the
+rows: the purchases are judged against the whole portfolio, so beside one account's `Δ` the figure
+would be on another denominator.
 `Funds::recommendation` is where that gate is. `recurring_goal` is the sixth screen, before Funds
 so that the screens a payday is worked from sit together. `retirement` is the eighth, beside Funds
 because both read the investment accounts: retirement savings against the age rule, read from
