@@ -778,8 +778,8 @@ pub fn transfer_value(
         .filter(|note| !note.is_empty())
         .map(|note| format!(": {note}"))
         .unwrap_or_default();
-    let out = format!("moved to {}{suffix}", destination.name);
-    let into = format!("moved from {}{suffix}", source.name);
+    let out = format!("To {}{suffix}", destination.name);
+    let into = format!("From {}{suffix}", source.name);
     db.transaction(|db| {
         let batch = insert_batch(db, BatchKind::Adhoc, date)?;
         insert_allocation(db, from, date, -amount, Some(&out), Some(batch))?;
@@ -1647,8 +1647,8 @@ mod tests {
                 )
                 .unwrap()
         };
-        assert_eq!(note(couch), "moved to Rug");
-        assert_eq!(note(rug), "moved from Couch");
+        assert_eq!(note(couch), "To Rug");
+        assert_eq!(note(rug), "From Couch");
     }
 
     /// The owner's reason lands on both rows, after the goal at the other end.
@@ -1678,8 +1678,8 @@ mod tests {
                 )
                 .unwrap()
         };
-        assert_eq!(note(couch), "moved to Rug: couch came in under");
-        assert_eq!(note(rug), "moved from Couch: couch came in under");
+        assert_eq!(note(couch), "To Rug: couch came in under");
+        assert_eq!(note(rug), "From Couch: couch came in under");
     }
 
     #[test]
@@ -1692,8 +1692,8 @@ mod tests {
         transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), Some("  ")).unwrap();
 
         let note = |goal| allocations(&db, goal).unwrap().pop().unwrap().note;
-        assert_eq!(note(couch).as_deref(), Some("moved to Rug"));
-        assert_eq!(note(rug).as_deref(), Some("moved from Couch"));
+        assert_eq!(note(couch).as_deref(), Some("To Rug"));
+        assert_eq!(note(rug).as_deref(), Some("From Couch"));
     }
 
     /// No cash crossed between the accounts, so a transfer across containers

@@ -1092,13 +1092,10 @@ mod tests {
                 .unwrap()
                 .note
         };
-        assert_eq!(
-            last_note(from).as_deref(),
-            Some("moved to Couch: trip moved")
-        );
+        assert_eq!(last_note(from).as_deref(), Some("To Couch: trip moved"));
         assert_eq!(
             last_note(to).as_deref(),
-            Some("moved from Vacation 2027: trip moved")
+            Some("From Vacation 2027: trip moved")
         );
     }
 
