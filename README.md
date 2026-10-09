@@ -173,7 +173,7 @@ nothing.
 
 With an investment account marked as the one the Planning `Investment` line buys into (its
 `Default` on screen `0`), the summary's title also says how to spend this payday's line —
-`invest $2,460 in USM, $1,431 in ISM` — and a `Δ After` column shows each class's gap once those
+`$3,891 · USM: $2,460 · ISM: $1,431` — and a `Δ After` column shows each class's gap once those
 purchases are made. A class the portfolio is short of gets at least its target share, so it does
 not fall further behind as the portfolio grows — the one furthest short first, and only where the
 payday can deliver that share whole through a fund in the account; what is left goes where the gaps

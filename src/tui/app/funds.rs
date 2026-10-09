@@ -972,12 +972,11 @@ mod tests {
 
         test_support::press(&mut app, KeyCode::Char('7'));
         let screen = test_support::drawn(&mut app);
+        let dollars = plan.lines.investment.to_whole_dollars();
+        assert!(screen.contains(&format!("· USB: ${dollars}")), "{screen}");
         assert!(
-            screen.contains(&format!(
-                "invest ${} in USB",
-                plan.lines.investment.to_whole_dollars()
-            )),
-            "{screen}"
+            !screen.contains(&format!("${dollars} · USB")),
+            "a lone purchase is drawn without the total beside it: {screen}"
         );
         assert!(screen.contains("After"), "{screen}");
     }
@@ -995,7 +994,7 @@ mod tests {
         test_support::press(&mut app, KeyCode::Char('7'));
         let screen = test_support::drawn(&mut app);
         assert!(!screen.contains("After"), "{screen}");
-        assert!(!screen.contains("invest $"), "{screen}");
+        assert!(!screen.contains("USB: $"), "{screen}");
 
         setting::set(
             &app.db,

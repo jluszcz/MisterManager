@@ -870,26 +870,29 @@ fn render_summary(frame: &mut Frame, area: Rect, funds: &Funds) {
         None => "Allocation".to_string(),
         Some(coverage) => format!("Allocation · {coverage}"),
     };
-    if let Some((purchases, _)) = &recommendation {
-        // A single purchase *is* the Planning `Investment` line with its
-        // cents dropped, so it is masked off the line's own value: keyed on
-        // the truncation, `mm --demo` would draw it with digits unrelated to
-        // the ones the Planning row shows for the same amount.
-        let whole = match (purchases.as_slice(), funds.investment) {
-            ([_], Some((_, line))) => Some(line),
-            _ => None,
+    // A recommendation is only ever computed off the `Investment` line, so
+    // the line is there whenever one is.
+    if let (Some((purchases, _)), Some((_, line))) = (&recommendation, funds.investment) {
+        // The total, and a single purchase, *are* the Planning `Investment`
+        // line with its cents dropped, so they are masked off the line's own
+        // value: keyed on the truncation, `mm --demo` would draw them with
+        // digits unrelated to the ones the Planning row shows for the same
+        // amount.
+        let whole = match purchases.as_slice() {
+            // A lone purchase is the total, so the total is not drawn beside it.
+            [_] => Some(line),
+            _ => {
+                title.push_str(&format!(" · ${}", crate::demo::whole_figure(line)));
+                None
+            }
         };
-        let spelled: Vec<String> = purchases
-            .iter()
-            .map(|(row, amount)| {
-                format!(
-                    "${} in {}",
-                    crate::demo::whole_figure(whole.unwrap_or(*amount)),
-                    crate::demo::text(&row.ticker),
-                )
-            })
-            .collect();
-        title.push_str(&format!(" · invest {}", spelled.join(", ")));
+        for (row, amount) in purchases {
+            title.push_str(&format!(
+                " · {}: ${}",
+                crate::demo::text(&row.ticker),
+                crate::demo::whole_figure(whole.unwrap_or(*amount)),
+            ));
+        }
     }
     // The block is drawn first and the two halves into what it leaves, rather
     // than handed to the table: the bar is not a row, and a table owning the
@@ -1457,6 +1460,42 @@ mod tests {
                 "the summary crowded {ticker} off the list: {lines:#?}"
             );
         }
+    }
+
+    /// A split payday heads its purchases with what they come to, which is
+    /// the `Investment` line with its cents dropped. The amounts are
+    /// `allocation`'s own three-way split over the same portfolio.
+    #[test]
+    fn a_split_purchase_is_titled_with_its_total_ahead_of_each_fund() {
+        let all = accounts();
+        let whole = |class| {
+            vec![Slice {
+                class,
+                weight: BasisPoints::ONE,
+            }]
+        };
+        let mut funds = Funds::new();
+        funds.set_accounts(all.clone());
+        funds.set_targets(crate::calc::fund::targets(Some(48), BasisPoints(4_000)));
+        funds.set_mixes(HashMap::from([
+            ("USM".to_string(), whole(AssetClass::UsStock)),
+            ("ISM".to_string(), whole(AssetClass::IntlStock)),
+            ("USB".to_string(), whole(AssetClass::UsBond)),
+        ]));
+        funds.set_rows(vec![
+            fixture_row(1, AccountId(1), &all, "USM", 6_000),
+            fixture_row(2, AccountId(1), &all, "ISM", 3_000),
+            fixture_row(3, AccountId(1), &all, "USB", 1_000),
+        ]);
+        funds.set_investment(Some((AccountId(1), Cents(500_050))));
+
+        let lines = drawn(&funds, 24);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("· $5,000 · ISM: $1,920 · USB: $1,700 · USM: $1,380")),
+            "{lines:#?}"
+        );
     }
 
     /// Every class represented, so the bar has four segments to draw rather
