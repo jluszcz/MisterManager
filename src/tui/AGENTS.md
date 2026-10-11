@@ -539,7 +539,10 @@ deferred to nothing.
   "nudge the date", not "nudge the date on the screens that happen to have wired it". On a form the
   arrows arrive through `FormFields::choice`, which reads **the field under the caret** and is the
   one place all three readings are written: a text field moves the caret a character, a date steps
-  a day, a selector cycles. A form says which of the three it has focused, once, in
+  a day, a selector cycles. A selector typed into — `Focused::Filter`, `t`'s `To` on Savings — is
+  still a selector to the arrows: the typing narrows the list, `FormFields::refilter` re-narrows
+  it after every changed keystroke, and the arrows cycle what is left. A form says which kind it
+  has focused, once, in
   `FormFields::focused` — an arrow pressed on the date must never move the account beside it, and
   a form that answered "which kind of field is this?" in two places would answer it differently in
   two places. **The draw asks the same method**: `FormFields::caret` is a provided default over

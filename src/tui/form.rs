@@ -337,14 +337,20 @@ impl Caret {
 
 /// The field a form's caret is in, as the key handler has to see it.
 ///
-/// The three arms are the three readings of `←`/`→`, which is why the
+/// The arms are the three readings of `←`/`→`, which is why the
 /// distinction is drawn here rather than left to each form: a text field
-/// moves the caret, a date steps a day, and a selector cycles.
+/// moves the caret, a date steps a day, and a selector -- typed into or not
+/// -- cycles.
 pub(super) enum Focused<'a> {
     Text(&'a mut Field),
     Date(&'a mut DateField),
     /// A choice, which no keystroke types into.
     Selector,
+    /// A choice narrowed by typing: the text is a needle over the list rather
+    /// than the value, so `←`/`→` cycle the matches the way a selector's
+    /// cycle its list, and the caret sits past the choice the way a
+    /// selector's does.
+    Filter(&'a mut Field),
 }
 
 /// The key a typed character arrives on, and the key that rubs one out.
@@ -588,11 +594,11 @@ pub(super) trait FormFields {
     }
 
     /// The field under the caret. One method, because what a keystroke means
-    /// depends on which of the three kinds has the focus and a form that
+    /// depends on which kind of field has the focus and a form that
     /// answered that question twice would answer it differently twice.
     fn focused(&mut self) -> Focused<'_>;
 
-    /// Where the caret goes, for the draw: whichever of the three kinds
+    /// Where the caret goes, for the draw: whichever kind
     /// [`FormFields::focused`] names. Derived rather than answered a second
     /// time, because a form that stated the two separately could gain a field,
     /// list it in `focused`, forget it here, and still compile -- with the
@@ -602,23 +608,43 @@ pub(super) trait FormFields {
         match self.focused() {
             Focused::Text(field) => Caret::in_field(field),
             Focused::Date(date) => Caret::in_field(date.text()),
-            Focused::Selector => Caret::End,
+            Focused::Selector | Focused::Filter(_) => Caret::End,
         }
     }
 
     /// Cycle the focused selector by `step`. Only reached when [`Focused::Selector`]
-    /// has the caret, so a form with no selector in it leaves this alone --
+    /// or [`Focused::Filter`] has the caret, so a form with no selector in it leaves this alone --
     /// and a date's step is not here at all, since one rule for every date
     /// field in the app is the point.
     fn cycle(&mut self, _step: Step) {}
 
+    /// Re-narrow the list a [`Focused::Filter`] chooses from. Called after
+    /// every edit that changed its needle, so a form never has to remember to
+    /// call it itself -- [`Search::refilter`]'s contract, for a field.
+    ///
+    /// [`Search::refilter`]: super::search::Search::refilter
+    fn refilter(&mut self) {}
+
     /// Answer an editing key, and say what it did. A selector types nothing.
     fn edit(&mut self, key: KeyEvent) -> Edit {
-        match self.focused() {
-            Focused::Text(field) => field.edit(key),
-            Focused::Date(date) => date.edit(key),
-            Focused::Selector => Edit::Ignored,
+        self.edit_focused(key)
+    }
+
+    /// The dispatch [`FormFields::edit`] defaults to, named so a form that
+    /// overrides `edit` to do more after a keystroke reaches it rather than
+    /// restating it -- a restated copy would miss the [`FormFields::refilter`]
+    /// a filter's needle owes.
+    fn edit_focused(&mut self, key: KeyEvent) -> Edit {
+        let (edit, filter) = match self.focused() {
+            Focused::Text(field) => (field.edit(key), false),
+            Focused::Date(date) => (date.edit(key), false),
+            Focused::Selector => (Edit::Ignored, false),
+            Focused::Filter(needle) => (needle.edit(key), true),
+        };
+        if filter && edit == Edit::Changed {
+            self.refilter();
         }
+        edit
     }
 
     /// `←`/`→`, and `Shift` with them: the field under the caret decides.
@@ -632,7 +658,7 @@ pub(super) trait FormFields {
                 date.step(step);
                 return;
             }
-            Focused::Selector => {}
+            Focused::Selector | Focused::Filter(_) => {}
         }
         self.cycle(step);
     }
@@ -650,7 +676,7 @@ pub(super) trait FormFields {
                 date.step(step);
                 true
             }
-            Focused::Text(_) | Focused::Selector => false,
+            Focused::Text(_) | Focused::Selector | Focused::Filter(_) => false,
         }
     }
 
