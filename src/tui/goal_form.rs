@@ -9,6 +9,7 @@ use super::form::{
     DateField, Field, Focused, FormFields, Precision, Step, is_share, next_in, parse_share,
     parse_whole_amount, step_index, tax_note,
 };
+use super::search::Matcher;
 use super::widget::{field_stack, render_fields};
 use super::{Account, Label};
 use crate::db::goal::{Allocation, AllocationEdit, GoalEdit};
@@ -746,6 +747,10 @@ pub struct GoalTransferForm {
     /// container whose only open goal is the one the cursor is on.
     destinations: Vec<(GoalId, String)>,
     destination: usize,
+    /// Typed on `To` to narrow `destinations`: a container can hold dozens of
+    /// goals, and cycling them one `→` at a time is the slow way to the one
+    /// at the far end. What commits is still the id under `destination`.
+    needle: Field,
     note: Field,
 }
 
@@ -772,13 +777,46 @@ impl GoalTransferForm {
             amount: Field::default(),
             destinations: siblings,
             destination: 0,
+            needle: Field::default(),
             note: Field::default(),
+        }
+    }
+
+    /// The indices of the destinations the needle leaves standing, in list
+    /// order -- every one of them while nothing is typed.
+    fn matches(&self) -> Vec<usize> {
+        let matcher = Matcher::new(self.needle.value());
+        (0..self.destinations.len())
+            .filter(|&i| matcher.matches(&self.destinations[i].1, &[]))
+            .collect()
+    }
+
+    /// The destination under the cursor, unless the needle has ruled out
+    /// every one of them.
+    fn selected(&self) -> Option<&(GoalId, String)> {
+        self.destinations
+            .get(self.destination)
+            .filter(|(_, name)| Matcher::new(self.needle.value()).matches(name, &[]))
+    }
+
+    /// What `To` draws past the choice: the needle and where the choice sits
+    /// among its matches. Nothing until something is typed, because an
+    /// unnarrowed list is the selector the form always was.
+    pub fn destination_note(&self) -> String {
+        let needle = self.needle.value();
+        if needle.is_empty() {
+            return String::new();
+        }
+        let matches = self.matches();
+        match matches.iter().position(|&i| i == self.destination) {
+            Some(at) => format!("/{needle} · {} of {}", at + 1, matches.len()),
+            None => format!("/{needle} · no match"),
         }
     }
 
     pub fn title(&self) -> String {
         format!(
-            "Move value out of {} ({}) — ←/→ destination · Enter save · Esc cancel",
+            "Move value out of {} ({}) — type or ←/→ destination · Enter save · Esc cancel",
             crate::demo::text(&self.goal_name),
             crate::demo::figure(self.balance)
         )
@@ -789,8 +827,7 @@ impl GoalTransferForm {
             GoalTransferField::Date => self.date.display(self.focus == GoalTransferField::Date),
             GoalTransferField::Amount => crate::demo::typed(self.amount.value()),
             GoalTransferField::Destination => self
-                .destinations
-                .get(self.destination)
+                .selected()
                 .map(|(_, name)| crate::demo::text(name).into_owned())
                 .unwrap_or_default(),
             GoalTransferField::Note => crate::demo::text(self.note.value()).into_owned(),
@@ -799,9 +836,8 @@ impl GoalTransferForm {
 
     pub fn commit(&self) -> Result<GoalTransfer> {
         let (to, _) = self
-            .destinations
-            .get(self.destination)
-            .context("a transfer form opens only over a container with another open goal")?;
+            .selected()
+            .with_context(|| format!("no goal matches {:?}", self.needle.value()))?;
         let note = self.note.value().trim().to_string();
         Ok(GoalTransfer {
             date: self.date.parse()?,
@@ -819,16 +855,33 @@ impl FormFields for GoalTransferForm {
     }
 
     // `←`/`→` step the date on one field and cycle the destination on
-    // another, and neither may reach across.
+    // another, and neither may reach across. The cycle is over what the
+    // needle left, so a narrowed list wraps within its matches.
     fn cycle(&mut self, step: Step) {
-        self.destination = step_index(self.destination, self.destinations.len(), step.direction());
+        let matches = self.matches();
+        if let Some(at) = matches.iter().position(|&i| i == self.destination) {
+            self.destination = matches[step_index(at, matches.len(), step.direction())];
+        }
+    }
+
+    /// The choice stays put while the needle still matches it, so typing more
+    /// of the name already on screen never moves it; otherwise it lands on
+    /// the first match. A needle matching nothing leaves it where it was, and
+    /// the next `Backspace` that finds it again draws it again.
+    fn refilter(&mut self) {
+        let matches = self.matches();
+        if !matches.contains(&self.destination)
+            && let Some(&first) = matches.first()
+        {
+            self.destination = first;
+        }
     }
 
     fn focused(&mut self) -> Focused<'_> {
         match self.focus {
             GoalTransferField::Date => Focused::Date(&mut self.date),
             GoalTransferField::Amount => Focused::Text(&mut self.amount),
-            GoalTransferField::Destination => Focused::Selector,
+            GoalTransferField::Destination => Focused::Filter(&mut self.needle),
             GoalTransferField::Note => Focused::Text(&mut self.note),
         }
     }
@@ -878,6 +931,7 @@ pub fn render_goal(frame: &mut Frame, form: &mut GoalForm) {
 
 /// Draws the move-value-to-another-goal modal: `t`'s form.
 pub fn render_goal_transfer(frame: &mut Frame, form: &mut GoalTransferForm) {
+    let note = form.destination_note();
     let caret = form.caret();
     let lines = field_stack(
         &GoalTransferField::ORDER,
@@ -885,7 +939,7 @@ pub fn render_goal_transfer(frame: &mut Frame, form: &mut GoalTransferForm) {
         caret,
         GoalTransferField::label,
         |f| form.display(f),
-        &[],
+        &[(GoalTransferField::Destination, note.as_str())],
     );
     render_fields(frame, form.title(), lines);
 }
@@ -2137,6 +2191,88 @@ mod tests {
             "Rug",
             "the cycle wraps through goals alone"
         );
+    }
+
+    fn lamps() -> GoalTransferForm {
+        let mut form = GoalTransferForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(60_000),
+            vec![
+                (GoalId(8), "Rug".to_string()),
+                (GoalId(9), "Lamp".to_string()),
+                (GoalId(10), "Floor Lamp".to_string()),
+            ],
+            day(2026, 8, 16),
+        );
+        typed_transfer(&mut form, GoalTransferField::Amount, "250");
+        form
+    }
+
+    fn drawn_destination(form: &GoalTransferForm) -> String {
+        form.display(GoalTransferField::Destination).plain_text()
+    }
+
+    /// A container can hold dozens of goals, so the one at the far end of the
+    /// list is a few letters away rather than dozens of arrows.
+    #[test]
+    fn typing_on_a_goal_transfers_destination_lands_on_the_first_goal_it_matches() {
+        let mut form = lamps();
+        typed_transfer(&mut form, GoalTransferField::Destination, "LAMP");
+        assert_eq!(drawn_destination(&form), "Lamp");
+        assert_eq!(form.destination_note(), "/LAMP · 1 of 2");
+        assert_eq!(form.commit().unwrap().to, GoalId(9));
+    }
+
+    #[test]
+    fn the_arrows_on_a_narrowed_goal_transfer_cycle_only_the_matches() {
+        let mut form = lamps();
+        typed_transfer(&mut form, GoalTransferField::Destination, "lamp");
+        form.choice(Step::NEXT);
+        assert_eq!(drawn_destination(&form), "Floor Lamp");
+        assert_eq!(form.destination_note(), "/lamp · 2 of 2");
+        form.choice(Step::NEXT);
+        assert_eq!(drawn_destination(&form), "Lamp", "the cycle wraps past Rug");
+        form.choice(Step::PREVIOUS);
+        assert_eq!(form.commit().unwrap().to, GoalId(10));
+    }
+
+    /// Typing more of the name already on screen confirms the choice rather
+    /// than jumping back to the first goal that happens to match.
+    #[test]
+    fn a_needle_that_still_matches_the_chosen_destination_leaves_it_chosen() {
+        let mut form = lamps();
+        walk_until!(
+            form.focus == GoalTransferField::Destination,
+            form.next_field()
+        );
+        form.choice(Step::PREVIOUS);
+        assert_eq!(drawn_destination(&form), "Floor Lamp");
+        typed_transfer(&mut form, GoalTransferField::Destination, "lamp");
+        assert_eq!(drawn_destination(&form), "Floor Lamp");
+    }
+
+    /// A needle matching nothing commits nothing: the goal last on screen is
+    /// not one the owner can see any more.
+    #[test]
+    fn a_goal_transfer_whose_needle_matches_nothing_refuses_to_commit() {
+        let mut form = lamps();
+        typed_transfer(&mut form, GoalTransferField::Destination, "lampx");
+        assert_eq!(drawn_destination(&form), "");
+        assert_eq!(form.destination_note(), "/lampx · no match");
+        let err = form.commit().unwrap_err().to_string();
+        assert!(err.contains("lampx"), "{err}");
+
+        form.edit(backspace_key());
+        assert_eq!(drawn_destination(&form), "Lamp");
+        assert_eq!(form.commit().unwrap().to, GoalId(9));
+    }
+
+    /// An unnarrowed list is the selector the form always was, so it draws
+    /// nothing past the choice.
+    #[test]
+    fn an_untyped_goal_transfer_destination_draws_no_note() {
+        assert_eq!(lamps().destination_note(), "");
     }
 
     /// The balance is not what moves here -- the typed amount is -- so the

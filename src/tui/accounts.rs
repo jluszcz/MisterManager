@@ -806,11 +806,7 @@ impl FormFields for AccountForm {
     /// The default's dispatch, plus: a change to either tax-free field makes
     /// it the one stored and rewrites the other from it.
     fn edit(&mut self, key: KeyEvent) -> Edit {
-        let edit = match self.focused() {
-            Focused::Text(field) => field.edit(key),
-            Focused::Date(date) => date.edit(key),
-            Focused::Selector => Edit::Ignored,
-        };
+        let edit = self.edit_focused(key);
         if edit == Edit::Changed {
             let typed = match self.focus {
                 AccountField::TaxFreePercent => Some(TaxFreeIn::Percent),

@@ -1062,6 +1062,40 @@ mod tests {
         assert!(drawn.contains("Couch"), "{drawn}");
     }
 
+    /// Typed characters on `To` reach the needle through the shared form
+    /// handler, rather than being dropped the way a selector drops them.
+    #[test]
+    fn typing_on_ts_destination_narrows_it_and_enter_writes_to_the_match() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
+        let to = app.savings.rows()[0].goal_id;
+
+        press(&mut app, KeyCode::Char('t'));
+        type_str(&mut app, "250");
+        walk_until!(
+            matches!(
+                &app.modal,
+                Some(Modal::GoalTransfer(form))
+                    if form.focus == goal_form::GoalTransferField::Destination
+            ),
+            press(&mut app, KeyCode::Tab)
+        );
+        type_str(&mut app, "zz");
+        press(&mut app, KeyCode::Enter);
+        assert!(app.modal.is_some(), "a needle matching nothing commits");
+        assert!(app.status.contains("no goal matches"), "{}", app.status);
+
+        press(&mut app, KeyCode::Backspace);
+        press(&mut app, KeyCode::Backspace);
+        type_str(&mut app, "cou");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        let last = goal::allocations(&app.db, to).unwrap().pop().unwrap();
+        assert_eq!(last.cents, Cents(25_000));
+    }
+
     /// A note typed on the form reaches both rows the transfer writes,
     /// after the goal at the other end of each.
     #[test]
