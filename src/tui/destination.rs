@@ -5,10 +5,11 @@
 //! exists, and typing its name would put name matching back where the whole
 //! design keeps it out of -- what gets stored is the id under the cursor.
 
-use super::cursor::{Cursor, Viewport, impl_scroll};
-use super::search::{Search, SearchBox};
+use super::cursor::{Cursor, Viewport};
+use super::search::{self, Search, SearchBox};
 use crate::db::GoalId;
 use crate::plan_line::Line;
+use jluszcz_finance_utils::impl_scroll;
 use ratatui::text::{Line as TextLine, Span};
 
 /// A goal as the list offers it: what it is called and where it sits.
@@ -142,7 +143,7 @@ impl Chooser {
         ))];
         if self.is_searching() || !self.search().is_empty() {
             spans.push(Span::raw(" · /"));
-            spans.extend(self.search_spans());
+            spans.extend(search::search_spans(self));
         }
         TextLine::from(spans)
     }

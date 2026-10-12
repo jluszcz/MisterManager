@@ -5,7 +5,7 @@
 //! no `Db` on the type. `App` runs the queries and hands the results in.
 
 use super::Label;
-use super::cursor::{Cursor, Viewport, impl_scroll};
+use super::cursor::{Cursor, Viewport};
 use super::form::{
     Field, Focused, FormFields, Step, next_in, parse_whole_amount, step_index, tax_note,
 };
@@ -16,6 +16,7 @@ use crate::db::recurring_goal::{Cadence, Entry, NewEntry};
 use crate::money::Cents;
 use crate::rate::BasisPoints;
 use anyhow::{Result, ensure};
+use jluszcz_finance_utils::impl_scroll;
 use std::collections::HashMap;
 
 /// One recurring goal entry as the screen shows it.

@@ -244,15 +244,18 @@ about what red means. The helpers that carry one of those decisions to a cell �
 which `style` re-exports: every mention is then visibly routed through the module that owns the
 choice, and the plumbing stays visibly plumbing. `help` is where the screen footers are joined from — one `Topic` per context,
 so a footer cannot drift from the panel that explains it; modal border titles are still written
-where they are drawn. `cursor` answers the scroll keys for every list at once, `text` is the line
-of text under the caret and the keys that edit one — every box in the app is one — `form` is the
+where they are drawn. `cursor` (finance-utils' `tui::cursor`, shared with Funder) answers the
+scroll keys for every list at once, `text` is the line of text under the caret and the keys that
+edit one — every box in the app is one — `form` is the
 field framework every form in the app is built out of, and the one-field `ValueForm` that belongs
 to no single screen; `widget` is how any of them is *drawn* — the centered box, its labelled
 lines, and the caret over the character the focused field is on — which is why the help panel and
 the destination chooser reach for it too, neither of them being a form at all.
 `search` is the `/` box the ledgers, Savings, Funds, Recurring Goals, the worksheet and the
 destination chooser share: the box, its keys, and `Matcher`, which is what a needle *means* on all
-six. What every screen shares lives in `tui/mod.rs`, not in whichever screen needed it first.
+six. All three are finance-utils' `tui::search`, shared with Funder; `search.rs` adds only
+`search_spans`, the needle drawn with this app's caret. What every screen shares lives in
+`tui/mod.rs`, not in whichever screen needed it first.
 
 `app` is a directory rather than a file, and it is split the same way this section reads: one
 module per screen — `app/ledger.rs`, `app/savings.rs`, `app/planning.rs`, `app/funds.rs`,

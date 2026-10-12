@@ -1,4 +1,4 @@
-use super::cursor::{Cursor, Viewport, impl_scroll};
+use super::cursor::{Cursor, Viewport};
 use super::search::{Search, SearchBox};
 use crate::calc::Month;
 use crate::db::AccountId;
@@ -7,6 +7,7 @@ use crate::db::txn::{Filter, Txn};
 use crate::description;
 use crate::money::Cents;
 use chrono::{Datelike, NaiveDate};
+use jluszcz_finance_utils::impl_scroll;
 use std::collections::HashMap;
 
 /// How many days at each end of a month widen the window to two months.

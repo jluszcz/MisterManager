@@ -26,7 +26,7 @@
 //! against every holding and a narrowed summary's Δ is not the figure they
 //! move.
 
-use super::cursor::{Cursor, Viewport, impl_scroll};
+use super::cursor::{Cursor, Viewport};
 use super::form::{AccountChoice, Field, Focused, FormFields, Step, next_in, parse_amount};
 use super::search::{Search, SearchBox};
 use super::widget::{field_stack, render_fields};
@@ -43,6 +43,7 @@ use crate::money::Cents;
 use crate::rate::BasisPoints;
 use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
+use jluszcz_finance_utils::impl_scroll;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};

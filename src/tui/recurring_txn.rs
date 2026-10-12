@@ -5,7 +5,7 @@
 //! no `Db` on the type. `App` runs the queries and hands the results in.
 
 use super::Label;
-use super::cursor::{Cursor, Viewport, impl_scroll};
+use super::cursor::{Cursor, Viewport};
 use super::form::{
     AccountChoice, DateField, Field, Focused, FormFields, Step, next_in, parse_amount, step_index,
 };
@@ -16,6 +16,7 @@ use crate::db::txn::Suggestion;
 use crate::money::Cents;
 use anyhow::{Result, ensure};
 use chrono::NaiveDate;
+use jluszcz_finance_utils::impl_scroll;
 use std::collections::HashMap;
 
 /// What the Account column is headed, and what [`RecurringTxns::acct_width`]

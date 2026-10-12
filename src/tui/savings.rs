@@ -1,4 +1,4 @@
-use super::cursor::{Cursor, Viewport, impl_scroll};
+use super::cursor::{Cursor, Viewport};
 use super::month::{MonthCycle, YearMonth};
 use super::search::{Search, SearchBox};
 use crate::db::account::Account;
@@ -9,6 +9,7 @@ use crate::rate::Percent;
 use crate::savings::Row;
 use anyhow::Result;
 use chrono::NaiveDate;
+use jluszcz_finance_utils::impl_scroll;
 
 /// The Savings screen's view state: one flat list of every open goal, which
 /// container it is filtered to, and where the cursor sits.

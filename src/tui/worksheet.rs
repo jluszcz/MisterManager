@@ -7,9 +7,9 @@
 //! transfers. It is also what makes the remaining counter meaningful, since it
 //! reconciles against that one container's excess.
 
-use super::cursor::{Cursor, Viewport, impl_scroll};
+use super::cursor::{Cursor, Viewport};
 use super::form::{Caret, DateField, Step};
-use super::search::{Search, SearchBox};
+use super::search::{self, Search, SearchBox};
 use super::text::Edit;
 use super::widget::value_spans;
 use super::{Account, Label};
@@ -20,6 +20,7 @@ use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
 use anyhow::{Result, ensure};
 use chrono::NaiveDate;
+use jluszcz_finance_utils::impl_scroll;
 use ratatui::crossterm::event::KeyEvent;
 
 /// What the next keystroke edits.
@@ -665,7 +666,7 @@ pub(super) fn render(frame: &mut Frame, sheet: &Worksheet) -> Viewport {
 
     let status = if sheet.is_searching() {
         let mut spans = vec![Span::raw("/")];
-        spans.extend(sheet.search_spans());
+        spans.extend(search::search_spans(sheet));
         spans.push(Span::raw("  · Enter to keep · Esc to clear"));
         TextLine::from(spans)
     } else {
