@@ -377,7 +377,7 @@ fn add_share(shares: &mut Vec<(GoalId, Cents)>, goal: GoalId, amount: Cents) {
 /// something else.
 fn search_footer(target: &impl Search) -> TextLine<'static> {
     let mut spans = vec![Span::raw("/")];
-    spans.extend(target.search_spans());
+    spans.extend(search::search_spans(target));
     spans.push(Span::raw("  · Enter to keep · Esc to clear"));
     TextLine::from(spans)
 }

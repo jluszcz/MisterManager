@@ -14,7 +14,7 @@
 //! View state only -- no ratatui above the render functions at the bottom,
 //! and no `Db` on the type. `App` runs the queries and hands the results in.
 
-use super::cursor::{Cursor, Viewport, impl_scroll};
+use super::cursor::{Cursor, Viewport};
 use super::form::{
     Field, Focused, FormFields, Step, next_in, parse_percent, parse_whole_amount, step_index,
 };
@@ -29,6 +29,7 @@ use crate::money::Cents;
 use crate::rate::BasisPoints;
 use crate::savings_block::Block as SavingsBlock;
 use anyhow::{Result, ensure};
+use jluszcz_finance_utils::impl_scroll;
 use ratatui::crossterm::event::KeyEvent;
 
 /// How wide a code may be: the `Code` column's width, and the bound `a` holds

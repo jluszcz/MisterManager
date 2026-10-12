@@ -16,12 +16,13 @@
 //!
 //! [`Modal::Allocation`]: super::modal::Modal::Allocation
 
-use super::cursor::{Cursor, Viewport, impl_scroll};
+use super::cursor::{Cursor, Viewport};
 use super::goal_form::AllocationForm;
 use super::modal::Confirm;
 use crate::db::goal::Allocation;
 use crate::db::{AccountId, GoalId};
 use crate::money::Cents;
+use jluszcz_finance_utils::impl_scroll;
 
 /// Which of the three things the modal is doing.
 ///

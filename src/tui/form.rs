@@ -303,17 +303,9 @@ pub(super) enum Caret {
 
 impl Caret {
     pub(super) fn in_field(field: &Field) -> Caret {
-        Caret::in_buffer(&field.text)
-    }
-
-    /// The same, for a box that is a buffer and nothing else -- a
-    /// [`SearchBox`], which has no "touched" to carry.
-    ///
-    /// [`SearchBox`]: super::search::SearchBox
-    pub(super) fn in_buffer(text: &TextBuffer) -> Caret {
         Caret::In {
-            at: text.caret(),
-            text: text.value().to_string(),
+            at: field.text.caret(),
+            text: field.text.value().to_string(),
         }
     }
 

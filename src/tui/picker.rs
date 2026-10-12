@@ -17,12 +17,13 @@
 //! listed either way -- so a preselection is a starting point the list can be
 //! scrolled out of rather than a cage.
 
-use super::cursor::{Cursor, Viewport, impl_scroll};
+use super::cursor::{Cursor, Viewport};
 use super::{Account, Label};
 use crate::db::recurring_goal::{Cadence, Entry};
 use crate::db::{AccountId, RecurringGoalId};
 use anyhow::{Context, Result};
 use chrono::{Datelike, Months, NaiveDate};
+use jluszcz_finance_utils::impl_scroll;
 use std::collections::{HashMap, HashSet};
 
 /// The first of `month`, this year if `today` falls in or before that month
