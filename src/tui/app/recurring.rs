@@ -216,19 +216,18 @@ impl App {
             return Ok(());
         };
         let new = form.commit()?;
-        let verb = match form.editing {
+        let (verb, id) = match form.editing {
             Some(id) => {
                 recurring_goal::update(&self.db, id, &new)?;
-                "updated"
+                ("updated", id)
             }
-            None => {
-                recurring_goal::insert(&self.db, &new)?;
-                "added"
-            }
+            None => ("added", recurring_goal::insert(&self.db, &new)?),
         };
         self.status = format!("{verb} {}", crate::demo::text(&new.name));
         self.close_modal();
-        self.reload()
+        self.reload()?;
+        self.recurring_goal.select_entry(id);
+        Ok(())
     }
 
     /// The confirmation names the entry and how many goals -- open or closed
@@ -1199,6 +1198,41 @@ mod tests {
             app.recurring_goal.rows()[0].base_cents,
             Cents::from_dollars(144)
         );
+    }
+
+    /// The catalog runs by month, so an edit that moves an entry's month moves
+    /// its row; the cursor follows the entry rather than staying on the index,
+    /// where the next `d` would name whichever entry took its place.
+    #[test]
+    fn an_edit_that_moves_an_entrys_month_keeps_the_cursor_on_that_entry() {
+        let mut app = app();
+        for (name, month) in [("Dropbox", 9), ("Lego", 10)] {
+            recurring_goal::insert(
+                &app.db,
+                &recurring_goal::NewEntry {
+                    name: name.to_string(),
+                    month,
+                    base_cents: Cents::from_dollars(128),
+                    taxed: false,
+                    cadence: recurring_goal::Cadence::Annual,
+                },
+            )
+            .unwrap();
+        }
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('6'));
+        assert_eq!(app.recurring_goal.selected().unwrap().name, "Dropbox");
+
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Tab); // Month
+        for _ in 9..11 {
+            press(&mut app, KeyCode::Right); // September to November
+        }
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        assert_eq!(entry_names(&app), ["Lego", "Dropbox"]);
+        assert_eq!(app.recurring_goal.selected().unwrap().name, "Dropbox");
     }
 
     #[test]

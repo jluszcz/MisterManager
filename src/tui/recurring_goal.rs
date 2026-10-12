@@ -172,6 +172,23 @@ impl RecurringGoals {
         self.visible.get(self.cursor.index()).map(|i| &self.all[*i])
     }
 
+    /// Put the cursor on an entry by id, leaving it where it is if the entry
+    /// is not among the visible rows.
+    ///
+    /// By id and not by index, for `Savings::select_goal`'s reason: the list
+    /// runs by month, so an add lands mid-list and an edit that changes the
+    /// month moves the entry, and the index the cursor held would name
+    /// whichever entry took that place.
+    pub fn select_entry(&mut self, id: RecurringGoalId) {
+        if let Some(index) = self
+            .visible
+            .iter()
+            .position(|i| self.all[*i].recurring_goal_id == id)
+        {
+            self.cursor.select(index);
+        }
+    }
+
     /// `Recurring Goals`, the month filter, and -- unfiltered only -- what
     /// each cadence costs a year and a payday.
     ///
@@ -456,9 +473,9 @@ pub(super) fn render(frame: &mut Frame, area: Rect, recurring_goal: &RecurringGo
             TableRow::new(vec![
                 Cell::from(crate::demo::text(&r.name).into_owned()),
                 Cell::from(month_name(r.month)),
+                Cell::from(r.cadence.as_str()),
                 amount(r.base_cents),
                 Cell::from(if r.taxed { "yes" } else { "no" }),
-                Cell::from(r.cadence.as_str()),
                 Cell::from(TextLine::from(r.open_goals.to_string()).right_aligned()),
             ])
         })
@@ -467,18 +484,18 @@ pub(super) fn render(frame: &mut Frame, area: Rect, recurring_goal: &RecurringGo
     let header = TableRow::new(vec![
         Cell::from("Name"),
         Cell::from("Month"),
+        Cell::from("Cadence"),
         right_header("Base"),
         Cell::from("Taxed"),
-        Cell::from("Cadence"),
         right_header("Open"),
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
     let widths = [
         Constraint::Min(16),
         Constraint::Length(5),
+        Constraint::Length(9),
         Constraint::Length(12),
         Constraint::Length(5),
-        Constraint::Length(9),
         Constraint::Length(4),
     ];
 
@@ -1300,13 +1317,13 @@ mod tests {
         let lines = drawn(&screen());
         let header = super::super::ends_in_order(
             &lines[1],
-            &["Name", "Month", "Base", "Taxed", "Cadence", "Open"],
+            &["Name", "Month", "Cadence", "Base", "Taxed", "Open"],
         );
         let row = super::super::ends_in_order(
             &lines[2],
-            &["Car Insurance", "Mar", "128.00", "no", "annual", "2"],
+            &["Car Insurance", "Mar", "annual", "128.00", "no", "2"],
         );
-        assert_eq!(header[2], row[2], "Base over {:?}", lines[2]);
+        assert_eq!(header[3], row[3], "Base over {:?}", lines[2]);
         assert_eq!(header[5], row[5], "Open over {:?}", lines[2]);
     }
 
