@@ -279,9 +279,10 @@ mod tests {
         picker.entries().iter().map(|e| e.name.as_str()).collect()
     }
 
-    /// The catalog's own order is insertion order, which says nothing about
-    /// when anything is due. The list runs in the order the goals would fall
-    /// due, so a month already past this year sorts after one still ahead.
+    /// The catalog's own order is the calendar's January to December, which
+    /// says nothing about when anything is next due. The list runs in the
+    /// order the goals would fall due, so a month already past this year sorts
+    /// after one still ahead.
     #[test]
     fn the_list_runs_in_the_order_the_goals_would_fall_due() {
         let picker = Picker::new(

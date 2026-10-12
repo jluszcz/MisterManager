@@ -104,8 +104,12 @@ pub fn insert(db: &Db, entry: &NewEntry) -> Result<RecurringGoalId> {
     Ok(RecurringGoalId(db.conn.last_insert_rowid()))
 }
 
+/// By the month a round falls due, so every reader lists the year in order;
+/// the name settles a month holding several.
 pub fn list(db: &Db) -> Result<Vec<Entry>> {
-    let mut stmt = db.conn.prepare(select_recurring_goal!("ORDER BY id"))?;
+    let mut stmt = db.conn.prepare(select_recurring_goal!(
+        "ORDER BY month, name COLLATE NOCASE, id"
+    ))?;
     let rows = stmt.query_map([], from_row)?;
     super::collect_rows(rows)
 }
@@ -251,6 +255,32 @@ mod tests {
         assert_eq!(entries[1].base_cents, Cents::from_dollars(165));
         assert!(entries[1].taxed);
         assert_eq!(entries[1].cadence, Cadence::Biennial);
+    }
+
+    #[test]
+    fn list_orders_by_month_and_then_by_name_ignoring_case_whatever_order_they_were_added_in() {
+        let db = db::open_in_memory().unwrap();
+        for (name, month) in [
+            ("Lego", 12),
+            ("Dropbox", 9),
+            ("backblaze", 9),
+            ("Car Insurance", 3),
+        ] {
+            insert(
+                &db,
+                &NewEntry {
+                    name: name.to_string(),
+                    month,
+                    base_cents: Cents::from_dollars(128),
+                    taxed: false,
+                    cadence: Cadence::Annual,
+                },
+            )
+            .unwrap();
+        }
+
+        let names: Vec<String> = list(&db).unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["Car Insurance", "backblaze", "Dropbox", "Lego"]);
     }
 
     #[test]
