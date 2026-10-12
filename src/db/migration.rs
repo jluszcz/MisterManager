@@ -428,6 +428,58 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         sql: "",
         data: Some(rescale_planning_percentages),
     },
+    Migration {
+        version: 20,
+        // An account's tax-free part is stated in basis points rather than
+        // whole percent, so a Roth side of 15.5% can be typed as itself.
+        // Renamed to `tax_free_bp` as well as rescaled, because a stored `20`
+        // read at the new scaling is 0.20% -- a plausible share, badly wrong
+        // -- and a new name is what turns a reader left behind into a query
+        // that fails. Strictly between the ends for arm 16's reason.
+        //
+        // A rebuild, for arm 12's reasons: the bound is a `CHECK`, and
+        // `tax_free_cents`' own `CHECK` names the old column, so it can be
+        // neither altered nor dropped in place. The table is spelled as it
+        // stands at version 19 -- arm 12's, with `retirement`,
+        // `tax_free_percent` and `tax_free_cents` from arms 15 to 17 -- and
+        // `account_code_kind` goes with it and is recreated.
+        sql: "CREATE TABLE account_new (
+                id   INTEGER PRIMARY KEY,
+                code TEXT    NOT NULL,
+                name TEXT    NOT NULL,
+                kind TEXT    NOT NULL CHECK (kind IN ('cash', 'credit', 'investment')),
+                grp  TEXT    NOT NULL CHECK (grp IN ('checking', 'savings', 'credit', 'investment')),
+                sort INTEGER NOT NULL DEFAULT 0,
+                interest_policy TEXT CHECK (interest_policy IN ('pro_rata', 'manual')),
+                color TEXT CHECK (color IN ('blue', 'copper', 'violet', 'teal',
+                                            'rose', 'olive', 'indigo', 'tan')),
+                tax_treatment TEXT CHECK (tax_treatment IN ('taxable', 'tax_deferred', 'tax_free')),
+                retirement INTEGER NOT NULL DEFAULT 0
+                  CHECK (retirement IN (0, 1) AND (retirement = 0 OR kind = 'investment')),
+                tax_free_bp INTEGER
+                  CHECK (tax_free_bp IS NULL OR
+                         (kind = 'investment' AND tax_free_bp BETWEEN 1 AND 9999)),
+                tax_free_cents INTEGER
+                  CHECK (tax_free_cents IS NULL OR
+                         (kind = 'investment' AND tax_free_cents > 0 AND tax_free_bp IS NULL)),
+                CHECK ((kind = 'investment') = (tax_treatment IS NOT NULL)),
+                UNIQUE (code, kind)
+              );
+              INSERT INTO account_new
+                (id, code, name, kind, grp, sort, interest_policy, color, tax_treatment,
+                 retirement, tax_free_bp, tax_free_cents)
+                SELECT id, code, name, kind, grp, sort, interest_policy, color, tax_treatment,
+                       retirement, tax_free_percent * 100, tax_free_cents
+                  FROM account;
+              DROP TABLE account;
+              ALTER TABLE account_new RENAME TO account;
+              CREATE UNIQUE INDEX account_code_kind
+                ON account (code COLLATE NOCASE, kind);",
+        // Nothing to move past the copy above, which rescales on the way
+        // across: arm 16's `BETWEEN 1 AND 99` is exactly what lands inside
+        // `BETWEEN 100 AND 9900` here.
+        data: None,
+    },
 ];
 
 /// Arm 19's data half: every stored Planning percentage, whole percent to
@@ -846,6 +898,75 @@ mod tests {
         let clash = conn.execute(
             "INSERT INTO account (id, code, name, kind, grp)
              VALUES (8, 'sav', 'Rainy Day Again', 'cash', 'savings')",
+            [],
+        );
+        assert!(
+            clash.is_err(),
+            "account_code_kind did not survive the rebuild"
+        );
+    }
+
+    /// A part stored as whole percent before arm 20 has to come out of it
+    /// meaning the same share, or a stored `20` reads as 0.20%; and the
+    /// rebuild has to carry every other column across with it.
+    #[test]
+    fn the_arm_rescaling_the_tax_free_part_keeps_each_share() {
+        const RESCALED_AT: i64 = 20;
+        let at = MIGRATIONS
+            .iter()
+            .position(|arm| arm.version == RESCALED_AT)
+            .expect("the arm that rescales the tax-free part");
+
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn, SCHEMA, &MIGRATIONS[..at]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO account
+               (id, code, name, kind, grp, sort, color, tax_treatment, retirement,
+                tax_free_percent, tax_free_cents)
+             VALUES
+               (3, 'RET', 'Long Haul', 'investment', 'investment', 2, 'teal',
+                'tax_deferred', 1, 20, NULL),
+               (4, 'BRK', 'Holdings', 'investment', 'investment', 3, NULL,
+                'taxable', 0, NULL, 500000)",
+        )
+        .unwrap();
+
+        apply(&conn, SCHEMA, MIGRATIONS).unwrap();
+
+        assert_eq!(version(&conn), SCHEMA_VERSION);
+        let row = |id: i64| -> (i64, Option<String>, String, i64, Option<i64>, Option<i64>) {
+            conn.query_row(
+                "SELECT sort, color, tax_treatment, retirement, tax_free_bp, tax_free_cents
+                 FROM account WHERE id = ?1",
+                [id],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                    ))
+                },
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            row(3),
+            (
+                2,
+                Some("teal".into()),
+                "tax_deferred".into(),
+                1,
+                Some(2_000),
+                None
+            )
+        );
+        assert_eq!(row(4), (3, None, "taxable".into(), 0, None, Some(500_000)));
+        let clash = conn.execute(
+            "INSERT INTO account (id, code, name, kind, grp, tax_treatment)
+             VALUES (5, 'ret', 'Long Haul Again', 'investment', 'investment', 'taxable')",
             [],
         );
         assert!(

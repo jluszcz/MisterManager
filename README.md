@@ -194,7 +194,7 @@ from your age to 55, leaving out the milestones already behind you, each with wh
 savings fall short of it — the dollar target, and the tax-free share of that target — with no
 growth assumed, so a later milestone reads as everything still to save for it. An account that is only partly
 tax-free, a workplace plan with a Roth side, takes its tax-free part on screen `0`, as a percentage
-or as a dollar amount — typing into either works out the other from what the account holds, and
+(to the hundredth, so `15.5` works) or as a dollar amount — typing into either works out the other from what the account holds, and
 the one you typed last is what is kept. That part counts as tax-free here and in the Funds screen's tax columns.
 
 Below the milestones, two charts draw every cash account's and every investment account's balance

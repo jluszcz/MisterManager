@@ -15,7 +15,9 @@
 //! and no `Db` on the type. `App` runs the queries and hands the results in.
 
 use super::cursor::{Cursor, Viewport, impl_scroll};
-use super::form::{Field, Focused, FormFields, Step, next_in, parse_whole_amount, step_index};
+use super::form::{
+    Field, Focused, FormFields, Step, next_in, parse_percent, parse_whole_amount, step_index,
+};
 use super::text::Edit;
 use super::{Label, label_width, tax_labels, tax_treatment_cell};
 use crate::db::AccountId;
@@ -24,9 +26,9 @@ use crate::db::account::{
 };
 use crate::default_source::Source;
 use crate::money::Cents;
-use crate::rate::{BasisPoints, Percent};
+use crate::rate::BasisPoints;
 use crate::savings_block::Block as SavingsBlock;
-use anyhow::{Context, Result, ensure};
+use anyhow::{Result, ensure};
 use ratatui::crossterm::event::KeyEvent;
 
 /// How wide a code may be: the `Code` column's width, and the bound `a` holds
@@ -179,8 +181,8 @@ pub enum AccountField {
     /// to could not hold it.
     TaxTreatment,
     /// Edit only, and only for an investment account whose treatment is not
-    /// already wholly tax-free: its tax-free part as a whole percentage.
-    /// Typing here rewrites `TaxFreeAmount` from it, against the balance.
+    /// already wholly tax-free: its tax-free part as a percentage, to the
+    /// hundredth. Typing here rewrites `TaxFreeAmount` from it, against the balance.
     TaxFreePercent,
     /// The same part as whole dollars, and the same the other way round.
     TaxFreeAmount,
@@ -430,20 +432,18 @@ fn parse_tax_free_amount(raw: &str) -> Result<Option<Cents>> {
     Ok((cents.0 > 0).then_some(cents))
 }
 
-/// A whole percentage under 100, `%` optional; blank and 0 are both none.
-fn parse_tax_free(raw: &str) -> Result<Option<Percent>> {
-    let text = raw.trim().trim_end_matches('%').trim();
-    if text.is_empty() {
+/// A percentage under 100 to the hundredth, read as the Planning splits are;
+/// blank, a bare `%` and 0 are all none.
+fn parse_tax_free(raw: &str) -> Result<Option<BasisPoints>> {
+    if raw.trim().trim_end_matches('%').trim().is_empty() {
         return Ok(None);
     }
-    let value: i64 = text
-        .parse()
-        .with_context(|| format!("not a whole percentage: {text:?}"))?;
+    let value = parse_percent(raw)?;
     ensure!(
-        (0..100).contains(&value),
-        "the tax-free part must be from 0 to 99% -- for all of it, set the treatment to Tax-free"
+        value < BasisPoints::ONE,
+        "the tax-free part must be under 100% -- for all of it, set the treatment to Tax-free"
     );
-    Ok((value > 0).then_some(Percent(value)))
+    Ok((value > BasisPoints::ZERO).then_some(value))
 }
 
 impl AccountForm {
@@ -558,7 +558,7 @@ impl AccountForm {
                 Some(TaxFreePart::Percent(_)) | None => TaxFreeIn::Percent,
             },
             tax_free_percent: Field::given(match account.tax_free {
-                Some(TaxFreePart::Percent(p)) => p.0.to_string(),
+                Some(TaxFreePart::Percent(p)) => p.exact_percent(),
                 _ => String::new(),
             }),
             tax_free_amount: Field::given(match account.tax_free {
@@ -591,8 +591,8 @@ impl AccountForm {
 
     /// Rewrite the tax-free field not last typed into from the one that
     /// was. Blank while the typed one says nothing or does not parse, and
-    /// for a percentage of an account holding nothing. A share is rounded to
-    /// the whole percent the field takes: it is what the amount came to, not
+    /// for a percentage of an account holding nothing. A share is floored to
+    /// the hundredth the field takes: it is what the amount came to, not
     /// what is stored, unless the owner then types into it.
     fn rederive_tax_free(&mut self) {
         let part = self.typed_tax_free().ok().flatten();
@@ -607,10 +607,9 @@ impl AccountForm {
             TaxFreeIn::Amount => {
                 let percent = part
                     .filter(|_| self.balance.0 > 0)
-                    .map(|p| account::tax_free_share(None, Some(p), self.balance))
-                    .map(|share| (share.0 + 50) / 100);
+                    .map(|p| account::tax_free_share(None, Some(p), self.balance));
                 self.tax_free_percent =
-                    Field::given(percent.map(|p| p.to_string()).unwrap_or_default());
+                    Field::given(percent.map(BasisPoints::exact_percent).unwrap_or_default());
             }
         }
     }
@@ -1168,12 +1167,12 @@ mod tests {
     fn a_tax_free_part_opens_on_the_accounts_own_and_goes_with_a_tax_free_treatment() {
         let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
         investment.tax_treatment = Some(TaxTreatment::TaxDeferred);
-        investment.tax_free = Some(TaxFreePart::Percent(Percent(20)));
+        investment.tax_free = Some(TaxFreePart::Percent(BasisPoints(2_000)));
         let mut form = AccountForm::edit(&investment, InterestPolicy::Manual, None, &[], false);
         assert!(form.fields().contains(&AccountField::TaxFreePercent));
         assert_eq!(
             form.commit().unwrap().tax_free,
-            Some(Some(TaxFreePart::Percent(Percent(20))))
+            Some(Some(TaxFreePart::Percent(BasisPoints(2_000))))
         );
         walk_until!(
             TaxTreatment::ALL[form.tax_treatment] == TaxTreatment::TaxFree,
@@ -1190,7 +1189,7 @@ mod tests {
     fn typing_either_tax_free_field_rewrites_the_other_and_is_what_is_stored() {
         let mut investment = account(3, "Long Haul", Kind::Investment, Group::Investment);
         investment.tax_treatment = Some(TaxTreatment::TaxDeferred);
-        investment.tax_free = Some(TaxFreePart::Percent(Percent(20)));
+        investment.tax_free = Some(TaxFreePart::Percent(BasisPoints(2_000)));
         let mut form = AccountForm::edit(&investment, InterestPolicy::Manual, None, &[], false)
             .holding(Cents::from_dollars(300_000));
         let typed = |form: &mut AccountForm, field, text: &str| {
@@ -1233,7 +1232,7 @@ mod tests {
         );
         assert_eq!(
             form.commit().unwrap().tax_free,
-            Some(Some(TaxFreePart::Percent(Percent(10))))
+            Some(Some(TaxFreePart::Percent(BasisPoints(1_000))))
         );
 
         typed(&mut form, AccountField::TaxFreePercent, "");
@@ -1257,7 +1256,11 @@ mod tests {
     fn a_tax_free_part_reads_blank_and_zero_as_none_and_refuses_all_of_it() {
         assert_eq!(parse_tax_free("").unwrap(), None);
         assert_eq!(parse_tax_free("0").unwrap(), None);
-        assert_eq!(parse_tax_free(" 25% ").unwrap(), Some(Percent(25)));
+        assert_eq!(parse_tax_free(" % ").unwrap(), None);
+        assert_eq!(parse_tax_free(" 25% ").unwrap(), Some(BasisPoints(2_500)));
+        assert_eq!(parse_tax_free("15.5").unwrap(), Some(BasisPoints(1_550)));
+        assert_eq!(parse_tax_free("99.99").unwrap(), Some(BasisPoints(9_999)));
+        assert!(parse_tax_free("15.555").is_err());
         assert!(parse_tax_free("100").is_err());
         assert!(parse_tax_free("-5").is_err());
         assert!(parse_tax_free("a fifth").is_err());

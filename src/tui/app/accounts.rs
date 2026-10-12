@@ -619,15 +619,17 @@ mod tests {
                 if f.focus == accounts_screen::AccountField::TaxFreePercent),
             press(&mut app, KeyCode::Tab)
         );
-        type_str(&mut app, "20");
+        type_str(&mut app, "15.5");
         press(&mut app, KeyCode::Enter);
 
         assert!(app.modal.is_none(), "{}", app.status);
         assert_eq!(
             account::get(&app.db, id).unwrap().tax_free,
-            Some(account::TaxFreePart::Percent(crate::rate::Percent(20)))
+            Some(account::TaxFreePart::Percent(crate::rate::BasisPoints(
+                1_550
+            )))
         );
-        assert!(drawn(&mut app).contains("20% tax-free"));
+        assert!(drawn(&mut app).contains("15% tax-free"));
     }
 
     #[test]

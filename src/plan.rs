@@ -93,7 +93,7 @@ pub fn expense_constants(db: &Db) -> Result<Vec<Target>> {
 /// any screen says so.
 ///
 /// Both bounds, because a cell is not a field. The form's writer is two
-/// refusals -- `tui::planning::parse_percent` will not let a percentage
+/// refusals -- `tui::form::parse_percent` will not let a percentage
 /// outside `0..=100` be typed at all, and `write_split` refuses the set it
 /// would join -- but `import::cell::as_rate_bp` reads whatever the sheet
 /// carries and does not clamp, so an import stating only the set would let a

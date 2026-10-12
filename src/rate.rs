@@ -10,9 +10,9 @@ use std::ops::{Add, Sub};
 
 /// A proportion in whole percent: `Percent(35)` is 35%.
 ///
-/// A goal's funded percentage and an account's tax-free share, both routinely
-/// stated in whole points, where a fraction of a point is noise. It is not a share of
-/// money being divided up -- the Planning splits are [`BasisPoints`], so the
+/// A goal's funded percentage, routinely stated in whole points, where a
+/// fraction of a point is noise. It is not a share someone typed -- the
+/// Planning splits and an account's tax-free part are [`BasisPoints`], so the
 /// owner can split a payday `10.5 / 20.5 / 69` -- and nothing here bounds it:
 /// an overfunded goal is `Percent(106)`, an overspent one is negative.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
@@ -34,7 +34,7 @@ impl Percent {
 /// `Constants!E2` is read at, and the Planning splits' too
 /// (`Planning!F19`, `F25:F27`).
 ///
-/// The splits' `0..=100%` bound belongs to `planning::parse_percent` and
+/// The splits' `0..=100%` bound belongs to `tui::form::parse_percent` and
 /// `plan::check_splits`, which enforce it on the paths where an out-of-range
 /// share would reroute real money; it is not an invariant of the type, and a
 /// gap between two of these is routinely negative.
