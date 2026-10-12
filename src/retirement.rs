@@ -268,7 +268,7 @@ mod tests {
         account::set_tax_free(
             &db,
             long_haul,
-            Some(account::TaxFreePart::Percent(crate::rate::Percent(20))),
+            Some(account::TaxFreePart::Percent(BasisPoints(2_000))),
         )
         .unwrap();
         holding::insert(&db, long_haul, "TDF45", Cents::from_dollars(300_000)).unwrap();
@@ -315,7 +315,7 @@ mod tests {
         account::set_tax_free(
             &db,
             ret,
-            Some(account::TaxFreePart::Percent(crate::rate::Percent(20))),
+            Some(account::TaxFreePart::Percent(BasisPoints(2_000))),
         )
         .unwrap();
         let r = load(&db, today()).unwrap();

@@ -113,7 +113,7 @@ month.
 
 The split percentages are user-editable, and the three are bounded **as a set** as well as one at a
 time: each inside `0..=100` on its own, and still wrong between them. Both writers hold both bounds
-— at the form, `tui::planning::parse_percent` refuses a percentage outside the range and
+— at the form, `tui::form::parse_percent` refuses a percentage outside the range and
 `write_split` refuses the set it would join; at the import, `plan::check_splits` refuses either,
 since `import::cell::as_rate_bp` reads whatever the sheet carries and a `150 / -60 / 5` totals 95.
 A share below zero is the one the set rule cannot catch on its own: `BasisPoints::of` does not clamp,
@@ -254,7 +254,7 @@ and lands in denominators. **The clamp lives with the divide**: `biweekly`, `per
 `per_paycheck_over_years` and `planning::compute` each `.max(1)` their own denominator, so a nonsense
 value cannot take down a whole screen and a caller has nothing left to clamp. Re-clamping in front of
 one of them is a protection that cannot fire, and it reads as though the one behind it were not
-there — `tui::planning::parse_percent`'s neighbour `parse_periods` is the other half, refusing the
+there — `tui::planning`'s `parse_periods` is the other half, refusing the
 value as it is typed so the clamps here are only ever the backstop for a database that already holds
 one. `div_ceil` returns an error for a non-positive divisor in *every* build, release included: a
 `debug_assert!` would compile out of the one build where dividing by zero actually matters. Don't

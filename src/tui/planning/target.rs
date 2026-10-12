@@ -12,62 +12,11 @@ use crate::db::setting::{self, key};
 use crate::money::Cents;
 use crate::plan_line::Line;
 use crate::rate::BasisPoints;
-use crate::tui::form::{parse_amount, parse_whole_amount};
+use crate::tui::form::{parse_amount, parse_percent, parse_whole_amount};
 use anyhow::{Context, Result, ensure};
 use chrono::NaiveDate;
 
 pub use crate::plan_rows::Target;
-
-/// A share to the hundredth of a percent, with a trailing sign tolerated:
-/// `10.5` and `10.5%` are both `BasisPoints(1_050)`.
-///
-/// Typed as a percentage rather than as the sheet's fraction, so `0.35` is
-/// 0.35% -- the screen draws it back as exactly that, which is what makes the
-/// reading safe to take. A third decimal is refused rather than rounded: a
-/// hundredth is the finest a share is stored at, and quietly storing `10.13`
-/// for a typed `10.125` would divide the payday by a split nobody chose.
-///
-/// Bounded to `0..=100`: `BasisPoints::of` does not clamp, so an unbounded
-/// value would write a negative or over-100 allocation straight into the
-/// waterfall with no error at any layer. The bound is per-field, not a sum
-/// check -- `compute` already saturates the Goals plug at zero when the other
-/// three shares total over 100.
-fn parse_percent(raw: &str) -> Result<BasisPoints> {
-    let text = raw.trim().trim_end_matches('%').trim();
-    let unsigned = text.strip_prefix('-').unwrap_or(text);
-    let (whole, frac) = unsigned.split_once('.').unwrap_or((unsigned, ""));
-    let digits = |s: &str| s.chars().all(|c| c.is_ascii_digit());
-    ensure!(
-        !(whole.is_empty() && frac.is_empty()) && digits(whole) && digits(frac),
-        "not a percentage: {text:?}"
-    );
-    ensure!(
-        frac.len() <= 2,
-        "a percentage takes at most two decimals, got {text}"
-    );
-    let whole: i64 = match whole {
-        "" => 0,
-        w => w
-            .parse()
-            .with_context(|| format!("not a percentage: {text:?}"))?,
-    };
-    // `5` is fifty hundredths and `05` is five, so the fraction is read as
-    // though it were padded to two places.
-    let hundredths: i64 = format!("{frac:0<2}").parse()?;
-    let magnitude = whole
-        .checked_mul(100)
-        .and_then(|w| w.checked_add(hundredths))
-        .with_context(|| format!("not a percentage: {text:?}"))?;
-    let value = BasisPoints(match unsigned.len() < text.len() {
-        true => -magnitude,
-        false => magnitude,
-    });
-    ensure!(
-        (BasisPoints::ZERO..=BasisPoints::ONE).contains(&value),
-        "percentage must be between 0 and 100, got {text}"
-    );
-    Ok(value)
-}
 
 /// The figure the whole waterfall then runs off.
 ///
