@@ -651,6 +651,60 @@ pub fn set_favorite(db: &Db, id: GoalId, favorite: bool) -> Result<()> {
     Ok(())
 }
 
+/// Every open goal `entry` could be linked to or unlinked from, whatever its
+/// container, by name: those no entry claims, and those `entry` already
+/// does. What `l` on Recurring Goals offers -- a link moves no money, so
+/// there is no container to keep it inside, and a goal another entry claims
+/// is not offered because [`link_recurring_goal`] would refuse it.
+pub fn linkable(db: &Db, entry: RecurringGoalId) -> Result<Vec<Goal>> {
+    let mut stmt = db.conn.prepare(select_goal!(
+        "WHERE (recurring_goal_id IS NULL OR recurring_goal_id = ?1) AND closed = 0
+          ORDER BY name COLLATE NOCASE, id"
+    ))?;
+    let rows = stmt.query_map(params![entry], from_row)?;
+    super::collect_rows(rows)
+}
+
+/// Record that `goal` is a round of `entry`, for a goal created some other
+/// way than from the entry -- every goal an import writes, and every one `n`
+/// types from scratch.
+///
+/// Only where there is no link yet, and only on an open goal: re-pointing a
+/// linked goal would quietly take a round away from the entry it names, and a
+/// closed goal is a round already through. The guard is in the `WHERE` rather
+/// than read first, so the refusal and the write cannot see two databases.
+pub fn link_recurring_goal(db: &Db, goal: GoalId, entry: RecurringGoalId) -> Result<()> {
+    let changed = db.conn.execute(
+        "UPDATE goal SET recurring_goal_id = ?2
+          WHERE id = ?1 AND recurring_goal_id IS NULL AND closed = 0",
+        params![goal, entry],
+    )?;
+    ensure!(
+        changed == 1,
+        "that goal is closed or already linked to a recurring goal"
+    );
+    Ok(())
+}
+
+/// Undo [`link_recurring_goal`]: `goal` is no longer a round of `entry`.
+///
+/// Only a link to `entry` itself, so a list drawn for one entry cannot clear
+/// another's. Closed goals are left alone for the reason linking refuses
+/// them: a round already through is history, and
+/// `has_goal_dated_in_year` counts on it.
+pub fn unlink_recurring_goal(db: &Db, goal: GoalId, entry: RecurringGoalId) -> Result<()> {
+    let changed = db.conn.execute(
+        "UPDATE goal SET recurring_goal_id = NULL
+          WHERE id = ?1 AND recurring_goal_id = ?2 AND closed = 0",
+        params![goal, entry],
+    )?;
+    ensure!(
+        changed == 1,
+        "that goal is closed or not linked to this recurring goal"
+    );
+    Ok(())
+}
+
 /// The goal value is moving *out* of, checked: it exists, and it is open.
 ///
 /// Both refusals here and in [`open_destination`] land on the status line
@@ -2315,6 +2369,121 @@ mod tests {
         close(&db, id).unwrap();
 
         assert!(has_goal_dated_in_year(&db, entry, 2026).unwrap());
+    }
+
+    fn backblaze(db: &Db) -> RecurringGoalId {
+        crate::db::recurring_goal::insert(
+            db,
+            &crate::db::recurring_goal::NewEntry {
+                name: "Backblaze".to_string(),
+                month: 11,
+                base_cents: Cents::from_dollars(99),
+                taxed: false,
+                cadence: crate::db::recurring_goal::Cadence::Annual,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn linking_an_unlinked_open_goal_records_the_entry_on_it() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let entry = backblaze(&db);
+        let id = insert(&db, &new_goal("Backblaze", savings, 99)).unwrap();
+
+        link_recurring_goal(&db, id, entry).unwrap();
+
+        assert_eq!(
+            get(&db, id).unwrap().unwrap().recurring_goal_id,
+            Some(entry)
+        );
+    }
+
+    /// A link is only ever made where there is none: re-pointing a goal at
+    /// another entry would quietly take a round away from the first.
+    #[test]
+    fn linking_a_goal_already_linked_is_refused_and_keeps_its_link() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let first = backblaze(&db);
+        let second = backblaze(&db);
+        let mut goal = new_goal("Backblaze", savings, 99);
+        goal.recurring_goal_id = Some(first);
+        let id = insert(&db, &goal).unwrap();
+
+        assert!(link_recurring_goal(&db, id, second).is_err());
+        assert_eq!(
+            get(&db, id).unwrap().unwrap().recurring_goal_id,
+            Some(first)
+        );
+    }
+
+    #[test]
+    fn linking_a_closed_goal_is_refused() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let entry = backblaze(&db);
+        let id = insert(&db, &new_goal("Backblaze", savings, 99)).unwrap();
+        close(&db, id).unwrap();
+
+        assert!(link_recurring_goal(&db, id, entry).is_err());
+        assert_eq!(get(&db, id).unwrap().unwrap().recurring_goal_id, None);
+    }
+
+    /// Every container, the entry's own links among them, and nothing
+    /// closed or claimed by another entry.
+    #[test]
+    fn the_linkable_goals_are_the_open_unclaimed_ones_and_the_entrys_own() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let nest = account::insert(&db, "NST", "Nest Egg", Kind::Cash, 0, None).unwrap();
+        let entry = backblaze(&db);
+        let other = backblaze(&db);
+        let open = insert(&db, &new_goal("Backblaze", savings, 99)).unwrap();
+        let elsewhere = insert(&db, &new_goal("Vacation", nest, 500)).unwrap();
+        let closed = insert(&db, &new_goal("Old Backblaze", savings, 99)).unwrap();
+        close(&db, closed).unwrap();
+        let mut own = new_goal("Linked Backblaze", savings, 99);
+        own.recurring_goal_id = Some(entry);
+        let own = insert(&db, &own).unwrap();
+        let mut theirs = new_goal("Other Backblaze", savings, 99);
+        theirs.recurring_goal_id = Some(other);
+        insert(&db, &theirs).unwrap();
+
+        let mut ids: Vec<GoalId> = linkable(&db, entry).unwrap().iter().map(|g| g.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![open, elsewhere, own]);
+    }
+
+    #[test]
+    fn unlinking_clears_the_entry_from_the_goal() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let entry = backblaze(&db);
+        let id = insert(&db, &new_goal("Backblaze", savings, 99)).unwrap();
+        link_recurring_goal(&db, id, entry).unwrap();
+
+        unlink_recurring_goal(&db, id, entry).unwrap();
+
+        assert_eq!(get(&db, id).unwrap().unwrap().recurring_goal_id, None);
+    }
+
+    /// A list drawn for one entry must not clear a link another entry holds.
+    #[test]
+    fn unlinking_a_goal_linked_to_another_entry_is_refused_and_keeps_its_link() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let entry = backblaze(&db);
+        let other = backblaze(&db);
+        let id = insert(&db, &new_goal("Backblaze", savings, 99)).unwrap();
+        link_recurring_goal(&db, id, other).unwrap();
+
+        assert!(unlink_recurring_goal(&db, id, entry).is_err());
+        assert_eq!(
+            get(&db, id).unwrap().unwrap().recurring_goal_id,
+            Some(other)
+        );
     }
 
     /// December and January are one day apart and two years, so the bounds

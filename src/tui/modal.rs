@@ -19,6 +19,7 @@ use super::goal_form::{self, AllocationForm, CloseForm, GoalForm, GoalTransferFo
 use super::help::Topic;
 use super::history::{self, History, Mode as HistoryMode};
 use super::ledger_form::{self, TransferForm, TxnForm};
+use super::link::{self, Linker};
 use super::picker::{self, Picker};
 use super::planning::{self, BillForm, Target, TransferConfirm};
 use super::recurring_goal::{self as recurring_goal_screen, RecurringGoalForm};
@@ -68,6 +69,9 @@ pub(super) enum Modal {
     /// `e` on a Planning destination row: the goals this line could be
     /// pointed at, and the withdrawal among them.
     Destination(destination::Chooser),
+    /// `l` on Recurring Goals: the open goals no entry claims, one of which
+    /// the selected entry is about to claim.
+    Link(Linker),
     /// `Enter` on Planning: why the transfers are unresolved, at the length
     /// a panel can hold rather than the length a table cell can.
     Details(&'static str, Vec<String>),
@@ -110,6 +114,7 @@ impl Modal {
             Modal::Bill(form) => Some(form),
             Modal::RecurringTxn(form) => Some(form),
             Modal::Destination(_) => None,
+            Modal::Link(_) => None,
             Modal::Details(..) => None,
             Modal::RecurringGoalEntry(form) => Some(form),
             Modal::PlanTransfers(_) => None,
@@ -142,6 +147,8 @@ impl Modal {
             Modal::Picker(_) => Topic::Picker,
             Modal::Destination(chooser) if chooser.is_searching() => Topic::DestinationSearch,
             Modal::Destination(_) => Topic::Destination,
+            Modal::Link(linker) if linker.is_searching() => Topic::LinkSearch,
+            Modal::Link(_) => Topic::Link,
             Modal::Details(..) => Topic::Details,
             Modal::Confirm { .. } => Topic::Confirm,
             Modal::Txn(_) | Modal::Transfer(_) | Modal::RecurringTxn(_) => Topic::SuggestForm,
@@ -351,6 +358,10 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
             viewport = Some(destination::render(frame, chooser));
             0
         }
+        Some(Modal::Link(linker)) => {
+            viewport = Some(link::render(frame, linker));
+            0
+        }
         Some(Modal::Details(title, lines)) => {
             planning::render_details(frame, title, lines);
             0
@@ -428,6 +439,7 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
             Some(Modal::Worksheet(sheet)) => sheet.record_viewport(viewport),
             Some(Modal::Picker(p)) => p.record_viewport(viewport),
             Some(Modal::Destination(chooser)) => chooser.record_viewport(viewport),
+            Some(Modal::Link(linker)) => linker.record_viewport(viewport),
             Some(Modal::History(h)) => h.record_viewport(viewport),
             _ => {}
         }

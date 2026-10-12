@@ -22,6 +22,7 @@ mod help;
 mod history;
 pub mod ledger;
 pub mod ledger_form;
+pub mod link;
 mod modal;
 pub mod month;
 pub mod overview;
