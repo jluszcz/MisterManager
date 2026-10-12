@@ -162,11 +162,16 @@ pub(super) enum Topic {
     WorksheetSearch,
     /// `/` inside the destination list.
     DestinationSearch,
+    /// `/` inside the link list.
+    LinkSearch,
     Worksheet,
     Picker,
     /// `e` on a Planning destination row: the goals one line could be
     /// pointed at.
     Destination,
+    /// `l` on Recurring Goals: the open goals the selected entry could be
+    /// linked to.
+    Link,
     /// `Enter` on Planning: the long form of a failure the screen only had a
     /// table cell for.
     Details,
@@ -552,7 +557,7 @@ const RECURRING_TXNS: [Entry; 7] = [
     },
 ];
 
-const RECURRING_GOALS: [Entry; 7] = [
+const RECURRING_GOALS: [Entry; 8] = [
     filter_entry(
         MONTH_FILTER,
         "Step the month filter. Entries carry a month and no date, so the cycle is the calendar: December wraps to January. The screen opens on All, and the first step enters at this month.",
@@ -584,6 +589,11 @@ const RECURRING_GOALS: [Entry; 7] = [
         key: "s",
         label: Label::Own("savings"),
         detail: "Open the picker: goals created from these entries, in the container the Savings screen's Tab names. The month filter opens it with those entries ticked and sorted to the top, every other entry still listed below. An entry that already has an open goal is left unticked. Each goal is dated a year past its month's next occurrence; a biennial entry that has had this year's round steps two.",
+    },
+    Entry {
+        key: "l",
+        label: Label::Own("link"),
+        detail: "Link the selected entry to an open goal that was not created from it -- an imported one, or one typed with n -- so it counts in Open. Every container's unlinked goals are offered, beside this entry's own links for u to undo; a goal linked to another entry is never re-pointed.",
     },
 ];
 
@@ -777,6 +787,29 @@ const DESTINATION: [Entry; 3] = [
         key: "Esc",
         label: Label::Hidden,
         detail: "Clear a kept filter if one is narrowing the list; otherwise close without changing where the line lands.",
+    },
+];
+
+const LINK: [Entry; 4] = [
+    Entry {
+        key: "/",
+        label: Label::Hidden,
+        detail: "Filter the goals by name as you type.",
+    },
+    Entry {
+        key: "Enter",
+        label: Label::Hidden,
+        detail: "Link the goal under the cursor to this entry, storing its id rather than its name. The entry's existing links are listed first, marked linked, and Enter on one does nothing; then goals named like the entry -- those dated in the entry's month above the rest -- and the list opens on them. Each goal's month and year is drawn beside it, and the entry's month is in the title.",
+    },
+    Entry {
+        key: "Esc",
+        label: Label::Hidden,
+        detail: "Clear a kept filter if one is narrowing the list; otherwise close without linking anything.",
+    },
+    Entry {
+        key: "u",
+        label: Label::Hidden,
+        detail: "Unlink the goal under the cursor, if it is linked to this entry. The list stays open, so the right goal can be linked next.",
     },
 ];
 
@@ -990,8 +1023,10 @@ impl Topic {
             | Topic::FundsSearch
             | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
-            | Topic::DestinationSearch => &SEARCH,
+            | Topic::DestinationSearch
+            | Topic::LinkSearch => &SEARCH,
             Topic::Destination => &DESTINATION,
+            Topic::Link => &LINK,
             Topic::Details => &DETAILS,
             Topic::Worksheet => &WORKSHEET,
             Topic::Picker => &PICKER,
@@ -1022,6 +1057,8 @@ impl Topic {
             Topic::WorksheetSearch => "Worksheet search",
             Topic::DestinationSearch => "Destination search",
             Topic::Destination => "Where a line lands",
+            Topic::LinkSearch => "Link search",
+            Topic::Link => "Link a recurring goal",
             Topic::Details => "Why the transfers are unresolved",
             Topic::Worksheet => "Worksheet",
             Topic::Picker => "Recurring goal picker",
@@ -1065,9 +1102,11 @@ impl Topic {
             | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch
+            | Topic::LinkSearch
             | Topic::Worksheet
             | Topic::Picker
             | Topic::Destination
+            | Topic::Link
             | Topic::Details
             | Topic::Confirm
             | Topic::History
@@ -1095,7 +1134,8 @@ impl Topic {
             | Topic::FundsSearch
             | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
-            | Topic::DestinationSearch => true,
+            | Topic::DestinationSearch
+            | Topic::LinkSearch => true,
             Topic::Overview
             | Topic::Ledger
             | Topic::Savings
@@ -1108,6 +1148,7 @@ impl Topic {
             | Topic::Worksheet
             | Topic::Picker
             | Topic::Destination
+            | Topic::Link
             | Topic::Details
             | Topic::Confirm
             | Topic::History
@@ -1137,6 +1178,7 @@ impl Topic {
             | Topic::RecurringGoalsSearch
             | Topic::WorksheetSearch
             | Topic::DestinationSearch
+            | Topic::LinkSearch
             | Topic::Worksheet
             | Topic::PlanTransfers => true,
             Topic::Overview
@@ -1150,6 +1192,7 @@ impl Topic {
             | Topic::Retirement
             | Topic::Picker
             | Topic::Destination
+            | Topic::Link
             | Topic::Details
             | Topic::History
             | Topic::Confirm => false,
@@ -1359,7 +1402,7 @@ mod tests {
 
     /// Every topic there is. `SCREENS` stays separate because only those nine
     /// join a footer.
-    const ALL: [Topic; 24] = [
+    const ALL: [Topic; 26] = [
         Topic::Overview,
         Topic::Ledger,
         Topic::Savings,
@@ -1375,9 +1418,11 @@ mod tests {
         Topic::RecurringGoalsSearch,
         Topic::WorksheetSearch,
         Topic::DestinationSearch,
+        Topic::LinkSearch,
         Topic::Worksheet,
         Topic::Picker,
         Topic::Destination,
+        Topic::Link,
         Topic::Details,
         Topic::Confirm,
         Topic::History,
@@ -1556,7 +1601,7 @@ mod tests {
         );
         assert_eq!(
             Topic::RecurringGoals.footer(),
-            "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings"
+            "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings · l link"
         );
         assert_eq!(Topic::Accounts.footer(), "a add · e edit · ⇧↑↓ move");
         assert_eq!(

@@ -32,6 +32,7 @@ forget, and the copy that goes stale is always the one further from the code.
 | `f` | the owner's own mark on the selected row: a favorite on Savings, a biweekly expense on Planning — one verb, two things worth marking |
 | `F` | narrow to the rows `f` has marked, on Savings — a filter `Esc` clears with the screen's others |
 | `r` | reconcile the ledgers' filtered account against a statement |
+| `l` | link the selected recurring goal entry to an existing goal, on Recurring Goals — no relative elsewhere, so a letter of its own |
 | `[` / `]` | step a month: the filter a screen narrows by, or the date a field holds |
 | `←` / `→` | move the caret in a text field, step a date a day at a time, or cycle the focused selector — see the invariant below |
 | `Shift`+`←` / `Shift`+`→` | the same nudge, a week at a time on a date; one choice on a selector |
@@ -98,7 +99,7 @@ the screen's own, not `q quit`.
 Who *shows* it is a separate question, and the rule is that the chrome appears only where `dispatch`
 actually answers those two keys. `Topic::answers_app_wide_keys` states it — the nine screen topics, and
 nothing else — and `App::footer_chrome` asks it through `App::topic`, so one question covers every
-modal and all six search boxes rather than a list of screens re-derived at the call site. That
+modal and all seven search boxes rather than a list of screens re-derived at the call site. That
 `dispatch` returns into `modal_key` *above* its `q` and `0-9` arms is what makes the answer false
 under a modal: a digit typed into a worksheet's `/` box is part of the needle, a `q` under a confirm
 dialog is one of the "any key" that cancels it, and naming a key that does nothing is worse than
@@ -194,8 +195,9 @@ what a constant may be edited to and where it lands, and `planning/bill.rs` and
 will not resolve, and `t`, which confirms a computed plan, writes its payday through
 `transfer::execute`, and opens the allocation worksheets prefilled. `planning/test_support.rs` is
 the one plan and wiring the other four test against, for the reason `app/test_support.rs` is one
-fixture rather than nine. `destination` is the list `e` opens on one of its destination rows. `fund`
-is the seventh screen and its form: one row per holding, filtered by investment account and by a
+fixture rather than nine. `destination` is the list `e` opens on one of its destination rows, and
+`link` the list `l` opens on Recurring Goals. `fund` is the seventh screen and its form: one row
+per holding, filtered by investment account and by a
 search over ticker and account, with `a`/`e`/`d` adding, editing and deleting one and `g`/`G`
 refreshing what a fund is made of. **No move key**, deliberately: a fund's place in the list is the
 order it was entered in rather than an arrangement worth making, which is why `db::holding` has no
@@ -251,11 +253,11 @@ field framework every form in the app is built out of, and the one-field `ValueF
 to no single screen; `widget` is how any of them is *drawn* — the centered box, its labelled
 lines, and the caret over the character the focused field is on — which is why the help panel and
 the destination chooser reach for it too, neither of them being a form at all.
-`search` is the `/` box the ledgers, Savings, Funds, Recurring Goals, the worksheet and the
-destination chooser share: the box, its keys, and `Matcher`, which is what a needle *means* on all
-six. All three are finance-utils' `tui::search`, shared with Funder; `search.rs` adds only
-`search_spans`, the needle drawn with this app's caret. What every screen shares lives in
-`tui/mod.rs`, not in whichever screen needed it first.
+`search` is the `/` box the ledgers, Savings, Funds, Recurring Goals, the worksheet, the
+destination chooser and the link list share: the box, its keys, and `Matcher`, which is what a
+needle *means* on all seven. All three are finance-utils' `tui::search`, shared with Funder;
+`search.rs` adds only `search_spans`, the needle drawn with this app's caret. What every screen
+shares lives in `tui/mod.rs`, not in whichever screen needed it first.
 
 `app` is a directory rather than a file, and it is split the same way this section reads: one
 module per screen — `app/ledger.rs`, `app/savings.rs`, `app/planning.rs`, `app/funds.rs`,
@@ -638,8 +640,9 @@ deferred to nothing.
     `Enter` has left the filter narrowing the list, because a kept filter takes no keystrokes. The
     ledger title is the one echo that never carries a caret even so: the box itself is in the
     footer there, and two carets on one screen would leave it ambiguous which is taking the typing.
-    The destination chooser has no footer, so its title *is* the box and does carry one — which is
-    why `Chooser::title` returns a `Line` where every other title is a `String` or a `Label`.
+    The destination chooser and the link list have no footer, so each title *is* the box and does
+    carry one — which is why `Chooser::title` and `Linker::title` return a `Line` where every other
+    title is a `String` or a `Label`.
     `App::footer` returns one for the same reason. Being the only place the box can be drawn is
     also why that title shows it **as soon as it opens**, empty: `/` on a title that waited for the
     first character would leave the screen unchanged, and the `Esc` closing the box after it would
@@ -1484,6 +1487,25 @@ deferred to nothing.
   runs by the date each goal would take, drawn as month and year: the catalog's own order says
   nothing about when anything falls due, and a month already past this year lands two calendars
   out. The date is computed once, when the picker opens, and is the date the commit writes.
+- **`l` on Recurring Goals links an entry to a goal that was not created from it** — every goal an
+  import writes, and every one `n` types — so it counts in `Open`, sinks out of `s`'s preselection,
+  and answers `goal::has_goal_dated_in_year`. `tui::link` is the list, read through
+  `goal::linkable`: every container's open goals no entry claims, since a link moves no money and
+  so has no container to stay inside, and the entry's own open links beside them. Each row
+  carries its goal's month and the title the entry's, because two entries can share a name and
+  so can their rounds, and the month is what tells them apart.
+  - **The list opens where a reflexive `Enter` is safe, or undoable.** The entry's existing links
+    come first, marked, and `Enter` on one does nothing; then the goals whose names contain the
+    entry's — those in its month above those that are not. That lift is a hint and nothing more:
+    what `Enter` stores is the id under the cursor, so name matching still decides nothing outside
+    import.
+  - **`u` takes a link back**, and the list stays up for the right goal to be linked next. Without
+    it a wrong link would be permanent, and `recurring_goal::delete`, which counts every goal
+    referencing the entry, would refuse the entry from then on.
+  - **Neither write touches another entry's link or a closed goal.** `goal::link_recurring_goal`
+    and `goal::unlink_recurring_goal` each say so in their `WHERE`: re-pointing a goal would
+    quietly take a round away from the entry it names, and a closed goal is a round already
+    through.
 - **A created goal is dated for the year ahead, not the next occurrence.** `picker::goal_date`
   starts from `next_occurrence` — the first of the entry's month, this year while that month has
   not ended — and steps a year past it, because creating goals is a reseed rather than a
@@ -1509,7 +1531,7 @@ deferred to nothing.
     first rather than with them: while the box is open `Esc` is the box's, the one
     `search::search_key` answers on every screen that has one, and once `Enter` has left the box
     the needle is still narrowing the list — `search::escape_kept_filter` clears it before these
-    two. That is the same order on all six `/` screens, so Savings is not the odd one out either
+    two. That is the same order on all seven `/` screens, so Savings is not the odd one out either
     way.
   - **A goal with no date belongs to no month**, so any month filter drops it and All is the only
     place it appears. That is what the filter is *for*, not an edge case.
@@ -1590,7 +1612,7 @@ deferred to nothing.
   The worksheet is the one screen that overrides anything else: `/` is two keys there, so opening
   the box also spends the pending slash that `/N` would have used.
 - **`Esc` clears a kept filter before it means anything else**, through `search::escape_kept_filter`
-  in each of the six screens' own `Esc` arms. `Enter` leaves the box and keeps the needle, so
+  in each of the seven screens' own `Esc` arms. `Enter` leaves the box and keeps the needle, so
   without this the only way back to the whole list is to open the box again and close it the other
   way -- the one route nothing on screen suggests. It is the vocabulary's "innermost thing" read
   literally: the needle first, then the screen's own filter (a ledger's account and window, Savings'
@@ -1601,7 +1623,7 @@ deferred to nothing.
 - **A needle matches a row's text *and* the figures the row is about**, and what that means is
   `search::Matcher` rather than four `contains` calls — it and `search::searchable_amount` say at
   their definitions how a figure is compared. What each screen decides is which figures it hands
-  over, and the six answers differ:
+  over, and the seven answers differ:
   - Savings offers **Current and Goal**. `%` and `$/Pay` are derived from those two and are
     deliberately withheld — a needle reaching a readout narrows through a column nobody was
     searching — and the goal date has `[`/`]` already.
@@ -1617,6 +1639,8 @@ deferred to nothing.
   - Funds offers none either, the same call as the destination chooser and for a related reason: a
     needle matches the ticker and the account a holding sits in, both text, and the balance beside
     them is not what a search over *which fund* is about.
+  - The link list offers none, for the destination chooser's reason: what is being chosen is a
+    goal by identity, and a link moves no money.
 - **Every `/` screen filters in memory, the Ledger included.** Its rows come out of SQL, but
   `txn::Filter` carries no needle: the window and the account filter bound the fetch before
   anything is typed, so the rows in hand are the only rows a needle could ever reach. Narrowing

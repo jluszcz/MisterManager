@@ -12,6 +12,7 @@ use crate::db::{RecurringGoalId, RecurringTxnId, account, goal, recurring_txn};
 use crate::goal as goal_engine;
 use crate::recurring_txn::{self as recurring_engine, Extended};
 use crate::tui::cursor;
+use crate::tui::link::{self, Linker};
 use crate::tui::modal::{Confirm, Modal};
 use crate::tui::picker::{self, Picker};
 use crate::tui::recurring_goal::RecurringGoalForm;
@@ -187,6 +188,7 @@ impl App {
             KeyCode::Char('e') => self.open_recurring_goal_edit()?,
             KeyCode::Char('d') => self.open_recurring_goal_delete()?,
             KeyCode::Char('s') => self.open_recurring_goals()?,
+            KeyCode::Char('l') => self.open_link()?,
             _ => {}
         }
         Ok(())
@@ -334,6 +336,118 @@ impl App {
         Ok(())
     }
 
+    /// `l`: the open goals no entry claims, for the selected entry to claim
+    /// one of, and the ones it already claims, for `u` to give back. Every
+    /// container's, since a link moves no money and so has no container to
+    /// stay inside.
+    fn open_link(&mut self) -> Result<()> {
+        let Some(row) = self.recurring_goal.selected() else {
+            return self.nothing_selected();
+        };
+        let (entry, entry_name, entry_month) = (row.recurring_goal_id, row.name.clone(), row.month);
+        let goals = goal::linkable(&self.db, entry)?;
+        if goals.is_empty() {
+            self.status = "no open goal to link".to_string();
+            return Ok(());
+        }
+        let accounts = account::list(&self.db)?;
+        let offered = goals
+            .into_iter()
+            .map(|g| link::Offered {
+                container: Account::named(&accounts, g.container_account_id),
+                id: g.id,
+                name: g.name,
+                goal_date: g.goal_date,
+                linked: g.recurring_goal_id == Some(entry),
+            })
+            .collect();
+        self.modal = Some(Modal::Link(Linker::new(
+            entry,
+            entry_name,
+            entry_month,
+            offered,
+        )));
+        Ok(())
+    }
+
+    pub(super) fn link_key(&mut self, key: KeyEvent) -> Result<()> {
+        if let Some(Modal::Link(linker)) = &mut self.modal
+            && linker.is_searching()
+        {
+            search::search_key(linker, key);
+            return Ok(());
+        }
+        if key.code == KeyCode::Enter {
+            return self.commit_link();
+        }
+        let Some(Modal::Link(linker)) = &mut self.modal else {
+            return Ok(());
+        };
+        if cursor::scroll_key(linker, key.code) {
+            return Ok(());
+        }
+        match key.code {
+            KeyCode::Esc => {
+                if !search::escape_kept_filter(linker) {
+                    self.close_modal();
+                }
+            }
+            KeyCode::Char('/') => linker.begin_search(),
+            KeyCode::Char('u') => return self.unlink_selected(),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Record the goal under the cursor as a round of the entry, by id.
+    ///
+    /// A row already linked is left as it is and the list stays up: the list
+    /// opens on such a row when there is one, so this is what a reflexive
+    /// `Enter` meets.
+    fn commit_link(&mut self) -> Result<()> {
+        let Some(Modal::Link(linker)) = &self.modal else {
+            return Ok(());
+        };
+        let entry = linker.entry();
+        let Some(chosen) = linker.selected().cloned() else {
+            return self.nothing_selected();
+        };
+        if chosen.linked {
+            self.status = format!("{} is already linked", crate::demo::text(&chosen.name));
+            return Ok(());
+        }
+        goal::link_recurring_goal(&self.db, chosen.id, entry)?;
+        self.status = format!("linked {}", crate::demo::text(&chosen.name));
+        self.close_modal();
+        self.reload()?;
+        self.recurring_goal.select_entry(entry);
+        Ok(())
+    }
+
+    /// `u`: the goal under the cursor is no longer a round of the entry.
+    /// The list stays up, so the right goal can be linked next.
+    fn unlink_selected(&mut self) -> Result<()> {
+        let Some(Modal::Link(linker)) = &self.modal else {
+            return Ok(());
+        };
+        let entry = linker.entry();
+        let Some(chosen) = linker.selected().cloned() else {
+            return self.nothing_selected();
+        };
+        if !chosen.linked {
+            self.status = format!("{} is not linked", crate::demo::text(&chosen.name));
+            return Ok(());
+        }
+        goal::unlink_recurring_goal(&self.db, chosen.id, entry)?;
+        if let Some(Modal::Link(linker)) = &mut self.modal {
+            linker.mark_unlinked(chosen.id);
+        }
+        self.status = format!("unlinked {}", crate::demo::text(&chosen.name));
+        self.reload()?;
+        self.recurring_goal.select_entry(entry);
+        Ok(())
+    }
+
     pub(super) fn picker_key(&mut self, key: KeyEvent) -> Result<()> {
         if key.code == KeyCode::Enter {
             return self.commit_picker();
@@ -465,6 +579,143 @@ mod tests {
             "a reseed is for the year ahead"
         );
         assert_eq!(created.current, Cents::ZERO);
+    }
+
+    fn couch_entry(app: &App) -> RecurringGoalId {
+        recurring_goal::insert(
+            &app.db,
+            &recurring_goal::NewEntry {
+                name: "Couch".to_string(),
+                month: 3,
+                base_cents: Cents::from_dollars(250),
+                taxed: false,
+                cadence: recurring_goal::Cadence::Annual,
+            },
+        )
+        .unwrap()
+    }
+
+    /// The fixture's goals were typed from scratch, so neither counts as a
+    /// round of the entry until `l` says it is one.
+    #[test]
+    fn l_links_the_goal_named_like_the_entry_and_counts_it_as_open() {
+        let mut app = app();
+        let entry = couch_entry(&app);
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('6'));
+        app.recurring_goal.select_entry(entry);
+        assert_eq!(app.recurring_goal.selected().unwrap().open_goals, 0);
+
+        press(&mut app, KeyCode::Char('l'));
+        let Some(Modal::Link(linker)) = &app.modal else {
+            panic!("l opened no link list");
+        };
+        assert_eq!(linker.selected().unwrap().name, "Couch");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none());
+        assert_eq!(app.recurring_goal.selected().unwrap().open_goals, 1);
+        let couch = goal::linkable(&app.db, entry)
+            .unwrap()
+            .into_iter()
+            .find(|g| g.name == "Couch")
+            .unwrap();
+        assert_eq!(couch.recurring_goal_id, Some(entry));
+    }
+
+    /// A wrong link is taken back from the same list, which stays up so the
+    /// right goal can be linked next.
+    #[test]
+    fn u_unlinks_the_goal_under_the_cursor_and_keeps_the_list_open() {
+        let mut app = app();
+        let entry = couch_entry(&app);
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('6'));
+        app.recurring_goal.select_entry(entry);
+        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.recurring_goal.selected().unwrap().open_goals, 1);
+
+        press(&mut app, KeyCode::Char('l'));
+        let Some(Modal::Link(linker)) = &app.modal else {
+            panic!("l opened no link list");
+        };
+        assert!(linker.selected().unwrap().linked, "it opened off the link");
+        press(&mut app, KeyCode::Char('u'));
+
+        assert!(matches!(app.modal, Some(Modal::Link(_))));
+        assert_eq!(app.recurring_goal.selected().unwrap().open_goals, 0);
+        assert!(
+            goal::linkable(&app.db, entry)
+                .unwrap()
+                .iter()
+                .all(|g| g.recurring_goal_id.is_none())
+        );
+    }
+
+    /// The list opens on an existing link, so `Enter` there must not do
+    /// anything at all.
+    #[test]
+    fn enter_on_an_already_linked_goal_changes_nothing() {
+        let mut app = app();
+        let entry = couch_entry(&app);
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('6'));
+        app.recurring_goal.select_entry(entry);
+        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('l'));
+
+        press(&mut app, KeyCode::Enter);
+
+        assert!(matches!(app.modal, Some(Modal::Link(_))));
+        assert_eq!(app.status, "Couch is already linked");
+        assert_eq!(app.recurring_goal.selected().unwrap().open_goals, 1);
+    }
+
+    /// Every open goal claimed by some other entry leaves this one nothing
+    /// to link and nothing to unlink.
+    #[test]
+    fn l_with_every_open_goal_claimed_elsewhere_opens_nothing_and_says_why() {
+        let mut app = app();
+        let other = couch_entry(&app);
+        let entry = couch_entry(&app);
+        for g in goal::linkable(&app.db, other).unwrap() {
+            goal::link_recurring_goal(&app.db, g.id, other).unwrap();
+        }
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('6'));
+        app.recurring_goal.select_entry(entry);
+
+        press(&mut app, KeyCode::Char('l'));
+
+        assert!(app.modal.is_none());
+        assert_eq!(app.status, "no open goal to link");
+    }
+
+    /// A search that matches nothing leaves no row under the cursor, and
+    /// `Enter` must not link whatever row the cursor last sat on.
+    #[test]
+    fn enter_on_an_empty_search_links_nothing() {
+        let mut app = app();
+        let entry = couch_entry(&app);
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('6'));
+        app.recurring_goal.select_entry(entry);
+        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Char('/'));
+        for c in "zzzz".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+
+        assert!(
+            goal::linkable(&app.db, entry)
+                .unwrap()
+                .iter()
+                .all(|g| g.recurring_goal_id.is_none())
+        );
     }
 
     /// `PAY_PERIODS_PER_YEAR` is editable on the Planning screen, and that

@@ -910,6 +910,7 @@ impl App {
             Some(Modal::Worksheet(_)) => self.worksheet_key(key),
             Some(Modal::Picker(_)) => self.picker_key(key),
             Some(Modal::Destination(_)) => self.destination_key(key),
+            Some(Modal::Link(_)) => self.link_key(key),
             Some(Modal::Details(..)) => {
                 if key.code == KeyCode::Esc {
                     self.close_modal();
@@ -2316,7 +2317,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '6'),
-            "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings"
+            "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings · l link"
         );
         assert_eq!(
             footer_of(&mut app, '9'),
@@ -2798,7 +2799,7 @@ mod tests {
             (Topic::RecurringTxns, &["a", "e", "d", "g", "G", "x", "P"]),
             (
                 Topic::RecurringGoals,
-                &["[ ]", "Esc", "/", "a", "e", "d", "s"],
+                &["[ ]", "Esc", "/", "a", "e", "d", "s", "l"],
             ),
             (Topic::Accounts, &["a", "e", "⇧↑↓"]),
         ];
@@ -2884,7 +2885,7 @@ mod tests {
     ///   cancels.
     #[test]
     fn every_key_a_modal_handler_matches_appears_in_its_table() {
-        let handlers: [(Topic, &[&str]); 13] = [
+        let handlers: [(Topic, &[&str]); 15] = [
             (
                 Topic::Worksheet,
                 &[
@@ -2907,6 +2908,11 @@ mod tests {
             ),
             (Topic::Picker, &["Space", "Enter", "Esc"]),
             (Topic::Destination, &["/", "Enter", "Esc"]),
+            (Topic::Link, &["/", "Enter", "Esc", "u"]),
+            (
+                Topic::LinkSearch,
+                &["Ctrl+A/E/B/F/W/U/K/D", "Enter", "Esc", "Backspace", "F1"],
+            ),
             (
                 Topic::DestinationSearch,
                 &["Ctrl+A/E/B/F/W/U/K/D", "Enter", "Esc", "Backspace", "F1"],

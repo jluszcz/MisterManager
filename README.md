@@ -134,6 +134,12 @@ a September entry created in August 2026 is dated September 2027, and a March on
 this year — is dated March 2028. A biennial entry that already has a goal dated this year steps two
 years instead, skipping the year between rather than filling it.
 
+`l` links the selected entry to an open goal that was not created from it — an imported goal, or
+one typed with `n` on Savings — so it counts in `Open`. Every container's unlinked goals are
+offered with their month and year, those named like the entry and dated in its month first. The
+entry's existing links are listed above them, marked, and `u` unlinks one; a goal linked to another
+entry is never re-pointed.
+
 ### `7` Funds
 
 One row per fund you hold: the investment account it sits in, the ticker, the fund's own name, the
