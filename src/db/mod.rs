@@ -552,6 +552,7 @@ mod tests {
                 description: "Paycheck".to_string(),
                 cents: crate::money::Cents::from_dollars(2_000),
                 account_id: savings,
+                to_account_id: None,
                 cadence: recurring_txn::Cadence::Biweekly,
                 anchor_date: chrono::NaiveDate::from_ymd_opt(2026, 1, 2).unwrap(),
                 horizon: None,

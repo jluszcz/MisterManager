@@ -885,10 +885,18 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   overtakes it. Neither can stand in for the other, which is why they are two columns.
   `recurring_txn::update` writes neither the extension nor `is_paycheck`, for the same reason: the
   form that calls it has a field for neither, so `set_generate_through` and `set_paycheck` are each
-  their column's one writer. `recurring_txn::extend` refuses rather than reporting an empty
-  regeneration when the cap or the ten-year ceiling already binds — its `Extended` says which — and
-  the date it reports on success is read back out of `horizon`, so what the status line quotes is
-  where the rows stop rather than where the floor landed.
+  their column's one writer. `x` asks for one date and `recurring_txn::extend_all` writes it as the
+  floor of every recurring transaction whose end has not passed, in one transaction; a date the ten
+  years would clamp is refused rather than clamped, and an extension never lowers a floor already
+  further out.
+- **A recurring transaction with `to_account_id` set is a transfer, and `cents` then means the
+  magnitude moved rather than a ledger figure.** Each occurrence is two rows, one per account, both
+  owned by the one rule and each signed off its own account's kind by `txn::transfer_legs` — the
+  table `txn::write_transfer` signs a `t` by, so a scheduled transfer and a typed one cannot land
+  opposite ways round. Ownership is therefore per `(date, account)` rather than per date:
+  `regenerate_within` writes back a missing leg without doubling the one still there. The schema's
+  `CHECK` holds the magnitude positive and the two accounts apart; `set_paycheck` refuses a
+  transfer, since a paycheck is income arriving.
 - **Deleting a recurring transaction releases its rows** (`recurring_txn_id = NULL`, `edited = 0`)
   rather than cascading. A
   delete must never move a balance.

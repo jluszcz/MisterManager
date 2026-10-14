@@ -221,7 +221,13 @@ screen gives up for the charts.
 
 The rows whose amount and date are known in advance — the paycheck and the monthlies. `P` marks the
 transaction the Paycheck-Eve column is derived from. `g` regenerates the selected one and `G` every
-one, reporting `removed / released / adopted / inserted`.
+one, reporting `removed / released / adopted / inserted`. `x` asks for a date and writes every one
+whose end date has not passed out to it. The list is ordered by `Next`, the soonest row each one has
+ahead of it; `Last` is the furthest.
+
+A `To` account on the form makes a recurring transfer: the amount moves out of `Account` and into
+`To` on every occurrence, written as two ledger rows signed the way `t` signs them, and the list
+names both ends as `CHK → SAV`.
 
 Rules on Cash and Credit accounts share one Amount column, and each figure is colored the way its own
 ledger colors it: a negative cash rule is money gone and draws red, a negative credit rule is the

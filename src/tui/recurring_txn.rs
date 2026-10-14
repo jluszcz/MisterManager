@@ -37,6 +37,13 @@ pub struct Row {
     /// transfer form's two selectors are the other place a list spans both,
     /// and they resolve against each other rather than against a table.
     pub account: super::Account,
+    /// Where a transfer lands, labelled the way `account` is; `None` for an
+    /// ordinary recurring transaction. The column draws the two as
+    /// `CHK → SAV`.
+    pub to: Option<super::Account>,
+    /// The ledger figure, signed as `sense` reads it -- or, on a transfer,
+    /// the magnitude moved, drawn uncolored since a transfer changes no net
+    /// worth.
     pub cents: Cents,
     /// Which way `cents` is signed, off this row's own account: this is the
     /// one Amount column holding both kinds, so no screen-wide sense serves
@@ -46,7 +53,10 @@ pub struct Row {
     /// every column without a sense of its own gets.
     pub sense: super::style::Sense,
     pub cadence: Cadence,
-    pub anchor_date: NaiveDate,
+    /// The earliest ledger row this recurring transaction owns from today on,
+    /// and `None` once every row it owns is behind it -- or before the first
+    /// `g` gives it any. The list is ordered by it.
+    pub next_owned: Option<NaiveDate>,
     /// The furthest-dated ledger row this recurring transaction owns, and
     /// `None` until the first `g` gives it one. The screen shows how far the
     /// rows actually reach rather than the horizon they are allowed to,
@@ -81,12 +91,17 @@ impl RecurringTxns {
         &mut self,
         txns: Vec<RecurringTxn>,
         owned: HashMap<RecurringTxnId, i64>,
+        next_owned: HashMap<RecurringTxnId, NaiveDate>,
         last_owned: HashMap<RecurringTxnId, NaiveDate>,
     ) {
+        let selected = self.selected().map(|r| r.recurring_txn_id);
         self.rows = txns
             .into_iter()
             .map(|txn| Row {
                 account: super::Account::coded(&self.accounts, txn.account_id),
+                to: txn
+                    .to_account_id
+                    .map(|id| super::Account::coded(&self.accounts, id)),
                 sense: self
                     .accounts
                     .iter()
@@ -95,16 +110,29 @@ impl RecurringTxns {
                         super::style::Sense::of_ledger(a.kind)
                     }),
                 owned: owned.get(&txn.id).copied().unwrap_or(0),
+                next_owned: next_owned.get(&txn.id).copied(),
                 last_owned: last_owned.get(&txn.id).copied(),
                 recurring_txn_id: txn.id,
                 description: txn.description,
                 cents: txn.cents,
                 cadence: txn.cadence,
-                anchor_date: txn.anchor_date,
                 is_paycheck: txn.is_paycheck,
             })
             .collect();
+        // Soonest first; a row with nothing ahead of it sorts last. The sort
+        // is stable, so ties keep the order they were entered in.
+        self.rows
+            .sort_by_key(|r| (r.next_owned.is_none(), r.next_owned));
         self.cursor.clamp(self.rows.len());
+        // By id rather than by index: a `g`, `x` or edit moves a row's `Next`
+        // and so its place, and the index the cursor held would name
+        // whichever recurring transaction took it -- the next `d` or `P`
+        // acting on a row the owner never chose.
+        if let Some(index) =
+            selected.and_then(|id| self.rows.iter().position(|r| r.recurring_txn_id == id))
+        {
+            self.cursor.select(index);
+        }
     }
 
     pub fn rows(&self) -> &[Row] {
@@ -127,30 +155,44 @@ impl RecurringTxns {
     /// `Name — Kind`, and a width chosen for a code would truncate exactly
     /// the label that exists to say more than one.
     pub fn acct_width(&self) -> u16 {
-        let width = |text: &str| text.chars().count();
-        self.rows.iter().fold(width(ACCT_HEADER), |widest, r| {
-            widest.max(r.account.render_with(|text, _| width(text)))
-        }) as u16
+        self.rows
+            .iter()
+            .fold(ACCT_HEADER.chars().count(), |widest, r| {
+                widest.max(label_line(&acct_label(r)).width())
+            }) as u16
     }
 }
 
 impl_scroll!(RecurringTxns, rows);
+
+/// What the Account column draws: the account, or a transfer's two.
+fn acct_label(row: &Row) -> Label {
+    let label = Label::default().account(row.account.clone());
+    match &row.to {
+        Some(to) => label.text(TRANSFER_ARROW).account(to.clone()),
+        None => label,
+    }
+}
+
+const TRANSFER_ARROW: &str = " → ";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RecurringTxnField {
     Description,
     Amount,
     Account,
+    To,
     Cadence,
     Anchor,
     Horizon,
 }
 
 impl RecurringTxnField {
-    pub const ORDER: [RecurringTxnField; 6] = [
+    pub const ORDER: [RecurringTxnField; 7] = [
         RecurringTxnField::Description,
         RecurringTxnField::Amount,
         RecurringTxnField::Account,
+        RecurringTxnField::To,
         RecurringTxnField::Cadence,
         RecurringTxnField::Anchor,
         RecurringTxnField::Horizon,
@@ -161,6 +203,7 @@ impl RecurringTxnField {
             RecurringTxnField::Description => "Description",
             RecurringTxnField::Amount => "Amount",
             RecurringTxnField::Account => "Account",
+            RecurringTxnField::To => "To",
             RecurringTxnField::Cadence => "Cadence",
             RecurringTxnField::Anchor => "Start",
             RecurringTxnField::Horizon => "End",
@@ -176,6 +219,11 @@ impl RecurringTxnField {
 ///
 /// `is_paycheck` is not a field: at most one recurring transaction carries it,
 /// and `P` is where it moves.
+///
+/// `To` is what makes it a transfer: `—`, its first position, is an ordinary
+/// recurring transaction written to `Account`; an account there moves the
+/// amount out of `Account` and into it, both legs signed off their own
+/// account's kind, so the amount is the positive magnitude moved.
 #[derive(Debug)]
 pub struct RecurringTxnForm {
     pub editing: Option<RecurringTxnId>,
@@ -185,6 +233,10 @@ pub struct RecurringTxnForm {
     anchor: DateField,
     horizon: DateField,
     account: AccountChoice,
+    /// The accounts `To` cycles through, behind its `—`.
+    to_accounts: Vec<Account>,
+    /// `0` is `—`; `n` is `to_accounts[n - 1]`.
+    to: usize,
     cadence: usize,
 }
 
@@ -201,6 +253,8 @@ impl RecurringTxnForm {
             amount: Field::default(),
             anchor: DateField::today(today),
             horizon: DateField::blank(today),
+            to_accounts: accounts.clone(),
+            to: 0,
             account: AccountChoice::untouched(accounts),
             // Monthly is what nearly every recurring transaction is; the
             // biweekly one is the paycheck, entered once.
@@ -227,6 +281,14 @@ impl RecurringTxnForm {
             amount: Field::given(txn.cents.to_string()),
             anchor: DateField::given(today, Some(txn.anchor_date)),
             horizon: DateField::given(today, txn.horizon),
+            // A transfer whose destination is gone opens on `—` rather than
+            // on some other account: saving it then is the owner's decision
+            // to make it ordinary, made with the field in view.
+            to: txn
+                .to_account_id
+                .and_then(|id| accounts.iter().position(|a| a.id == id))
+                .map_or(0, |i| i + 1),
+            to_accounts: accounts.clone(),
             account: AccountChoice::given(accounts, txn.account_id),
             cadence: Cadence::ALL
                 .iter()
@@ -264,8 +326,18 @@ impl RecurringTxnForm {
                     .display(self.focus == RecurringTxnField::Horizon),
             ),
             RecurringTxnField::Account => self.account.display(),
+            RecurringTxnField::To => match self.to_account() {
+                Some(a) => {
+                    Label::default().account(super::Account::labelled(&self.to_accounts, a.id))
+                }
+                None => Label::from("—"),
+            },
             RecurringTxnField::Cadence => Label::from(Cadence::ALL[self.cadence].as_str()),
         }
+    }
+
+    fn to_account(&self) -> Option<&Account> {
+        self.to.checked_sub(1).and_then(|i| self.to_accounts.get(i))
     }
 
     pub fn commit(&self) -> Result<NewRecurringTxn> {
@@ -276,13 +348,23 @@ impl RecurringTxnForm {
             .ok_or_else(|| anyhow::anyhow!("no account is selected"))?;
         let description = self.description.value().trim().to_string();
         ensure!(!description.is_empty(), "description must not be empty");
+        // Signed exactly as the ledger is, and `parse_amount` refuses an
+        // empty field: a zero-amount recurring transaction writes a row that
+        // changes nothing, every fortnight, forever.
+        let cents = parse_amount(self.amount.value())?;
+        let to_account_id = self.to_account().map(|a| a.id);
+        if let Some(to) = to_account_id {
+            ensure!(to != account, "a transfer needs two different accounts");
+            ensure!(
+                cents > Cents::ZERO,
+                "a transfer's amount is what moves, so it is positive"
+            );
+        }
         Ok(NewRecurringTxn {
             description,
-            // Signed exactly as the ledger is, and `parse_amount` refuses an
-            // empty field: a zero-amount recurring transaction writes a row
-            // that changes nothing, every fortnight, forever.
-            cents: parse_amount(self.amount.value())?,
+            cents,
             account_id: account,
+            to_account_id,
             cadence: Cadence::ALL[self.cadence],
             anchor_date: self.anchor.parse()?,
             // An empty horizon is a recurring transaction that does not end --
@@ -300,6 +382,9 @@ impl FormFields for RecurringTxnForm {
     fn cycle(&mut self, step: Step) {
         match self.focus {
             RecurringTxnField::Account => self.account.step(step),
+            RecurringTxnField::To => {
+                self.to = step_index(self.to, self.to_accounts.len() + 1, step.direction())
+            }
             RecurringTxnField::Cadence => {
                 self.cadence = step_index(self.cadence, Cadence::ALL.len(), step.direction())
             }
@@ -319,7 +404,9 @@ impl FormFields for RecurringTxnForm {
             RecurringTxnField::Amount => Focused::Text(&mut self.amount),
             RecurringTxnField::Anchor => Focused::Date(&mut self.anchor),
             RecurringTxnField::Horizon => Focused::Date(&mut self.horizon),
-            RecurringTxnField::Account | RecurringTxnField::Cadence => Focused::Selector,
+            RecurringTxnField::Account | RecurringTxnField::To | RecurringTxnField::Cadence => {
+                Focused::Selector
+            }
         }
     }
 
@@ -335,15 +422,72 @@ impl FormFields for RecurringTxnForm {
     fn apply_suggestion(&mut self, hit: &Suggestion) {
         self.description.fill(hit.description.clone());
         if !self.amount.is_touched() {
-            self.amount.fill(hit.cents.to_string());
+            // A transfer's amount is a magnitude; a suggestion off one leg of
+            // a past one is signed by that leg's ledger.
+            let cents = match self.to_account() {
+                Some(_) => Cents(hit.cents.0.abs()),
+                None => hit.cents,
+            };
+            self.amount.fill(cents.to_string());
         }
         self.account.take(hit);
     }
 }
 
+/// The one field of the `x` form.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ExtendField {
+    Until,
+}
+
+impl ExtendField {
+    pub const ORDER: [ExtendField; 1] = [ExtendField::Until];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ExtendField::Until => "Until",
+        }
+    }
+}
+
+/// `x`: the date every recurring transaction still running is written out
+/// to. `crate::recurring_txn::extend_all` is what it is committed through,
+/// and where the refusals live.
+#[derive(Debug)]
+pub struct ExtendForm {
+    until: DateField,
+}
+
+impl ExtendForm {
+    /// Opened on `suggested`, `crate::recurring_txn::extend_default`.
+    pub fn new(today: NaiveDate, suggested: NaiveDate) -> ExtendForm {
+        ExtendForm {
+            until: DateField::on(today, suggested),
+        }
+    }
+
+    pub fn display(&self, field: ExtendField) -> Label {
+        match field {
+            ExtendField::Until => Label::from(self.until.display(true)),
+        }
+    }
+
+    pub fn commit(&self) -> Result<NaiveDate> {
+        self.until.parse()
+    }
+}
+
+impl FormFields for ExtendForm {
+    fn move_focus(&mut self, _step: isize) {}
+
+    fn focused(&mut self) -> Focused<'_> {
+        Focused::Date(&mut self.until)
+    }
+}
+
 use super::autocomplete::Autocomplete;
 use super::widget::{field_stack, render_fields, render_popup};
-use super::{Chrome, account_cell, amount_in, render_table, right_header};
+use super::{Chrome, account_cell, amount_in, label_line, render_table, right_header};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
@@ -366,6 +510,19 @@ pub fn render_form(frame: &mut Frame, form: &mut RecurringTxnForm, popup: &Autoc
     render_popup(frame, area, popup)
 }
 
+pub fn render_extend_form(frame: &mut Frame, form: &mut ExtendForm) {
+    let caret = form.caret();
+    let lines = field_stack(
+        &ExtendField::ORDER,
+        ExtendField::Until,
+        caret,
+        ExtendField::label,
+        |f| form.display(f),
+        &[],
+    );
+    render_fields(frame, "Extend all until — Enter extend · Esc cancel", lines);
+}
+
 /// One row per recurring transaction. Returns the [`Viewport`] it drew: the
 /// height `PageUp`/`PageDown` move by, and the row the next draw starts from.
 pub(super) fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> Viewport {
@@ -379,25 +536,33 @@ pub(super) fn render(frame: &mut Frame, area: Rect, list: &RecurringTxns) -> Vie
             TableRow::new(vec![
                 Cell::from(if r.is_paycheck { "$" } else { " " }),
                 Cell::from(crate::demo::text(&r.description).into_owned()),
-                account_cell(&r.account),
-                amount_in(r.sense, r.cents),
+                match r.to {
+                    Some(_) => Cell::from(label_line(&acct_label(r))),
+                    None => account_cell(&r.account),
+                },
+                match r.to {
+                    Some(_) => {
+                        Cell::from(TextLine::from(crate::demo::figure(r.cents)).right_aligned())
+                    }
+                    None => amount_in(r.sense, r.cents),
+                },
                 Cell::from(r.cadence.as_str()),
-                Cell::from(r.anchor_date.to_string()),
+                optional(r.next_owned.map(|d| d.to_string())),
                 optional(r.last_owned.map(|d| d.to_string())),
                 Cell::from(TextLine::from(r.owned.to_string()).right_aligned()),
             ])
         })
         .collect();
 
-    // `Amount` and `Rows` are the right-aligned columns. `Last` is not: its
-    // cells go through the local `optional` above, which does not right-align.
+    // `Amount` and `Rows` are the right-aligned columns. `Next` and `Last`
+    // are not: their cells go through the local `optional` above, which does not right-align.
     let header = TableRow::new(vec![
         Cell::from(" "),
         Cell::from("Description"),
         Cell::from(ACCT_HEADER),
         right_header("Amount"),
         Cell::from("Cadence"),
-        Cell::from("Start"),
+        Cell::from("Next"),
         Cell::from("Last"),
         right_header("Rows"),
     ])
@@ -453,6 +618,7 @@ mod tests {
             description: description.to_string(),
             cents: Cents(cents),
             account_id: AccountId(1),
+            to_account_id: None,
             cadence,
             anchor_date: day(2026, 8, 28),
             horizon: Some(day(2026, 12, 18)),
@@ -472,6 +638,10 @@ mod tests {
                 recurring_txn(4, "Phone", -4_500, Cadence::Monthly, false),
             ],
             HashMap::from([(RecurringTxnId(1), 9), (RecurringTxnId(2), 4)]),
+            HashMap::from([
+                (RecurringTxnId(1), day(2026, 8, 28)),
+                (RecurringTxnId(2), day(2026, 9, 1)),
+            ]),
             HashMap::from([
                 (RecurringTxnId(1), day(2026, 12, 18)),
                 (RecurringTxnId(2), day(2026, 11, 1)),
@@ -503,6 +673,56 @@ mod tests {
         );
     }
 
+    /// Soonest first, and a recurring transaction with nothing ahead of it
+    /// after every one that has -- in the order they were entered, since none
+    /// of them has a date to be ordered by.
+    #[test]
+    fn the_list_is_ordered_by_next_date_with_the_undated_last() {
+        let mut list = RecurringTxns::new(accounts());
+        list.set_recurring_txns(
+            vec![
+                recurring_txn(1, "Salary", 500_000, Cadence::Biweekly, true),
+                recurring_txn(2, "Mortgage", -120_000, Cadence::Monthly, false),
+                recurring_txn(3, "HOA", -30_000, Cadence::Monthly, false),
+                recurring_txn(4, "Phone", -4_500, Cadence::Monthly, false),
+            ],
+            HashMap::new(),
+            HashMap::from([
+                (RecurringTxnId(2), day(2026, 8, 20)),
+                (RecurringTxnId(4), day(2026, 8, 18)),
+            ]),
+            HashMap::new(),
+        );
+        let order: Vec<&str> = list.rows().iter().map(|r| r.description.as_str()).collect();
+        assert_eq!(order, vec!["Phone", "Mortgage", "Salary", "HOA"]);
+    }
+
+    /// A reload that reorders the list keeps the cursor on the recurring
+    /// transaction it was on, not on the index it held.
+    #[test]
+    fn a_reload_that_reorders_the_list_keeps_the_cursor_on_its_row() {
+        let txns = || {
+            vec![
+                recurring_txn(1, "Salary", 500_000, Cadence::Biweekly, true),
+                recurring_txn(2, "Mortgage", -120_000, Cadence::Monthly, false),
+            ]
+        };
+        let mut list = RecurringTxns::new(accounts());
+        list.set_recurring_txns(txns(), HashMap::new(), HashMap::new(), HashMap::new());
+        list.cursor_mut().select(1);
+        assert_eq!(list.selected().unwrap().description, "Mortgage");
+
+        list.set_recurring_txns(
+            txns(),
+            HashMap::new(),
+            HashMap::from([(RecurringTxnId(2), day(2026, 9, 1))]),
+            HashMap::new(),
+        );
+
+        assert_eq!(list.rows()[0].description, "Mortgage");
+        assert_eq!(list.selected().unwrap().description, "Mortgage");
+    }
+
     #[test]
     fn each_row_names_its_rules_account_by_code() {
         let list = screen();
@@ -519,6 +739,7 @@ mod tests {
             vec![recurring_txn(1, "Salary", 500_000, Cadence::Biweekly, true)],
             HashMap::new(),
             HashMap::new(),
+            HashMap::new(),
         );
         assert_eq!(list.rows()[0].account.text(), "Everyday — Cash");
     }
@@ -530,6 +751,7 @@ mod tests {
         let mut list = RecurringTxns::new(vec![cash(1, "CHK"), credit(2, "CHK")]);
         list.set_recurring_txns(
             vec![recurring_txn(1, "Salary", 500_000, Cadence::Biweekly, true)],
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );
@@ -550,6 +772,7 @@ mod tests {
         let mut list = RecurringTxns::new(Vec::new());
         list.set_recurring_txns(
             vec![recurring_txn(1, "Salary", 500_000, Cadence::Biweekly, true)],
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );
@@ -596,16 +819,95 @@ mod tests {
             vec![recurring_txn(1, "Salary", 500_000, Cadence::Biweekly, true)],
             HashMap::new(),
             HashMap::new(),
+            HashMap::new(),
         );
 
         assert_eq!(list.selected_index(), 0);
         assert_eq!(list.selected().unwrap().recurring_txn_id, RecurringTxnId(1));
     }
 
+    /// A form with `To` stepped onto an account, the amount typed as `amount`.
+    fn transfer_form(amount: &str, to_steps: usize) -> RecurringTxnForm {
+        let mut form = RecurringTxnForm::add(accounts(), today()).unwrap();
+        for c in "Sweep".chars() {
+            form.edit(char_key(c));
+        }
+        walk_until!(form.focus == RecurringTxnField::Amount, form.next_field());
+        for c in amount.chars() {
+            form.edit(char_key(c));
+        }
+        walk_until!(form.focus == RecurringTxnField::To, form.next_field());
+        for _ in 0..to_steps {
+            form.choice(Step::NEXT);
+        }
+        form
+    }
+
+    /// `To` past its `—` makes the row a transfer out of `Account` into the
+    /// account it names, and the amount is the magnitude moved.
+    #[test]
+    fn an_account_under_to_makes_a_transfer() {
+        let form = transfer_form("250", 2);
+        assert_eq!(
+            form.display(RecurringTxnField::To).plain_text(),
+            "SAV — Rainy Day"
+        );
+
+        let new = form.commit().unwrap();
+
+        assert_eq!(new.account_id, AccountId(1));
+        assert_eq!(new.to_account_id, Some(AccountId(2)));
+        assert_eq!(new.cents, Cents(25_000));
+    }
+
+    #[test]
+    fn a_transfer_into_its_own_account_is_refused() {
+        let refused = transfer_form("250", 1).commit().unwrap_err();
+        assert!(refused.to_string().contains("two different"), "{refused}");
+    }
+
+    /// Each leg is signed off its own account at generation, so a sign
+    /// typed here could only ever be the wrong one.
+    #[test]
+    fn a_transfer_with_a_negative_amount_is_refused() {
+        let refused = transfer_form("-250", 2).commit().unwrap_err();
+        assert!(refused.to_string().contains("positive"), "{refused}");
+    }
+
+    /// Editing a transfer opens on the account it lands in, not on `—`,
+    /// or saving any other field would quietly make it ordinary.
+    #[test]
+    fn editing_a_transfer_opens_on_its_destination() {
+        let txn = RecurringTxn {
+            to_account_id: Some(AccountId(2)),
+            ..recurring_txn(1, "Sweep", 25_000, Cadence::Monthly, false)
+        };
+        let form = RecurringTxnForm::edit(accounts(), today(), &txn).unwrap();
+        assert_eq!(form.commit().unwrap().to_account_id, Some(AccountId(2)));
+    }
+
+    /// The Account column names both ends, and is widened to fit them.
+    #[test]
+    fn a_transfer_is_listed_from_one_account_to_the_other() {
+        let mut list = RecurringTxns::new(accounts());
+        list.set_recurring_txns(
+            vec![RecurringTxn {
+                to_account_id: Some(AccountId(2)),
+                ..recurring_txn(1, "Sweep", 25_000, Cadence::Monthly, false)
+            }],
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        let lines = drawn(&list);
+        assert!(lines[2].contains("CHK → SAV"), "{:?}", lines[2]);
+        assert_eq!(list.acct_width(), "CHK → SAV".chars().count() as u16);
+    }
+
     #[test]
     fn an_empty_list_has_nothing_selected() {
         let mut list = RecurringTxns::new(accounts());
-        list.set_recurring_txns(Vec::new(), HashMap::new(), HashMap::new());
+        list.set_recurring_txns(Vec::new(), HashMap::new(), HashMap::new(), HashMap::new());
         assert!(list.rows().is_empty());
         assert!(list.selected().is_none());
     }
@@ -639,6 +941,7 @@ mod tests {
         }
         form.next_field();
         form.choice(Step::NEXT);
+        form.next_field(); // To, left at `—`
         form.next_field();
         form.choice(Step::NEXT);
         form.next_field();
@@ -662,6 +965,7 @@ mod tests {
         assert_eq!(new.cadence, Cadence::Biweekly);
         assert_eq!(new.anchor_date, day(2026, 9, 1));
         assert_eq!(new.horizon, Some(day(2026, 12, 1)));
+        assert_eq!(new.to_account_id, None, "`—` is an ordinary one");
     }
 
     /// A recurring transaction that does not end leaves the field blank -- the
@@ -1135,6 +1439,7 @@ mod tests {
             ],
             HashMap::new(),
             HashMap::new(),
+            HashMap::new(),
         );
 
         let buffer = draw_buffer(MIN_WIDTH, 8, |frame| {
@@ -1161,13 +1466,14 @@ mod tests {
             }],
             HashMap::new(),
             HashMap::new(),
+            HashMap::new(),
         );
         assert_eq!(list.rows()[0].sense, super::super::style::Sense::Natural);
     }
 
     /// `Amount` and `Rows` are the two right-aligned columns, so they are the
-    /// two headers that must end where their figures do. `Last` is left with
-    /// its cells, which the local `optional` does not right-align.
+    /// two headers that must end where their figures do. `Next` and `Last`
+    /// are left with their cells, which the local `optional` does not right-align.
     #[test]
     fn the_right_aligned_headers_end_where_their_own_columns_do() {
         let lines = drawn(&screen());
@@ -1178,7 +1484,7 @@ mod tests {
                 "Acct",
                 "Amount",
                 "Cadence",
-                "Start",
+                "Next",
                 "Last",
                 "Rows",
             ],
@@ -1216,6 +1522,7 @@ mod tests {
         list.set_recurring_txns(
             vec![recurring_txn(1, "Salary", 500_000, Cadence::Biweekly, true)],
             HashMap::from([(RecurringTxnId(1), 9)]),
+            HashMap::from([(RecurringTxnId(1), day(2026, 8, 28))]),
             HashMap::from([(RecurringTxnId(1), day(2026, 12, 18))]),
         );
         let lines = drawn(&list);
@@ -1236,6 +1543,7 @@ mod tests {
         list.set_recurring_txns(
             vec![recurring_txn(1, "Salary", 500_000, Cadence::Biweekly, true)],
             HashMap::from([(RecurringTxnId(1), 9)]),
+            HashMap::from([(RecurringTxnId(1), day(2026, 8, 28))]),
             HashMap::from([(RecurringTxnId(1), day(2026, 12, 18))]),
         );
         let lines = drawn(&list);

@@ -16,7 +16,7 @@ use crate::tui::link::{self, Linker};
 use crate::tui::modal::{Confirm, Modal};
 use crate::tui::picker::{self, Picker};
 use crate::tui::recurring_goal::RecurringGoalForm;
-use crate::tui::recurring_txn::RecurringTxnForm;
+use crate::tui::recurring_txn::{ExtendForm, RecurringTxnForm};
 use crate::tui::search::{self, Search};
 use anyhow::{Result, ensure};
 use chrono::{Datelike, NaiveDate};
@@ -34,7 +34,7 @@ impl App {
             KeyCode::Char('d') => self.open_recurring_txn_delete(),
             KeyCode::Char('g') => self.regenerate_selected()?,
             KeyCode::Char('G') => self.regenerate_every()?,
-            KeyCode::Char('x') => self.extend_selected()?,
+            KeyCode::Char('x') => self.open_extend()?,
             KeyCode::Char('P') => self.make_paycheck()?,
             _ => {}
         }
@@ -110,7 +110,7 @@ impl App {
     /// Owned rather than borrowed because every one of those keys writes
     /// `self.status` afterwards, which the row's own borrow of
     /// `self.recurring_txn` would hold off -- and masked because the status
-    /// line is a place a figure or a name reaches a human. `g`, `x` and `P`
+    /// line is a place a figure or a name reaches a human. `g` and `P`
     /// each said that twice; the refusal itself stays at the call site, since
     /// `nothing_selected` is what every other screen's guard reads as too.
     fn selected_recurring_txn(&self) -> Option<(RecurringTxnId, String)> {
@@ -137,26 +137,31 @@ impl App {
         self.reload()
     }
 
-    /// `x`: push the selected recurring transaction one rolling horizon
-    /// further out and regenerate it.
-    ///
-    /// Both refusals name the date that binds, because "nothing happened" on
-    /// a screen whose whole subject is future rows reads as a bug.
-    fn extend_selected(&mut self) -> Result<()> {
-        let Some((id, description)) = self.selected_recurring_txn() else {
-            return self.nothing_selected();
+    /// `x`: ask how far out to write every recurring transaction, opening
+    /// on one rolling window past the furthest any already reaches.
+    fn open_extend(&mut self) -> Result<()> {
+        let suggested = recurring_engine::extend_default(&self.db, self.today)?;
+        self.modal = Some(Modal::ExtendRecurringTxns(ExtendForm::new(
+            self.today, suggested,
+        )));
+        Ok(())
+    }
+
+    /// Both counts are reported, because "nothing happened" on a screen
+    /// whose whole subject is future rows reads as a bug -- and the ones
+    /// passed over for having ended are the likeliest reason.
+    pub(super) fn commit_extend_recurring_txns(&mut self) -> Result<()> {
+        let Some(Modal::ExtendRecurringTxns(form)) = &self.modal else {
+            return Ok(());
         };
-        self.status = match recurring_engine::extend(&self.db, id, self.today)? {
-            Extended::Through { through, report } => {
-                format!("{description} extended through {through}: {report}")
-            }
-            Extended::Ends(end) => {
-                format!("{description} ends {end} — change that with e")
-            }
-            Extended::Ceiling(reach) => {
-                format!("{description} already reaches {reach}, ten years out")
-            }
-        };
+        let until = form.commit()?;
+        let Extended {
+            extended,
+            ended,
+            report,
+        } = recurring_engine::extend_all(&self.db, until, self.today)?;
+        self.close_modal();
+        self.status = format!("extended {extended} through {until} ({ended} ended): {report}");
         self.reload()
     }
 
@@ -259,6 +264,7 @@ impl App {
         self.recurring_txn.set_recurring_txns(
             recurring_txn::list(&self.db)?,
             recurring_txn::owned_counts(&self.db)?,
+            recurring_txn::next_owned_dates(&self.db, self.today)?,
             recurring_txn::last_owned_dates(&self.db)?,
         );
         Ok(())
@@ -953,9 +959,10 @@ mod tests {
         press(app, KeyCode::Esc); // dismiss the suggestion popup, keep the form
         press(app, KeyCode::Tab);
         type_str(app, "-1200.00");
-        press(app, KeyCode::Tab);
-        press(app, KeyCode::Tab);
-        press(app, KeyCode::Tab);
+        press(app, KeyCode::Tab); // Account
+        press(app, KeyCode::Tab); // To
+        press(app, KeyCode::Tab); // Cadence
+        press(app, KeyCode::Tab); // Start
         for _ in 0..10 {
             press(app, KeyCode::Backspace);
         }
@@ -1004,13 +1011,58 @@ mod tests {
         assert_eq!(app.recurring_txn.rows()[0].owned, 3);
     }
 
-    /// From 2026-08-15 the three-month window ends 2026-11-15, so the
-    /// mortgage's rows stop at 2026-11-01. One `x` buys another window: the
-    /// rows run to 2027-02-01, and the screen's date column says so.
+    /// Push the mortgage's end out of the way, so `x` is what binds.
+    fn endless_mortgage(app: &mut App) -> RecurringTxnId {
+        let id = app.recurring_txn.rows()[0].recurring_txn_id;
+        let found = recurring_txn::get(&app.db, id).unwrap();
+        set_end(app, id, &found, None);
+        id
+    }
+
+    fn set_end(
+        app: &mut App,
+        id: RecurringTxnId,
+        found: &recurring_txn::RecurringTxn,
+        end: Option<NaiveDate>,
+    ) {
+        recurring_txn::update(
+            &app.db,
+            id,
+            &recurring_txn::NewRecurringTxn {
+                description: found.description.clone(),
+                cents: found.cents,
+                account_id: found.account_id,
+                to_account_id: None,
+                cadence: found.cadence,
+                anchor_date: found.anchor_date,
+                horizon: end,
+            },
+        )
+        .unwrap();
+    }
+
+    /// `x` opens on one window past the furthest reach: from 2026-08-15 the
+    /// three-month window ends 2026-11-15, so the form offers 2027-02-15.
     #[test]
-    fn x_extends_the_selected_rule_and_the_last_date_follows() {
+    fn x_opens_a_date_form_on_one_window_past_the_furthest_reach() {
         let mut app = recurring_txns_app();
         add_mortgage_rule(&mut app);
+
+        press(&mut app, KeyCode::Char('x'));
+
+        let Some(Modal::ExtendRecurringTxns(form)) = &app.modal else {
+            panic!("x opened no extend form: {}", app.status);
+        };
+        assert_eq!(form.commit().unwrap(), day(2027, 2, 15));
+    }
+
+    /// `Enter` on the form writes the rows out to the date it holds, and the
+    /// screen's date column follows.
+    #[test]
+    fn x_then_enter_extends_and_the_last_date_follows() {
+        let mut app = recurring_txns_app();
+        add_mortgage_rule(&mut app);
+        endless_mortgage(&mut app);
         press(&mut app, KeyCode::Char('g'));
         assert_eq!(
             app.recurring_txn.rows()[0].last_owned,
@@ -1018,7 +1070,9 @@ mod tests {
         );
 
         press(&mut app, KeyCode::Char('x'));
+        press(&mut app, KeyCode::Enter);
 
+        assert!(app.modal.is_none(), "{}", app.status);
         assert_eq!(
             app.recurring_txn.rows()[0].last_owned,
             Some(day(2027, 2, 1))
@@ -1027,13 +1081,40 @@ mod tests {
         assert!(app.status.contains("2027-02-15"), "{}", app.status);
     }
 
+    /// The date is typed, not just accepted: whatever the field holds is
+    /// where the rows run to.
+    #[test]
+    fn x_extends_to_the_date_typed() {
+        let mut app = recurring_txns_app();
+        add_mortgage_rule(&mut app);
+        let id = endless_mortgage(&mut app);
+
+        press(&mut app, KeyCode::Char('x'));
+        for _ in 0..10 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_str(&mut app, "2027-06-30");
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(
+            recurring_txn::get(&app.db, id).unwrap().generate_through,
+            Some(day(2027, 6, 30))
+        );
+        assert_eq!(
+            app.recurring_txn.rows()[0].last_owned,
+            Some(day(2027, 6, 1))
+        );
+    }
+
     /// The extension is durable, or the next `g` would sweep the extra rows
     /// straight back out again.
     #[test]
     fn a_g_after_an_x_keeps_the_extended_rows() {
         let mut app = recurring_txns_app();
         add_mortgage_rule(&mut app);
+        endless_mortgage(&mut app);
         press(&mut app, KeyCode::Char('x'));
+        press(&mut app, KeyCode::Enter);
         let extended = txn::count(&app.db).unwrap();
 
         press(&mut app, KeyCode::Char('g'));
@@ -1045,38 +1126,47 @@ mod tests {
         );
     }
 
-    /// A recurring transaction that ends cannot be extended past its end:
-    /// moving that date is the form's decision, and the status line says
-    /// where to make it.
+    /// A recurring transaction whose end has passed is not extended, and the
+    /// status line counts it so an extension of nothing explains itself.
     #[test]
-    fn x_on_a_rule_that_has_ended_names_the_date_it_ends() {
+    fn x_skips_a_rule_whose_end_has_passed_and_says_so() {
         let mut app = recurring_txns_app();
         add_mortgage_rule(&mut app);
         let id = app.recurring_txn.rows()[0].recurring_txn_id;
-        let mut ends = recurring_txn::get(&app.db, id).unwrap();
-        ends.horizon = Some(day(2026, 10, 1));
-        recurring_txn::update(
-            &app.db,
-            id,
-            &recurring_txn::NewRecurringTxn {
-                description: ends.description,
-                cents: ends.cents,
-                account_id: ends.account_id,
-                cadence: ends.cadence,
-                anchor_date: ends.anchor_date,
-                horizon: ends.horizon,
-            },
-        )
-        .unwrap();
+        let found = recurring_txn::get(&app.db, id).unwrap();
+        set_end(&mut app, id, &found, Some(day(2026, 8, 1)));
 
         press(&mut app, KeyCode::Char('x'));
+        press(&mut app, KeyCode::Enter);
 
-        assert!(app.status.contains("2026-10-01"), "{}", app.status);
+        assert!(app.status.contains("extended 0"), "{}", app.status);
+        assert!(app.status.contains("1 ended"), "{}", app.status);
         assert_eq!(
             recurring_txn::get(&app.db, id).unwrap().generate_through,
-            None,
-            "a refused extension writes nothing"
+            None
         );
+    }
+
+    /// A refused date keeps the form open with the reason on the status
+    /// line, so the owner can correct it rather than retype it.
+    #[test]
+    fn a_date_past_ten_years_keeps_the_form_open() {
+        let mut app = recurring_txns_app();
+        add_mortgage_rule(&mut app);
+
+        press(&mut app, KeyCode::Char('x'));
+        for _ in 0..10 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_str(&mut app, "2040-01-01");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(
+            matches!(app.modal, Some(Modal::ExtendRecurringTxns(_))),
+            "{}",
+            app.status
+        );
+        assert!(app.status.contains("ten years"), "{}", app.status);
     }
 
     /// Regenerating twice in a row must produce identical rows.
@@ -1114,8 +1204,9 @@ mod tests {
         press(&mut app, KeyCode::Esc);
         press(&mut app, KeyCode::Tab);
         type_str(&mut app, "5000.00");
-        press(&mut app, KeyCode::Tab);
-        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab); // Account
+        press(&mut app, KeyCode::Tab); // To
+        press(&mut app, KeyCode::Tab); // Cadence
         // A paycheck is biweekly, not the form's monthly default -- and this
         // is the app-level press that keeps `←`/`→` reaching `commit`.
         press(&mut app, KeyCode::Right);
@@ -1160,8 +1251,9 @@ mod tests {
         press(&mut app, KeyCode::Esc);
         press(&mut app, KeyCode::Tab);
         type_str(&mut app, "5000.00");
-        press(&mut app, KeyCode::Tab);
-        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab); // Account
+        press(&mut app, KeyCode::Tab); // To
+        press(&mut app, KeyCode::Tab); // Cadence
         // A paycheck is biweekly, not the form's monthly default -- and this
         // is the app-level press that keeps `←`/`→` reaching `commit`.
         press(&mut app, KeyCode::Right);
@@ -1292,6 +1384,7 @@ mod tests {
         press(&mut app, KeyCode::Char('e'));
         press(&mut app, KeyCode::Tab); // Amount
         press(&mut app, KeyCode::Tab); // Account
+        press(&mut app, KeyCode::Tab); // To
         press(&mut app, KeyCode::Tab); // Cadence
         press(&mut app, KeyCode::Tab); // Anchor
         for _ in 0..10 {

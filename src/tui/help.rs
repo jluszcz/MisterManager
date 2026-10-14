@@ -523,7 +523,7 @@ const RECURRING_TXNS: [Entry; 7] = [
     Entry {
         key: "a",
         label: Label::Own("add"),
-        detail: "Add a recurring transaction: an account, an amount, a cadence and a start date.",
+        detail: "Add a recurring transaction: an account, an amount, a cadence and a start date. An account under To makes it a transfer out of Account and into that one, the amount being what moves.",
     },
     Entry {
         key: "e",
@@ -538,7 +538,7 @@ const RECURRING_TXNS: [Entry; 7] = [
     Entry {
         key: "g",
         label: Label::Own("regen"),
-        detail: "Regenerate the selected one's rows. One run reaches three months ahead by default — an end date only ever cuts that short, and 'x' is what pushes further out. Idempotent: running it twice produces identical rows, and hand-corrected rows are left alone.",
+        detail: "Regenerate the selected one's rows. One run reaches three months ahead by default — an end date only ever cuts that short, and 'x' is what pushes every one further out. Idempotent: running it twice produces identical rows, and hand-corrected rows are left alone.",
     },
     Entry {
         key: "G",
@@ -548,7 +548,7 @@ const RECURRING_TXNS: [Entry; 7] = [
     Entry {
         key: "x",
         label: Label::Own("extend"),
-        detail: "Push this one's rows further out. Refuses when the end date or the ten-year ceiling already binds, and reports where the rows actually stop.",
+        detail: "Ask for a date, then write every recurring transaction whose end date has not passed out to it. Opens one rolling window past the furthest reach; one ending sooner stops at its end, and a date more than ten years out is refused.",
     },
     Entry {
         key: "P",

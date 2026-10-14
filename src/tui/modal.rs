@@ -23,7 +23,7 @@ use super::link::{self, Linker};
 use super::picker::{self, Picker};
 use super::planning::{self, BillForm, Target, TransferConfirm};
 use super::recurring_goal::{self as recurring_goal_screen, RecurringGoalForm};
-use super::recurring_txn::{self as recurring_txn_screen, RecurringTxnForm};
+use super::recurring_txn::{self as recurring_txn_screen, ExtendForm, RecurringTxnForm};
 use super::retirement::{self as retirement_screen, RetirementForm, WindowForm};
 use super::search::Search;
 use super::widget;
@@ -66,6 +66,9 @@ pub(super) enum Modal {
     Value(ValueTarget, ValueForm),
     Bill(BillForm),
     RecurringTxn(RecurringTxnForm),
+    /// `x` on Recurring Transactions: the date every one still running is
+    /// written out to.
+    ExtendRecurringTxns(ExtendForm),
     /// `e` on a Planning destination row: the goals this line could be
     /// pointed at, and the withdrawal among them.
     Destination(destination::Chooser),
@@ -113,6 +116,7 @@ impl Modal {
             Modal::Value(_, form) => Some(form),
             Modal::Bill(form) => Some(form),
             Modal::RecurringTxn(form) => Some(form),
+            Modal::ExtendRecurringTxns(form) => Some(form),
             Modal::Destination(_) => None,
             Modal::Link(_) => None,
             Modal::Details(..) => None,
@@ -158,6 +162,7 @@ impl Modal {
             | Modal::GoalTransfer(_)
             | Modal::Value(..)
             | Modal::Bill(_)
+            | Modal::ExtendRecurringTxns(_)
             | Modal::RecurringGoalEntry(_)
             | Modal::Holding(_)
             | Modal::Retirement(_)
@@ -387,6 +392,10 @@ pub(super) fn render(frame: &mut Frame, modal: &mut Option<Modal>, popup: &Autoc
             0
         }
         Some(Modal::RecurringTxn(f)) => recurring_txn_screen::render_form(frame, f, popup),
+        Some(Modal::ExtendRecurringTxns(f)) => {
+            recurring_txn_screen::render_extend_form(frame, f);
+            0
+        }
         Some(Modal::RecurringGoalEntry(f)) => {
             recurring_goal_screen::render_form(frame, f);
             0
