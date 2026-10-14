@@ -929,6 +929,9 @@ impl App {
             ),
             Some(Modal::Bill(_)) => self.form_key(key, App::commit_bill),
             Some(Modal::RecurringTxn(_)) => self.form_key(key, App::commit_recurring_txn),
+            Some(Modal::ExtendRecurringTxns(_)) => {
+                self.form_key(key, App::commit_extend_recurring_txns)
+            }
             Some(Modal::RecurringGoalEntry(_)) => self.form_key(key, App::commit_recurring_goal),
             Some(Modal::Account(_)) => self.form_key(key, App::commit_account),
             Some(Modal::Holding(_)) => self.form_key(key, App::commit_holding_form),
@@ -3081,6 +3084,7 @@ mod tests {
                     description: name.to_string(),
                     cents: Cents::from_dollars(-100),
                     account_id: checking,
+                    to_account_id: None,
                     cadence: recurring_txn::Cadence::Monthly,
                     anchor_date: day(2026, 8, day_of_month),
                     horizon: None,

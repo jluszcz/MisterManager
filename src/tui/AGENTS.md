@@ -1156,7 +1156,9 @@ deferred to nothing.
     from its own content.** A code is not the only thing it holds: this is the one list that mixes
     both kinds, so a code both kinds hold falls back to `Everyday — Cash`, and a width chosen for
     a code would truncate exactly the label that exists to say more than one. `RecurringTxns::acct_width`
-    is that derivation — the widest label drawn, or `ACCT_HEADER`, whichever is longer. `Description`
+    is that derivation — the widest label drawn, or `ACCT_HEADER`, whichever is longer. A
+    recurring transfer draws both of its accounts there as `CHK → SAV`, which is the other label
+    a fixed width would cut. `Description`
     is still the screen's one `Constraint::Min`, so the widening is paid for there and out of
     nothing else, and `a_widened_account_column_is_drawn_whole_at_the_minimum_width` is what holds
     that up at `MIN_WIDTH`.
@@ -1748,10 +1750,13 @@ deferred to nothing.
   to a handler means adding it to its `Topic`'s table, which
   `every_key_a_screen_handler_matches_appears_in_its_table` and
   `every_key_a_modal_handler_matches_appears_in_its_table` enforce.
-- **Screen 9 shows the last date a recurring transaction reaches, not the horizon it may reach.**
-  `recurring_txn::last_owned_dates` is `MAX(txn.date)` over the rows it owns, beside the `Rows`
-  count from the same source — so the column is `—` until the first `g`, and it is the number `x`
-  moves. The end date stays editable in the `e` form: a cap the owner sets belongs with the rest of
+- **Screen 9 shows the next and last dates a recurring transaction reaches, not the dates its
+  rule names.** `recurring_txn::last_owned_dates` is `MAX(txn.date)` over the rows it owns and
+  `next_owned_dates` is `MIN(txn.date)` over those dated today or later, beside the `Rows` count
+  from the same source — so both columns are `—` until the first `g`, `Last` is the number `x`
+  moves, and `Next` is where a corrected row actually landed rather than where the schedule put
+  it. The list is ordered by `Next`, soonest first, and a recurring transaction with nothing
+  ahead of it sorts after every one that has. The end date stays editable in the `e` form: a cap the owner sets belongs with the rest of
   the fields, not in a table of what the schedule has actually produced.
   **The two date fields are labelled `Start` and `End`**, over the columns `anchor_date` and
   `horizon`. `End` is the load-bearing rename: two different bounds would otherwise share one word,
@@ -1761,9 +1766,8 @@ deferred to nothing.
   read as though it did, which is the reading `x` exists to answer. `Start` follows it because the
   pair is read together and `Anchor` names the mechanism rather than the question the owner is
   answering; it is still `anchor_date`, the date the cadence counts from, which may sit in the past
-  while generation begins at today. The list's column beside them stays `Last`, a third thing
-  again: where the rows actually reached. That list heads its own column `Start` too — one field
-  cannot be called two things across the screen that lists it and the form that edits it.
+  while generation begins at today. The list carries neither: its `Next` and `Last` are what the
+  ledger holds, not what the form asks.
 - **A holding is one row, and `e` edits all of it: account, ticker and balance.** There is no `E`
   beside it the way a bill splits `e`/`E` — a holding has no figure that stands apart from the row
   the way a bill's amount does, so one form asks for the three fields together. Nothing on this

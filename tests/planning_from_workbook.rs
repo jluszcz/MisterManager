@@ -83,6 +83,7 @@ fn add_paycheck_rule(db: &db::Db, path: &Path) -> NaiveDate {
             description: "Salary".to_string(),
             cents: Cents(500_000),
             account_id: checking.id,
+            to_account_id: None,
             cadence: db::recurring_txn::Cadence::Biweekly,
             anchor_date: anchor,
             horizon: None,

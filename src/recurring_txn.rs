@@ -8,8 +8,9 @@
 use crate::calc::schedule::{self, Step};
 use crate::db::recurring_txn::{self, Cadence, RecurringTxn};
 use crate::db::setting::{self, key};
-use crate::db::{Db, RecurringTxnId, txn};
-use anyhow::{Context, Result};
+use crate::db::{AccountId, Db, RecurringTxnId, txn};
+use crate::money::Cents;
+use anyhow::{Context, Result, ensure};
 use chrono::{Months, NaiveDate};
 use std::collections::HashSet;
 use std::fmt;
@@ -105,8 +106,8 @@ fn horizon_months(db: &Db) -> Result<i64> {
 /// floor an extension has written past it.
 ///
 /// [`horizon`] then caps it -- by ten years and by the recurring
-/// transaction's own end -- while [`extend`] reads it uncapped, because the
-/// caps are precisely what it has to report having hit.
+/// transaction's own end -- while [`extend_all`] reads it uncapped, since a
+/// floor is compared against the date asked for before either cap applies.
 fn reach(db: &Db, recurring_txn: &RecurringTxn, today: NaiveDate) -> Result<NaiveDate> {
     let rolling = add_months(today, horizon_months(db)?)?;
     Ok(match recurring_txn.generate_through {
@@ -127,63 +128,82 @@ fn add_months(date: NaiveDate, months: i64) -> Result<NaiveDate> {
         .context("the recurring transaction horizon ran off the end of the calendar")
 }
 
-/// What one press of `x` did.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Extended {
-    /// The rows now reach `through` -- the extended floor, cut short by the
-    /// recurring transaction's own end, which is the date the ledger shows.
-    /// The floor itself is stored uncapped, so moving that end out later
-    /// reaches further without a second press.
-    Through {
-        through: NaiveDate,
-        report: Regenerated,
-    },
-    /// Refused: the recurring transaction ends on this date, and extending
-    /// how far ahead it is written out cannot outlive it. Moving the end is
-    /// the form's decision, not `x`'s.
-    Ends(NaiveDate),
-    /// Refused: generation already reaches the ten-year ceiling.
-    Ceiling(NaiveDate),
+/// What one `x` did, across every recurring transaction.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Extended {
+    /// How many were regenerated out to the date asked for -- or to their
+    /// own end, where that comes first.
+    pub extended: usize,
+    /// How many were passed over because their end date is already behind
+    /// today: there is nothing left of them to write out.
+    pub ended: usize,
+    /// The regeneration of the extended ones, summed as `G`'s is.
+    pub report: Regenerated,
 }
 
-/// Push one recurring transaction one rolling horizon further out, and
-/// regenerate it.
+/// What the `x` form opens on: one rolling window past the furthest any
+/// recurring transaction already reaches, so `Enter` alone is one window's
+/// stride, the same unit `g` writes. Capped at the ten-year ceiling.
+pub fn extend_default(db: &Db, today: NaiveDate) -> Result<NaiveDate> {
+    let months = horizon_months(db)?;
+    // Every recurring transaction's `reach` is the one rolling window raised
+    // by its own floor, so the furthest is the window raised by the furthest
+    // floor.
+    let furthest_reach = recurring_txn::list(db)?
+        .into_iter()
+        .filter_map(|r| r.generate_through)
+        .fold(add_months(today, months)?, NaiveDate::max);
+    Ok(add_months(furthest_reach, months)?.min(furthest(today)?))
+}
+
+/// Push every recurring transaction whose end date has not passed out to
+/// `until`, and regenerate each of them.
 ///
-/// The step is [`key::RECURRING_TXN_HORIZON_MONTHS`] rather than a fixed
-/// three months: it is already the answer to "how far ahead do I look", so a
-/// stride of the same size keeps one press meaning one window.
+/// `until` is written as each one's `generate_through` floor uncapped by its
+/// own end, so moving that end out later reaches further without a second
+/// `x`. A floor already past `until` is left where it is -- an extension
+/// never pulls generation back in -- but the rows are regenerated all the
+/// same, since a floor is a promise about how far the rows may reach and not
+/// a record of how far they do.
 ///
-/// The write and the regeneration share a transaction, so a failed
-/// regeneration cannot leave the row claiming a reach its ledger has not got.
+/// A date past the ten-year ceiling is refused rather than clamped, and so is
+/// one not after today: either way the owner typed a date nothing would be
+/// written out to, and a status line reporting zeroes reads as a bug.
+///
+/// One transaction for the lot, so a failed regeneration cannot leave some
+/// rows claiming a reach their ledger has not got.
 ///
 /// **Must be called at top level, not inside another [`Db::transaction`].**
-pub fn extend(db: &Db, id: RecurringTxnId, today: NaiveDate) -> Result<Extended> {
-    let recurring_txn = recurring_txn::get(db, id)?;
-    let reach = reach(db, &recurring_txn, today)?;
-    if let Some(end) = recurring_txn.horizon
-        && end <= reach
-    {
-        return Ok(Extended::Ends(end));
-    }
+pub fn extend_all(db: &Db, until: NaiveDate, today: NaiveDate) -> Result<Extended> {
+    ensure!(until > today, "extend until a date after today");
     let ceiling = furthest(today)?;
-    if reach >= ceiling {
-        return Ok(Extended::Ceiling(reach));
-    }
-    let floor = add_months(reach, horizon_months(db)?)?.min(ceiling);
-    let extended = RecurringTxn {
-        generate_through: Some(floor),
-        ..recurring_txn
-    };
-    // What the rows will actually reach, which is the floor cut short by the
-    // recurring transaction's own end. Read from `horizon` rather than
-    // recomputed, so the message and the generation cannot drift: quoting the
-    // floor would overstate the reach right up until the next press refused.
-    let through = horizon(db, &extended, today)?;
-    let report = db.transaction(|db| {
-        recurring_txn::set_generate_through(db, id, floor)?;
-        regenerate_within(db, &extended, today)
-    })?;
-    Ok(Extended::Through { through, report })
+    ensure!(until <= ceiling, "{until} is past {ceiling}, ten years out");
+    let recurring_txns = recurring_txn::list(db)?;
+    db.transaction(|db| {
+        let mut done = Extended::default();
+        for recurring_txn in recurring_txns {
+            if recurring_txn.horizon.is_some_and(|end| end < today) {
+                done.ended += 1;
+                continue;
+            }
+            // Regenerated whether or not the floor moves: the rolling window
+            // advances with today but rows are only written when something
+            // regenerates, so a reach the window already covers can still
+            // be a reach the ledger has not got.
+            let extended = if until > reach(db, &recurring_txn, today)? {
+                recurring_txn::set_generate_through(db, recurring_txn.id, until)?;
+                RecurringTxn {
+                    generate_through: Some(until),
+                    ..recurring_txn
+                }
+            } else {
+                recurring_txn
+            };
+            done.report = done.report.add(regenerate_within(db, &extended, today)?);
+            done.extended += 1;
+        }
+        Ok(done)
+    })
 }
 
 /// Regenerate one recurring transaction's rows, inside one transaction.
@@ -243,6 +263,7 @@ fn regenerate_within(
     // reclaim it anyway, so asking would only end in a duplicate insert for
     // the same date.
     let owned = recurring_txn::owned_dates(db, recurring_txn.id, today)?;
+    let legs = legs(db, recurring_txn)?;
     let to = horizon(db, recurring_txn, today)?;
     let occurrences = schedule::occurrences(
         recurring_txn.anchor_date,
@@ -259,8 +280,10 @@ fn regenerate_within(
     //     stranded.
     let stranded: Vec<NaiveDate> = owned
         .iter()
-        .copied()
+        .map(|(date, _)| *date)
         .filter(|date| *date <= to && !scheduled.contains(date))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
         .collect();
     let released = recurring_txn::release_dates(db, recurring_txn.id, &stranded)?;
 
@@ -269,44 +292,64 @@ fn regenerate_within(
         released,
         ..Regenerated::default()
     };
-    // What is left after 1b: the occurrences this recurring transaction
-    // already accounts for.
-    let already_owned: HashSet<NaiveDate> = owned
+    // What is left after 1b: the legs of each occurrence this recurring
+    // transaction already accounts for. Per leg rather than per date, so a
+    // transfer missing one leg -- deleted by hand -- has that leg written
+    // back without doubling the other.
+    let already_owned: HashSet<(NaiveDate, AccountId)> = owned
         .into_iter()
-        .filter(|date| scheduled.contains(date))
+        .filter(|(date, _)| scheduled.contains(date))
         .collect();
     for date in occurrences {
-        if already_owned.contains(&date) {
-            continue;
-        }
-        // 2. Adopt a matching unclaimed row -- the workbook already holds
-        //    every future occurrence as an ordinary row -- before
-        // 3. inserting, when there was nothing to adopt.
-        let adopted = recurring_txn::adopt(
-            db,
-            recurring_txn.id,
-            date,
-            recurring_txn.account_id,
-            &recurring_txn.description,
-            recurring_txn.cents,
-        )?;
-        if adopted {
-            report.adopted += 1;
-        } else {
-            txn::insert(
+        for &(account_id, cents) in &legs {
+            if already_owned.contains(&(date, account_id)) {
+                continue;
+            }
+            // 2. Adopt a matching unclaimed row -- the workbook already holds
+            //    every future occurrence as an ordinary row -- before
+            // 3. inserting, when there was nothing to adopt.
+            let adopted = recurring_txn::adopt(
                 db,
-                &txn::NewTxn {
-                    date,
-                    cents: recurring_txn.cents,
-                    account_id: recurring_txn.account_id,
-                    description: recurring_txn.description.clone(),
-                    recurring_txn_id: Some(recurring_txn.id),
-                },
+                recurring_txn.id,
+                date,
+                account_id,
+                &recurring_txn.description,
+                cents,
             )?;
-            report.inserted += 1;
+            if adopted {
+                report.adopted += 1;
+            } else {
+                txn::insert(
+                    db,
+                    &txn::NewTxn {
+                        date,
+                        cents,
+                        account_id,
+                        description: recurring_txn.description.clone(),
+                        recurring_txn_id: Some(recurring_txn.id),
+                    },
+                )?;
+                report.inserted += 1;
+            }
         }
     }
     Ok(report)
+}
+
+/// The rows one occurrence writes, as `(account, signed amount)`: the one
+/// row of an ordinary recurring transaction, or a transfer's two legs, each
+/// signed off its own account's kind by `txn::transfer_legs` -- the rule a
+/// `t` on the ledger writes by, so a scheduled transfer and a typed one land
+/// the same way round.
+fn legs(db: &Db, recurring_txn: &RecurringTxn) -> Result<Vec<(AccountId, Cents)>> {
+    Ok(match recurring_txn.to_account_id {
+        None => vec![(recurring_txn.account_id, recurring_txn.cents)],
+        Some(to) => {
+            let (from_cents, to_cents) =
+                txn::transfer_legs(db, recurring_txn.account_id, to, recurring_txn.cents)?;
+            vec![(recurring_txn.account_id, from_cents), (to, to_cents)]
+        }
+    })
 }
 
 /// The first paycheck strictly after `after`, from whichever recurring
@@ -339,10 +382,10 @@ pub fn next_paycheck(db: &Db, after: NaiveDate) -> Result<Option<NaiveDate>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db;
     use crate::db::account::{self, Kind};
     use crate::db::recurring_txn::{Cadence, NewRecurringTxn};
     use crate::db::txn::{self, Filter, NewTxn, Txn};
-    use crate::db::{self, AccountId};
     use crate::money::Cents;
     use crate::test_support::day;
 
@@ -368,6 +411,7 @@ mod tests {
             description: "Mortgage".to_string(),
             cents: Cents(-120_000),
             account_id,
+            to_account_id: None,
             cadence: Cadence::Monthly,
             anchor_date: day(2026, 9, 1),
             horizon: Some(day(2026, 12, 1)),
@@ -777,120 +821,298 @@ mod tests {
         assert_eq!(dates.last(), Some(&day(2036, 8, 1)));
     }
 
-    /// One press buys one rolling horizon's worth past where generation
-    /// already reaches: from 2026-08-16 the window ends 2026-11-16, so
-    /// extending carries it to 2027-02-16 and the rows out to 2027-02-01.
-    #[test]
-    fn extending_generates_one_more_horizon_of_rows() {
-        let db = db::open_in_memory().unwrap();
-        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+    fn endless(db: &Db, checking: AccountId) -> RecurringTxnId {
         let mut new = mortgage(checking);
         new.horizon = None;
-        let id = recurring_txn::insert(&db, &new).unwrap();
+        recurring_txn::insert(db, &new).unwrap()
+    }
 
-        let extended = extend(&db, id, today()).unwrap();
+    /// The rows run out to the date asked for, and the report is a whole
+    /// regeneration's, as `g`'s is -- release then insert.
+    #[test]
+    fn extending_writes_rows_out_to_the_date_asked_for() {
+        let db = db::open_in_memory().unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        endless(&db, checking);
 
-        let Extended::Through { through, report } = extended else {
-            panic!("extending an endless recurring transaction is not refused: {extended:?}");
-        };
-        assert_eq!(through, day(2027, 2, 16));
-        assert_eq!(
-            report.inserted, 6,
-            "the counts are a whole regeneration's, as `g`'s are -- release then insert"
-        );
+        let extended = extend_all(&db, day(2027, 2, 16), today()).unwrap();
+
+        assert_eq!(extended.extended, 1);
+        assert_eq!(extended.report.inserted, 6);
         let dates: Vec<NaiveDate> = rows(&db).iter().map(|t| t.date).collect();
         assert_eq!(dates.last(), Some(&day(2027, 2, 1)));
     }
 
-    /// The extension is a date, not a flag: pressing again moves it on from
-    /// where it already stands rather than recomputing the same date.
+    /// One `x` reaches every recurring transaction, not just the selected one.
     #[test]
-    fn extending_twice_reaches_two_horizons_out() {
+    fn extending_reaches_every_recurring_transaction() {
         let db = db::open_in_memory().unwrap();
         let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
-        let mut new = mortgage(checking);
-        new.horizon = None;
-        let id = recurring_txn::insert(&db, &new).unwrap();
+        let first = endless(&db, checking);
+        let second = endless(&db, checking);
 
-        extend(&db, id, today()).unwrap();
-        let extended = extend(&db, id, today()).unwrap();
+        let extended = extend_all(&db, day(2027, 2, 16), today()).unwrap();
 
-        let Extended::Through { through, .. } = extended else {
-            panic!("the second extension is not refused: {extended:?}");
-        };
-        assert_eq!(through, day(2027, 5, 16));
-        let dates: Vec<NaiveDate> = rows(&db).iter().map(|t| t.date).collect();
-        assert_eq!(dates.last(), Some(&day(2027, 5, 1)));
+        assert_eq!(extended.extended, 2);
+        for id in [first, second] {
+            assert_eq!(
+                recurring_txn::get(&db, id).unwrap().generate_through,
+                Some(day(2027, 2, 16))
+            );
+        }
     }
 
     /// The mortgage ends 2026-12-01, which the rolling window has not reached
-    /// yet: the first press is what writes that last occurrence out.
+    /// yet: extending past it writes out that last occurrence and no further.
     #[test]
-    fn extending_reaches_a_rules_own_end_and_then_refuses() {
-        let (db, _, id) = fresh();
+    fn extending_stops_at_a_rules_own_end() {
+        let (db, _, _) = fresh();
 
-        let first = extend(&db, id, today()).unwrap();
-        let second = extend(&db, id, today()).unwrap();
+        let extended = extend_all(&db, day(2027, 6, 1), today()).unwrap();
 
-        assert!(
-            matches!(first, Extended::Through { .. }),
-            "the end was still ahead of the window: {first:?}"
-        );
+        assert_eq!(extended.extended, 1);
         let dates: Vec<NaiveDate> = rows(&db).iter().map(|t| t.date).collect();
         assert_eq!(dates.last(), Some(&day(2026, 12, 1)));
+    }
+
+    /// Once a recurring transaction is written out to its own end, a further
+    /// extension regenerates the same rows and no more.
+    #[test]
+    fn a_rule_already_written_out_to_its_end_gains_no_rows() {
+        let (db, _, _) = fresh();
+        extend_all(&db, day(2027, 6, 1), today()).unwrap();
+        let before = rows(&db).len();
+
+        extend_all(&db, day(2027, 9, 1), today()).unwrap();
+
+        assert_eq!(rows(&db).len(), before);
+        assert_eq!(rows(&db).last().map(|t| t.date), Some(day(2026, 12, 1)));
+    }
+
+    /// The rolling window moves with today, but rows are only written when
+    /// something regenerates: rows last written months ago stop well short of
+    /// where the window now reaches. An `x` to a date inside the window must
+    /// still write them out to it rather than reading the window as done.
+    #[test]
+    fn extending_writes_out_rows_the_window_reaches_but_nothing_has_written() {
+        let db = db::open_in_memory().unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let id = endless(&db, checking);
+        // Last regenerated on 2026-06-16, so the rows stop at 2026-09-01.
+        regenerate(&db, id, day(2026, 6, 16)).unwrap();
         assert_eq!(
-            second,
-            Extended::Ends(day(2026, 12, 1)),
-            "nothing is left to generate past the date it ends"
+            rows(&db).iter().map(|t| t.date).max(),
+            Some(day(2026, 9, 1))
+        );
+
+        // From 2026-08-16 the window reaches 2026-11-16, past the date asked.
+        let extended = extend_all(&db, day(2026, 11, 1), today()).unwrap();
+
+        assert_eq!(extended.extended, 1);
+        assert_eq!(
+            rows(&db).iter().map(|t| t.date).max(),
+            Some(day(2026, 11, 1))
         );
     }
 
-    /// The status line quotes where the rows now stop, not where the floor
-    /// landed. The two part company whenever the recurring transaction's own
-    /// end binds first, and a message overstating the reach by two months is
-    /// contradicted by the very next press refusing.
+    /// An end date behind today is a recurring transaction that is over: it
+    /// is counted as such and nothing about it is written.
     #[test]
-    fn the_reported_reach_is_where_the_rows_stop() {
-        let (db, _, id) = fresh();
+    fn a_rule_whose_end_has_passed_is_skipped() {
+        let db = db::open_in_memory().unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let mut new = mortgage(checking);
+        new.anchor_date = day(2026, 1, 1);
+        new.horizon = Some(day(2026, 8, 1));
+        let id = recurring_txn::insert(&db, &new).unwrap();
 
-        let extended = extend(&db, id, today()).unwrap();
+        let extended = extend_all(&db, day(2027, 2, 16), today()).unwrap();
 
-        let Extended::Through { through, .. } = extended else {
-            panic!("the end was still ahead of the window: {extended:?}");
-        };
-        let dates: Vec<NaiveDate> = rows(&db).iter().map(|t| t.date).collect();
-        assert_eq!(through, day(2026, 12, 1));
-        assert_eq!(dates.last(), Some(&through));
+        assert_eq!(extended.extended, 0);
+        assert_eq!(extended.ended, 1);
+        assert_eq!(recurring_txn::get(&db, id).unwrap().generate_through, None);
     }
 
-    /// Refusing writes nothing at all -- neither the extension nor a round of
-    /// regeneration that would report zeroes.
+    /// An extension never pulls generation back in: a date short of where a
+    /// recurring transaction already reaches leaves it where it is.
     #[test]
-    fn a_refused_extension_leaves_the_rule_untouched() {
-        let (db, _, id) = fresh();
-        extend(&db, id, today()).unwrap();
-        let before = recurring_txn::get(&db, id).unwrap();
+    fn a_date_short_of_the_current_reach_moves_nothing() {
+        let db = db::open_in_memory().unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let id = endless(&db, checking);
+        extend_all(&db, day(2027, 6, 1), today()).unwrap();
 
-        extend(&db, id, today()).unwrap();
+        extend_all(&db, day(2027, 2, 16), today()).unwrap();
 
-        assert_eq!(recurring_txn::get(&db, id).unwrap(), before);
+        assert_eq!(
+            recurring_txn::get(&db, id).unwrap().generate_through,
+            Some(day(2027, 6, 1))
+        );
+        assert_eq!(
+            rows(&db).last().map(|t| t.date),
+            Some(day(2027, 6, 1)),
+            "the rows stay out where the floor already reached"
+        );
     }
 
-    /// Ten years is the ceiling on generation however it is reached, so the
-    /// press that would cross it is refused rather than clamped into a report
-    /// of nothing inserted.
     #[test]
     fn extending_past_ten_years_is_refused() {
         let db = db::open_in_memory().unwrap();
         let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
-        let mut new = mortgage(checking);
-        new.horizon = None;
-        let id = recurring_txn::insert(&db, &new).unwrap();
+        let id = endless(&db, checking);
+
+        let refused = extend_all(&db, day(2036, 8, 17), today()).unwrap_err();
+
+        assert!(refused.to_string().contains("ten years"), "{refused}");
+        assert_eq!(recurring_txn::get(&db, id).unwrap().generate_through, None);
+    }
+
+    #[test]
+    fn extending_to_today_or_before_is_refused() {
+        let (db, _, _) = fresh();
+        assert!(extend_all(&db, today(), today()).is_err());
+    }
+
+    /// The form opens one rolling window past the furthest reach: from
+    /// 2026-08-16 the window ends 2026-11-16, and one already extended to
+    /// 2027-02-16 pushes the default out with it.
+    #[test]
+    fn the_default_is_one_window_past_the_furthest_reach() {
+        let db = db::open_in_memory().unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        assert_eq!(extend_default(&db, today()).unwrap(), day(2027, 2, 16));
+
+        let id = endless(&db, checking);
+        recurring_txn::set_generate_through(&db, id, day(2027, 2, 16)).unwrap();
+        assert_eq!(extend_default(&db, today()).unwrap(), day(2027, 5, 16));
+    }
+
+    #[test]
+    fn the_default_is_capped_at_ten_years() {
+        let db = db::open_in_memory().unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let id = endless(&db, checking);
         recurring_txn::set_generate_through(&db, id, day(2036, 8, 16)).unwrap();
+        assert_eq!(extend_default(&db, today()).unwrap(), day(2036, 8, 16));
+    }
 
-        let extended = extend(&db, id, today()).unwrap();
+    /// A recurring card payment: cash out of the current account, debt shed
+    /// on the card. Both legs are negative, by `txn::write_transfer`'s table.
+    fn card_payment(db: &Db) -> (AccountId, AccountId, RecurringTxnId) {
+        let checking = account::insert(db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let card = account::insert(db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
+        let mut new = mortgage(checking);
+        new.description = "Autopay".to_string();
+        new.cents = Cents(20_000);
+        new.to_account_id = Some(card);
+        let id = recurring_txn::insert(db, &new).unwrap();
+        (checking, card, id)
+    }
 
-        assert_eq!(extended, Extended::Ceiling(day(2036, 8, 16)));
+    fn every_row(db: &Db) -> Vec<Txn> {
+        let mut all = rows(db);
+        all.extend(
+            txn::list(
+                db,
+                &Filter {
+                    kind: Kind::Credit,
+                    ..all_cash()
+                },
+            )
+            .unwrap(),
+        );
+        all
+    }
+
+    /// Each occurrence of a transfer is two rows, one per account, each
+    /// signed by its own ledger and both owned by the one rule.
+    #[test]
+    fn a_recurring_transfer_writes_both_legs_signed_by_their_own_ledgers() {
+        let db = db::open_in_memory().unwrap();
+        let (checking, card, id) = card_payment(&db);
+
+        let report = regenerate(&db, id, today()).unwrap();
+
+        assert_eq!(report.inserted, 6, "three occurrences, two legs each");
+        let legs: Vec<(NaiveDate, AccountId, Cents)> = every_row(&db)
+            .iter()
+            .filter(|t| t.date == day(2026, 9, 1))
+            .map(|t| (t.date, t.account_id, t.cents))
+            .collect();
+        assert_eq!(
+            legs,
+            vec![
+                (day(2026, 9, 1), checking, Cents(-20_000)),
+                (day(2026, 9, 1), card, Cents(-20_000)),
+            ]
+        );
+        assert!(
+            every_row(&db)
+                .iter()
+                .all(|t| t.recurring_txn_id == Some(id)),
+            "both legs are owned"
+        );
+    }
+
+    #[test]
+    fn regenerating_a_transfer_twice_produces_identical_rows() {
+        let db = db::open_in_memory().unwrap();
+        let (_, _, id) = card_payment(&db);
+        regenerate(&db, id, today()).unwrap();
+        let first = every_row(&db).len();
+
+        regenerate(&db, id, today()).unwrap();
+
+        assert_eq!(every_row(&db).len(), first);
+    }
+
+    /// A leg deleted by hand is written back without doubling the leg that
+    /// is still there: ownership is per leg, not per date.
+    #[test]
+    fn a_transfer_missing_one_leg_gets_only_that_leg_back() {
+        let db = db::open_in_memory().unwrap();
+        let (_, card, id) = card_payment(&db);
+        regenerate(&db, id, today()).unwrap();
+        // The cash leg, hand-edited so release leaves it in place.
+        let cash_leg = rows(&db)
+            .into_iter()
+            .find(|t| t.date == day(2026, 9, 1))
+            .unwrap();
+        txn::update(
+            &db,
+            cash_leg.id,
+            &NewTxn {
+                date: cash_leg.date,
+                cents: Cents(-19_000),
+                account_id: cash_leg.account_id,
+                description: cash_leg.description.clone(),
+                recurring_txn_id: cash_leg.recurring_txn_id,
+            },
+        )
+        .unwrap();
+        let card_leg = every_row(&db)
+            .into_iter()
+            .find(|t| t.date == day(2026, 9, 1) && t.account_id == card)
+            .unwrap();
+        txn::delete(&db, card_leg.id).unwrap();
+
+        regenerate(&db, id, today()).unwrap();
+
+        let on_the_day: Vec<AccountId> = every_row(&db)
+            .iter()
+            .filter(|t| t.date == day(2026, 9, 1))
+            .map(|t| t.account_id)
+            .collect();
+        assert_eq!(on_the_day.len(), 2, "{on_the_day:?}");
+        assert!(on_the_day.contains(&card));
+    }
+
+    #[test]
+    fn a_transfer_cannot_be_the_paycheck() {
+        let db = db::open_in_memory().unwrap();
+        let (_, _, id) = card_payment(&db);
+        assert!(recurring_txn::set_paycheck(&db, id).is_err());
+        assert!(!recurring_txn::get(&db, id).unwrap().is_paycheck);
     }
 
     /// `G` is one action and reports one line.
@@ -934,6 +1156,7 @@ mod tests {
                 description: "Salary".to_string(),
                 cents: Cents(500_000),
                 account_id: checking,
+                to_account_id: None,
                 cadence: Cadence::Biweekly,
                 anchor_date: day(2026, 8, 28),
                 horizon: None,

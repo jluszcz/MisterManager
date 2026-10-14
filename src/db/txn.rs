@@ -368,33 +368,12 @@ pub fn write_transfer(
     from_description: &str,
     to_description: &str,
 ) -> Result<()> {
-    // Checked, not asserted: the sign convention is applied below per each
-    // account's kind, so a negative magnitude here writes both legs the
-    // wrong way round, and a `debug_assert!` would let exactly that through
-    // in a release build.
-    ensure!(
-        cents >= Cents::ZERO,
-        "write_transfer expects a positive magnitude, got {cents}"
-    );
-
-    let is_credit = |id: AccountId| -> rusqlite::Result<bool> {
-        let kind: String =
-            db.conn
-                .query_row("SELECT kind FROM account WHERE id = ?1", params![id], |r| {
-                    r.get(0)
-                })?;
-        Ok(kind == "credit")
-    };
-    let credit_source = is_credit(from_account_id)?;
-    let credit_destination = is_credit(to_account_id)?;
-
+    let (from_cents, to_cents) = transfer_legs(db, from_account_id, to_account_id, cents)?;
     insert(
         db,
         &NewTxn {
             date,
-            // Cash source pays out; credit source funds the move by taking
-            // on debt.
-            cents: if credit_source { cents } else { -cents },
+            cents: from_cents,
             account_id: from_account_id,
             description: from_description.to_string(),
             recurring_txn_id: None,
@@ -404,14 +383,56 @@ pub fn write_transfer(
         db,
         &NewTxn {
             date,
-            // Cash destination receives; credit destination sheds debt.
-            cents: if credit_destination { -cents } else { cents },
+            cents: to_cents,
             account_id: to_account_id,
             description: to_description.to_string(),
             recurring_txn_id: None,
         },
     )?;
     Ok(())
+}
+
+/// The two legs of a transfer of `cents` from one account to another, each
+/// signed off its own account's kind -- the table on [`write_transfer`]. Also
+/// what a recurring transfer signs its legs with, so a payday's transfer and
+/// a scheduled one cannot come to disagree about which way a card moves.
+pub fn transfer_legs(
+    db: &Db,
+    from_account_id: AccountId,
+    to_account_id: AccountId,
+    cents: Cents,
+) -> Result<(Cents, Cents)> {
+    // Checked, not asserted: the sign convention is applied below per each
+    // account's kind, so a negative magnitude here writes both legs the
+    // wrong way round, and a `debug_assert!` would let exactly that through
+    // in a release build.
+    ensure!(
+        cents >= Cents::ZERO,
+        "a transfer expects a positive magnitude, got {cents}"
+    );
+    let is_credit = |id: AccountId| -> rusqlite::Result<bool> {
+        let kind: String =
+            db.conn
+                .query_row("SELECT kind FROM account WHERE id = ?1", params![id], |r| {
+                    r.get(0)
+                })?;
+        Ok(kind == "credit")
+    };
+    Ok((
+        // Cash source pays out; credit source funds the move by taking on
+        // debt.
+        if is_credit(from_account_id)? {
+            cents
+        } else {
+            -cents
+        },
+        // Cash destination receives; credit destination sheds debt.
+        if is_credit(to_account_id)? {
+            -cents
+        } else {
+            cents
+        },
+    ))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -995,6 +1016,7 @@ mod tests {
                 description: "Paycheck".to_string(),
                 cents: Cents(500_000),
                 account_id,
+                to_account_id: None,
                 cadence: crate::db::recurring_txn::Cadence::Biweekly,
                 anchor_date: day(2026, 1, 2),
                 horizon: None,

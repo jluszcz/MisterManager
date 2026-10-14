@@ -88,6 +88,7 @@ mod tests {
                 description: "Salary".to_string(),
                 cents: Cents(500_000),
                 account_id: checking,
+                to_account_id: None,
                 cadence: Cadence::Biweekly,
                 anchor_date: anchor,
                 horizon: None,

@@ -51,9 +51,14 @@ text_enum!(
 pub struct NewRecurringTxn {
     pub description: String,
     /// Signed exactly as the ledger is: the paycheck is positive on a cash
-    /// account, the mortgage negative.
+    /// account, the mortgage negative. On a transfer, the positive magnitude
+    /// moved, which each leg signs off its own account's kind.
     pub cents: Cents,
+    /// The account the row is written to -- or, on a transfer, the one the
+    /// money leaves.
     pub account_id: AccountId,
+    /// Where a transfer lands; `None` for an ordinary recurring transaction.
+    pub to_account_id: Option<AccountId>,
     pub cadence: Cadence,
     pub anchor_date: NaiveDate,
     /// The last date this recurring transaction ever generates, or `None` for
@@ -68,6 +73,7 @@ pub struct RecurringTxn {
     pub description: String,
     pub cents: Cents,
     pub account_id: AccountId,
+    pub to_account_id: Option<AccountId>,
     pub cadence: Cadence,
     pub anchor_date: NaiveDate,
     pub horizon: Option<NaiveDate>,
@@ -98,6 +104,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<RecurringTxn> {
         horizon: date::parse_opt(horizon, 6)?,
         generate_through: date::parse_opt(generate_through, 8)?,
         is_paycheck: row.get::<_, i64>(7)? != 0,
+        to_account_id: row.get(9)?,
     })
 }
 
@@ -107,7 +114,7 @@ macro_rules! select_recurring_txn {
     ($tail:literal) => {
         concat!(
             "SELECT id, description, cents, account_id, cadence, anchor_date,
-                    horizon, is_paycheck, generate_through
+                    horizon, is_paycheck, generate_through, to_account_id
                FROM recurring_txn ",
             $tail
         )
@@ -116,15 +123,17 @@ macro_rules! select_recurring_txn {
 
 pub fn insert(db: &Db, recurring_txn: &NewRecurringTxn) -> Result<RecurringTxnId> {
     db.conn.execute(
-        "INSERT INTO recurring_txn (description, cents, account_id, cadence, anchor_date, horizon)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO recurring_txn
+                (description, cents, account_id, cadence, anchor_date, horizon, to_account_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             recurring_txn.description,
             recurring_txn.cents.0,
             recurring_txn.account_id,
             recurring_txn.cadence.as_str(),
             iso(recurring_txn.anchor_date),
-            recurring_txn.horizon.map(iso)
+            recurring_txn.horizon.map(iso),
+            recurring_txn.to_account_id
         ],
     )?;
     Ok(RecurringTxnId(db.conn.last_insert_rowid()))
@@ -156,10 +165,19 @@ pub fn get(db: &Db, id: RecurringTxnId) -> Result<RecurringTxn> {
 /// clearing it here would silently un-derive the ad-hoc projection date the
 /// moment the owner corrected a typo in the description.
 pub fn update(db: &Db, id: RecurringTxnId, recurring_txn: &NewRecurringTxn) -> Result<()> {
+    // `set_paycheck`'s refusal, from the other side: the flag stays where it
+    // is through an edit, so an edit is what would turn the paycheck into a
+    // transfer.
+    if recurring_txn.to_account_id.is_some() {
+        ensure!(
+            !get(db, id)?.is_paycheck,
+            "the paycheck cannot be a transfer"
+        );
+    }
     let changed = db.conn.execute(
         "UPDATE recurring_txn
             SET description = ?2, cents = ?3, account_id = ?4,
-                cadence = ?5, anchor_date = ?6, horizon = ?7
+                cadence = ?5, anchor_date = ?6, horizon = ?7, to_account_id = ?8
           WHERE id = ?1",
         params![
             id,
@@ -168,7 +186,8 @@ pub fn update(db: &Db, id: RecurringTxnId, recurring_txn: &NewRecurringTxn) -> R
             recurring_txn.account_id,
             recurring_txn.cadence.as_str(),
             iso(recurring_txn.anchor_date),
-            recurring_txn.horizon.map(iso)
+            recurring_txn.horizon.map(iso),
+            recurring_txn.to_account_id
         ],
     )?;
     ensure!(changed == 1, "no recurring transaction with id {id}");
@@ -213,7 +232,13 @@ pub fn delete(db: &Db, id: RecurringTxnId) -> Result<usize> {
 pub fn set_paycheck(db: &Db, id: RecurringTxnId) -> Result<()> {
     // Read for the check alone: without it an unknown id would clear the flag
     // from every row and set it on none, leaving no paycheck at all.
-    get(db, id)?;
+    let found = get(db, id)?;
+    // A paycheck is income arriving, which a transfer between two accounts
+    // the owner already holds is not.
+    ensure!(
+        found.to_account_id.is_none(),
+        "a transfer cannot be the paycheck"
+    );
     db.transaction(|db| {
         db.conn.execute(
             "UPDATE recurring_txn SET is_paycheck = 0 WHERE id <> ?1",
@@ -276,6 +301,24 @@ pub fn last_owned_dates(db: &Db) -> Result<HashMap<RecurringTxnId, NaiveDate>> {
           WHERE recurring_txn_id IS NOT NULL GROUP BY recurring_txn_id",
     )?;
     let rows = stmt.query_map([], |r| {
+        let date: String = r.get(1)?;
+        Ok((r.get(0)?, date::parse(&date, 1)?))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<HashMap<_, _>>>()?)
+}
+
+/// The earliest `txn` row each recurring transaction owns on or after `from`.
+///
+/// The Recurring Transactions screen's `Next` column, and the order it lists
+/// them in. Read off the ledger for [`last_owned_dates`]' reason: a corrected
+/// row moved off its schedule date is where the money actually lands. A
+/// recurring transaction owning nothing from `from` onward is absent.
+pub fn next_owned_dates(db: &Db, from: NaiveDate) -> Result<HashMap<RecurringTxnId, NaiveDate>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT recurring_txn_id, MIN(date) FROM txn
+          WHERE recurring_txn_id IS NOT NULL AND date >= ?1 GROUP BY recurring_txn_id",
+    )?;
+    let rows = stmt.query_map(params![iso(from)], |r| {
         let date: String = r.get(1)?;
         Ok((r.get(0)?, date::parse(&date, 1)?))
     })?;
@@ -356,7 +399,11 @@ pub fn adopt(
 }
 
 /// Step 0 of the occurrence loop: every date this recurring transaction
-/// already owns, at `from` or later.
+/// already owns a row on, at `from` or later, with the account the row is on.
+///
+/// The account is what tells a transfer's two legs apart: one occurrence is
+/// two rows on one date, and a leg is accounted for only by a row on its own
+/// account.
 ///
 /// Called after [`release_generated`], so whatever the recurring transaction
 /// still owns from that date onward is exactly the set of hand-corrected rows
@@ -365,13 +412,18 @@ pub fn adopt(
 /// same date rather than asking [`adopt`] to reclaim a row this recurring
 /// transaction already holds, which its `recurring_txn_id IS NULL` guard
 /// refuses.
-pub fn owned_dates(db: &Db, id: RecurringTxnId, from: NaiveDate) -> Result<Vec<NaiveDate>> {
-    let mut stmt = db
-        .conn
-        .prepare("SELECT date FROM txn WHERE recurring_txn_id = ?1 AND date >= ?2 ORDER BY date")?;
+pub fn owned_dates(
+    db: &Db,
+    id: RecurringTxnId,
+    from: NaiveDate,
+) -> Result<Vec<(NaiveDate, AccountId)>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT date, account_id FROM txn
+          WHERE recurring_txn_id = ?1 AND date >= ?2 ORDER BY date, account_id",
+    )?;
     let rows = stmt.query_map(params![id, iso(from)], |row| {
         let raw: String = row.get(0)?;
-        date::parse(&raw, 0)
+        Ok((date::parse(&raw, 0)?, row.get(1)?))
     })?;
     super::collect_rows(rows)
 }
@@ -393,10 +445,54 @@ mod tests {
             description: "Salary".to_string(),
             cents: Cents(500_000),
             account_id,
+            to_account_id: None,
             cadence: Cadence::Biweekly,
             anchor_date: day(2026, 8, 28),
             horizon: Some(day(2026, 12, 18)),
         }
+    }
+
+    /// The schema's backstop under the form's two refusals: a transfer moves
+    /// a positive magnitude between two different accounts.
+    #[test]
+    fn the_schema_refuses_a_transfer_to_itself_or_of_a_signed_amount() {
+        let db = db::open_in_memory().unwrap();
+        let checking = checking(&db);
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let transfer = |to, cents| NewRecurringTxn {
+            to_account_id: Some(to),
+            cents: Cents(cents),
+            ..paycheck_recurring_txn(checking)
+        };
+
+        assert!(insert(&db, &transfer(checking, 500_000)).is_err());
+        assert!(insert(&db, &transfer(savings, -500_000)).is_err());
+        let id = insert(&db, &transfer(savings, 500_000)).unwrap();
+        assert_eq!(get(&db, id).unwrap().to_account_id, Some(savings));
+    }
+
+    /// `set_paycheck` refuses a transfer, and an edit must not reach the
+    /// same state from the other side.
+    #[test]
+    fn the_paycheck_cannot_be_edited_into_a_transfer() {
+        let db = db::open_in_memory().unwrap();
+        let checking = checking(&db);
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let id = insert(&db, &paycheck_recurring_txn(checking)).unwrap();
+        set_paycheck(&db, id).unwrap();
+
+        let refused = update(
+            &db,
+            id,
+            &NewRecurringTxn {
+                to_account_id: Some(savings),
+                ..paycheck_recurring_txn(checking)
+            },
+        )
+        .unwrap_err();
+
+        assert!(refused.to_string().contains("paycheck"), "{refused}");
+        assert_eq!(get(&db, id).unwrap().to_account_id, None);
     }
 
     fn write(db: &Db, account_id: AccountId, date: NaiveDate, cents: i64, what: &str) -> TxnId {
@@ -486,6 +582,7 @@ mod tests {
                 description: "Mortgage".to_string(),
                 cents: Cents(-120_000),
                 account_id: savings,
+                to_account_id: None,
                 cadence: Cadence::Monthly,
                 anchor_date: day(2026, 9, 1),
                 horizon: None,
@@ -848,6 +945,38 @@ mod tests {
         );
     }
 
+    /// Today counts as next: a row dated today has not been superseded by
+    /// anything, while one dated yesterday is history.
+    #[test]
+    fn next_owned_dates_reports_the_earliest_row_from_the_given_day() {
+        let db = db::open_in_memory().unwrap();
+        let account_id = checking(&db);
+        let id = insert(&db, &paycheck_recurring_txn(account_id)).unwrap();
+        let past = insert(&db, &paycheck_recurring_txn(account_id)).unwrap();
+        for date in [day(2026, 8, 28), day(2026, 8, 15), day(2026, 8, 14)] {
+            write(&db, account_id, date, 500_000, "Salary");
+            adopt(&db, id, date, account_id, "Salary", Cents(500_000)).unwrap();
+        }
+        write(&db, account_id, day(2026, 7, 3), 500_000, "Salary");
+        adopt(
+            &db,
+            past,
+            day(2026, 7, 3),
+            account_id,
+            "Salary",
+            Cents(500_000),
+        )
+        .unwrap();
+
+        let next = next_owned_dates(&db, day(2026, 8, 15)).unwrap();
+        assert_eq!(next.get(&id), Some(&day(2026, 8, 15)));
+        assert_eq!(
+            next.get(&past),
+            None,
+            "a recurring transaction whose rows are all behind it has no next date"
+        );
+    }
+
     #[test]
     fn owned_counts_reports_every_row_a_rule_holds_at_any_date() {
         let db = db::open_in_memory().unwrap();
@@ -899,7 +1028,10 @@ mod tests {
 
         assert_eq!(
             dates,
-            vec![day(2026, 8, 28), day(2026, 9, 11)],
+            vec![
+                (day(2026, 8, 28), account_id),
+                (day(2026, 9, 11), account_id)
+            ],
             "07-03 is before `from`, 09-25 belongs to the other recurring transaction"
         );
     }

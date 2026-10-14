@@ -480,6 +480,22 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // `BETWEEN 100 AND 9900` here.
         data: None,
     },
+    Migration {
+        version: 21,
+        // The account a recurring transfer lands in, beside `account_id` as
+        // the one it leaves. Nullable because `NULL` is an ordinary recurring
+        // transaction, which every existing row is. Set, `cents` stops being
+        // a signed ledger figure and becomes the magnitude moved -- each leg
+        // is signed off its own account's kind at generation, the way
+        // `txn::write_transfer` signs one -- so the `CHECK` holds it positive,
+        // and refuses a transfer from an account to itself.
+        sql: "ALTER TABLE recurring_txn ADD COLUMN to_account_id INTEGER \
+          REFERENCES account(id) \
+          CHECK (to_account_id IS NULL OR (to_account_id <> account_id AND cents > 0))",
+        // Nothing to move: every existing row is a plain recurring
+        // transaction, which is what `NULL` reads as.
+        data: None,
+    },
 ];
 
 /// Arm 19's data half: every stored Planning percentage, whole percent to
