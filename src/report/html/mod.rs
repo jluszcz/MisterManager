@@ -235,14 +235,30 @@ fn tab_rules() -> String {
 }
 
 /// Everything that changes below [`NARROW`]: the tab bar traded for the
-/// menu, and the Retirement tab's milestone table set a size smaller.
+/// menu, the Retirement tab's milestone table set a size smaller, a goal's
+/// history grown to nearly the whole screen, and the rows of the ledgers and
+/// the Savings table given a little more height and face.
 ///
-/// That table is four columns of bands, each a figure either side of a spaced
-/// dash, and a band broken at its dash reads as two figures -- so its cells
-/// do not wrap, and the face and the padding are what give way instead. At
-/// the page's own size it runs past the 361px a phone leaves; the size here
+/// The milestone table is four columns of bands, each a figure either side of
+/// a spaced dash, and a band broken at its dash reads as two figures -- so its
+/// cells do not wrap, and the face and the padding are what give way instead.
+/// At the page's own size it runs past the 361px a phone leaves; the size here
 /// sets it about a tenth inside that in Chrome, since Safari's figures run
 /// wider and a margin that fit one browser exactly scrolled in the other.
+///
+/// A history is three columns, two of them short, so on a phone it can spend
+/// the width on a larger face rather than the smaller one every other table
+/// keeps -- it is the one view the reader has opened to read. `dvh` rather
+/// than `vh`, since Safari's `vh` counts the toolbar that covers the bottom
+/// of it. The `×` takes padding to a fingertip's size there too.
+///
+/// The ledgers and the Savings table are what a phone scrolls through most,
+/// so their rows are taller and a fingertip apart. Their face grows less than
+/// the history's, and Savings' least: it is five columns, and the size here
+/// fits a seven-figure goal inside the 361px a phone leaves in Chrome with a
+/// little to spare for Safari's wider figures.
+/// Savings is reached by its panel because its table carries no class, and
+/// as a child so the histories' tables, further down inside it, are not.
 ///
 /// The menu's radio is `display:none` above the breakpoint, not merely moved
 /// off-screen as the tabs' are. It is in their group, and the arrow keys walk
@@ -262,6 +278,14 @@ fn narrow_rules() -> String {
          {{outline:2px solid currentColor;outline-offset:-2px}}\
          table.bands{{font-size:0.72rem}}\
          table.bands td,table.bands th{{padding-left:0.15rem;padding-right:0.15rem}}\
+         table.ledger{{font-size:0.88rem}}\
+         #savings-panel>table{{font-size:0.85rem}}\
+         table.ledger td,#savings-panel>table td{{padding-top:0.4rem;padding-bottom:0.4rem}}\
+         div.history{{width:calc(100vw - 1rem);max-height:90vh;max-height:90dvh}}\
+         div.history h4{{font-size:1.05rem}}\
+         div.history table{{font-size:0.95rem}}\
+         div.history td,div.history th{{padding-top:0.4rem;padding-bottom:0.4rem}}\
+         div.history button.close{{padding:0.3rem 0.5rem;margin:-0.45rem -0.5rem 0 0}}\
          }}"
     )
 }
@@ -284,17 +308,22 @@ fn narrow_rules() -> String {
 /// as two dates rather than one and `-1,` over `000.00` as neither. Refusing
 /// to wrap sets a floor under those columns, so `w` names the one that gives
 /// way instead: the owner's own free text, a ledger description or a goal
-/// name. It is the longest text on the page, and the only text still legible
-/// broken mid-word -- every other column keeps its longest word whole, which
-/// is what stops `Brokerage` becoming `Broker`/`age` beside it. The ledgers
+/// name. It is the longest text on the page, and wraps at its spaces.
+/// `break-word` rather than `anywhere`, because only the second lowers the
+/// column's floor to a single letter: a table sizing its columns takes that
+/// floor at its word, and Safari drew `Reimburseme` over `nt` with the space
+/// before it unused. `break-word` splits a word only when it cannot fit a
+/// line of its own, so the column is never narrower than its longest word.
+/// Every other column keeps its longest word whole too, which is what stops
+/// `Brokerage` becoming `Broker`/`age` beside it. The ledgers
 /// carry the same three rules by position instead, `table.ledger td:nth-child`,
 /// since their columns never change and a class on every cell of every row is
 /// the largest single cost on the page. A goal's history is the same shape
 /// for the same reason, three fixed columns repeated under every goal.
 ///
-/// Those floors are why the panel scrolls. An account name is the owner's
-/// too and takes no `w`, so a long enough one puts the table past the phone
-/// whatever the description gives up; `overflow-x` on the panel is what that
+/// Those floors are why the panel scrolls. A row whose longest words cannot
+/// sit side by side inside the phone puts the table past it, whichever
+/// column they are in; `overflow-x` on the panel is what that
 /// then moves, rather than the page under every tab. It sits on the panel and
 /// not on a wrapper around each table because the month filter reaches its
 /// rows as `#month:checked~table.ledger`, and a `<div>` between the two would
@@ -314,7 +343,14 @@ fn narrow_rules() -> String {
 /// dark counterpart for both. It is hidden by a rule of its own and shown by
 /// `:popover-open`, rather than left to the browser's: a browser without
 /// popovers drops only the second rule, and draws the page without
-/// histories rather than every one of them inline under its table. The goal name that opens it is a `<button>`
+/// histories rather than every one of them inline under its table. Its name
+/// and its `×` are one `<header>` above a `div.rows` that alone scrolls, so a
+/// long history moves under the header rather than past it. Not a `sticky`
+/// header over a scrolling box: Safari leaves a sliver above one, and the
+/// rows' text shows through it. The rows contain their own scrolling, so a
+/// history scrolled to its end does not go on to move the page under it, and
+/// the backdrop blurs that page as well as dimming it. The goal name that
+/// opens it is a `<button>`
 /// stripped back to the text it replaces, plus the dotted underline that
 /// says it can be tapped.
 ///
@@ -332,7 +368,7 @@ const STYLE: &str = "\
     td,th{padding:0.25rem 0.25rem;border-bottom:1px solid #dddddd;text-align:left}\
     td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}\
     td.d,th.d{white-space:nowrap}\
-    td.w{overflow-wrap:anywhere}\
+    td.w{overflow-wrap:break-word}\
     tr.fav{background:#fff6d8}\
     tr.expired td:first-child::after{content:' !'}\
     tr.counted td:first-child::after{content:' \u{2022}'}\
@@ -370,7 +406,8 @@ const STYLE: &str = "\
     details.picker div.options label.now{font-weight:600;background:#eeeeee}\
     table.ledger tbody{display:none}\
     table.ledger td:first-child,div.history td:first-child{white-space:nowrap}\
-    table.ledger td:nth-child(3),div.history td:nth-child(2){overflow-wrap:anywhere}\
+    table.ledger td:nth-child(3),div.history td:nth-child(2)\
+    {overflow-wrap:break-word}\
     table.ledger td:nth-child(4),table.ledger th:nth-child(4),\
     div.history td:nth-child(3),div.history th:nth-child(3)\
     {text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}\
@@ -385,15 +422,20 @@ const STYLE: &str = "\
     text-underline-offset:0.15em}\
     button.goal:focus-visible{outline:2px solid currentColor;outline-offset:1px}\
     div.history{width:min(32rem,calc(100vw - 2rem));box-sizing:border-box;max-height:80vh;\
-    overflow-y:auto;padding:0.8rem 1rem;border:1px solid #dddddd;border-radius:0.5rem;\
+    overflow:hidden;padding:0 1rem;border:1px solid #dddddd;border-radius:0.5rem;\
     background:#ffffff;color:#1a1a1a}\
     div.history{display:none}\
-    div.history:popover-open{display:block}\
-    div.history::backdrop{background:rgba(0,0,0,0.4)}\
-    div.history h4{margin:0 0 0.4rem}\
-    div.history table{margin-bottom:0.6rem}\
-    div.history button.close{font:inherit;padding:0.35rem 0.9rem;border:1px solid #dddddd;\
-    border-radius:0.35rem;background:transparent;color:inherit;cursor:pointer}\
+    div.history:popover-open{display:flex;flex-direction:column}\
+    div.history::backdrop{background:rgba(0,0,0,0.5);-webkit-backdrop-filter:blur(3px);\
+    backdrop-filter:blur(3px)}\
+    div.history header{display:flex;align-items:flex-start;gap:0.5rem;\
+    padding:0.8rem 0 0.4rem;border-bottom:1px solid #dddddd}\
+    div.history div.rows{overflow-y:auto;overscroll-behavior:contain;min-height:0;\
+    padding:0.4rem 0 0.8rem}\
+    div.history h4{margin:0;flex:1;min-width:0;overflow-wrap:break-word}\
+    div.history table{margin-bottom:0}\
+    div.history button.close{font:inherit;font-size:1.3rem;line-height:1;padding:0 0.3rem;\
+    margin:-0.15rem -0.3rem 0 0;border:none;background:transparent;color:inherit;cursor:pointer}\
     @media (prefers-color-scheme: dark){\
     body{background:#121212;color:#eeeeee}\
     td,th{border-bottom-color:#333333}\
@@ -403,7 +445,7 @@ const STYLE: &str = "\
     div.bar{background:#333333}\
     details.picker div.options label.now{background:#2a2a2a}\
     div.history{background:#1e1e1e;color:#eeeeee}\
-    div.history,div.history button.close{border-color:#333333}\
+    div.history,div.history header{border-color:#333333}\
     svg.chart line.grid{stroke:#333333}\
     svg.chart .total{stroke:#eeeeee}\
     svg.chart circle.total{fill:#eeeeee}\

@@ -119,8 +119,8 @@ fn history_id(row: &Row) -> String {
 /// A `popover` rather than a radio and a `:checked ~` rule, because the
 /// table it is opened from sits between any radio and the element it would
 /// have to address, and a popover needs neither: the button names it by id,
-/// the browser draws it over the page, and a tap outside it or on `Close`
-/// dismisses it. Still no script -- it is an attribute, the same kind of
+/// the browser draws it over the page, and a tap outside it or on the `×`
+/// beside the name dismisses it. Still no script -- it is an attribute, the same kind of
 /// thing `<details>` is.
 ///
 /// The amounts keep their cents where the table above drops them: the rows
@@ -162,9 +162,10 @@ fn history(goal: &Goal) -> String {
         format!("<table>{table}</table>")
     };
     format!(
-        "<div class=\"history\" id=\"{}\" popover><h4>{}</h4>{note}{body}\
+        "<div class=\"history\" id=\"{}\" popover><header><h4>{}</h4>\
          <button type=\"button\" class=\"close\" popovertarget=\"{}\" \
-         popovertargetaction=\"hide\">Close</button></div>",
+         popovertargetaction=\"hide\" aria-label=\"Close\">\u{d7}</button></header>\
+         <div class=\"rows\">{note}{body}</div></div>",
         history_id(row),
         escape(&row.name),
         history_id(row),
@@ -344,12 +345,15 @@ mod tests {
             "{panel}"
         );
         assert!(
-            panel.contains("<div class=\"history\" id=\"history-1\" popover><h4>Rainy Day</h4>"),
+            panel.contains(
+                "<div class=\"history\" id=\"history-1\" popover><header><h4>Rainy Day</h4>"
+            ),
             "{panel}"
         );
         assert!(
             panel.contains(
-                "popovertarget=\"history-1\" popovertargetaction=\"hide\">Close</button>"
+                "popovertarget=\"history-1\" popovertargetaction=\"hide\" \
+                 aria-label=\"Close\">\u{d7}</button></header>"
             ),
             "the history cannot be closed: {panel}"
         );
@@ -396,7 +400,12 @@ mod tests {
         let page = page(&snapshot);
         let panel = panel(&page, "savings");
         assert!(
-            panel.contains("<h4>Rainy Day</h4><p class=\"note\">Roof &lt;first&gt;</p><table>"),
+            panel.contains(
+                "<h4>Rainy Day</h4><button type=\"button\" class=\"close\" \
+                 popovertarget=\"history-1\" popovertargetaction=\"hide\" \
+                 aria-label=\"Close\">\u{d7}</button></header>\
+                 <div class=\"rows\"><p class=\"note\">Roof &lt;first&gt;</p><table>"
+            ),
             "{panel}"
         );
     }
