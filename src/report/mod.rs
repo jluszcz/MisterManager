@@ -31,8 +31,16 @@ use std::path::Path;
 /// One container's goals and its unallocated remainder.
 pub struct Container {
     pub account: Account,
-    pub rows: Vec<savings::Row>,
+    pub rows: Vec<Goal>,
     pub excess: Cents,
+}
+
+/// One Savings row and the allocations its balance is the sum of -- what the
+/// screen's `Enter` opens, read up front because a page cannot ask later.
+pub struct Goal {
+    pub row: savings::Row,
+    /// Oldest first, as `goal::allocations` reads them.
+    pub history: Vec<crate::db::goal::Allocation>,
 }
 
 /// The portfolio's look-through, the age rule it is read against, and the
@@ -375,16 +383,24 @@ impl Snapshot {
 
         let containers = savings::containers_with_excess(db)?
             .into_iter()
-            .map(|(id, excess)| Container {
-                account: Account::named(&accounts, id),
-                rows: all
+            .map(|(id, excess)| {
+                let rows = all
                     .iter()
                     .filter(|r| r.container.id() == id)
-                    .cloned()
-                    .collect(),
-                excess,
+                    .map(|r| {
+                        Ok(Goal {
+                            history: crate::db::goal::allocations(db, r.goal_id)?,
+                            row: r.clone(),
+                        })
+                    })
+                    .collect::<Result<_>>()?;
+                Ok(Container {
+                    account: Account::named(&accounts, id),
+                    rows,
+                    excess,
+                })
             })
-            .collect();
+            .collect::<Result<_>>()?;
 
         Ok(Snapshot {
             generated_at,
@@ -879,7 +895,68 @@ mod tests {
         );
     }
 
-    /// Every control on the page is a radio and a sibling selector, so a
+    /// A goal's history is read off the database with the rest of the page,
+    /// and the popover that draws it is two attributes a minifier could
+    /// rename or drop -- either way the goal's name would render and then do
+    /// nothing.
+    #[test]
+    fn a_goals_history_reaches_the_disk_and_still_opens() {
+        let db = seeded();
+        let container =
+            account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 1, None).unwrap();
+        let couch = crate::db::goal::insert(
+            &db,
+            &crate::db::goal::NewGoal {
+                name: "Couch".to_string(),
+                container_account_id: container,
+                base_cents: Cents::from_dollars(1_000),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: false,
+                floating: false,
+                note: None,
+            },
+        )
+        .unwrap();
+        for (date, cents, note) in [
+            (
+                today() - chrono::Duration::days(30),
+                Cents(40_012),
+                Some("Interest"),
+            ),
+            (today(), Cents::from_dollars(-100), None),
+        ] {
+            crate::db::goal::insert_allocation(&db, couch, date, cents, note, None).unwrap();
+        }
+
+        let snapshot = Snapshot::load(&db, today(), Local::now()).unwrap();
+        let history = &snapshot.containers[0].rows[0].history;
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].cents, Cents(40_012), "not oldest first");
+
+        let dir = scratch("history");
+        let written = write(&db, &dir, today()).unwrap();
+        let page = std::fs::read_to_string(&written.path)
+            .unwrap()
+            .replace('"', "");
+        let id = format!("history-{}", couch.0);
+        // Matched without the attributes beside each, whose order is the
+        // minifier's to choose.
+        assert!(page.contains(&format!("popovertarget={id} ")), "{page}");
+        assert!(page.contains(&format!("id={id} popover>")), "{page}");
+        assert!(
+            page.contains("400.12"),
+            "the history lost its cents: {page}"
+        );
+        assert!(
+            page.contains("300.12"),
+            "the history lost its total: {page}"
+        );
+    }
+
+    /// Every tab and the menu are a radio and a sibling selector, so a
     /// minifier that dropped an `id`, unquoted one the CSS matches on, or
     /// reordered an input past the panel it shows would leave a page that
     /// renders and then does nothing -- and no other test would see it,

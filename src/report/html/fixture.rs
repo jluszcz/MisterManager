@@ -16,8 +16,8 @@ use crate::plan_rows::{Bill, Transfer};
 use crate::projection::Dates;
 use crate::rate::{BasisPoints, Percent};
 use crate::report::{
-    AccountAllocation, Allocation, Container, Holding, Ledger, LedgerMonth, LedgerRow, PlanView,
-    Planning, Snapshot,
+    AccountAllocation, Allocation, Container, Goal, Holding, Ledger, LedgerMonth, LedgerRow,
+    PlanView, Planning, Snapshot,
 };
 use crate::test_support::day;
 use chrono::{Local, NaiveDate, TimeZone};
@@ -77,8 +77,8 @@ pub(super) fn row(name: &str, current: i64, goal: i64) -> crate::savings::Row {
         per_paycheck: Some(Cents::from_dollars(25)),
         interest_eligible: false,
         favorite: false,
-        // The report has no column for it: a note is read on the two screens
-        // that edit and audit one goal.
+        // No column on the row draws it: a note is read above the goal's
+        // history, which the tests that want one set it for.
         note: None,
     }
 }
@@ -291,6 +291,24 @@ pub(super) fn funds(targets: Targets) -> Allocation {
     }
 }
 
+/// Two allocations every fixture goal carries, one noted and one not: the
+/// note column draws both of its cases on every page the tests read. They
+/// come to $500 whatever the row's own `current` says, since no test here
+/// asserts the two against each other.
+pub(super) fn history(goal_id: GoalId) -> Vec<crate::db::goal::Allocation> {
+    let allocation = |id, date, dollars, note: Option<&str>| crate::db::goal::Allocation {
+        id: crate::db::AllocationId(id),
+        goal_id,
+        date,
+        cents: Cents::from_dollars(dollars),
+        note: note.map(str::to_string),
+    };
+    vec![
+        allocation(1, day(2026, 7, 10), 300, Some("Paycheck")),
+        allocation(2, day(2026, 8, 7), 200, None),
+    ]
+}
+
 /// The whole page's worth: `rows` are the one container's goals and `net` is
 /// what the Overview's Net line reads.
 pub(super) fn snapshot(rows: Vec<crate::savings::Row>, net: i64) -> Snapshot {
@@ -323,7 +341,13 @@ pub(super) fn snapshot(rows: Vec<crate::savings::Row>, net: i64) -> Snapshot {
         credit: ledger(Kind::Credit),
         containers: vec![Container {
             account: labelled(),
-            rows,
+            rows: rows
+                .into_iter()
+                .map(|row| Goal {
+                    history: history(row.goal_id),
+                    row,
+                })
+                .collect(),
             excess: Cents(23),
         }],
         planning: Planning::Resolved(Box::new(plan_view())),

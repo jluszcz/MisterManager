@@ -52,7 +52,7 @@ about a figure, one of them is wrong.
   was *written* rather than the day it quotes. **`mm report` is not gated**, for the
   same reason an unset `[report]` section does not stop it: it reaches `write`
   directly, and being asked for outright is the point.
-- **Every control on the page is CSS, and that is what the no-script rule
+- **Every control on the page is CSS or HTML, and that is what the no-script rule
   buys.** The tabs and the ledgers' month filter are radio buttons the page
   never shows, plus a `:checked ~` rule per control; the radios are moved
   off-screen rather than `display:none`d, so they keep their place in the focus
@@ -130,6 +130,15 @@ about a figure, one of them is wrong.
   `html::money` makes from a `Cents`. **The class labels stay plain and the legend stays**, where
   the screen tints its labels and drops its legend: this page has the width for a legend under the
   bar and a terminal does not. Either way a class is named in its own color exactly once.
+- **A goal's history is a `popover`, the one control on the page that is not a radio.** Tapping a
+  goal's name on the Savings tab opens what `Enter` opens on the screen — the goal's note, its
+  allocations oldest first at the cent, and their total, which is the balance beside the name.
+  A radio cannot do it: the table the name sits in lies between any radio and the box it would
+  show, and `:checked ~` only looks forward. A `popover` is an attribute, not a script, and the
+  browser supplies the rest — the box over the page, a tap outside or `Close` to dismiss it. Every
+  goal's history is on the page whether it is opened or not, the ledgers' cost again.
+  `Snapshot::load` reads them through `goal::allocations`, the reader the screen's history uses,
+  so the two cannot list different rows.
 - **Two tabs leave off columns their screens carry, because a phone cannot fit them.** Funds draws
   the summary's Class, Target, Actual and Δ and not the three tax columns; Savings draws no
   `$/Pay`. Each is a figure spent at the screen -- where a holding sits, what a payday prefills --

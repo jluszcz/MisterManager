@@ -1,9 +1,10 @@
 //! The Savings tab: every container's goals, and what it has left over.
 
-use super::{account, escape, whole_money};
+use super::{account, escape, money, whole_money};
+use crate::money::Cents;
 use crate::palette;
 use crate::rate::Percent;
-use crate::report::Container;
+use crate::report::{Container, Goal};
 use crate::savings::{Row, unallocated};
 
 /// The row's `<tr>` classes: `fav` for the owner's highlight, `expired` for a
@@ -71,14 +72,16 @@ fn section(container: &Container) -> String {
         })
         .collect();
     let mut rows = format!("<thead><tr>{header}</tr></thead>");
-    for r in &container.rows {
+    for Goal { row: r, .. } in &container.rows {
         let goal_date = r
             .goal_date
             .map(|d| escape(&d.to_string()))
             .unwrap_or_default();
         rows.push_str(&format!(
-            "<tr{}><td class=\"w\">{}</td>{}{}{}<td class=\"d\">{goal_date}</td></tr>",
+            "<tr{}><td class=\"w\"><button type=\"button\" class=\"goal\" \
+             popovertarget=\"{}\">{}</button></td>{}{}{}<td class=\"d\">{goal_date}</td></tr>",
             row_classes(r),
+            history_id(r),
             escape(&r.name),
             whole_money(r.current),
             whole_money(r.goal),
@@ -95,11 +98,83 @@ fn section(container: &Container) -> String {
         "<tr><td>Unallocated</td>{}<td class=\"n\"></td><td class=\"n\"></td><td class=\"d\"></td></tr>",
         whole_money(excess)
     ));
+    let histories: String = container.rows.iter().map(history).collect();
     format!(
-        "<h3>{}</h3><table>{rows}</table>",
+        "<h3>{}</h3><table>{rows}</table>{histories}",
         account(&container.account)
     )
 }
+
+/// The id a goal's history is opened by. A goal id rather than its name,
+/// which is neither unique nor safe to put in an attribute.
+fn history_id(row: &Row) -> String {
+    format!("history-{}", row.goal_id.0)
+}
+
+/// What `Enter` opens on a Savings row: the goal's note, then every
+/// allocation its balance is the sum of, footed by the total -- which is the
+/// `Current` beside the name, to the cent.
+///
+/// A `popover` rather than a radio and a `:checked ~` rule, because the
+/// table it is opened from sits between any radio and the element it would
+/// have to address, and a popover needs neither: the button names it by id,
+/// the browser draws it over the page, and a tap outside it or on `Close`
+/// dismisses it. Still no script -- it is an attribute, the same kind of
+/// thing `<details>` is.
+///
+/// The amounts keep their cents where the table above drops them: the rows
+/// worth auditing are the interest postings and the import's, which carry
+/// cents, and the total has to land on the balance rather than near it.
+fn history(goal: &Goal) -> String {
+    let row = &goal.row;
+    let note = row
+        .note
+        .as_deref()
+        .map(|n| format!("<p class=\"note\">{}</p>", escape(n)))
+        .unwrap_or_default();
+    let body = if goal.history.is_empty() {
+        "<p class=\"note\">No allocations yet.</p>".to_string()
+    } else {
+        let mut table = HISTORY_HEADER
+            .iter()
+            .map(|h| {
+                let class = if *h == "Amount" { " class=\"n\"" } else { "" };
+                format!("<th{class}>{h}</th>")
+            })
+            .collect::<String>();
+        table = format!("<thead><tr>{table}</tr></thead>");
+        for a in &goal.history {
+            table.push_str(&format!(
+                "<tr><td class=\"d\">{}</td><td class=\"w\">{}</td>{}</tr>",
+                a.date,
+                escape(&crate::description::render(
+                    a.note.as_deref().unwrap_or_default()
+                )),
+                money(a.cents.to_string(), a.cents),
+            ));
+        }
+        let total = goal
+            .history
+            .iter()
+            .fold(Cents::ZERO, |sum, a| sum + a.cents);
+        table.push_str(&format!(
+            "<tr class=\"tot\"><td>Total</td><td class=\"w\"></td>{}</tr>",
+            money(total.to_string(), total)
+        ));
+        format!("<table>{table}</table>")
+    };
+    format!(
+        "<div class=\"history\" id=\"{}\" popover><h4>{}</h4>{note}{body}\
+         <button type=\"button\" class=\"close\" popovertarget=\"{}\" \
+         popovertargetaction=\"hide\">Close</button></div>",
+        history_id(row),
+        escape(&row.name),
+        history_id(row),
+    )
+}
+
+/// The history screen's columns, in its order and wording.
+const HISTORY_HEADER: [&str; 3] = ["Date", "Note", "Amount"];
 
 pub(super) fn sections(containers: &[Container]) -> String {
     containers.iter().map(section).collect()
@@ -229,7 +304,7 @@ mod tests {
     fn a_sub_dollar_negative_balance_is_neither_signed_nor_red() {
         let red = palette::hex(palette::NEGATIVE);
         let mut snapshot = snapshot(vec![row("Rainy Day", 0, 1_000)], 0);
-        snapshot.containers[0].rows[0].current = crate::money::Cents(-23);
+        snapshot.containers[0].rows[0].row.current = crate::money::Cents(-23);
         let page = page(&snapshot);
         let panel = panel(&page, "savings");
         assert!(!panel.contains(&red), "sub-dollar drift drew red: {panel}");
@@ -246,6 +321,77 @@ mod tests {
         let panel = panel(&page, "savings");
         assert!(!panel.contains("$/Pay"), "{panel}");
         assert!(!panel.contains(">25<"), "the per-paycheck figure: {panel}");
+    }
+
+    /// The goal's name is what opens its history, and the button and the
+    /// popover agree on the id -- a mismatch renders a name that does nothing
+    /// when tapped.
+    #[test]
+    fn a_goals_name_opens_its_own_history() {
+        let page = page(&snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000));
+        let panel = panel(&page, "savings");
+        assert!(
+            panel.contains(
+                "<button type=\"button\" class=\"goal\" popovertarget=\"history-1\">Rainy Day</button>"
+            ),
+            "{panel}"
+        );
+        assert!(
+            panel.contains("<div class=\"history\" id=\"history-1\" popover><h4>Rainy Day</h4>"),
+            "{panel}"
+        );
+        assert!(
+            panel.contains(
+                "popovertarget=\"history-1\" popovertargetaction=\"hide\">Close</button>"
+            ),
+            "the history cannot be closed: {panel}"
+        );
+    }
+
+    /// The screen's columns, oldest first, to the cent, with the ledger's em
+    /// dash for a row nobody said anything about -- and footed by what they
+    /// come to, which is the balance the row shows.
+    #[test]
+    fn the_history_lists_every_allocation_and_foots_with_their_total() {
+        let page = page(&snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000));
+        let panel = panel(&page, "savings");
+        let first = panel
+            .find("<td class=\"d\">2026-07-10</td><td class=\"w\">Paycheck</td><td class=\"n\">300.00</td>")
+            .expect("the noted row is missing");
+        let second = panel
+            .find("<td class=\"d\">2026-08-07</td><td class=\"w\">\u{2014}</td><td class=\"n\">200.00</td>")
+            .expect("the unnoted row is missing");
+        assert!(first < second, "the rows are not oldest first");
+        assert!(
+            panel.contains("<tr class=\"tot\"><td>Total</td><td class=\"w\"></td><td class=\"n\">500.00</td></tr>"),
+            "{panel}"
+        );
+    }
+
+    /// A goal with nothing allocated says so rather than footing a zero, the
+    /// way the screen's empty history does.
+    #[test]
+    fn a_goal_with_no_allocations_says_so_instead_of_footing_a_zero() {
+        let mut snapshot = snapshot(vec![row("Rainy Day", 0, 1_000)], 1_000);
+        snapshot.containers[0].rows[0].history.clear();
+        let page = page(&snapshot);
+        let panel = panel(&page, "savings");
+        assert!(panel.contains("No allocations yet."), "{panel}");
+        assert!(!panel.contains(">Total<"), "{panel}");
+    }
+
+    /// The goal's own note sits above the rows, as on the screen; a goal with
+    /// none spends no line on it.
+    #[test]
+    fn a_goals_note_is_drawn_above_its_history() {
+        let mut snapshot = snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000);
+        snapshot.containers[0].rows[0].row.note = Some("Roof <first>".to_string());
+        let page = page(&snapshot);
+        let panel = panel(&page, "savings");
+        assert!(
+            panel.contains("<h4>Rainy Day</h4><p class=\"note\">Roof &lt;first&gt;</p><table>"),
+            "{panel}"
+        );
     }
 
     /// Unlike an empty Overview band, which is a group the owner does not
