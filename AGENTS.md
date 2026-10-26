@@ -826,7 +826,8 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
     later. A lost note moves nothing either, but unlike a favorite it cannot be retyped from what
     is on screen: it is the only thing in the database nothing else records.
   - **Nothing downstream reads the note.** It is drawn on the goal form that writes it and above the
-    rows in that goal's history, and nowhere else — not on a Savings row, not in the report. One
+    rows in that goal's history, on the screen and in the report's Savings tab alike, and nowhere
+    else — not on a Savings row. One
     number bounds it, `crate::goal::NOTE_LIMIT`, because the form that refuses an over-long note and
     the modal that draws one on a single line have to agree about what fits. **The form is what
     bounds it**, being the narrower of the two and having no horizontal scrolling: a longer limit
@@ -847,7 +848,8 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   literal of its own.
 - **An allocation is editable whatever wrote it, and a history is scoped to one goal.**
   `goal::allocations`, `update_allocation` and `delete_allocation` are the only readers and writers
-  of a *single* `allocation` row in the crate; everything else wants the sum. **A row never leaves
+  of a *single* `allocation` row in the crate, the first read by the history modal and by the
+  report's Savings tab alike; everything else wants the sum. **A row never leaves
   the goal it was written against**: re-pointing one across containers would move a goal's value
   with no cash moved between the accounts, the boundary `goal::move_value` already refuses to
   cross, so the form offers no field that could. What the modal over those rows does with them is

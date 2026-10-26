@@ -405,7 +405,8 @@ pub fn insert_allocation(
 
 /// One row of a goal's allocation history.
 ///
-/// Nothing but the history modal reads an allocation back individually: every
+/// Nothing but the history modal and the report's Savings tab reads an
+/// allocation back individually: every
 /// other reader wants the sum, through [`balance`] or [`select_goal!`]'s
 /// `with_balance` arm. The `batch_id` is not among the columns, because
 /// nothing that draws a row has anything to say about which posting wrote it.

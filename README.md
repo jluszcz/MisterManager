@@ -450,6 +450,9 @@ script, sized to read on a phone in light or dark. Pointing `dir` at a synced
 folder is what turns "checked the balance on the laptop" into "checked it on
 the phone a minute later."
 
+On the Savings tab, tapping a goal's name opens its history — the same
+allocations `Enter` lists on the Savings screen, with their total.
+
 The write happens after the TUI has already torn its screen down, the same
 timing as the scheduled backup, and a failure prints to stderr rather than
 making the run fail. `mm --demo` never writes a report: the file it would

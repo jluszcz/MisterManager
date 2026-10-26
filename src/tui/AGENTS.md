@@ -234,8 +234,9 @@ an account the workbook does not name, and `e`, over everything the workbook doe
 one.
 
 `history` is the modal `Enter` opens on a Savings row: one goal's allocation rows, oldest first,
-and the two writes that correct one. It is the only reader of an `allocation` row in the crate —
-everything else wants the sum — and it carries its three modes inside the one type rather than as a
+and the two writes that correct one. It and the report's Savings tab, which draws the same rows
+read-only, are the only readers of an `allocation` row in the crate — everything else wants the
+sum — and it carries its three modes inside the one type rather than as a
 modal over a modal, so `Esc` peels one layer at a time with no flag on `App` saying what to return
 to.
 

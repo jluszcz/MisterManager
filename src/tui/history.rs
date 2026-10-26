@@ -1,7 +1,8 @@
 //! One goal's allocation history: every row its balance is the sum of, with
 //! the two writes that correct one.
 //!
-//! Nothing else in the app reads an allocation back individually. They are
+//! Nothing else on the screens reads an allocation back individually; the
+//! report's Savings tab draws the same rows, read-only. They are
 //! written by `a` on Savings, by every worksheet commit and by the import, and
 //! before this the only way to reach one again was `U`, which deletes a whole
 //! batch and only ever the most recent. A figure typed wrongly into a payday

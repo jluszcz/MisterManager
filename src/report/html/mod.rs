@@ -3,9 +3,10 @@
 //! Self-contained by requirement: inline CSS, no script, no font, no image, no
 //! request of any kind. A phone opening this out of a sync folder may be
 //! offline, and anything fetched would render half-drawn or not at all. That
-//! is also why every control here is a radio button and a sibling selector:
-//! the tabs and the ledgers' month filter are CSS, because a click handler
-//! would be the one thing on the page that could fail to arrive.
+//! is also why every control here is a radio button and a sibling selector,
+//! or a `popover` attribute: the tabs and the ledgers' month filter are CSS
+//! and a goal's history is HTML, because a click handler would be the one
+//! thing on the page that could fail to arrive.
 //!
 //! One module per tab, the way `src/tui/` keeps one module per screen. What
 //! they share -- escaping, a money cell, an account in its own color -- lives
@@ -231,6 +232,16 @@ fn narrow_rules() -> String {
 /// the page's own two colors, that track being the one grey a reader is meant
 /// to see.
 ///
+/// A goal's history is a `popover`, which the browser draws over the page in
+/// its own layer -- so unlike everything else here it sets its own
+/// background and foreground rather than inheriting the body's, and needs a
+/// dark counterpart for both. It is hidden by a rule of its own and shown by
+/// `:popover-open`, rather than left to the browser's: a browser without
+/// popovers drops only the second rule, and draws the page without
+/// histories rather than every one of them inline under its table. The goal name that opens it is a `<button>`
+/// stripped back to the text it replaces, plus the dotted underline that
+/// says it can be tapped.
+///
 /// The table face is smaller than the page's and the cells are padded by a
 /// quarter of it. That is Savings' bill too: five columns, one of them a date
 /// and two of them money, on the 361px a 393px phone leaves inside the
@@ -288,6 +299,19 @@ const STYLE: &str = "\
     svg.chart{display:block;width:100%;height:auto;margin:0 0 0.3rem}\
     svg.chart line.grid{stroke:#dddddd;stroke-width:1}\
     svg.chart text.axis{fill:#666666;font-size:10px;font-variant-numeric:tabular-nums}\
+    button.goal{all:unset;cursor:pointer;text-decoration:underline dotted;\
+    text-underline-offset:0.15em}\
+    button.goal:focus-visible{outline:2px solid currentColor;outline-offset:1px}\
+    div.history{width:min(32rem,calc(100vw - 2rem));box-sizing:border-box;max-height:80vh;\
+    overflow-y:auto;padding:0.8rem 1rem;border:1px solid #dddddd;border-radius:0.5rem;\
+    background:#ffffff;color:#1a1a1a}\
+    div.history{display:none}\
+    div.history:popover-open{display:block}\
+    div.history::backdrop{background:rgba(0,0,0,0.4)}\
+    div.history h4{margin:0 0 0.4rem}\
+    div.history table{margin-bottom:0.6rem}\
+    div.history button.close{font:inherit;padding:0.35rem 0.9rem;border:1px solid #dddddd;\
+    border-radius:0.35rem;background:transparent;color:inherit;cursor:pointer}\
     @media (prefers-color-scheme: dark){\
     body{background:#121212;color:#eeeeee}\
     td,th{border-bottom-color:#333333}\
@@ -295,6 +319,8 @@ const STYLE: &str = "\
     div.menubar,div.menubar label{border-color:#333333}\
     tr.fav{background:#3a3315}\
     div.bar{background:#333333}\
+    div.history{background:#1e1e1e;color:#eeeeee}\
+    div.history,div.history button.close{border-color:#333333}\
     svg.chart line.grid{stroke:#333333}\
     svg.chart .total{stroke:#eeeeee}\
     svg.chart circle.total{fill:#eeeeee}\
