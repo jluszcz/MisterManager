@@ -23,15 +23,17 @@ mod savings;
 mod fixture;
 
 use super::Snapshot;
+use crate::db::account::AccountColor;
 use crate::money::Cents;
 use crate::palette;
 
 // Every interpolation of owner-typed text goes through `escape`: a goal named
 // with an angle bracket would otherwise truncate the page at its own row. It
 // escapes `&`, `<`, `>` and `"` but never `'`, because the page's only
-// attributes carrying interpolated data are double-quoted -- `money_in`'s,
-// `account`'s and `savings::percent`'s `style="color:{hex}"`, whose hex always
-// comes from `palette::hex`, never owner text. A call site that puts escaped
+// attributes carrying interpolated data are double-quoted -- `savings::percent`'s
+// `style="color:{hex}"`, whose hex always comes from `palette::hex`, and the
+// classes `account_class` and `amount_class` build from constants -- never
+// owner text. A call site that puts escaped
 // text inside a single-quoted attribute reopens the injection it exists to
 // close.
 use jluszcz_finance_utils::report::escape;
@@ -48,11 +50,45 @@ fn money(text: String, cents: Cents) -> String {
 /// decision -- the same one `tui::style::amount_color_of` reads, so a card
 /// paid down is green on the Credit tab exactly as it is on the screen.
 fn money_in(sense: palette::Sense, text: String, cents: Cents) -> String {
-    let color = match palette::amount(sense, cents) {
-        Some(rgb) => format!(" style=\"color:{}\"", palette::hex(rgb)),
-        None => String::new(),
+    let class = match amount_class(sense, cents) {
+        Some(tone) => format!("n {tone}"),
+        None => "n".to_string(),
     };
-    format!("<td class=\"n\"{color}>{}</td>", escape(&text))
+    format!("<td class=\"{class}\">{}</td>", escape(&text))
+}
+
+/// A money cell, to the cent, in a table whose stylesheet aligns its columns
+/// by position -- a ledger or a goal's history -- and so carries no `n`.
+fn positional_money(sense: palette::Sense, cents: Cents) -> String {
+    match amount_class(sense, cents) {
+        Some(tone) => format!("<td class=\"{tone}\">{cents}</td>"),
+        None => format!("<td>{cents}</td>"),
+    }
+}
+
+/// The two colors [`palette::amount`] answers in, each as the class the
+/// stylesheet draws it through. [`amount_rules`] writes a rule per entry, so
+/// the class and its color cannot be paired twice.
+const AMOUNT_CLASSES: [(palette::Rgb, &str); 2] =
+    [(palette::NEGATIVE, "neg"), (palette::POSITIVE, "pos")];
+
+/// The class a figure takes in a column running in `sense`, or `None` when
+/// [`palette::amount`] leaves it uncolored.
+fn amount_class(sense: palette::Sense, cents: Cents) -> Option<&'static str> {
+    palette::amount(sense, cents).map(|rgb| {
+        AMOUNT_CLASSES
+            .iter()
+            .find(|(c, _)| *c == rgb)
+            .map(|(_, class)| *class)
+            .expect("palette::amount answers in one of AMOUNT_CLASSES' colors")
+    })
+}
+
+fn amount_rules() -> String {
+    AMOUNT_CLASSES
+        .iter()
+        .map(|&(rgb, class)| format!("td.{class}{{color:{}}}", palette::hex(rgb)))
+        .collect()
 }
 
 /// The same cell with the cents dropped before the color is chosen -- see
@@ -72,11 +108,47 @@ fn whole_money(cents: Cents) -> String {
 fn account(account: &crate::account_label::Account) -> String {
     account.render_with(|text, color| {
         format!(
-            "<span style=\"color:{}\">{}</span>",
-            palette::hex(palette::account(color)),
+            "<span class=\"{}\">{}</span>",
+            account_class(color),
             escape(text)
         )
     })
+}
+
+/// An account as a whole cell, the class on the `<td>` itself -- the ledgers'
+/// form, where a `<span>` inside every row's cell is bytes spent a thousand
+/// times over for the same color.
+fn account_cell(account: &crate::account_label::Account) -> String {
+    account.render_with(|text, color| {
+        format!(
+            "<td class=\"{}\">{}</td>",
+            account_class(color),
+            escape(text)
+        )
+    })
+}
+
+/// The class an account's color is drawn through. A class rather than an
+/// inline `style`, because the page names the same eight colors on every
+/// ledger row and [`account_rules`] says each of them once.
+fn account_class(color: AccountColor) -> String {
+    format!("a-{}", color.as_str())
+}
+
+/// One rule per [`AccountColor`], whether or not an account on the page wears
+/// it -- eight short rules, and no account can reach the page in a color the
+/// stylesheet never named.
+fn account_rules() -> String {
+    AccountColor::ALL
+        .iter()
+        .map(|&c| {
+            format!(
+                ".{}{{color:{}}}",
+                account_class(c),
+                palette::hex(palette::account(c))
+            )
+        })
+        .collect()
 }
 
 /// A row whose cells are one label spanning the table: a section heading, or
@@ -214,7 +286,11 @@ fn narrow_rules() -> String {
 /// way instead: the owner's own free text, a ledger description or a goal
 /// name. It is the longest text on the page, and the only text still legible
 /// broken mid-word -- every other column keeps its longest word whole, which
-/// is what stops `Brokerage` becoming `Broker`/`age` beside it.
+/// is what stops `Brokerage` becoming `Broker`/`age` beside it. The ledgers
+/// carry the same three rules by position instead, `table.ledger td:nth-child`,
+/// since their columns never change and a class on every cell of every row is
+/// the largest single cost on the page. A goal's history is the same shape
+/// for the same reason, three fixed columns repeated under every goal.
 ///
 /// Those floors are why the panel scrolls. An account name is the owner's
 /// too and takes no `w`, so a long enough one puts the table past the phone
@@ -291,7 +367,13 @@ const STYLE: &str = "\
     details.picker div.options{border:1px solid #dddddd;border-radius:0.35rem;\
     margin-top:0.3rem;max-height:14rem;overflow-y:auto}\
     details.picker div.options label{display:block;padding:0.4rem 0.7rem;cursor:pointer}\
+    details.picker div.options label.now{font-weight:600;background:#eeeeee}\
     table.ledger tbody{display:none}\
+    table.ledger td:first-child,div.history td:first-child{white-space:nowrap}\
+    table.ledger td:nth-child(3),div.history td:nth-child(2){overflow-wrap:anywhere}\
+    table.ledger td:nth-child(4),table.ledger th:nth-child(4),\
+    div.history td:nth-child(3),div.history th:nth-child(3)\
+    {text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}\
     footer{border-top:1px solid #dddddd;margin-top:1.5rem;padding-top:0.6rem}\
     footer p.stamp{margin:0}\
     h4{margin:1rem 0 0.3rem;font-size:0.9rem}\
@@ -319,6 +401,7 @@ const STYLE: &str = "\
     div.menubar,div.menubar label{border-color:#333333}\
     tr.fav{background:#3a3315}\
     div.bar{background:#333333}\
+    details.picker div.options label.now{background:#2a2a2a}\
     div.history{background:#1e1e1e;color:#eeeeee}\
     div.history,div.history button.close{border-color:#333333}\
     svg.chart line.grid{stroke:#333333}\
@@ -355,7 +438,9 @@ pub fn page(snapshot: &Snapshot) -> String {
     // exist is a fact about the database, and how deep the waterfall goes is
     // a fact about the plan.
     let rules = format!(
-        "{}{}{}{}{}",
+        "{}{}{}{}{}{}{}",
+        account_rules(),
+        amount_rules(),
         tab_rules(),
         narrow_rules(),
         ledger::month_rules(&snapshot.cash),
@@ -421,7 +506,9 @@ mod tests {
     /// `2026-08-` over `22` -- which reads as two dates rather than one, and
     /// is what a phone did to all three of the Overview's column headers. Every
     /// date on the page therefore sits in a cell that refuses to wrap: `n`
-    /// where the date is a money column's header, `d` where it is data.
+    /// where the date is a money column's header, `d` where it is data, and
+    /// the first column of a ledger or a goal's history, which the stylesheet
+    /// holds by position instead.
     #[test]
     fn no_date_reaches_the_page_in_a_cell_that_may_wrap() {
         /// `2026-08-21`, and nothing else on the page is shaped like it.
@@ -439,7 +526,14 @@ mod tests {
             vec![fixture::row("Rainy Day", 500, 1_000)],
             1_000,
         ));
-        let dates: Vec<_> = cells(&page)
+        for table in ["table.ledger", "div.history"] {
+            assert!(
+                page.contains(&format!("{table} td:first-child")),
+                "nothing holds the {table} dates on one line"
+            );
+        }
+        let classed = fixture::without_positional_tables(&page);
+        let dates: Vec<_> = cells(&classed)
             .into_iter()
             .filter(|(_, t)| is_a_date(t))
             .collect();
@@ -449,7 +543,7 @@ mod tests {
         );
         for (attrs, text) in dates {
             assert!(
-                attrs.contains("class=\"d\"") || attrs.contains("class=\"n\""),
+                fixture::has_class(attrs, "d") || fixture::has_class(attrs, "n"),
                 "{text} sits in a cell that may wrap: <td{attrs}>"
             );
         }
@@ -566,8 +660,19 @@ mod tests {
             vec![fixture::row("Rainy Day", 500, 1_000)],
             1_000,
         ));
-        let teal = palette::hex(palette::account(crate::db::account::AccountColor::Teal));
-        assert!(page.contains(&teal), "the account lost its color");
+        let teal = crate::db::account::AccountColor::Teal;
+        assert!(
+            panel(&page, "cash").contains(&format!("<td class=\"{}\">", account_class(teal))),
+            "the ledger's account cell lost its color"
+        );
+        assert!(
+            page.contains(&format!(
+                ".{}{{color:{}}}",
+                account_class(teal),
+                palette::hex(palette::account(teal))
+            )),
+            "the account's class names no color"
+        );
     }
 
     /// Each tab draws its own screen and no other's: a panel built from the

@@ -525,8 +525,8 @@ mod tests {
             (crate::db::account::AccountColor::Violet, "Long Haul", "USB"),
         ] {
             let heading = format!(
-                "<h3><span style=\"color:{}\">{name}</span></h3>",
-                palette::hex(palette::account(color))
+                "<h3><span class=\"{}\">{name}</span></h3>",
+                super::super::account_class(color)
             );
             let at = panel
                 .find(&heading)

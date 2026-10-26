@@ -1,8 +1,9 @@
 //! The Savings tab: every container's goals, and what it has left over.
 
-use super::{account, escape, money, whole_money};
+use super::{account, escape, positional_money, whole_money};
 use crate::money::Cents;
 use crate::palette;
+use crate::palette::Sense;
 use crate::rate::Percent;
 use crate::report::{Container, Goal};
 use crate::savings::{Row, unallocated};
@@ -137,20 +138,17 @@ fn history(goal: &Goal) -> String {
     } else {
         let mut table = HISTORY_HEADER
             .iter()
-            .map(|h| {
-                let class = if *h == "Amount" { " class=\"n\"" } else { "" };
-                format!("<th{class}>{h}</th>")
-            })
+            .map(|h| format!("<th>{h}</th>"))
             .collect::<String>();
         table = format!("<thead><tr>{table}</tr></thead>");
         for a in &goal.history {
             table.push_str(&format!(
-                "<tr><td class=\"d\">{}</td><td class=\"w\">{}</td>{}</tr>",
+                "<tr><td>{}</td><td>{}</td>{}</tr>",
                 a.date,
                 escape(&crate::description::render(
                     a.note.as_deref().unwrap_or_default()
                 )),
-                money(a.cents.to_string(), a.cents),
+                positional_money(Sense::Natural, a.cents),
             ));
         }
         let total = goal
@@ -158,8 +156,8 @@ fn history(goal: &Goal) -> String {
             .iter()
             .fold(Cents::ZERO, |sum, a| sum + a.cents);
         table.push_str(&format!(
-            "<tr class=\"tot\"><td>Total</td><td class=\"w\"></td>{}</tr>",
-            money(total.to_string(), total)
+            "<tr class=\"tot\"><td>Total</td><td></td>{}</tr>",
+            positional_money(Sense::Natural, total)
         ));
         format!("<table>{table}</table>")
     };
@@ -254,12 +252,21 @@ mod tests {
     fn the_container_heading_names_its_account_in_color() {
         let page = page(&snapshot(vec![], 1_000));
         let panel = panel(&page, "savings");
-        let teal = palette::hex(palette::account(crate::db::account::AccountColor::Teal));
+        let teal = crate::db::account::AccountColor::Teal;
         assert!(
             panel.contains(&format!(
-                "<h3><span style=\"color:{teal}\">Rainy Day</span></h3>"
+                "<h3><span class=\"{}\">Rainy Day</span></h3>",
+                super::super::account_class(teal)
             )),
             "{panel}"
+        );
+        assert!(
+            page.contains(&format!(
+                ".{}{{color:{}}}",
+                super::super::account_class(teal),
+                palette::hex(palette::account(teal))
+            )),
+            "the class names no color"
         );
     }
 
@@ -279,19 +286,19 @@ mod tests {
     /// does not, because the truncation takes its sign along with its cents.
     #[test]
     fn a_negative_remainder_is_red_and_a_sub_dollar_one_is_not() {
-        let red = palette::hex(palette::NEGATIVE);
+        let red = "class=\"n neg\"";
         let mut over = snapshot(vec![], 1_000);
         over.containers[0].excess = crate::money::Cents(-250_000);
         let over = page(&over);
         let over = panel(&over, "savings");
-        assert!(over.contains(&red), "an overdrawn container was not red");
+        assert!(over.contains(red), "an overdrawn container was not red");
         assert!(over.contains("-2,500"), "{over}");
 
         let mut drift = snapshot(vec![], 1_000);
         drift.containers[0].excess = crate::money::Cents(-23);
         let drift = page(&drift);
         let drift = panel(&drift, "savings");
-        assert!(!drift.contains(&red), "sub-dollar drift drew red: {drift}");
+        assert!(!drift.contains(red), "sub-dollar drift drew red: {drift}");
         assert!(!drift.contains("-0"), "{drift}");
     }
 
@@ -356,14 +363,14 @@ mod tests {
         let page = page(&snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000));
         let panel = panel(&page, "savings");
         let first = panel
-            .find("<td class=\"d\">2026-07-10</td><td class=\"w\">Paycheck</td><td class=\"n\">300.00</td>")
+            .find("<td>2026-07-10</td><td>Paycheck</td><td>300.00</td>")
             .expect("the noted row is missing");
         let second = panel
-            .find("<td class=\"d\">2026-08-07</td><td class=\"w\">\u{2014}</td><td class=\"n\">200.00</td>")
+            .find("<td>2026-08-07</td><td>\u{2014}</td><td>200.00</td>")
             .expect("the unnoted row is missing");
         assert!(first < second, "the rows are not oldest first");
         assert!(
-            panel.contains("<tr class=\"tot\"><td>Total</td><td class=\"w\"></td><td class=\"n\">500.00</td></tr>"),
+            panel.contains("<tr class=\"tot\"><td>Total</td><td></td><td>500.00</td></tr>"),
             "{panel}"
         );
     }

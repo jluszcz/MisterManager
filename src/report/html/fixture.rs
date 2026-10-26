@@ -403,6 +403,16 @@ fn next_cell(html: &str) -> Option<usize> {
     }
 }
 
+/// Whether a cell's attributes name `class` among its classes -- `n` is
+/// still `n` in `class="n neg"`.
+pub(super) fn has_class(attrs: &str, class: &str) -> bool {
+    attrs
+        .split("class=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .is_some_and(|list| list.split(' ').any(|c| c == class))
+}
+
 /// Every `<td>` and `<th>` in some html, as its opening tag's attributes and
 /// the text between the tags. The attributes are what a test checks a cell's
 /// class against; the text is what the cell holds, tags and all.
@@ -453,7 +463,7 @@ pub(super) fn row_column_counts(table: &str) -> Vec<usize> {
 /// reverse. A spanning cell is in no single column, so a row carrying one is
 /// left out of the reading; an empty header labels nothing to align.
 pub(super) fn misaligned_headers(table: &str) -> Vec<String> {
-    let is_n = |attrs: &str| attrs.contains("class=\"n\"");
+    let is_n = |attrs: &str| has_class(attrs, "n");
     let mut rows = Vec::new();
     let mut rest = table;
     while let Some(start) = rest.find("<tr") {
@@ -485,4 +495,30 @@ pub(super) fn misaligned_headers(table: &str) -> Vec<String> {
         })
         .map(|(_, (_, text))| text.to_string())
         .collect()
+}
+
+/// The page with every ledger table and goal history cut out: what is left
+/// is the markup whose cells say what they may do with their width through
+/// their own classes, rather than through the stylesheet's positional rules.
+pub(super) fn without_positional_tables(page: &str) -> String {
+    let mut rest = page;
+    let mut kept = String::new();
+    loop {
+        let next = [
+            ("<table class=\"ledger\">", "</table>"),
+            ("<div class=\"history\"", "</div>"),
+        ]
+        .into_iter()
+        .filter_map(|(open, close)| rest.find(open).map(|at| (at, close)))
+        .min_by_key(|(at, _)| *at);
+        let Some((at, close)) = next else {
+            kept.push_str(rest);
+            return kept;
+        };
+        kept.push_str(&rest[..at]);
+        let end = rest[at..]
+            .find(close)
+            .expect("an unclosed positional table");
+        rest = &rest[at + end + close.len()..];
+    }
 }
