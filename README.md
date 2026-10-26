@@ -450,6 +450,10 @@ script, sized to read on a phone in light or dark. Pointing `dir` at a synced
 folder is what turns "checked the balance on the laptop" into "checked it on
 the phone a minute later."
 
+The Cash and Credit tabs carry the current month, the three before it, and
+everything dated after it; older rows are on the screens, where `[` reaches
+them.
+
 On the Savings tab, tapping a goal's name opens its history — the same
 allocations `Enter` lists on the Savings screen, with their total.
 

@@ -6,16 +6,17 @@
 //! "the option that is chosen", so a `<select>` here would render and do
 //! nothing. Radios are the only control CSS can read.
 
-use super::{account, escape, full_width_row, money_in};
+use super::{account_cell, escape, full_width_row, positional_money};
 use crate::db::account::Kind;
 use crate::description;
 use crate::palette::Sense;
 use crate::report::{Ledger, LedgerMonth};
 
 /// Date, Account, Description, Amount -- the ledger screen's own columns, in
-/// its order.
+/// its order. No cell here or below carries `d`, `w` or `n`: the stylesheet's
+/// positional rules for `table.ledger` say the same of each column once.
 const HEADER: &str = "<thead><tr><th>Date</th><th>Account</th>\
-                      <th>Description</th><th class=\"n\">Amount</th></tr></thead>";
+                      <th>Description</th><th>Amount</th></tr></thead>";
 
 const COLUMNS: usize = 4;
 
@@ -38,12 +39,13 @@ fn month_id(kind: Kind, key: &str) -> String {
 /// running balance is read downward, and a page that reversed the rows would
 /// be the only place in the application where it is not.
 ///
-/// Four columns on a phone, so which of them gives way is decided here rather
-/// than by whichever is widest: the date and the amount hold their line (`d`
-/// and `n`), and the description absorbs what is left (`w`). The account
-/// beside it is the owner's text too and takes no `w`: a name is scanned
-/// rather than read, so it keeps its word whole and the panel scrolls under a
-/// name long enough to need it.
+/// Four columns on a phone, so which of them gives way is decided rather
+/// than left to whichever is widest: the date and the amount hold their line,
+/// and the description absorbs what is left -- `table.ledger`'s rules by
+/// position, where every other table spends `d`, `n` and `w` per cell. The
+/// account beside it is the owner's text too and does not wrap: a name is
+/// scanned rather than read, so it keeps its word whole and the panel scrolls
+/// under a name long enough to need it.
 fn month(kind: Kind, m: &LedgerMonth) -> String {
     let sense = Sense::of_ledger(kind);
     let rows: String = m
@@ -54,11 +56,11 @@ fn month(kind: Kind, m: &LedgerMonth) -> String {
             // the projection model made visible, not a payment already made.
             let class = if r.future { " class=\"future\"" } else { "" };
             format!(
-                "<tr{class}><td class=\"d\">{}</td><td>{}</td><td class=\"w\">{}</td>{}</tr>",
+                "<tr{class}><td>{}</td>{}<td>{}</td>{}</tr>",
                 r.date,
-                account(&r.account),
+                account_cell(&r.account),
                 escape(&description::render(&r.description)),
-                money_in(sense, r.cents.to_string(), r.cents),
+                positional_money(sense, r.cents),
             )
         })
         .collect();
@@ -94,12 +96,16 @@ pub(super) fn panel(ledger: &Ledger) -> String {
                 .map(|m| (month_id(ledger.kind, &m.key), m.label.as_str())),
         )
         .collect();
+    // The month being lived in stands out in the open dropdown whichever
+    // month is picked, so stepping back through the months never loses it.
+    let now = month_id(ledger.kind, &ledger.current);
     let mut inputs = String::new();
     let mut options = String::new();
     let mut summary = String::new();
     for (id, label) in &entries {
         inputs.push_str(&radio(id, *id == opens_on));
-        options.push_str(&format!("<label for=\"{id}\">{label}</label>"));
+        let class = if *id == now { " class=\"now\"" } else { "" };
+        options.push_str(&format!("<label{class} for=\"{id}\">{label}</label>"));
         // One of these shows at a time -- whichever radio is checked -- so the
         // closed dropdown reads as the month it is filtered to.
         summary.push_str(&format!("<span id=\"{id}-sel\">{label}</span>"));
@@ -164,9 +170,9 @@ mod tests {
 
         let snapshot = snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000);
         let page = page(&snapshot);
-        for (tab, ledger, rgb) in [
-            ("credit", &snapshot.credit, palette::POSITIVE),
-            ("cash", &snapshot.cash, palette::NEGATIVE),
+        for (tab, ledger, class, rgb) in [
+            ("credit", &snapshot.credit, "pos", palette::POSITIVE),
+            ("cash", &snapshot.cash, "neg", palette::NEGATIVE),
         ] {
             let drawn = panel(&page, tab);
             let negative = ledger
@@ -175,12 +181,10 @@ mod tests {
                 .flat_map(|m| &m.rows)
                 .find(|r| r.cents < Cents::ZERO)
                 .unwrap_or_else(|| panic!("the {tab} fixture carries a row below zero"));
-            let cell = format!(
-                "<td class=\"n\" style=\"color:{}\">{}</td>",
-                palette::hex(rgb),
-                negative.cents
-            );
+            let cell = format!("<td class=\"{class}\">{}</td>", negative.cents);
             assert!(drawn.contains(&cell), "{tab} does not draw {cell}");
+            let rule = format!("td.{class}{{color:{}}}", palette::hex(rgb));
+            assert!(page.contains(&rule), "nothing colors {class}");
         }
     }
 
@@ -198,7 +202,7 @@ mod tests {
             .flat_map(|m| &m.rows)
             .find(|r| r.cents > crate::money::Cents::ZERO)
             .expect("the credit fixture carries a charge");
-        let cell = format!("<td class=\"n\">{}</td>", charge.cents);
+        let cell = format!("<td>{}</td>", charge.cents);
         assert!(
             credit.contains(&cell),
             "a charge is not drawn plain: {cell}"
@@ -225,7 +229,7 @@ mod tests {
         let mut snapshot = snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000);
         snapshot.cash.months[0].rows[0].description = String::new();
         assert!(
-            cash(&snapshot).contains("<td class=\"w\">\u{2014}</td>"),
+            cash(&snapshot).contains("<td>\u{2014}</td>"),
             "an unnamed row left an empty cell"
         );
     }
@@ -243,7 +247,7 @@ mod tests {
                 "no radio for {label}"
             );
             assert!(
-                cash.contains(&format!("<label for=\"cash-{key}\">{label}</label>")),
+                cash.contains(&format!(" for=\"cash-{key}\">{label}</label>")),
                 "no dropdown entry for {label}"
             );
             assert!(
@@ -272,6 +276,19 @@ mod tests {
             page.contains("#cash-all:checked~table.ledger tbody{display:table-row-group}"),
             "All months shows nothing"
         );
+    }
+
+    /// The dropdown marks the month the page is read in, and no other.
+    #[test]
+    fn the_dropdown_highlights_the_current_month() {
+        let page = page(&snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000));
+        let cash = panel(&page, "cash");
+        assert!(
+            cash.contains("<label class=\"now\" for=\"cash-2026-08\">Aug 2026</label>"),
+            "the current month is not highlighted: {cash}"
+        );
+        assert_eq!(cash.matches("class=\"now\"").count(), 1, "{cash}");
+        assert!(page.contains("details.picker div.options label.now{"));
     }
 
     /// The first of a month, before anything has been entered in it. A

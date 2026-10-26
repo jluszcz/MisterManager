@@ -94,10 +94,8 @@ pub struct Holding {
 /// One ledger's rows, grouped into the months the page's filter switches
 /// between.
 ///
-/// Every row there is, where the screen shows a month or two: a page is
-/// scrolled and filtered rather than paged through, and a report that stopped
-/// at the current window would be missing exactly what someone reaches for it
-/// to check.
+/// The [`LEDGER_HISTORY_MONTHS`] before the current one, the current one, and
+/// every month after it -- see that constant for why the page stops there.
 pub struct Ledger {
     pub kind: Kind,
     pub months: Vec<LedgerMonth>,
@@ -174,19 +172,32 @@ pub struct Snapshot {
     pub charts: Option<crate::balance_history::Charts>,
 }
 
-/// One ledger, every row of it, grouped by month.
+/// How many whole months before the current one each ledger tab carries.
+///
+/// The ledgers are nearly the whole page, and the page crosses a sync folder
+/// on every write, so carrying every row there is would grow it by a month
+/// of rows each month for as long as the database lives. What the page is
+/// opened to check is the month being lived in and the ones just behind it;
+/// anything older is on the screen, where `[` reaches it. Every future row is
+/// kept, being the projection the Overview's figures are quoted from.
+const LEDGER_HISTORY_MONTHS: i32 = 3;
+
+/// One ledger's recent and future rows, grouped by month.
 ///
 /// The grouping leans on `txn::list` returning rows in date order: a month
 /// ends where the next key differs, so nothing sorts twice.
 fn ledger(db: &Db, accounts: &[account::Account], kind: Kind, today: NaiveDate) -> Result<Ledger> {
     let current = today.format("%Y-%m").to_string();
-    let Some((from, to)) = txn::date_range(db)? else {
+    let Some((_, to)) = txn::date_range(db)? else {
         return Ok(Ledger {
             kind,
             months: Vec::new(),
             current,
         });
     };
+    let from = calc::Month::of(today)
+        .shifted(-LEDGER_HISTORY_MONTHS)
+        .first_day();
     let filter = txn::Filter {
         kind,
         account_id: None,
@@ -670,6 +681,41 @@ mod tests {
             "a past row read as future"
         );
         assert!(ledger.months[1].rows[1].future, "a future row read as past");
+    }
+
+    /// The page carries the three months behind the current one, the
+    /// current one, and everything ahead of it: a row older than that is
+    /// the screen's to show, and a future row is the projection the
+    /// Overview quotes from, however far out it is.
+    #[test]
+    fn a_ledger_carries_three_trailing_months_and_every_future_one() {
+        let db = seeded();
+        let account = account::list(&db).unwrap()[0].id;
+        let write = |date: NaiveDate| {
+            crate::db::txn::insert(
+                &db,
+                &crate::db::txn::NewTxn {
+                    date,
+                    cents: Cents::from_dollars(10),
+                    account_id: account,
+                    description: String::new(),
+                    recurring_txn_id: None,
+                },
+            )
+            .unwrap();
+        };
+        let day = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        // `today` is in August, so May is the oldest month kept and April's
+        // last day is the newest row dropped.
+        write(day(2026, 4, 30));
+        write(day(2026, 5, 1));
+        write(day(2026, 8, 3));
+        write(day(2027, 3, 9));
+
+        let ledger = ledger(&db, &account::list(&db).unwrap(), Kind::Cash, today()).unwrap();
+
+        let months: Vec<&str> = ledger.months.iter().map(|m| m.key.as_str()).collect();
+        assert_eq!(months, ["2026-05", "2026-08", "2027-03"]);
     }
 
     /// A failure reading the plug's asks costs the annotation and nothing

@@ -68,14 +68,15 @@ about a figure, one of them is wrong.
   checkbox: choosing a tab unchecks it by being in the same group, which is the
   only way a page with no script can close a menu once something is picked.
   While it is open no tab is checked, so the open menu is the whole page.
-- **The Cash and Credit tabs carry every transaction, where the screens carry
-  a window.** `tui::ledger::Window` exists because a terminal shows one screen
-  at a time and `[`/`]` move it; a page is scrolled and filtered instead, and a
-  report that stopped at the current window would be missing exactly what
-  someone opens it to check. The rows are grouped into one `<tbody>` per month
-  and the filter shows one of them -- so the page's size is the whole ledger
-  whatever the dropdown says, which is the cost of the file being readable
-  offline with no query to re-run. It **opens on the month `today` falls in**,
+- **The Cash and Credit tabs carry the three months behind the current one,
+  the current one, and every future month** -- `report::LEDGER_HISTORY_MONTHS`,
+  where the cut is argued. The ledgers are nearly the whole page, so carrying
+  every row would grow a file that crosses a sync folder on every write by a
+  month of rows each month; anything older is the screen's, where `[` reaches
+  it. The rows are grouped into one `<tbody>` per month and the filter shows
+  one of them -- so the page's size is every month carried whatever the
+  dropdown says, which is the cost of the file being readable offline with no
+  query to re-run. It **opens on the month `today` falls in**,
   and on `All months` when that month has no rows yet: a selection matching no
   group would draw an empty table and no reason for it, which is what the first
   of a month would otherwise look like. **The Credit tab reads its signs the way the Credit screen
@@ -184,7 +185,14 @@ about a figure, one of them is wrong.
   then what scrolls rather than the page under every tab. It sits on the panel
   and not on a wrapper around each table because the month filter reaches its
   rows as `#month:checked~table.ledger`, and a `<div>` between those two would
-  leave the dropdown showing nothing. The table face and its
+  leave the dropdown showing nothing. **The ledgers and the goal histories
+  spell the three by position instead**, as `td:nth-child` rules under
+  `table.ledger` and `div.history`, and a ledger colors an account through a
+  class on its cell rather than a `<span>` in it: those columns never change,
+  and an attribute on every cell of every row was most of the page. For the
+  same reason every color a row repeats is a class the stylesheet names once
+  -- an account's `a-<AccountColor::as_str>` and an amount's `neg`/`pos` --
+  rather than an inline `style`. The table face and its
   padding are set by the widest tab rather than by the prettiest: Savings is five
   columns, one dated and two of them money, inside the 361px a phone leaves.
 - **The report is renamed onto its name, never written to it.** A sync client
@@ -196,8 +204,8 @@ about a figure, one of them is wrong.
   rename that cannot happen would otherwise leave the partial page in the synced
   folder under a name nothing ever looks for again.
 - **The page is minified on the way to the disk, not on the way out of `html`.**
-  The whole file crosses a sync folder and is read on a phone offline — every
-  row of both ledgers, not a window on them — so its size is worth spending a
+  The whole file crosses a sync folder and is read on a phone offline — months
+  of both ledgers, not a window on them — so its size is worth spending a
   dependency on; but `html::page` is what every test in
   `src/report/html/` asserts exact markup against, and a module whose output no
   longer matched what it was checked for would be testing the minifier instead.
