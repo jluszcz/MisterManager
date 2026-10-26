@@ -136,7 +136,8 @@ about a figure, one of them is wrong.
   allocations oldest first at the cent, and their total, which is the balance beside the name.
   A radio cannot do it: the table the name sits in lies between any radio and the box it would
   show, and `:checked ~` only looks forward. A `popover` is an attribute, not a script, and the
-  browser supplies the rest — the box over the page, a tap outside or `Close` to dismiss it. Every
+  browser supplies the rest — the box over the page, a tap outside or the `×` beside the name to
+  dismiss it, the two pinned to the top of the box as a long history scrolls. Every
   goal's history is on the page whether it is opened or not, the ledgers' cost again.
   `Snapshot::load` reads them through `goal::allocations`, the reader the screen's history uses,
   so the two cannot list different rows.
@@ -176,13 +177,14 @@ about a figure, one of them is wrong.
   enough takes them, which is what once drew `2026-08-` over `22` across all
   three of the Overview's headers. Refusing to wrap puts a floor under those
   columns, so `w` names the one that gives way instead: the owner's own free
-  text, a ledger description or a goal name, the longest text on the page and
-  the only text still legible broken mid-word. Every other column keeps its
-  longest word whole, which is what stops an account name from being shredded to
-  make room — and `overflow-x` on the panel is what catches what those floors
-  leave: an account name is the owner's text as well, so a long enough one puts
-  its table past the phone whatever the description gives up, and the panel is
-  then what scrolls rather than the page under every tab. It sits on the panel
+  text, a ledger description or a goal name, the longest text on the page. It
+  wraps at its spaces, as `overflow-wrap:break-word`: `anywhere` would lower the
+  column's floor to one letter, and a table sizing its columns takes that floor
+  at its word, which is what drew `Reimburseme` over `nt` in Safari. Every column
+  therefore keeps its longest word whole — and `overflow-x` on the panel is what
+  catches what those floors leave: a row whose longest words cannot sit side by
+  side inside the phone puts its table past it, and the panel is then what
+  scrolls rather than the page under every tab. It sits on the panel
   and not on a wrapper around each table because the month filter reaches its
   rows as `#month:checked~table.ledger`, and a `<div>` between those two would
   leave the dropdown showing nothing. **The ledgers and the goal histories

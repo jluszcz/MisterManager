@@ -506,7 +506,8 @@ pub(super) fn without_positional_tables(page: &str) -> String {
     loop {
         let next = [
             ("<table class=\"ledger\">", "</table>"),
-            ("<div class=\"history\"", "</div>"),
+            // A history's rows are a `div` of their own inside it.
+            ("<div class=\"history\"", "</div></div>"),
         ]
         .into_iter()
         .filter_map(|(open, close)| rest.find(open).map(|at| (at, close)))
