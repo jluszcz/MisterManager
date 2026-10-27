@@ -1,17 +1,16 @@
-//! The report as one page.
+//! The report as one page: `finance-utils`' shell, one JSON payload, and the
+//! script that draws every tab from it.
 //!
-//! Self-contained by requirement: inline CSS, no script, no font, no image
+//! Self-contained by requirement: inline CSS and script, no font, no image
 //! beyond the favicon inlined as a `data:` URI, no request of any kind. A
 //! phone opening this out of a sync folder may be offline, and anything
-//! fetched would render half-drawn or not at all. That
-//! is also why every control here is a radio button and a sibling selector,
-//! or a `popover` attribute: the tabs and the ledgers' month filter are CSS
-//! and a goal's history is HTML, because a click handler would be the one
-//! thing on the page that could fail to arrive.
+//! fetched would render half-drawn or not at all.
 //!
-//! One module per tab, the way `src/tui/` keeps one module per screen. What
-//! they share -- escaping, a money cell, an account in its own color -- lives
-//! here.
+//! One module per tab, the way `src/tui/` keeps one module per screen. Each
+//! builds its tab as a [`TabView`](crate::report::view::TabView) with every
+//! decision already made -- a figure's sign, an account's color, a bar's
+//! widths -- and `report.js` only lays them out. What the tabs share is
+//! `crate::report::view`.
 
 mod funds;
 mod ledger;
@@ -24,731 +23,244 @@ mod savings;
 mod fixture;
 
 use super::Snapshot;
-use crate::db::account::AccountColor;
-use crate::money::Cents;
-use crate::palette;
+use super::view::{Accounts, Page, tokens_css};
+use jluszcz_finance_utils::report::html::{App, NavTab, app_page, script_json};
 
-// Every interpolation of owner-typed text goes through `escape`: a goal named
-// with an angle bracket would otherwise truncate the page at its own row. It
-// escapes `&`, `<`, `>` and `"` but never `'`, because the page's only
-// attributes carrying interpolated data are double-quoted -- `savings::percent`'s
-// `style="color:{hex}"`, whose hex always comes from `palette::hex`, and the
-// classes `account_class` and `amount_class` build from constants -- never
-// owner text. A call site that puts escaped
-// text inside a single-quoted attribute reopens the injection it exists to
-// close.
+// Owner text reaches the page two ways, and neither is markup: the payload,
+// where `script_json` turns every `<` into `<` so no string can end the
+// block, and the script, which inserts every string through `textContent`.
+// The one exception is a chart's SVG, built here, whose only text is a
+// compact figure and a month label -- `retirement` still escapes them, so the
+// rule has no case to argue.
 use jluszcz_finance_utils::report::escape;
-use jluszcz_finance_utils::report::html::{self as shared, Tab};
 
-/// A money cell in a naturally signed column -- every one on the page but
-/// the Credit tab's Amount.
-fn money(text: String, cents: Cents) -> String {
-    money_in(palette::Sense::Natural, text, cents)
-}
-
-/// A money cell in whichever [`palette::Sense`] the column runs. Below zero
-/// is the one thing that colors a figure, and [`palette::amount`] is the
-/// decision -- the same one `tui::style::amount_color_of` reads, so a card
-/// paid down is green on the Credit tab exactly as it is on the screen.
-fn money_in(sense: palette::Sense, text: String, cents: Cents) -> String {
-    let class = match amount_class(sense, cents) {
-        Some(tone) => format!("n {tone}"),
-        None => "n".to_string(),
-    };
-    format!("<td class=\"{class}\">{}</td>", escape(&text))
-}
-
-/// A money cell, to the cent, in a table whose stylesheet aligns its columns
-/// by position -- a ledger or a goal's history -- and so carries no `n`.
-fn positional_money(sense: palette::Sense, cents: Cents) -> String {
-    match amount_class(sense, cents) {
-        Some(tone) => format!("<td class=\"{tone}\">{cents}</td>"),
-        None => format!("<td>{cents}</td>"),
-    }
-}
-
-/// The two colors [`palette::amount`] answers in, each as the class the
-/// stylesheet draws it through. [`amount_rules`] writes a rule per entry, so
-/// the class and its color cannot be paired twice.
-const AMOUNT_CLASSES: [(palette::Rgb, &str); 2] =
-    [(palette::NEGATIVE, "neg"), (palette::POSITIVE, "pos")];
-
-/// The class a figure takes in a column running in `sense`, or `None` when
-/// [`palette::amount`] leaves it uncolored.
-fn amount_class(sense: palette::Sense, cents: Cents) -> Option<&'static str> {
-    palette::amount(sense, cents).map(|rgb| {
-        AMOUNT_CLASSES
-            .iter()
-            .find(|(c, _)| *c == rgb)
-            .map(|(_, class)| *class)
-            .expect("palette::amount answers in one of AMOUNT_CLASSES' colors")
-    })
-}
-
-fn amount_rules() -> String {
-    AMOUNT_CLASSES
-        .iter()
-        .map(|&(rgb, class)| format!("td.{class}{{color:{}}}", palette::hex(rgb)))
-        .collect()
-}
-
-/// The same cell with the cents dropped before the color is chosen -- see
-/// [`Cents::trunc_to_dollar`].
-///
-/// Most of the page's figures are targets and balances in the thousands,
-/// where two decimal places are two digits of noise on every row.
-/// `tui::whole_amount` is the screens' half of the same rule.
-fn whole_money(cents: Cents) -> String {
-    let whole = cents.trunc_to_dollar();
-    money(whole.to_whole_dollars(), whole)
-}
-
-/// An account, in its own color. The report's half of the rule that an
-/// account never reaches a glyph without its color -- `tui::label` has the
-/// other half.
-fn account(account: &crate::account_label::Account) -> String {
-    account.render_with(|text, color| {
-        format!(
-            "<span class=\"{}\">{}</span>",
-            account_class(color),
-            escape(text)
-        )
-    })
-}
-
-/// An account as a whole cell, the class on the `<td>` itself -- the ledgers'
-/// form, where a `<span>` inside every row's cell is bytes spent a thousand
-/// times over for the same color.
-fn account_cell(account: &crate::account_label::Account) -> String {
-    account.render_with(|text, color| {
-        format!(
-            "<td class=\"{}\">{}</td>",
-            account_class(color),
-            escape(text)
-        )
-    })
-}
-
-/// The class an account's color is drawn through. A class rather than an
-/// inline `style`, because the page names the same eight colors on every
-/// ledger row and [`account_rules`] says each of them once.
-fn account_class(color: AccountColor) -> String {
-    format!("a-{}", color.as_str())
-}
-
-/// One rule per [`AccountColor`], whether or not an account on the page wears
-/// it -- eight short rules, and no account can reach the page in a color the
-/// stylesheet never named.
-fn account_rules() -> String {
-    AccountColor::ALL
-        .iter()
-        .map(|&c| {
-            format!(
-                ".{}{{color:{}}}",
-                account_class(c),
-                palette::hex(palette::account(c))
-            )
-        })
-        .collect()
-}
-
-/// A row whose cells are one label spanning the table: a section heading, or
-/// the sentence a table has instead of rows.
-///
-/// `colspan` and not a one-cell row, so the column widths a real row sets are
-/// not disturbed by a line of prose sitting in the first of them.
-fn full_width_row(class: &str, columns: usize, html: String) -> String {
-    format!("<tr class=\"{class}\"><td colspan=\"{columns}\">{html}</td></tr>")
+/// One tab of the bar: its id, which names its panel; the label the wide bar
+/// shows and the shorter one under its icon; and the icon, the inside of a
+/// 24x24 `<svg>` the shell strokes in the text color.
+pub(super) struct Tab {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub short: &'static str,
+    pub icon: &'static str,
 }
 
 /// The tabs, in the order the screens are numbered: `1` Overview, `2` Cash,
-/// `3` Credit, `4` Savings, `5` Planning, `7` Funds, `8` Retirement. An owner who reaches for
-/// `4` on the keyboard should not find Planning under it here.
+/// `3` Credit, `4` Savings, `5` Planning, `7` Funds, `8` Retirement. An owner
+/// who reaches for `4` on the keyboard should not find Planning under it here.
 ///
-/// The id doubles as the panel's and as the CSS selector's, so a tab added
-/// here is a tab wired everywhere -- including in `report`'s own check that
-/// the minifier left the switch working, which reads this list rather than
-/// restating it.
-pub(super) const TABS: [(&str, &str); 7] = [
-    ("overview", "Overview"),
-    ("cash", "Cash"),
-    ("credit", "Credit"),
-    ("savings", "Savings"),
-    ("planning", "Planning"),
-    ("funds", "Funds"),
-    ("retirement", "Retirement"),
+/// [`page_view`] builds its tabs in this order, and a test holds the two
+/// level: the script fills `#{id}-panel` by the id each view carries.
+pub(super) const TABS: [Tab; 7] = [
+    Tab {
+        id: "overview",
+        label: "Overview",
+        short: "Overview",
+        icon: "<path d=\"M4 19V9M10 19V5M16 19v-7M22 19H2\"/>",
+    },
+    Tab {
+        id: "cash",
+        label: "Cash",
+        short: "Cash",
+        icon: "<rect x=\"2\" y=\"6\" width=\"20\" height=\"12\" rx=\"2\"/>\
+               <circle cx=\"12\" cy=\"12\" r=\"2.5\"/>",
+    },
+    Tab {
+        id: "credit",
+        label: "Credit",
+        short: "Credit",
+        icon: "<rect x=\"2\" y=\"5\" width=\"20\" height=\"14\" rx=\"2\"/>\
+               <path d=\"M2 10h20M6 15h4\"/>",
+    },
+    Tab {
+        id: "savings",
+        label: "Savings",
+        short: "Savings",
+        icon: "<circle cx=\"12\" cy=\"12\" r=\"9\"/><circle cx=\"12\" cy=\"12\" r=\"5\"/>\
+               <circle cx=\"12\" cy=\"12\" r=\"1\"/>",
+    },
+    Tab {
+        id: "planning",
+        label: "Planning",
+        short: "Plan",
+        icon: "<path d=\"M4 5h16M7 10h13M10 15h10M13 20h7\"/>",
+    },
+    Tab {
+        id: "funds",
+        label: "Funds",
+        short: "Funds",
+        icon: "<path d=\"M12 3v9l7 4\"/><circle cx=\"12\" cy=\"12\" r=\"9\"/>",
+    },
+    Tab {
+        id: "retirement",
+        label: "Retirement",
+        short: "Retire",
+        icon: "<path d=\"M3 20h18M6 20V10l6-5 6 5v10M10 20v-5h4v5\"/>",
+    },
 ];
 
-/// The id of the narrow page's menu: a radio in the tabs' own group rather
-/// than a checkbox beside it, which is what lets choosing a tab close it.
-/// Checking a tab unchecks the menu as a side effect of being in one group,
-/// where a checkbox would stay open over the panel it had just switched to
-/// until it was tapped again -- and the page has no script to tap it.
-const MENU: &str = "menu";
+/// The page's own layout, after the palette tokens [`tokens_css`] generates.
+const STYLE: &str = include_str!("../report.css");
 
-/// Below this width the tab bar would wrap onto a second line, so the page
-/// draws the menu instead. Seven labels at the nav's padding run about
-/// 35rem, plus the body's own padding either side.
-const NARROW: &str = "38rem";
-
-/// The tab bar, the narrow page's menu bar, and the radios that drive both.
-///
-/// A checkbox hack rather than a click handler, because the page carries no
-/// script: a phone opening this out of a sync folder still switches tabs
-/// offline. Every radio sits ahead of the nav and of every panel, since
-/// `:checked ~` only ever looks forward -- an input placed after the thing it
-/// shows would leave the page stuck on whichever panel CSS defaulted to.
-///
-/// The menu bar names the tab it is on, one `<span>` per tab with the checked
-/// one shown, the way a ledger's month picker names its month. While the menu
-/// is open no tab is checked, so no panel shows: the open menu *is* the page
-/// until a tab is chosen, which is what a menu with no way to close itself
-/// but a choice has to be.
-fn tab_bar() -> String {
-    let current: String = TABS
-        .iter()
-        .map(|(id, name)| format!("<span id=\"{id}-cur\">{name}</span>"))
-        .collect();
-    let tabs = tabs();
-    format!(
-        "{}<input class=\"tab\" type=\"radio\" name=\"tab\" id=\"{MENU}\">\
-         <div class=\"menubar\"><label for=\"{MENU}\" aria-label=\"Tabs\">\u{2630}</label>\
-         {current}</div>{}",
-        shared::tab_inputs(&tabs, Some(0)),
-        shared::tab_nav(&tabs),
-    )
-}
-
-/// The tabs, in `TABS` order.
-fn tabs() -> Vec<Tab> {
-    TABS.iter().map(|(id, name)| Tab::new(*id, *name)).collect()
-}
-
-/// Which panel is shown, which label is lit, where the focus ring goes, and
-/// which name the narrow page's menu bar reads -- one rule set per tab,
-/// generated so that the list above stays the only place a tab is named.
-fn tab_rules() -> String {
-    let current: String = TABS
-        .iter()
-        .map(|(id, _)| format!("#{id}:checked~.menubar #{id}-cur{{display:inline}}"))
-        .collect();
-    format!("{}{current}", shared::tab_rules(&tabs()))
-}
-
-/// Everything that changes below [`NARROW`]: the tab bar traded for the
-/// menu, the Retirement tab's milestone table set a size smaller, a goal's
-/// history grown to nearly the whole screen, and the rows of the ledgers and
-/// the Savings table given a little more height and face.
-///
-/// The milestone table is four columns of bands, each a figure either side of
-/// a spaced dash, and a band broken at its dash reads as two figures -- so its
-/// cells do not wrap, and the face and the padding are what give way instead.
-/// At the page's own size it runs past the 361px a phone leaves; the size here
-/// sets it about a tenth inside that in Chrome, since Safari's figures run
-/// wider and a margin that fit one browser exactly scrolled in the other.
-///
-/// A history is three columns, two of them short, so on a phone it can spend
-/// the width on a larger face rather than the smaller one every other table
-/// keeps -- it is the one view the reader has opened to read. `dvh` rather
-/// than `vh`, since Safari's `vh` counts the toolbar that covers the bottom
-/// of it. The `×` takes padding to a fingertip's size there too.
-///
-/// The ledgers and the Savings table are what a phone scrolls through most,
-/// so their rows are taller and a fingertip apart. Their face grows less than
-/// the history's, and Savings' least: it is five columns, and the size here
-/// fits a seven-figure goal inside the 361px a phone leaves in Chrome with a
-/// little to spare for Safari's wider figures.
-/// Savings is reached by its panel because its table carries no class, and
-/// as a child so the histories' tables, further down inside it, are not.
-///
-/// The menu's radio is `display:none` above the breakpoint, not merely moved
-/// off-screen as the tabs' are. It is in their group, and the arrow keys walk
-/// a group's rendered radios: one left rendered at a width with no menu to
-/// show would let `→` off the last tab check it, leaving no tab checked and
-/// so no panel drawn.
-fn narrow_rules() -> String {
-    format!(
-        "#{MENU}{{display:none}}\
-         @media (max-width:{NARROW}){{\
-         #{MENU}{{display:block}}\
-         div.menubar{{display:flex}}\
-         nav{{display:none;flex-direction:column}}\
-         #{MENU}:checked~nav{{display:flex}}\
-         #{MENU}:checked~.menubar{{display:none}}\
-         #{MENU}:focus-visible~.menubar label\
-         {{outline:2px solid currentColor;outline-offset:-2px}}\
-         table.bands{{font-size:0.72rem}}\
-         table.bands td,table.bands th{{padding-left:0.15rem;padding-right:0.15rem}}\
-         table.ledger{{font-size:0.88rem}}\
-         #savings-panel>table{{font-size:0.85rem}}\
-         table.ledger td,#savings-panel>table td{{padding-top:0.4rem;padding-bottom:0.4rem}}\
-         div.history{{width:calc(100vw - 1rem);max-height:90vh;max-height:90dvh}}\
-         div.history h4{{font-size:1.05rem}}\
-         div.history table{{font-size:0.95rem}}\
-         div.history td,div.history th{{padding-top:0.4rem;padding-bottom:0.4rem}}\
-         div.history button.close{{padding:0.3rem 0.5rem;margin:-0.45rem -0.5rem 0 0}}\
-         }}"
-    )
-}
-
-/// A system font stack, tabular money, a favorite's band, an expired goal's
-/// marker, the tab switch, the ledgers' month dropdown, the allocation bar
-/// and its legend, and the media query that flips background and foreground
-/// for a phone in dark mode. The other media query, the narrow page's, is
-/// [`narrow_rules`]': it names the menu's id.
-/// Target a phone width; there is no `MIN_WIDTH` here.
-///
-/// The radios are moved off the page rather than `display:none`d, which would
-/// take them out of the focus order and leave the tabs reachable by pointer
-/// alone.
-///
-/// Three classes say what a column may do with the width it is given, and
-/// between them they are what fits Savings' five columns on a phone. `n` and
-/// `d` -- a figure and a date -- never wrap: both offer a break at a comma or
-/// a hyphen, and a table narrow enough takes it, so `2026-08-` over `22` reads
-/// as two dates rather than one and `-1,` over `000.00` as neither. Refusing
-/// to wrap sets a floor under those columns, so `w` names the one that gives
-/// way instead: the owner's own free text, a ledger description or a goal
-/// name. It is the longest text on the page, and wraps at its spaces.
-/// `break-word` rather than `anywhere`, because only the second lowers the
-/// column's floor to a single letter: a table sizing its columns takes that
-/// floor at its word, and Safari drew `Reimburseme` over `nt` with the space
-/// before it unused. `break-word` splits a word only when it cannot fit a
-/// line of its own, so the column is never narrower than its longest word.
-/// Every other column keeps its longest word whole too, which is what stops
-/// `Brokerage` becoming `Broker`/`age` beside it. The ledgers
-/// carry the same three rules by position instead, `table.ledger td:nth-child`,
-/// since their columns never change and a class on every cell of every row is
-/// the largest single cost on the page. A goal's history is the same shape
-/// for the same reason, three fixed columns repeated under every goal.
-///
-/// Those floors are why the panel scrolls. A row whose longest words cannot
-/// sit side by side inside the phone puts the table past it, whichever
-/// column they are in; `overflow-x` on the panel is what that
-/// then moves, rather than the page under every tab. It sits on the panel and
-/// not on a wrapper around each table because the month filter reaches its
-/// rows as `#month:checked~table.ledger`, and a `<div>` between the two would
-/// leave the dropdown showing nothing.
-///
-/// The allocation bar is the one thing here that is not a table: a flex row
-/// of segments whose widths `funds` writes inline, over a track that is the
-/// bar's own background -- so what the four classes leave over needs no
-/// element of its own, and the bar cannot read as though they were the whole
-/// portfolio. It is the only rule here that needs a dark counterpart beyond
-/// the page's own two colors, that track being the one grey a reader is meant
-/// to see.
-///
-/// A goal's history is a `popover`, which the browser draws over the page in
-/// its own layer -- so unlike everything else here it sets its own
-/// background and foreground rather than inheriting the body's, and needs a
-/// dark counterpart for both. It is hidden by a rule of its own and shown by
-/// `:popover-open`, rather than left to the browser's: a browser without
-/// popovers drops only the second rule, and draws the page without
-/// histories rather than every one of them inline under its table. Its name
-/// and its `×` are one `<header>` above a `div.rows` that alone scrolls, so a
-/// long history moves under the header rather than past it. Not a `sticky`
-/// header over a scrolling box: Safari leaves a sliver above one, and the
-/// rows' text shows through it. The rows contain their own scrolling, so a
-/// history scrolled to its end does not go on to move the page under it, and
-/// the backdrop blurs that page as well as dimming it. The goal name that
-/// opens it is a `<button>`
-/// stripped back to the text it replaces, plus the dotted underline that
-/// says it can be tapped.
-///
-/// The table face is smaller than the page's and the cells are padded by a
-/// quarter of it. That is Savings' bill too: five columns, one of them a date
-/// and two of them money, on the 361px a 393px phone leaves inside the
-/// body's padding.
-const STYLE: &str = "\
-    :root{color-scheme:light dark}\
-    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\
-    margin:0 auto;max-width:40rem;padding:1rem;background:#ffffff;color:#1a1a1a}\
-    h3{margin:1.2rem 0 0.4rem}\
-    p.stamp{color:#666666;margin:0 0 0.6rem;font-size:0.85rem}\
-    table{width:100%;border-collapse:collapse;margin-bottom:1rem;font-size:0.82rem}\
-    td,th{padding:0.25rem 0.25rem;border-bottom:1px solid #dddddd;text-align:left}\
-    td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}\
-    td.d,th.d{white-space:nowrap}\
-    td.w{overflow-wrap:break-word}\
-    tr.fav{background:#fff6d8}\
-    tr.expired td:first-child::after{content:' !'}\
-    tr.counted td:first-child::after{content:' \u{2022}'}\
-    tr.head td{padding-top:0.9rem;font-weight:600}\
-    tr.gap td{padding-top:0.9rem}\
-    tr.tot td{font-weight:600}\
-    tr.future{opacity:0.55}\
-    tr.note td{color:#666666}\
-    div.bar{display:flex;height:0.6rem;border-radius:0.3rem;overflow:hidden;\
-    background:#dddddd;margin:0 0 0.4rem}\
-    p.legend{margin:0 0 1rem;font-size:0.72rem;color:#666666}\
-    p.legend span.item{display:inline-block;white-space:nowrap;margin-right:0.7rem}\
-    span.key{display:inline-block;width:0.55rem;height:0.55rem;\
-    border-radius:0.15rem;margin-right:0.25rem}\
-    input.tab,input.pick{position:absolute;opacity:0;width:0;height:0}\
-    nav{display:flex;flex-wrap:wrap;border-bottom:1px solid #dddddd;margin-bottom:0.8rem}\
-    nav label{padding:0.5rem 0.7rem;margin-bottom:-1px;cursor:pointer;font-weight:600;\
-    color:#666666;border-bottom:2px solid transparent}\
-    div.menubar{display:none;align-items:center;gap:0.6rem;font-weight:600;\
-    border-bottom:1px solid #dddddd;margin-bottom:0.8rem;padding:0.3rem 0}\
-    div.menubar label{cursor:pointer;font-size:1.3rem;line-height:1;padding:0.2rem 0.5rem;\
-    border:1px solid #dddddd;border-radius:0.35rem}\
-    div.menubar span{display:none}\
-    section.panel{display:none;overflow-x:auto}\
-    tbody+tbody tr:first-child td{padding-top:0.9rem}\
-    details.picker{margin:0 0 0.8rem}\
-    details.picker summary{display:inline-block;cursor:pointer;padding:0.35rem 0.7rem;\
-    border:1px solid #dddddd;border-radius:0.35rem;list-style:none}\
-    details.picker summary::-webkit-details-marker{display:none}\
-    details.picker summary::after{content:' \\25be';color:#666666}\
-    details.picker summary span{display:none}\
-    details.picker div.options{border:1px solid #dddddd;border-radius:0.35rem;\
-    margin-top:0.3rem;max-height:14rem;overflow-y:auto}\
-    details.picker div.options label{display:block;padding:0.4rem 0.7rem;cursor:pointer}\
-    details.picker div.options label.now{font-weight:600;background:#eeeeee}\
-    table.ledger tbody{display:none}\
-    table.ledger td:first-child,div.history td:first-child{white-space:nowrap}\
-    table.ledger td:nth-child(3),div.history td:nth-child(2)\
-    {overflow-wrap:break-word}\
-    table.ledger td:nth-child(4),table.ledger th:nth-child(4),\
-    div.history td:nth-child(3),div.history th:nth-child(3)\
-    {text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}\
-    footer{border-top:1px solid #dddddd;margin-top:1.5rem;padding-top:0.6rem}\
-    footer p.stamp{margin:0}\
-    h4{margin:1rem 0 0.3rem;font-size:0.9rem}\
-    p.note{color:#666666;font-size:0.82rem}\
-    svg.chart{display:block;width:100%;height:auto;margin:0 0 0.3rem}\
-    svg.chart line.grid{stroke:#dddddd;stroke-width:1}\
-    svg.chart text.axis{fill:#666666;font-size:10px;font-variant-numeric:tabular-nums}\
-    button.goal{all:unset;cursor:pointer;text-decoration:underline dotted;\
-    text-underline-offset:0.15em}\
-    button.goal:focus-visible{outline:2px solid currentColor;outline-offset:1px}\
-    div.history{width:min(32rem,calc(100vw - 2rem));box-sizing:border-box;max-height:80vh;\
-    overflow:hidden;padding:0 1rem;border:1px solid #dddddd;border-radius:0.5rem;\
-    background:#ffffff;color:#1a1a1a}\
-    div.history{display:none}\
-    div.history:popover-open{display:flex;flex-direction:column}\
-    div.history::backdrop{background:rgba(0,0,0,0.5);-webkit-backdrop-filter:blur(3px);\
-    backdrop-filter:blur(3px)}\
-    div.history header{display:flex;align-items:flex-start;gap:0.5rem;\
-    padding:0.8rem 0 0.4rem;border-bottom:1px solid #dddddd}\
-    div.history div.rows{overflow-y:auto;overscroll-behavior:contain;min-height:0;\
-    padding:0.4rem 0 0.8rem}\
-    div.history h4{margin:0;flex:1;min-width:0;overflow-wrap:break-word}\
-    div.history table{margin-bottom:0}\
-    div.history button.close{font:inherit;font-size:1.3rem;line-height:1;padding:0 0.3rem;\
-    margin:-0.15rem -0.3rem 0 0;border:none;background:transparent;color:inherit;cursor:pointer}\
-    @media (prefers-color-scheme: dark){\
-    body{background:#121212;color:#eeeeee}\
-    td,th{border-bottom-color:#333333}\
-    nav,footer,details.picker summary,details.picker div.options,\
-    div.menubar,div.menubar label{border-color:#333333}\
-    tr.fav{background:#3a3315}\
-    div.bar{background:#333333}\
-    details.picker div.options label.now{background:#2a2a2a}\
-    div.history{background:#1e1e1e;color:#eeeeee}\
-    div.history,div.history header{border-color:#333333}\
-    svg.chart line.grid{stroke:#333333}\
-    svg.chart .total{stroke:#eeeeee}\
-    svg.chart circle.total{fill:#eeeeee}\
-    span.key.total{background:#eeeeee!important}\
-    }";
+/// What draws the payload into the panels.
+const SCRIPT: &str = include_str!("../report.js");
 
 /// How old the page is, in the footer: a reader arrives at the figures, and
 /// checks the stamp on the way out. `%-I:%M %p` rather than a 24-hour clock,
 /// because this is read on a phone alongside every other page on it.
 const STAMP_FORMAT: &str = "%Y-%m-%d %-I:%M %p";
 
-pub fn page(snapshot: &Snapshot) -> String {
-    // In `TABS` order, and the zip below is what holds the two together.
-    let panels = [
-        overview::table(&snapshot.overview),
-        ledger::panel(&snapshot.cash),
-        ledger::panel(&snapshot.credit),
-        savings::sections(&snapshot.containers),
-        planning::block(&snapshot.planning),
-        funds::sections(&snapshot.allocation),
-        retirement::panel(&snapshot.retirement, snapshot.charts.as_ref()),
+/// Every tab as data, in `TABS` order, over one account table and one list
+/// of histories.
+pub(super) fn page_view(snapshot: &Snapshot) -> Page {
+    let mut acc = Accounts::new();
+    let mut histories = Vec::new();
+    let tabs = vec![
+        overview::view(&snapshot.overview, &mut acc),
+        ledger::view(&snapshot.cash, &mut acc),
+        ledger::view(&snapshot.credit, &mut acc),
+        savings::view(&snapshot.containers, &mut acc, &mut histories),
+        planning::view(&snapshot.planning, &mut acc),
+        funds::view(&snapshot.allocation, &mut acc),
+        retirement::view(&snapshot.retirement, snapshot.charts.as_ref(), &mut acc),
     ];
-    let body: String = TABS
+    Page {
+        accounts: acc.into_vec(),
+        tabs,
+        histories,
+    }
+}
+
+pub fn page(snapshot: &Snapshot) -> String {
+    let json = serde_json::to_string(&page_view(snapshot))
+        .expect("the view holds only strings, numbers and lists");
+    let tabs: Vec<NavTab> = TABS
         .iter()
-        .zip(panels)
-        .map(|((id, _), html)| {
-            format!("<section class=\"panel\" id=\"{id}-panel\">{html}</section>")
-        })
+        .map(|t| NavTab::new(t.id, t.label).short(t.short).icon(t.icon))
         .collect();
-    // The month filters are per-ledger and per-month, and the waterfall's
-    // indents are per-level, so their rules cannot be constants: what months
-    // exist is a fact about the database, and how deep the waterfall goes is
-    // a fact about the plan.
-    let rules = format!(
-        "{}{}{}{}{}{}{}",
-        account_rules(),
-        amount_rules(),
-        tab_rules(),
-        narrow_rules(),
-        ledger::month_rules(&snapshot.cash),
-        ledger::month_rules(&snapshot.credit),
-        planning::depth_rules(&snapshot.planning),
-    );
-    shared::page(
-        "Money",
-        Some("\u{1F4B0}"),
-        &format!("{STYLE}{rules}"),
-        &format!("{}{body}", tab_bar()),
-        &format!("Generated {}", snapshot.generated_at.format(STAMP_FORMAT)),
-    )
+    let panels = vec![String::new(); TABS.len()];
+    app_page(&App {
+        title: "Money",
+        favicon: Some("\u{1F4B0}"),
+        style: &format!("{}{STYLE}", tokens_css()),
+        tabs: &tabs,
+        open: 0,
+        panels: &panels,
+        data: Some(&script_json(&json)),
+        script: Some(SCRIPT),
+        stamp: &format!("Generated {}", snapshot.generated_at.format(STAMP_FORMAT)),
+    })
+}
+
+/// The JSON block a page carries, parsed: `<` arrives as `<`, which
+/// JSON reads back as the character it stands for. Tolerates the
+/// minifier's unquoted attributes.
+#[cfg(test)]
+pub(super) fn payload(page: &str) -> serde_json::Value {
+    let open = page.find("application/json").expect("no data block");
+    let start = open + page[open..].find('>').unwrap() + 1;
+    let end = start
+        + page[start..]
+            .find("</script>")
+            .expect("an unclosed data block");
+    serde_json::from_str(&page[start..end]).expect("the data block is not JSON")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::fixture::{cells, misaligned_headers, panel, row_column_counts, snapshot, tables};
+    use super::fixture::{row, snapshot};
     use super::*;
 
+    fn fixture() -> Snapshot {
+        snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000)
+    }
+
     /// A phone opening this out of a sync folder may be offline, and a page
-    /// that fetched anything would render half-drawn or not at all. The
-    /// script half is the stronger rule: every control here is CSS, so there
-    /// is nothing for a blocked or broken script to take away.
+    /// that fetched anything would render half-drawn or not at all.
     #[test]
-    fn the_page_makes_no_external_request_and_carries_no_script() {
-        let page = page(&snapshot(
-            vec![fixture::row("Rainy Day", 500, 1_000)],
-            1_000,
-        ));
+    fn the_page_makes_no_external_request() {
+        let page = page(&fixture::long_names_snapshot());
         assert!(!page.contains("http"), "the page reaches out of itself");
-        assert!(!page.contains("<script"), "the page carries script");
     }
 
-    /// The favicon is the one image on the page, and it has to arrive inline
-    /// for the reason everything else does.
+    /// The script fills each panel by the id its view carries, so a view
+    /// built out of `TABS` order would draw under the wrong tab.
     #[test]
-    fn the_page_carries_its_favicon_inline() {
-        let page = page(&snapshot(
-            vec![fixture::row("Rainy Day", 500, 1_000)],
-            1_000,
-        ));
-        assert!(
-            page.contains("<link rel=\"icon\" href=\"data:image/svg+xml;base64,"),
-            "the page has no inline favicon"
-        );
+    fn every_tab_has_a_panel_in_order() {
+        let snapshot = fixture();
+        let page = page(&snapshot);
+        let mut last = 0;
+        for tab in TABS {
+            let at = page
+                .find(&format!("id=\"{}-panel\"", tab.id))
+                .unwrap_or_else(|| panic!("no {} panel", tab.id));
+            assert!(at > last, "the {} panel is out of order", tab.id);
+            assert!(
+                page.contains(&format!("data-t=\"{}\"", tab.id)),
+                "no {} tab",
+                tab.id
+            );
+            last = at;
+        }
+        let ids: Vec<_> = page_view(&snapshot).tabs.iter().map(|t| t.id).collect();
+        assert_eq!(ids, TABS.map(|t| t.id));
     }
 
-    /// Seven tabs, seven panels, and the switch wired between them. A tab whose
-    /// panel or rule went missing would render as a label that does nothing.
     #[test]
-    fn every_tab_has_a_panel_and_the_page_opens_on_the_overview() {
-        let page = page(&snapshot(
-            vec![fixture::row("Rainy Day", 500, 1_000)],
-            1_000,
-        ));
-        assert!(
-            page.contains("id=\"overview\" checked"),
-            "the page does not open on the Overview"
-        );
-        for (id, name) in TABS {
-            assert!(
-                page.contains(&format!("<label for=\"{id}\">{name}</label>")),
-                "no {id} tab"
-            );
-            assert!(
-                page.contains(&format!("id=\"{id}-panel\"")),
-                "no {id} panel"
-            );
-            assert!(
-                page.contains(&format!("#{id}:checked~#{id}-panel")),
-                "nothing switches the {id} panel on"
-            );
-        }
-    }
-
-    /// A hyphen is a break opportunity, so a column narrow enough draws
-    /// `2026-08-` over `22` -- which reads as two dates rather than one, and
-    /// is what a phone did to all three of the Overview's column headers. Every
-    /// date on the page therefore sits in a cell that refuses to wrap: `n`
-    /// where the date is a money column's header, `d` where it is data, and
-    /// the first column of a ledger or a goal's history, which the stylesheet
-    /// holds by position instead.
-    #[test]
-    fn no_date_reaches_the_page_in_a_cell_that_may_wrap() {
-        /// `2026-08-21`, and nothing else on the page is shaped like it.
-        fn is_a_date(text: &str) -> bool {
-            let b = text.as_bytes();
-            b.len() == 10
-                && b[4] == b'-'
-                && b[7] == b'-'
-                && [0, 1, 2, 3, 5, 6, 8, 9]
-                    .iter()
-                    .all(|&i| b[i].is_ascii_digit())
-        }
-
-        let page = page(&snapshot(
-            vec![fixture::row("Rainy Day", 500, 1_000)],
-            1_000,
-        ));
-        for table in ["table.ledger", "div.history"] {
-            assert!(
-                page.contains(&format!("{table} td:first-child")),
-                "nothing holds the {table} dates on one line"
-            );
-        }
-        let classed = fixture::without_positional_tables(&page);
-        let dates: Vec<_> = cells(&classed)
-            .into_iter()
-            .filter(|(_, t)| is_a_date(t))
-            .collect();
-        assert!(
-            dates.len() >= 5,
-            "the fixture stopped carrying dates, so this test checks nothing"
-        );
-        for (attrs, text) in dates {
-            assert!(
-                fixture::has_class(attrs, "d") || fixture::has_class(attrs, "n"),
-                "{text} sits in a cell that may wrap: <td{attrs}>"
-            );
-        }
-    }
-
-    /// `<thead>` starts with `<th` as well, and reading it as a cell returns
-    /// an entry running from `<tr>` to the first `</th>` -- swallowing the
-    /// first header cell of every table, which is exactly the cell the check
-    /// above would then never see.
-    #[test]
-    fn a_thead_is_not_taken_for_a_header_cell() {
-        let html = "<thead><tr><th class=\"d\">2026-08-21</th><th>Date</th></tr></thead>";
+    fn the_payload_parses_back_to_the_view() {
+        let snapshot = fixture::long_names_snapshot();
         assert_eq!(
-            cells(html),
-            vec![(" class=\"d\"", "2026-08-21"), ("", "Date")]
+            payload(&page(&snapshot)),
+            serde_json::to_value(page_view(&snapshot)).unwrap()
         );
     }
 
-    /// A header sits over its column the way the column's cells sit: a
-    /// right-aligned figure under a left-aligned heading reads as belonging
-    /// to the column beside it.
+    /// Owner text that spells the element's own closer has to arrive as
+    /// text: the first `</script>` after the data block opens is the block's.
     #[test]
-    fn every_header_is_aligned_with_its_column() {
-        let page = page(&snapshot(
-            vec![fixture::row("Rainy Day", 500, 1_000)],
-            1_000,
-        ));
-        for table in tables(&page) {
-            assert_eq!(misaligned_headers(table), Vec::<String>::new(), "{table}");
-        }
-    }
-
-    /// The narrow page's menu is a radio in the tabs' own group, so choosing
-    /// a tab is what closes it; a menu outside the group would stay open
-    /// over the panel it had just switched to.
-    #[test]
-    fn the_menu_is_one_of_the_tabs_radios_and_opens_the_nav() {
-        let page = page(&snapshot(
-            vec![fixture::row("Rainy Day", 500, 1_000)],
-            1_000,
-        ));
-        assert!(
-            page.contains(&format!("type=\"radio\" name=\"tab\" id=\"{MENU}\">")),
-            "the menu is not in the tabs' group"
-        );
-        assert!(page.contains(&format!("#{MENU}:checked~nav{{display:flex}}")));
-        // Rendered only where it has a menu to open, or the arrow keys reach
-        // it from the last tab on a wide page and blank it.
-        assert!(page.contains(&format!("#{MENU}{{display:none}}@media")));
-        for (id, name) in TABS {
-            assert!(
-                page.contains(&format!("<span id=\"{id}-cur\">{name}</span>")),
-                "the menu bar cannot name the {id} tab"
-            );
-            assert!(page.contains(&format!("#{id}:checked~.menubar #{id}-cur")));
-        }
+    fn owner_text_cannot_end_the_payload() {
+        let name = "a</script><b>&\"";
+        let page = page(&snapshot(vec![row(name, 500, 1_000)], 1_000));
+        let open = page.find("application/json").unwrap();
+        let block = &page[open..];
+        let close = block.find("</script>").unwrap();
+        assert!(!block[..close].contains('<'), "{}", &block[..close]);
+        assert_eq!(payload(&page)["histories"][0]["name"], name);
     }
 
     /// The page's job on a phone is to be honest about its own age, and the
     /// footer is where a reader looks for that.
     #[test]
     fn the_page_names_when_it_was_generated() {
-        let page = page(&snapshot(
-            vec![fixture::row("Rainy Day", 500, 1_000)],
-            1_000,
-        ));
         assert!(
-            page.contains("<footer><p class=\"stamp\">Generated 2026-08-21 2:30 PM</p></footer>"),
+            page(&fixture()).contains("<p class=\"stamp\">Generated 2026-08-21 2:30 PM</p>"),
             "no generated-at stamp in the footer"
         );
     }
 
-    /// A row a cell short of its neighbors either drops a column's data
-    /// silently or shifts every cell after it into the wrong column -- the
-    /// Unallocated row once put its figure under `%` this way. Every table on
-    /// the page is checked, and a heading spanning its table counts as the
-    /// columns it spans rather than as one.
+    /// Every tab carries an icon, so the shell draws the bottom bar on a
+    /// phone; one missing would drop the whole bar to the wrapping row.
     #[test]
-    fn every_row_in_every_table_is_as_wide_as_its_neighbors() {
-        let page = page(&snapshot(
-            vec![fixture::row("Rainy Day", 500, 1_000)],
-            1_000,
-        ));
-        for table in tables(&page) {
-            let counts = row_column_counts(table);
-            let first = counts[0];
-            assert!(
-                counts.iter().all(|&c| c == first),
-                "rows of differing width in one table: {counts:?}"
-            );
+    fn the_bar_is_the_icon_form() {
+        assert!(page(&fixture()).contains("class=\"tabs icons\""));
+    }
+
+    /// The chart lines and the legend's Total swatch draw in `currentColor`,
+    /// so the stylesheet is the only thing that gives them ink.
+    #[test]
+    fn the_stylesheet_inks_the_chart_lines_and_the_total() {
+        let page = page(&fixture());
+        for rule in [
+            ".ln{stroke:currentColor}",
+            "circle.ln{fill:currentColor}",
+            ".total{color:var(--total)}",
+            ".key{",
+        ] {
+            assert!(STYLE.contains(rule), "no {rule}");
         }
-    }
-
-    /// Owner-typed text reaches the page through `escape` or it does not
-    /// reach it at all: a goal named with an angle bracket would otherwise
-    /// truncate the page at its own row, and every figure below it would
-    /// simply not be there.
-    #[test]
-    fn owner_typed_text_is_escaped_wherever_it_lands() {
-        let page = page(&snapshot(
-            vec![fixture::row("Roof <b> & \"gutters\"", 500, 1_000)],
-            1_000,
-        ));
         assert!(
-            page.contains("Roof &lt;b&gt; &amp; &quot;gutters&quot;"),
-            "the name was not escaped"
+            page.contains(STYLE.trim()),
+            "the stylesheet is not on the page"
         );
-        assert!(!page.contains("<b>"), "the name reached the page raw");
-    }
-
-    #[test]
-    fn an_account_is_drawn_in_its_own_color() {
-        let page = page(&snapshot(
-            vec![fixture::row("Rainy Day", 500, 1_000)],
-            1_000,
-        ));
-        let teal = crate::db::account::AccountColor::Teal;
-        assert!(
-            panel(&page, "cash").contains(&format!("<td class=\"{}\">", account_class(teal))),
-            "the ledger's account cell lost its color"
-        );
-        assert!(
-            page.contains(&format!(
-                ".{}{{color:{}}}",
-                account_class(teal),
-                palette::hex(palette::account(teal))
-            )),
-            "the account's class names no color"
-        );
-    }
-
-    /// Each tab draws its own screen and no other's: a panel built from the
-    /// wrong field would show the right table under the wrong label.
-    #[test]
-    fn each_panel_holds_its_own_screen() {
-        let page = page(&snapshot(
-            vec![fixture::row("Rainy Day", 500, 1_000)],
-            1_000,
-        ));
-        assert!(panel(&page, "cash").contains("Groceries"), "no cash rows");
-        assert!(
-            panel(&page, "savings").contains("Unallocated"),
-            "no savings rows"
-        );
-        assert!(
-            panel(&page, "planning").contains("Remaining Excess"),
-            "no planning rows"
-        );
+        assert!(page.contains("--total:"), "no Total token");
     }
 }

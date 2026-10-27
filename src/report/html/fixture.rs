@@ -5,6 +5,8 @@
 //! of them. Every figure here is invented; see the no-real-data rule in
 //! `AGENTS.md`.
 
+use crate::balance_history::Charts;
+use crate::calc::Month;
 use crate::calc::fund::Targets;
 use crate::calc::planning::{PlanInputs, PlanSettings};
 use crate::db::account::{Account, AccountColor, Group, Kind, TaxTreatment};
@@ -19,6 +21,7 @@ use crate::report::{
     AccountAllocation, Allocation, Container, Goal, Holding, Ledger, LedgerMonth, LedgerRow,
     PlanView, Planning, Snapshot,
 };
+use crate::retirement::{Retirement, rows};
 use crate::test_support::day;
 use chrono::{Local, NaiveDate, TimeZone};
 
@@ -358,171 +361,126 @@ pub(super) fn snapshot(rows: Vec<crate::savings::Row>, net: i64) -> Snapshot {
     }
 }
 
-/// One tab's panel, between its own tags.
-pub(super) fn panel<'a>(page: &'a str, id: &str) -> &'a str {
-    let open = format!("<section class=\"panel\" id=\"{id}-panel\">");
-    let start = page.find(&open).expect("no such panel") + open.len();
-    let rest = &page[start..];
-    &rest[..rest.find("</section>").expect("an unclosed panel")]
-}
-
-/// Every `<table ...>...</table>` span in some html, in order.
-pub(super) fn tables(html: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut rest = html;
-    while let Some(start) = rest.find("<table") {
-        let after = &rest[start..];
-        let open = after.find('>').expect("an unclosed <table") + 1;
-        let end = after.find("</table>").expect("a <table> with no </table>");
-        out.push(&after[open..end]);
-        rest = &after[end + "</table>".len()..];
-    }
-    out
-}
-
-/// The next `<td`/`<th` that opens a cell, rather than merely starting with
-/// those three bytes.
-///
-/// `<thead>` does too, and taking it for a cell swallows the first header
-/// cell of every table: the entry runs from `<tr>` to the first `</th>`, so
-/// the real cell inside it is never returned and never checked. A cell's tag
-/// name ends at the byte after it.
-fn next_cell(html: &str) -> Option<usize> {
-    let mut from = 0;
-    loop {
-        let start = from
-            + match (html[from..].find("<td"), html[from..].find("<th")) {
-                (Some(d), Some(h)) => d.min(h),
-                (Some(d), None) => d,
-                (None, Some(h)) => h,
-                (None, None) => return None,
-            };
-        match html.as_bytes().get(start + 3) {
-            Some(&b) if b == b'>' || b.is_ascii_whitespace() => return Some(start),
-            _ => from = start + 3,
-        }
+/// Thirty-seven, $330,000 saved against a $100,000 salary: short of
+/// 3.40× by $10,000, with nothing held tax-free.
+pub(super) fn retirement() -> Retirement {
+    let accounts = accounts();
+    let saved = Cents::from_dollars(330_000);
+    let salary = Cents::from_dollars(100_000);
+    Retirement {
+        age: Some(37),
+        salary: Some(salary),
+        saved,
+        tax_free: Cents::ZERO,
+        held: vec![crate::retirement::Held {
+            account: crate::account_label::Account::named(&accounts, AccountId(3)),
+            treatment: TaxTreatment::TaxDeferred,
+            tax_free: Cents::ZERO,
+            tax_free_share: crate::rate::BasisPoints::ZERO,
+            balance: saved,
+        }],
+        rows: rows(Some(37), Some(salary)),
     }
 }
 
-/// Whether a cell's attributes name `class` among its classes -- `n` is
-/// still `n` in `class="n neg"`.
-pub(super) fn has_class(attrs: &str, class: &str) -> bool {
-    attrs
-        .split("class=\"")
-        .nth(1)
-        .and_then(|rest| rest.split('"').next())
-        .is_some_and(|list| list.split(' ').any(|c| c == class))
+fn month(m: u32) -> Month {
+    Month::of(crate::test_support::day(2026, m, 1))
 }
 
-/// Every `<td>` and `<th>` in some html, as its opening tag's attributes and
-/// the text between the tags. The attributes are what a test checks a cell's
-/// class against; the text is what the cell holds, tags and all.
-pub(super) fn cells(html: &str) -> Vec<(&str, &str)> {
-    let mut out = Vec::new();
-    let mut rest = html;
-    while let Some(start) = next_cell(rest) {
-        let (tag, after) = rest[start..].split_at(3);
-        let open = after.find('>').expect("an unclosed cell");
-        let body = &after[open + 1..];
-        let close = format!("</{}>", &tag[1..]);
-        let end = body.find(&close).expect("a cell with no closing tag");
-        out.push((&after[..open], &body[..end]));
-        rest = &body[end..];
-    }
-    out
-}
-
-/// The column count of every `<tr>...</tr>` in one table, `<td>` and `<th>`
-/// counted together so a header row is checked against the body rows below
-/// it, and a `colspan` counted as the columns it actually spans.
-pub(super) fn row_column_counts(table: &str) -> Vec<usize> {
-    let mut out = Vec::new();
-    let mut rest = table;
-    while let Some(start) = rest.find("<tr") {
-        let after = &rest[start..];
-        let end = after.find("</tr>").expect("a <tr> with no </tr>");
-        let row = &after[..end];
-        let cells = row.matches("<td").count() + row.matches("<th").count();
-        let spanned: usize = row
-            .match_indices("colspan=\"")
-            .map(|(i, m)| {
-                let rest = &row[i + m.len()..];
-                let digits = &rest[..rest.find('"').expect("an unclosed colspan")];
-                digits.parse::<usize>().expect("a non-numeric colspan")
-            })
-            // Each spanning cell was already counted once above.
-            .map(|span| span - 1)
-            .sum();
-        out.push(cells + spanned);
-        rest = &after[end + "</tr>".len()..];
-    }
-    out
-}
-
-/// The headers in one table set differently from the column under them: a
-/// header that is not `n` over a column whose every body cell is, or the
-/// reverse. A spanning cell is in no single column, so a row carrying one is
-/// left out of the reading; an empty header labels nothing to align.
-pub(super) fn misaligned_headers(table: &str) -> Vec<String> {
-    let is_n = |attrs: &str| has_class(attrs, "n");
-    let mut rows = Vec::new();
-    let mut rest = table;
-    while let Some(start) = rest.find("<tr") {
-        let after = &rest[start..];
-        let end = after.find("</tr>").expect("a <tr> with no </tr>");
-        if !after[..end].contains("colspan") {
-            rows.push(cells(&after[..end]));
-        }
-        rest = &after[end + "</tr>".len()..];
-    }
-    let Some((header, body)) = rows.split_first() else {
-        return Vec::new();
+/// Rainy Day alone from March through August, and two investment
+/// accounts: Holdings from July, Long Haul recorded only in August. The
+/// investment Total is $10K in July and $20K in August.
+pub(super) fn charts() -> Charts {
+    use crate::balance_history::{History, Series};
+    let accounts = accounts();
+    let named = |id| crate::account_label::Account::named(&accounts, AccountId(id));
+    let history = History {
+        cash: vec![Series {
+            account: named(1),
+            points: (3..=8)
+                .map(|m| (month(m), Cents::from_dollars(1_000 * i64::from(m))))
+                .collect(),
+        }],
+        credit: Vec::new(),
+        investment: vec![
+            Series {
+                account: named(2),
+                points: vec![
+                    (month(7), Cents::from_dollars(10_000)),
+                    (month(8), Cents::from_dollars(12_000)),
+                ],
+            },
+            Series {
+                account: named(3),
+                points: vec![(month(8), Cents::from_dollars(8_000))],
+            },
+        ],
     };
-    if body.is_empty() {
-        return Vec::new();
-    }
-    header
-        .iter()
-        .enumerate()
-        .filter(|(_, (_, text))| !text.is_empty())
-        .filter(|(i, (attrs, _))| {
-            let column_n = body
-                .iter()
-                .all(|row| row.get(*i).is_some_and(|(a, _)| is_n(a)));
-            let column_left = body
-                .iter()
-                .all(|row| row.get(*i).is_some_and(|(a, _)| !is_n(a)));
-            (column_n && !is_n(attrs)) || (column_left && is_n(attrs))
-        })
-        .map(|(_, (_, text))| text.to_string())
-        .collect()
+    Charts::whole(&history).unwrap()
 }
 
-/// The page with every ledger table and goal history cut out: what is left
-/// is the markup whose cells say what they may do with their width through
-/// their own classes, rather than through the stylesheet's positional rules.
-pub(super) fn without_positional_tables(page: &str) -> String {
-    let mut rest = page;
-    let mut kept = String::new();
-    loop {
-        let next = [
-            ("<table class=\"ledger\">", "</table>"),
-            // A history's rows are a `div` of their own inside it.
-            ("<div class=\"history\"", "</div></div>"),
-        ]
-        .into_iter()
-        .filter_map(|(open, close)| rest.find(open).map(|at| (at, close)))
-        .min_by_key(|(at, _)| *at);
-        let Some((at, close)) = next else {
-            kept.push_str(rest);
-            return kept;
-        };
-        kept.push_str(&rest[..at]);
-        let end = rest[at..]
-            .find(close)
-            .expect("an unclosed positional table");
-        rest = &rest[at + end + close.len()..];
-    }
+/// The page as a reader would meet it with every tab populated: a long goal
+/// name and a long description to wrap, two containers, a favorite, an
+/// expired goal, a dated history with an `Earlier` line, both charts and the
+/// retirement standings. For looking at in a browser, so every figure is
+/// invented and round.
+pub(super) fn long_names_snapshot() -> Snapshot {
+    let mut first = row(
+        "Replace the roof, gutters and downspouts before the winter storms",
+        6_500,
+        12_000,
+    );
+    first.note = Some("Three quotes in hand; the middle one is the one to beat.".into());
+    let mut favorite = row("Rainy Day", 4_000, 4_000);
+    favorite.goal_id = GoalId(2);
+    favorite.favorite = true;
+    favorite.percent = Some(Percent(100));
+    favorite.goal_date = None;
+    let mut late = row("Bike", 150, 900);
+    late.goal_id = GoalId(3);
+    late.expired = true;
+    late.percent = Some(Percent(16));
+    late.goal_date = Some(day(2026, 6, 1));
+    let mut floating = row("Holiday Gifts", 0, 0);
+    floating.goal_id = GoalId(4);
+    floating.percent = None;
+    floating.goal_date = None;
+    let mut snapshot = snapshot(vec![first, favorite, late, floating], 18_000);
+    snapshot.containers[0].rows[0].earlier = Some(crate::report::Earlier {
+        before: day(2026, 5, 1),
+        count: 6,
+        cents: Cents::from_dollars(6_000),
+    });
+    let nest = vec![Account {
+        color: Some(AccountColor::Rose),
+        ..crate::test_support::cash(4, "NST")
+    }];
+    let nest = crate::account_label::Account::named(&nest, AccountId(4));
+    let mut car = row("Car", 2_500, 10_000);
+    car.goal_id = GoalId(5);
+    car.container = nest.clone();
+    car.percent = Some(Percent(25));
+    snapshot.containers.push(Container {
+        account: nest,
+        rows: vec![Goal {
+            earlier: None,
+            history: history(GoalId(5)),
+            row: car,
+        }],
+        excess: Cents::from_dollars(-3),
+    });
+    snapshot.cash.months[1].rows.insert(
+        1,
+        txn(
+            day(2026, 8, 14),
+            "Hardware store, garden supplies, replacement hose and two bags of mulch",
+            -70,
+            false,
+        ),
+    );
+    snapshot.retirement = retirement();
+    snapshot.charts = Some(charts());
+    snapshot
 }
 
 /// A view type as the JSON the script is handed, for assertions on its shape.

@@ -27,8 +27,8 @@ pub enum Cell {
 
 #[derive(Debug, Serialize)]
 pub struct Row {
-    /// A row with fewer cells than its table's head spans its last cell
-    /// across the rest.
+    /// A row with fewer cells than its table has columns -- its head, or
+    /// its widest row -- spans its last cell across the rest.
     pub c: Vec<Cell>,
     /// Row classes, space-separated.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -66,6 +66,7 @@ pub enum Block {
     /// A ledger's month filter and the months under it. `opens` is the key of
     /// the month shown first, `None` meaning All months.
     Ledger {
+        head: Vec<String>,
         months: Vec<Month>,
         opens: Option<String>,
         empty: Option<String>,
@@ -76,7 +77,8 @@ pub enum Block {
         segments: Vec<(String, usize)>,
         legend: Vec<(String, usize)>,
     },
-    /// `svg` is markup built in Rust, its lines colored by class. A legend
+    /// `svg` is the whole `<svg>` element, built in Rust, its lines colored
+    /// by class. A legend
     /// entry is an account ([`Cell::Account`]) or the Total line
     /// (`Cell::Toned("Total", "total")`).
     Chart {

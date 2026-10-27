@@ -81,7 +81,8 @@ by single keystrokes, so the same action takes the same key on every screen that
 before touching anything under `src/tui/` — nothing about the screens is documented here.
 
 `src/report/AGENTS.md` and `src/mix/AGENTS.md` complete the set. The report's invariants follow
-from two facts — the page carries no script, and it is read offline on a phone. The backup has no
+from two facts — the page is drawn by its own script from a payload in which Rust has already
+made every decision, and it is read offline on a phone. The backup has no
 directory of its own: its code is `finance-utils`', and what is MisterManager's is under
 [Backup](#backup) below, most of it in `mistermanager.tf` at the repository root. The mix's follow
 from one fact of their own: the service on the other end is SEC's, so that
@@ -202,7 +203,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/goal.rs` | Reads the `goal` table and the sales tax rate out of `db`, feeds `calc::tax`. The one place a goal's stored base becomes the target every screen funds it to. |
 | `src/transfer.rs` | The policy over `db::txn`: resolving lines to destinations, grouping, and writing a payday atomically. `wiring` and `diagnose` are the same rules read rather than enforced, for the screen that has to draw a database `plan` would refuse. `spread_asks` prices the plug's set, and `unmet_asks` says when the plug falls short of it. |
 | `src/recurring_txn.rs` | The policy over `db::recurring_txn`: horizons, adoption order, what a cadence *is*, and regeneration. |
-| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning, the allocation and Retirement in one pass, `html` renders them as one self-contained page -- one module per tab, the way `tui` keeps one per screen -- `write` hands that page to `finance-utils`, which minifies it and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own, and its Funds tab of `allocation`, with one stacked section per account where the screen cycles them with `Tab`, and its Retirement tab of `retirement` and `balance_history::Charts`. |
+| `src/report/` | The standing HTML report: `Snapshot` reads the Overview, both ledgers, Savings, Planning, the allocation and Retirement in one pass, `view` is the serializable payload every tab is built as -- one `html` module per tab, the way `tui` keeps one per screen -- and `html` puts it in `finance-utils`' shell beside `report.js`, which draws it, and `report.css`, as one self-contained page; `write` hands that page to `finance-utils`, which minifies it and puts it on the disk atomically, and `write_if_enabled` is the quit path's gate over it. Its Overview, Savings and Planning tabs are spellings of `overview`, `savings` and `plan_rows` rather than readings of their own, and its Funds tab of `allocation`, with one stacked section per account where the screen cycles them with `Tab`, and its Retirement tab of `retirement` and `balance_history::Charts`. |
 | `src/projection.rs` | The dates every balance is quoted at: to-date, ad-hoc, month-end. |
 | `src/lib.rs` | `BACKUP`, the `finance-utils` `backup::Spec` naming the app and the key stem. The schedule, the upload, the state file and `mm backup`'s behavior are all the crate's; `db::snapshot` makes the copy, so `rusqlite` stays in `src/db/`. See [Backup](#backup). |
 | `src/tui/` | The screens. `ratatui`/`crossterm` are named only here. An account reaches a screen through `account_label::Account`, which colors it, everywhere but a short, named list of residuals in `src/tui/AGENTS.md`'s account-color section. View-state types hold no ratatui; render functions only draw, and what every screen shares lives in `tui/mod.rs` rather than in whichever screen needed it first. `app` is a directory, one module per screen over one `App`. Which module is which screen, what a key may mean, and how wide a screen is laid out for are all in `src/tui/AGENTS.md`. |
@@ -557,17 +558,16 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
 - **The Planning waterfall is one ordered list, read twice.** `plan_rows::rows` is the sequence —
   which blocks there are, what they are headed, what each row is called, and which of them the two
   footers sit under. `tui::planning::view::build` maps it into a terminal `Row` and `report::html::planning`
-  into a `<tr>`, and neither may add, drop, rename or reorder one: what a sink adds is only what its
+  into a payload row, and neither may add, drop, rename or reorder one: what a sink adds is only what its
   own medium has, which is a cursor, a tint and an editor for the screen and a class for the page.
   The two were hand-transcriptions of each other until they read one list, and they had already come
   to disagree about which blocks are headed at all — the same duplication `transfer::unmet_asks`
   exists to prevent for the figure drawn *into* those rows.
   - **`Row::depth` is the one thing the two mediums genuinely spell differently**, which is why it
-    is a number: the screen spends two spaces a level and the page spends a `sub{n}` class a level,
-    and neither spelling belongs in a list both of them read. Each medium keeps indenting for as
-    long as the number goes -- the page generates its rule per level the way the ledgers generate
-    one per month, since a level the stylesheet never named would draw flat a row the screen draws
-    nested.
+    is a number: the screen spends two spaces a level and the page spends it as an indent its
+    script sets per row, and neither spelling belongs in a list both of them read. Each medium
+    keeps indenting for as long as the number goes, since a page that collapsed every level past
+    the first onto one indent would draw flat a row the screen draws nested.
   - **The Destinations block is the screen's alone**, and is appended after the shared list rather
     than carried in it: a destination is a thing the owner *changes*, and the page has no way to
     offer that.
@@ -673,7 +673,7 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
     rateless taxed goal earn are made where the set is read, and a set assembled any other way would
     place a payday in a container nothing had validated.
   - **`transfer::unmet_asks` is the one place a payday is called under-funded**, drawn as an
-    `Unmet Asks` row footing the transfers block on the Planning screen and as a `<td>` by
+    `Unmet Asks` row footing the transfers block on the Planning screen and as a payload row by
     `report::html::planning`. **Both sinks read the asks themselves and never chain them to
     `transfer::plan`**: that call is what a payday with every line at zero *fails*, so asks read
     through it would be zero exactly where the row exists to be drawn. A failure of the asks' own

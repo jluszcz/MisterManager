@@ -478,28 +478,28 @@ backup, a hand edit, a session held open across midnight, or a `--today` run —
 until the next quit that changes something. `mm report` is never skipped: being
 asked for outright is the point.
 
-The page carries six tabs, in the order the screens are numbered: Overview,
-Cash, Credit, Savings, Planning, Funds. It opens on Overview, and the switch is
-radio buttons and a stylesheet — no script, so it works on a phone with no
-network and nothing to load. Each container's goals sit under its own heading,
-the Planning tab shows the transfers and the biweekly expenses over the
-waterfall that produced them, and
-the footer says when the page was written. A goal's `%` is colored the way the
-Savings screen colors it — red at nothing saved, yellow at halfway, green at
-funded, and every shade between — off the same ramp, so a goal is the same
+The page carries seven tabs, in the order the screens are numbered: Overview,
+Cash, Credit, Savings, Planning, Funds, Retirement. It opens on Overview. The
+page is one file with its data and a small script inside it, so it works on a
+phone with no network and nothing to load. On a phone the tabs sit in a bar
+along the bottom and each row folds onto two lines; on a wider screen the tabs
+run along the top and every row is one line. Each container's goals sit under
+its own heading, and tapping a goal opens its history. The Planning tab shows
+the transfers and the biweekly expenses over the waterfall that produced them,
+and the footer says when the page was written. A goal's `%` is colored the way
+the Savings screen colors it — red at nothing saved, yellow at halfway, green
+at funded, and every shade between — off the same ramp, so a goal is the same
 color on the phone as it is in the terminal.
 
-Cash and Credit carry **every** transaction, not the month or two the screens
-window to, with a dropdown that filters to one month at a time. Their amounts
-are colored the way the screens color them — red below zero on Cash, green
-below zero on Credit, where it is the card being paid down. They open on
-the current month — or on all of them, in the first days of a month with
-nothing entered in it yet. That dropdown is a `<details>` full of radio buttons
-rather than a `<select>`: CSS cannot see which option of a `<select>` is
-chosen, so a real one would render and do nothing.
+Cash and Credit carry the three months before the current one, the current
+one and every future month, with a dropdown that filters to one month at a
+time. Their amounts are colored the way the screens color them — red below
+zero on Cash, green below zero on Credit, where it is the card being paid
+down. They open on the current month — or on all of them, in the first days of
+a month with nothing entered in it yet.
 
-The file is minified before it lands, since a page carrying every transaction
-crosses a sync folder on its way to a phone. Nothing about reading it changes;
+The file is minified before it lands, since a page carrying months of
+transactions crosses a sync folder on its way to a phone. Nothing about reading it changes;
 only viewing its source does.
 
 To write one without opening the application:

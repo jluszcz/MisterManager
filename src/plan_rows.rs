@@ -207,7 +207,7 @@ pub enum Value {
 }
 
 /// The third column: what the screen keeps beside a figure, and the page
-/// keeps a `<td>` for.
+/// keeps a cell for.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Extra {
     /// The percentage that produced the figure beside it.
