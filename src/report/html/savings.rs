@@ -402,10 +402,14 @@ mod tests {
 
     #[test]
     fn a_goals_note_is_carried_exactly_as_stored() {
-        let mut s = snapshot(vec![row("Rainy Day", 500, 1_000)], 0);
-        s.containers[0].rows[0].row.note = Some("Roof <first> & \u{2014}".to_string());
-        let (_, histories) = built(&s);
-        assert_eq!(histories[0]["note"], "Roof <first> & \u{2014}");
+        // A whitespace-only note is what `description::render` would turn into
+        // an em dash, so only an untouched note passes.
+        for note in ["Roof <first> & \u{2014}", "  "] {
+            let mut s = snapshot(vec![row("Rainy Day", 500, 1_000)], 0);
+            s.containers[0].rows[0].row.note = Some(note.to_string());
+            let (_, histories) = built(&s);
+            assert_eq!(histories[0]["note"], note);
+        }
     }
 
     #[test]
