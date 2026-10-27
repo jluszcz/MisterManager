@@ -877,7 +877,7 @@ impl App {
     /// Any key but `y` cancels, and the dialog closes either way.
     ///
     /// The write runs while the modal is still up, so a refusal --
-    /// `recurring_goal::delete` while a goal still references the entry --
+    /// `recurring_goal::delete` while an open goal still references the entry --
     /// leaves the question on screen with the reason under it, rather than
     /// closing the dialog on an error the owner has not read yet.
     fn confirm_key(&mut self, key: KeyEvent, action: Confirm) -> Result<()> {

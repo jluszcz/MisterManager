@@ -1503,8 +1503,8 @@ deferred to nothing.
     what `Enter` stores is the id under the cursor, so name matching still decides nothing outside
     import.
   - **`u` takes a link back**, and the list stays up for the right goal to be linked next. Without
-    it a wrong link would be permanent, and `recurring_goal::delete`, which counts every goal
-    referencing the entry, would refuse the entry from then on.
+    it a wrong link would be permanent, and `recurring_goal::delete`, which counts every open goal
+    referencing the entry, would refuse the entry until the goal was closed.
   - **Neither write touches another entry's link or a closed goal.** `goal::link_recurring_goal`
     and `goal::unlink_recurring_goal` each say so in their `WHERE`: re-pointing a goal would
     quietly take a round away from the entry it names, and a closed goal is a round already
@@ -1727,7 +1727,7 @@ deferred to nothing.
   verb `y` reads as, the write itself, and how a cancel reads. It is a variant rather than a boxed
   closure so the write stays an exhaustive match — a new dialog cannot be added without saying all
   four. The write runs while the modal is still up, so a refusal that reaches the status line
-  (`recurring_goal::delete` while a goal still references the entry) leaves the question on screen
+  (`recurring_goal::delete` while an open goal still references the entry) leaves the question on screen
   with the reason under it.
 - **Every single-field edit is one modal too, and `Modal::Value`'s `ValueTarget` is what tells those
   apart.** Planning's `e` and a ledger's `r` both open the same one-line box over the same

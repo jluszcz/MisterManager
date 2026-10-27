@@ -237,18 +237,17 @@ impl App {
         Ok(())
     }
 
-    /// The confirmation names the entry and how many goals -- open or closed
-    /// -- reference it: that is the number `recurring_goal::delete` actually
-    /// gates on, which is not the same as the screen's "Open" column. Querying
-    /// it fresh rather than reading `row.open_goals` is what keeps the
-    /// confirmation from promising a delete the gate is about to refuse.
+    /// The confirmation names the entry and how many open goals reference it:
+    /// the number `recurring_goal::delete` gates on. Querying it fresh rather
+    /// than reading `row.open_goals` is what keeps the confirmation from
+    /// promising a delete the gate is about to refuse.
     fn open_recurring_goal_delete(&mut self) -> Result<()> {
         let Some(row) = self.recurring_goal.selected() else {
             return self.nothing_selected();
         };
-        let goals = recurring_goal::goal_count(&self.db, row.recurring_goal_id)?;
+        let goals = recurring_goal::open_goal_count(&self.db, row.recurring_goal_id)?;
         let label = format!(
-            "{} · {} · {goals} goal(s), open or closed, reference it",
+            "{} · {} · {goals} open goal(s) reference it",
             crate::demo::text(&row.name),
             crate::demo::figure(row.base_cents)
         );
@@ -1613,23 +1612,17 @@ mod tests {
         );
     }
 
-    /// The screen's "Open" column and the confirmation box read from two
-    /// different counts on purpose: `recurring_goal::goal_count`, which is
-    /// what `recurring_goal::delete` actually gates on, counts a closed goal
-    /// same as an open one. An entry whose only goal has been closed must
-    /// still show and confirm a nonzero count, not the zero the "Open" column
-    /// shows.
+    /// A closed round does not pin its entry: the confirmation counts open
+    /// goals, as the screen's "Open" column does, and `y` deletes the entry
+    /// and unlinks the closed goal rather than refusing.
     #[test]
-    fn d_on_a_catalog_entry_whose_only_goal_is_closed_still_confirms_a_nonzero_count() {
+    fn d_on_a_catalog_entry_whose_only_goal_is_closed_deletes_it() {
         let mut app = app();
         press(&mut app, KeyCode::Char('6'));
         press(&mut app, KeyCode::Char('a'));
         type_str(&mut app, "Dropbox");
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Tab);
-        // $500.00 rather than $128.00: no digit `1` anywhere in the rendered
-        // amount, so a stray `1` in the price cannot rescue an assertion
-        // that is meant to be reading the goal count.
         type_str(&mut app, "500");
         press(&mut app, KeyCode::Enter);
         // Create a goal from it, through the picker `s` opens, then close it
@@ -1650,34 +1643,24 @@ mod tests {
         app.reload().unwrap();
 
         press(&mut app, KeyCode::Char('6'));
-        assert_eq!(
-            app.recurring_goal.rows()[0].open_goals,
-            0,
-            "the goal is closed, not open"
-        );
-
         press(&mut app, KeyCode::Char('d'));
         match &app.modal {
             Some(Modal::Confirm {
                 action: Confirm::DeleteRecurringGoal(_),
                 label,
-            }) => {
-                // The exact count, not a bare digit: a label built from
-                // `row.open_goals` would read "0 open goals" here, which
-                // also happens to contain a `1` if the amount were $128.00
-                // -- this is the assertion the review asked for.
-                assert!(label.contains("1 goal(s)"), "{label}");
-            }
+            }) => assert!(label.contains("· 0 open goal(s)"), "{label}"),
             _ => panic!("no delete confirmation is open"),
         }
 
         press(&mut app, KeyCode::Char('y'));
-        assert_eq!(
-            recurring_goal::list(&app.db).unwrap().len(),
-            1,
-            "the closed goal still blocks the delete"
+        assert!(
+            recurring_goal::list(&app.db).unwrap().is_empty(),
+            "{}",
+            app.status
         );
-        assert!(app.status.contains("1 goal(s)"), "{}", app.status);
+        let kept = goal::get(&app.db, goal_id).unwrap().unwrap();
+        assert!(kept.closed);
+        assert_eq!(kept.recurring_goal_id, None);
     }
 
     /// The eighth `Scroll` implementor, and the one the shared fixtures cannot

@@ -225,8 +225,8 @@ pub(super) enum Confirm {
     /// The rows a recurring transaction owns are released rather than
     /// deleted, so no balance moves.
     DeleteRecurringTxn(RecurringTxnId),
-    /// `recurring_goal::delete` itself refuses while any goal still
-    /// references the entry, open or closed.
+    /// `recurring_goal::delete` itself refuses while an open goal still
+    /// references the entry, and unlinks the closed ones.
     DeleteRecurringGoal(RecurringGoalId),
     /// One row of a goal's allocation history. The goal's balance moves with
     /// it, and so does every figure derived from it.

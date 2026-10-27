@@ -583,7 +583,7 @@ const RECURRING_GOALS: [Entry; 8] = [
     Entry {
         key: "d",
         label: Label::Own("delete"),
-        detail: "Delete the selected entry, after a confirmation. Refused while any goal still references it, open or closed.",
+        detail: "Delete the selected entry, after a confirmation. Refused while an open goal still references it; closed goals are kept and unlinked.",
     },
     Entry {
         key: "s",
