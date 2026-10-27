@@ -161,38 +161,46 @@ pub fn update(db: &Db, id: RecurringGoalId, entry: &NewEntry) -> Result<()> {
     Ok(())
 }
 
-/// How many goals reference this entry, open or closed.
-///
-/// Closed ones count: `goal::has_goal_dated_in_year` reads them, and it is what
-/// tells a biennial entry whether the year ahead is its turn or the one it
-/// skips. A round that has been through and been closed out has still been
-/// through.
-pub fn goal_count(db: &Db, id: RecurringGoalId) -> Result<i64> {
+/// How many open goals reference this entry -- the number [`delete`] gates on,
+/// and the same figure [`open_goal_counts`] gives the screen's "Open" column.
+pub fn open_goal_count(db: &Db, id: RecurringGoalId) -> Result<i64> {
     let n: i64 = db.conn.query_row(
-        "SELECT COUNT(*) FROM goal WHERE recurring_goal_id = ?1",
+        "SELECT COUNT(*) FROM goal WHERE recurring_goal_id = ?1 AND closed = 0",
         params![id],
         |r| r.get(0),
     )?;
     Ok(n)
 }
 
-/// Delete an entry, refusing while any goal still references it.
+/// Delete an entry, refusing while an open goal still references it, and
+/// unlinking the closed ones in the same transaction.
 ///
-/// Orphaning `goal.recurring_goal_id` would leave the picker unable to date
-/// the next round -- a foreign key SQLite would not complain about, because
-/// the column is nullable and the row would simply dangle.
+/// An open round is refused because it is still being funded as one of this
+/// entry's, and `u` on Recurring Goals is how the owner takes it back. A closed
+/// round is not: what it answers is `goal::has_goal_dated_in_year`, which only
+/// this entry ever asks, so once the entry goes the link has nothing left to
+/// say. Leaving it would dangle -- a foreign key SQLite would not complain
+/// about, because the column is nullable -- and refusing over it would make
+/// every entry with a round behind it undeletable, since nothing can unlink a
+/// closed goal.
 pub fn delete(db: &Db, id: RecurringGoalId) -> Result<()> {
-    let goals = goal_count(db, id)?;
-    ensure!(
-        goals == 0,
-        "{goals} goal(s), open or closed, still reference this recurring goal; \
-         a recurring goal cannot be deleted while any round of it exists"
-    );
-    let removed = db
-        .conn
-        .execute("DELETE FROM recurring_goal WHERE id = ?1", params![id])?;
-    ensure!(removed == 1, "no recurring goal with id {id}");
-    Ok(())
+    db.transaction(|db| {
+        let goals = open_goal_count(db, id)?;
+        ensure!(
+            goals == 0,
+            "{goals} open goal(s) still reference this recurring goal; \
+             unlink or close them first"
+        );
+        db.conn.execute(
+            "UPDATE goal SET recurring_goal_id = NULL WHERE recurring_goal_id = ?1",
+            params![id],
+        )?;
+        let removed = db
+            .conn
+            .execute("DELETE FROM recurring_goal WHERE id = ?1", params![id])?;
+        ensure!(removed == 1, "no recurring goal with id {id}");
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -386,13 +394,11 @@ mod tests {
         assert_eq!(found.cadence, Cadence::Biennial);
     }
 
-    /// Orphaning `goal.recurring_goal_id` would break
-    /// `goal::has_goal_dated_in_year`, which is what decides whether a
-    /// biennial entry is due next year or the year after. Closed goals count
-    /// for exactly that reason -- a round that has been through and been
-    /// closed out has still been through.
+    /// A closed round does not pin its entry, and is unlinked rather than left
+    /// dangling: `goal::has_goal_dated_in_year` is the only reader of the
+    /// link, and it is only ever asked about this entry.
     #[test]
-    fn deleting_an_entry_that_any_goal_references_is_refused() {
+    fn deleting_an_entry_whose_only_goal_is_closed_unlinks_the_goal_and_removes_the_entry() {
         let db = db::open_in_memory().unwrap();
         let savings = crate::db::account::insert(
             &db,
@@ -432,14 +438,74 @@ mod tests {
         .unwrap();
         crate::db::goal::close(&db, goal_id).unwrap();
 
-        assert_eq!(
-            goal_count(&db, id).unwrap(),
-            1,
-            "a closed goal still counts"
-        );
+        assert_eq!(open_goal_count(&db, id).unwrap(), 0);
+        delete(&db, id).unwrap();
+
+        assert!(get(&db, id).is_err());
+        let goal = crate::db::goal::get(&db, goal_id).unwrap().unwrap();
+        assert!(goal.closed, "the goal itself is kept");
+        assert_eq!(goal.recurring_goal_id, None);
+    }
+
+    #[test]
+    fn deleting_an_entry_an_open_goal_references_is_refused() {
+        let db = db::open_in_memory().unwrap();
+        let savings = crate::db::account::insert(
+            &db,
+            "SAV",
+            "Rainy Day",
+            crate::db::account::Kind::Cash,
+            0,
+            None,
+        )
+        .unwrap();
+        let id = insert(
+            &db,
+            &NewEntry {
+                name: "Lego".to_string(),
+                month: 12,
+                base_cents: Cents::from_dollars(340),
+                taxed: false,
+                cadence: Cadence::Annual,
+            },
+        )
+        .unwrap();
+        let new_goal = |closed| {
+            let goal = crate::db::goal::insert(
+                &db,
+                &crate::db::goal::NewGoal {
+                    name: "Lego".to_string(),
+                    container_account_id: savings,
+                    base_cents: Cents::from_dollars(340),
+                    goal_date: None,
+                    recurring_goal_id: Some(id),
+                    interest_eligible: true,
+                    sort: 0,
+                    taxed: false,
+                    floating: false,
+                    note: None,
+                },
+            )
+            .unwrap();
+            if closed {
+                crate::db::goal::close(&db, goal).unwrap();
+            }
+            goal
+        };
+        let closed = new_goal(true);
+        new_goal(false);
+
         let err = delete(&db, id).unwrap_err();
-        assert!(err.to_string().contains("1 goal(s)"), "{err}");
+        assert!(err.to_string().contains("1 open goal(s)"), "{err}");
         assert!(get(&db, id).is_ok());
+        assert_eq!(
+            crate::db::goal::get(&db, closed)
+                .unwrap()
+                .unwrap()
+                .recurring_goal_id,
+            Some(id),
+            "a refused delete unlinks nothing"
+        );
     }
 
     #[test]
