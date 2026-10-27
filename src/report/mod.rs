@@ -7,6 +7,9 @@
 //! same page in two forms.
 
 pub mod html;
+// The tabs' views build on it; nothing calls it until they do.
+#[allow(dead_code)]
+pub mod view;
 
 use crate::account_label::Account;
 use crate::allocation::{Class, Held, SummaryRow};
