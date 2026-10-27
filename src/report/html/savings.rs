@@ -312,4 +312,46 @@ mod tests {
         assert_eq!(last["k"], "unalloc");
         assert_eq!(last["c"], json!(["Unallocated", "0", "", "", ""]));
     }
+
+    /// Allocations summed into `Earlier` are still allocations: the history
+    /// lists that line and its total rather than saying there are none.
+    #[test]
+    fn a_goal_with_only_earlier_allocations_does_not_say_it_has_none() {
+        let mut s = snapshot(vec![row("Rainy Day", 150, 1_000)], 0);
+        let goal = &mut s.containers[0].rows[0];
+        goal.history.clear();
+        goal.earlier = Some(crate::report::Earlier {
+            before: crate::test_support::day(2026, 5, 1),
+            count: 4,
+            cents: Cents::from_dollars(150),
+        });
+        let (_, histories) = built(&s);
+        assert!(histories[0].get("empty").is_none(), "{}", histories[0]);
+        let rows = histories[0]["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1]["c"], json!(["Total", "", "150.00"]));
+    }
+
+    #[test]
+    fn a_container_with_no_open_goals_still_reports_its_unallocated_remainder() {
+        let (tab, histories) = built(&snapshot(vec![], 0));
+        assert!(
+            tab["blocks"][0]["text"].is_number(),
+            "the container vanished"
+        );
+        let rows = tab["blocks"][1]["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["c"][0], "Unallocated");
+        assert_eq!(histories, json!([]));
+    }
+
+    /// A database with no containers still has a Savings tab, over nothing.
+    #[test]
+    fn a_snapshot_with_no_containers_still_renders() {
+        let mut s = snapshot(vec![], 0);
+        s.containers.clear();
+        let (tab, _) = built(&s);
+        assert_eq!(tab["id"], "savings");
+        assert_eq!(tab["blocks"], json!([]));
+    }
 }

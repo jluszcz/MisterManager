@@ -56,8 +56,14 @@ about a figure, one of them is wrong.
 - **Each table is a class, and a row is its own grid placed by position.** `ov`, `lg`, `sv`, `pl`,
   `fs`, `fh`, `rs`, `rm`, `ra` and the histories' `hs`; `report.css` places each cell by
   `nth-child` under its row's class, so a column's meaning lives in one rule rather than on every
-  cell. Because each row sizes its own grid, every column that must line up down a table has a
-  fixed width; `auto` is only ever the column flush against the right edge. A row with fewer cells
+  cell. Because each row sizes its own grid, a column sized to its content lines up with nothing
+  above or below it, so every column a reader scans down a table has a fixed width. Content-sized
+  columns are left where that costs nothing: the column flush against the right edge, which ends
+  at the same place whatever its width; a ledger's date, every one the same width; the figures a
+  two-line form sets on its second line, which a reader takes with the name above them rather
+  than down the table; and Planning's last column, which has a 5rem floor and grows past it for
+  a figure too wide for it, moving only that row's figure rather than spilling into the gutter. A
+  row with fewer cells
   than its table spans its last cell across the rest — a Planning heading, the Retirement row that
   says to set a salary — which the script marks `span` and the stylesheet places. Below the
   breakpoint:

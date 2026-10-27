@@ -186,4 +186,11 @@ mod tests {
         assert_eq!(id(&snapshot.cash), json!("cash"));
         assert_eq!(id(&snapshot.credit), json!("credit"));
     }
+
+    /// A charge on a card is the ordinary case and takes no tone at all.
+    #[test]
+    fn a_charge_on_the_credit_tab_takes_no_color() {
+        let b = block(&fixture(), Kind::Credit);
+        assert_eq!(b["months"][1]["rows"][0]["c"][3], json!("2,500.00"));
+    }
 }

@@ -337,4 +337,79 @@ mod tests {
             "{drawn:?}"
         );
     }
+
+    /// A filing that over-foots puts the four classes past the whole between
+    /// them: the residual is stated as the negative share it is, and the bar
+    /// clamps at the whole rather than drawing a segment past it or one
+    /// running backwards over the one before.
+    #[test]
+    fn a_mix_that_over_foots_states_a_negative_residual_and_draws_no_backwards_segment() {
+        use crate::allocation::{Held, SummaryRow};
+        use crate::db::account::TaxTreatment;
+        use crate::db::fund_mix::{AssetClass, Slice};
+        use crate::money::Cents;
+        use crate::rate::BasisPoints;
+        let mut a = snapshot(vec![], 1_000).allocation;
+        let claimed = vec![Slice {
+            class: AssetClass::UsStock,
+            weight: BasisPoints(10_100),
+        }];
+        a.lookthrough = allocation::apportion(&[Held {
+            balance: Cents::from_dollars(1_000),
+            treatment: Some(TaxTreatment::Taxable),
+            tax_free: BasisPoints::ZERO,
+            mix: Some(claimed.as_slice()),
+        }]);
+        a.summary = Class::ALL
+            .iter()
+            .map(|class| {
+                SummaryRow::new(
+                    *class,
+                    &a.lookthrough.slices,
+                    super::super::fixture::targets(),
+                )
+            })
+            .collect();
+        let drawn = blocks(&a);
+        let fs = drawn.iter().find(|b| b["class"] == "fs").unwrap();
+        let other = fs["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["c"][0] == Class::Other.label())
+            .expect("the excess has no row to land in");
+        assert_eq!(other["c"][2], "-1.00%", "{other}");
+        let bar = drawn.iter().find(|b| b["t"] == "Bar").unwrap();
+        let widths: Vec<f64> = bar["segments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s[0].as_str().unwrap().parse().unwrap())
+            .collect();
+        assert!(widths.iter().all(|w| *w >= 0.0), "{widths:?}");
+        assert_eq!(widths[0], 100.0, "{widths:?}");
+        assert_eq!(widths.iter().sum::<f64>(), 100.0, "{widths:?}");
+        assert_eq!(bar["legend"][0][0], "U.S. Stock 101.00%");
+    }
+
+    /// No birth date means no bond target: the row states neither a target
+    /// nor a gap rather than measuring the portfolio against a zero.
+    #[test]
+    fn a_bond_target_with_no_birth_date_states_no_figure_in_either_of_its_cells() {
+        use crate::rate::BasisPoints;
+        let a = super::super::fixture::funds(crate::calc::fund::targets(None, BasisPoints(4_000)));
+        let actual = Class::Bonds.actual(&a.lookthrough.slices);
+        let drawn = blocks(&a);
+        let fs = drawn.iter().find(|b| b["class"] == "fs").unwrap();
+        let bonds = fs["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["c"][0] == Class::Bonds.label())
+            .unwrap();
+        assert_eq!(
+            bonds["c"],
+            json!(["Bonds", "--", format!("{actual}%"), "--"])
+        );
+    }
 }

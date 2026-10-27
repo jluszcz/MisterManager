@@ -478,6 +478,16 @@ pub(super) fn long_names_snapshot() -> Snapshot {
             false,
         ),
     );
+    // A gap and a year wide enough to test the Planning tab's last column.
+    if let Planning::Resolved(view) = &mut snapshot.planning {
+        view.plan.shortfall.bills = Cents::from_dollars(12_345);
+        view.expense_constants = vec![crate::plan_rows::Target::GoalsFloor];
+        if let Ok(transfers) = &mut view.transfers {
+            transfers[0]
+                .lines
+                .push((crate::plan_line::Line::Bills, Cents::from_dollars(300)));
+        }
+    }
     snapshot.retirement = retirement();
     snapshot.charts = Some(charts());
     snapshot
