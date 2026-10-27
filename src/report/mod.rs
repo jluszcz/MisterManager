@@ -37,10 +37,28 @@ pub struct Container {
 
 /// One Savings row and the allocations its balance is the sum of -- what the
 /// screen's `Enter` opens, read up front because a page cannot ask later.
+///
+/// `earlier` and `history` together are every allocation the goal has, so
+/// they still foot to the balance beside its name.
 pub struct Goal {
     pub row: savings::Row,
-    /// Oldest first, as `goal::allocations` reads them.
+    /// The allocations dated before [`HISTORY_MONTHS`] reaches, as one line.
+    pub earlier: Option<Earlier>,
+    /// Oldest first, as `goal::allocations` reads them: from the first day
+    /// [`HISTORY_MONTHS`] reaches on, or every one of them when `earlier` is
+    /// `None`.
     pub history: Vec<crate::db::goal::Allocation>,
+}
+
+/// Every allocation a goal's history on the page does not list row by row,
+/// summed -- the ledgers drop such rows outright, but a history foots to a
+/// balance and so cannot.
+pub struct Earlier {
+    /// The first day the history lists row by row; everything summed here
+    /// is dated before it.
+    pub before: NaiveDate,
+    pub count: usize,
+    pub cents: Cents,
 }
 
 /// The portfolio's look-through, the age rule it is read against, and the
@@ -94,7 +112,7 @@ pub struct Holding {
 /// One ledger's rows, grouped into the months the page's filter switches
 /// between.
 ///
-/// The [`LEDGER_HISTORY_MONTHS`] before the current one, the current one, and
+/// The [`HISTORY_MONTHS`] before the current one, the current one, and
 /// every month after it -- see that constant for why the page stops there.
 pub struct Ledger {
     pub kind: Kind,
@@ -172,15 +190,45 @@ pub struct Snapshot {
     pub charts: Option<crate::balance_history::Charts>,
 }
 
-/// How many whole months before the current one each ledger tab carries.
+/// How many whole months before the current one each ledger tab and each
+/// goal's history carries row by row.
 ///
 /// The ledgers are nearly the whole page, and the page crosses a sync folder
 /// on every write, so carrying every row there is would grow it by a month
 /// of rows each month for as long as the database lives. What the page is
 /// opened to check is the month being lived in and the ones just behind it;
 /// anything older is on the screen, where `[` reaches it. Every future row is
-/// kept, being the projection the Overview's figures are quoted from.
-const LEDGER_HISTORY_MONTHS: i32 = 3;
+/// kept, being the projection the Overview's figures are quoted from. A
+/// goal's older allocations are summed into one [`Earlier`] line rather than
+/// dropped, since its history has to foot to its balance.
+const HISTORY_MONTHS: i32 = 3;
+
+/// The first day [`HISTORY_MONTHS`] reaches back to from `today`.
+fn history_start(today: NaiveDate) -> NaiveDate {
+    calc::Month::of(today).shifted(-HISTORY_MONTHS).first_day()
+}
+
+/// A goal's allocations, those before `from` summed into one line.
+///
+/// A single such allocation is left as itself: one line in place of one
+/// line saves nothing, and would hide its date and note for no reason.
+fn split_history(
+    mut allocations: Vec<crate::db::goal::Allocation>,
+    from: NaiveDate,
+) -> (Option<Earlier>, Vec<crate::db::goal::Allocation>) {
+    // `goal::allocations` reads oldest first, so the older ones are a prefix.
+    let split = allocations.partition_point(|a| a.date < from);
+    if split < 2 {
+        return (None, allocations);
+    }
+    let history = allocations.split_off(split);
+    let earlier = Earlier {
+        before: from,
+        count: allocations.len(),
+        cents: allocations.iter().fold(Cents::ZERO, |sum, a| sum + a.cents),
+    };
+    (Some(earlier), history)
+}
 
 /// One ledger's recent and future rows, grouped by month.
 ///
@@ -195,9 +243,7 @@ fn ledger(db: &Db, accounts: &[account::Account], kind: Kind, today: NaiveDate) 
             current,
         });
     };
-    let from = calc::Month::of(today)
-        .shifted(-LEDGER_HISTORY_MONTHS)
-        .first_day();
+    let from = history_start(today);
     let filter = txn::Filter {
         kind,
         account_id: None,
@@ -392,6 +438,7 @@ impl Snapshot {
             periods_per_year,
         )?;
 
+        let history_from = history_start(today);
         let containers = savings::containers_with_excess(db)?
             .into_iter()
             .map(|(id, excess)| {
@@ -399,9 +446,14 @@ impl Snapshot {
                     .iter()
                     .filter(|r| r.container.id() == id)
                     .map(|r| {
+                        let (earlier, history) = split_history(
+                            crate::db::goal::allocations(db, r.goal_id)?,
+                            history_from,
+                        );
                         Ok(Goal {
-                            history: crate::db::goal::allocations(db, r.goal_id)?,
                             row: r.clone(),
+                            earlier,
+                            history,
                         })
                     })
                     .collect::<Result<_>>()?;
@@ -716,6 +768,50 @@ mod tests {
 
         let months: Vec<&str> = ledger.months.iter().map(|m| m.key.as_str()).collect();
         assert_eq!(months, ["2026-05", "2026-08", "2027-03"]);
+    }
+
+    /// A goal's history is cut where the ledgers are, and what falls before
+    /// the cut is summed rather than dropped -- so the page still foots to
+    /// the balance. One allocation alone before the cut is left as itself.
+    #[test]
+    fn a_goals_allocations_before_the_ledgers_cut_are_summed_into_one_line() {
+        let allocation = |id, date, dollars| crate::db::goal::Allocation {
+            id: crate::db::AllocationId(id),
+            goal_id: crate::db::GoalId(1),
+            date,
+            cents: Cents::from_dollars(dollars),
+            note: None,
+        };
+        let day = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        // `today` is in August, so May's first is the first day listed.
+        let from = history_start(today());
+        assert_eq!(from, day(2026, 5, 1));
+
+        let (earlier, history) = split_history(
+            vec![
+                allocation(1, day(2025, 12, 1), 100),
+                allocation(2, day(2026, 4, 30), 50),
+                allocation(3, day(2026, 5, 1), 25),
+            ],
+            from,
+        );
+        let earlier = earlier.expect("nothing was summed");
+        assert_eq!(
+            (earlier.before, earlier.count, earlier.cents),
+            (from, 2, Cents::from_dollars(150))
+        );
+        let listed: Vec<_> = history.iter().map(|a| a.id.0).collect();
+        assert_eq!(listed, [3]);
+
+        let (earlier, history) = split_history(
+            vec![
+                allocation(1, day(2026, 4, 30), 50),
+                allocation(2, day(2026, 5, 1), 25),
+            ],
+            from,
+        );
+        assert!(earlier.is_none(), "a lone allocation was summed");
+        assert_eq!(history.len(), 2);
     }
 
     /// A failure reading the plug's asks costs the annotation and nothing

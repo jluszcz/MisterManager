@@ -455,7 +455,9 @@ everything dated after it; older rows are on the screens, where `[` reaches
 them.
 
 On the Savings tab, tapping a goal's name opens its history — the same
-allocations `Enter` lists on the Savings screen, with their total.
+allocations `Enter` lists on the Savings screen, with their total. When two or more
+allocations are older than the ledgers' three months, they are summed into one
+`Earlier` line.
 
 The write happens after the TUI has already torn its screen down, the same
 timing as the scheduled backup, and a failure prints to stderr rather than
