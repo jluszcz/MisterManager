@@ -126,6 +126,8 @@ fn history_id(row: &Row) -> String {
 /// The amounts keep their cents where the table above drops them: the rows
 /// worth auditing are the interest postings and the import's, which carry
 /// cents, and the total has to land on the balance rather than near it.
+/// That is also why the allocations older than the ledgers reach are one
+/// `Earlier` line ahead of the rest rather than left off.
 fn history(goal: &Goal) -> String {
     let row = &goal.row;
     let note = row
@@ -133,7 +135,7 @@ fn history(goal: &Goal) -> String {
         .as_deref()
         .map(|n| format!("<p class=\"note\">{}</p>", escape(n)))
         .unwrap_or_default();
-    let body = if goal.history.is_empty() {
+    let body = if goal.history.is_empty() && goal.earlier.is_none() {
         "<p class=\"note\">No allocations yet.</p>".to_string()
     } else {
         let mut table = HISTORY_HEADER
@@ -141,6 +143,14 @@ fn history(goal: &Goal) -> String {
             .map(|h| format!("<th>{h}</th>"))
             .collect::<String>();
         table = format!("<thead><tr>{table}</tr></thead>");
+        if let Some(earlier) = &goal.earlier {
+            table.push_str(&format!(
+                "<tr><td>Earlier</td><td>{} allocations before {}</td>{}</tr>",
+                earlier.count,
+                earlier.before.format("%b %Y"),
+                positional_money(Sense::Natural, earlier.cents),
+            ));
+        }
         for a in &goal.history {
             table.push_str(&format!(
                 "<tr><td>{}</td><td>{}</td>{}</tr>",
@@ -151,10 +161,10 @@ fn history(goal: &Goal) -> String {
                 positional_money(Sense::Natural, a.cents),
             ));
         }
-        let total = goal
-            .history
-            .iter()
-            .fold(Cents::ZERO, |sum, a| sum + a.cents);
+        let total = goal.history.iter().fold(
+            goal.earlier.as_ref().map_or(Cents::ZERO, |e| e.cents),
+            |sum, a| sum + a.cents,
+        );
         table.push_str(&format!(
             "<tr class=\"tot\"><td>Total</td><td></td>{}</tr>",
             positional_money(Sense::Natural, total)
@@ -375,6 +385,53 @@ mod tests {
         assert!(first < second, "the rows are not oldest first");
         assert!(
             panel.contains("<tr class=\"tot\"><td>Total</td><td></td><td>500.00</td></tr>"),
+            "{panel}"
+        );
+    }
+
+    /// What the ledgers would have dropped is one line ahead of the rest, and
+    /// still counted in the total -- which is the balance beside the name,
+    /// whatever the page leaves unlisted.
+    #[test]
+    fn allocations_before_the_cut_are_one_line_the_total_still_counts() {
+        let mut snapshot = snapshot(vec![row("Rainy Day", 650, 1_000)], 1_000);
+        snapshot.containers[0].rows[0].earlier = Some(crate::report::Earlier {
+            before: crate::test_support::day(2026, 5, 1),
+            count: 4,
+            cents: crate::money::Cents::from_dollars(150),
+        });
+        let page = page(&snapshot);
+        let panel = panel(&page, "savings");
+        let earlier = panel
+            .find("<td>Earlier</td><td>4 allocations before May 2026</td><td>150.00</td>")
+            .expect("the earlier line is missing");
+        let first = panel
+            .find("<td>2026-07-10</td>")
+            .expect("the listed rows are missing");
+        assert!(earlier < first, "the earlier line is not first");
+        assert!(
+            panel.contains("<tr class=\"tot\"><td>Total</td><td></td><td>650.00</td></tr>"),
+            "{panel}"
+        );
+    }
+
+    /// A goal whose every allocation is older than the cut still has a
+    /// history to show, and does not claim to have none.
+    #[test]
+    fn a_goal_with_only_earlier_allocations_does_not_say_it_has_none() {
+        let mut snapshot = snapshot(vec![row("Rainy Day", 150, 1_000)], 1_000);
+        let goal = &mut snapshot.containers[0].rows[0];
+        goal.history.clear();
+        goal.earlier = Some(crate::report::Earlier {
+            before: crate::test_support::day(2026, 5, 1),
+            count: 4,
+            cents: crate::money::Cents::from_dollars(150),
+        });
+        let page = page(&snapshot);
+        let panel = panel(&page, "savings");
+        assert!(!panel.contains("No allocations yet."), "{panel}");
+        assert!(
+            panel.contains("<tr class=\"tot\"><td>Total</td><td></td><td>150.00</td></tr>"),
             "{panel}"
         );
     }

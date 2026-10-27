@@ -344,6 +344,7 @@ pub(super) fn snapshot(rows: Vec<crate::savings::Row>, net: i64) -> Snapshot {
             rows: rows
                 .into_iter()
                 .map(|row| Goal {
+                    earlier: None,
                     history: history(row.goal_id),
                     row,
                 })

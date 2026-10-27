@@ -69,7 +69,7 @@ about a figure, one of them is wrong.
   only way a page with no script can close a menu once something is picked.
   While it is open no tab is checked, so the open menu is the whole page.
 - **The Cash and Credit tabs carry the three months behind the current one,
-  the current one, and every future month** -- `report::LEDGER_HISTORY_MONTHS`,
+  the current one, and every future month** -- `report::HISTORY_MONTHS`,
   where the cut is argued. The ledgers are nearly the whole page, so carrying
   every row would grow a file that crosses a sync folder on every write by a
   month of rows each month; anything older is the screen's, where `[` reaches
@@ -138,7 +138,10 @@ about a figure, one of them is wrong.
   show, and `:checked ~` only looks forward. A `popover` is an attribute, not a script, and the
   browser supplies the rest — the box over the page, a tap outside or the `×` beside the name to
   dismiss it, the two pinned to the top of the box as a long history scrolls. Every
-  goal's history is on the page whether it is opened or not, the ledgers' cost again.
+  goal's history is on the page whether it is opened or not, the ledgers' cost again --
+  so it takes the ledgers' cut too, `report::HISTORY_MONTHS`. What is older is summed into
+  one `Earlier` line ahead of the rest rather than dropped, because the total has to land
+  on the balance; a lone older allocation stays as itself, there being nothing to save.
   `Snapshot::load` reads them through `goal::allocations`, the reader the screen's history uses,
   so the two cannot list different rows.
 - **Two tabs leave off columns their screens carry, because a phone cannot fit them.** Funds draws
