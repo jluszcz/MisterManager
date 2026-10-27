@@ -202,10 +202,7 @@ fn percent_cell(percent: Option<Percent>) -> Cell {
 /// payload.
 fn view_history(goal: &Goal) -> History {
     let row = &goal.row;
-    let note = row
-        .note
-        .as_deref()
-        .map(|n| crate::description::render(n).into_owned());
+    let note = row.note.clone();
     if goal.history.is_empty() && goal.earlier.is_none() {
         return History {
             name: row.name.clone(),
@@ -386,25 +383,29 @@ mod tests {
         let rows = histories[0]["rows"].as_array().unwrap();
         assert_eq!(rows[0]["c"][0], "Earlier");
         assert_eq!(rows[0]["c"][1], "4 allocations before May 2026");
-        let amount = |r: &serde_json::Value| {
-            let cell = &r["c"][2];
-            cell.as_str()
-                .or_else(|| cell[0].as_str())
-                .unwrap()
-                .to_string()
-        };
-        let parsed = |r: &serde_json::Value| amount(r).replace(',', "");
-        let listed: i64 = rows[..rows.len() - 1]
-            .iter()
-            .map(|r| (parsed(r).parse::<f64>().unwrap() * 100.0).round() as i64)
-            .sum();
-        assert_eq!(Cents(listed), s.containers[0].rows[0].row.current);
+        // 300 + 200 listed, 150 folded in: the cells are what `Cents` prints.
+        let shown = |dollars: i64| json!(Cents::from_dollars(dollars).to_string());
+        assert_eq!(rows[0]["c"][2], shown(150));
+        assert_eq!(rows[1]["c"][2], shown(300));
+        assert_eq!(rows[2]["c"][2], shown(200));
+        assert_eq!(
+            s.containers[0].rows[0].row.current,
+            Cents::from_dollars(650)
+        );
         let total = rows.last().unwrap();
         assert_eq!(total["k"], "tot");
         assert_eq!(total["c"][0], "Total");
-        assert_eq!(parsed(total), "650.00");
+        assert_eq!(total["c"][2], shown(650));
         assert_eq!(rows[1]["c"][1], "Paycheck");
         assert_eq!(rows[2]["c"][1], "\u{2014}");
+    }
+
+    #[test]
+    fn a_goals_note_is_carried_exactly_as_stored() {
+        let mut s = snapshot(vec![row("Rainy Day", 500, 1_000)], 0);
+        s.containers[0].rows[0].row.note = Some("Roof <first> & \u{2014}".to_string());
+        let (_, histories) = built(&s);
+        assert_eq!(histories[0]["note"], "Roof <first> & \u{2014}");
     }
 
     #[test]

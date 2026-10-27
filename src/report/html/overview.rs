@@ -200,6 +200,60 @@ mod tests {
     }
 
     #[test]
+    fn a_section_in_two_bands_subtotals_each_and_only_its_first_row_is_set_apart() {
+        use crate::db::account::{Group, Kind};
+        use crate::overview::{Balances, Band, Line};
+        let b = |d| Balances {
+            to_date: crate::money::Cents::from_dollars(d),
+            adhoc: crate::money::Cents::from_dollars(d),
+            month_end: crate::money::Cents::from_dollars(d),
+        };
+        let line = |label: &str, d| Line {
+            account: None,
+            label: label.to_string(),
+            balances: b(d),
+        };
+        let mut s = snapshot(vec![], 0);
+        s.overview.cash.bands = vec![
+            Band {
+                group: Group::Checking,
+                lines: vec![line("Everyday", 100), line("Brokerage", 50)],
+                total: b(150),
+            },
+            Band {
+                group: Group::Savings,
+                lines: vec![line("Rainy Day", 400)],
+                total: b(400),
+            },
+        ];
+        s.overview.cash.total = b(550);
+        assert_eq!(s.overview.cash.kind, Kind::Cash);
+        let t = table(&s);
+        let rows = t["rows"].as_array().unwrap();
+        let labels: Vec<_> = rows.iter().map(|r| r["c"][0].clone()).collect();
+        assert_eq!(
+            labels[..6],
+            [
+                json!("Everyday"),
+                json!("Brokerage"),
+                json!(Group::Checking.label()),
+                json!("Rainy Day"),
+                json!(Group::Savings.label()),
+                json!("Cash"),
+            ]
+        );
+        for i in [2, 4, 5] {
+            assert_eq!(rows[i]["k"], "tot", "row {i}");
+        }
+        assert_eq!(rows[2]["c"][1], "150.00");
+        let separated: Vec<_> = (0..rows.len())
+            .filter(|&i| rows[i]["k"].as_str().is_some_and(|k| k.contains("sep")))
+            .collect();
+        // Cash's first row, Credit's first row, and Net.
+        assert_eq!(separated, [0, 6, rows.len() - 1]);
+    }
+
+    #[test]
     fn a_negative_cash_balance_is_toned() {
         let t = table(&snapshot(vec![], -1_000));
         assert_eq!(t["rows"][0]["c"][1], json!(["-1,000.00", "neg"]));
