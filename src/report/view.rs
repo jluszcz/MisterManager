@@ -27,6 +27,8 @@ pub enum Cell {
 
 #[derive(Debug, Serialize)]
 pub struct Row {
+    /// A row with fewer cells than its table's head spans its last cell
+    /// across the rest.
     pub c: Vec<Cell>,
     /// Row classes, space-separated.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -74,12 +76,13 @@ pub enum Block {
         segments: Vec<(String, usize)>,
         legend: Vec<(String, usize)>,
     },
-    /// `svg` is markup built in Rust. A legend entry's color is an account
-    /// ([`Cell::Account`]) or, with `None`, the Total line.
+    /// `svg` is markup built in Rust, its lines colored by class. A legend
+    /// entry is an account ([`Cell::Account`]) or the Total line
+    /// (`Cell::Toned("Total", "total")`).
     Chart {
         title: String,
         svg: String,
-        legend: Vec<(Cell, Option<usize>)>,
+        legend: Vec<Cell>,
     },
 }
 
@@ -189,16 +192,17 @@ pub fn tokens_css() -> String {
         classes.push_str(&format!(".a-{name}{{color:var(--a-{name})}}"));
     }
     root.push_str(&format!(
-        "--neg:{};--pos:{};",
+        "--neg:{};--pos:{};--mid:{};",
         palette::hex(palette::NEGATIVE),
-        palette::hex(palette::POSITIVE)
+        palette::hex(palette::POSITIVE),
+        palette::hex(palette::STANDING_MID)
     ));
     for (i, rgb) in palette::CLASSES.iter().enumerate() {
         root.push_str(&format!("--c{i}:{};", palette::hex(*rgb)));
     }
     root.push_str(&format!("--total:{};", palette::hex(palette::TOTAL)));
     format!(
-        ":root{{{root}}}{classes}.neg{{color:var(--neg)}}.pos{{color:var(--pos)}}\
+        ":root{{{root}}}{classes}.neg{{color:var(--neg)}}.pos{{color:var(--pos)}}.mid{{color:var(--mid)}}\
          @media (prefers-color-scheme:dark){{:root{{--total:var(--fg)}}}}"
     )
 }
@@ -257,6 +261,16 @@ mod tests {
     #[test]
     fn cents_dropped_by_a_whole_dollar_cell_do_not_tone_it() {
         assert!(matches!(whole(Cents(-40)), Cell::Text(_)));
+    }
+
+    #[test]
+    fn tokens_name_the_on_track_color_and_its_class() {
+        let css = tokens_css();
+        assert!(
+            css.contains(&format!("--mid:{};", palette::hex(palette::STANDING_MID))),
+            "{css}"
+        );
+        assert!(css.contains(".mid{color:var(--mid)}"), "{css}");
     }
 
     #[test]

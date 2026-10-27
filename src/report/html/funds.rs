@@ -20,6 +20,7 @@ use crate::allocation::{self, Class};
 use crate::db::fund_mix::Slice;
 use crate::palette;
 use crate::rate::BasisPoints;
+use crate::report::view::{Accounts, Block, Cell, Row, TabView, whole};
 use crate::report::{AccountAllocation, Allocation, Holding};
 
 /// One class's color, as `#rrggbb`.
@@ -250,10 +251,18 @@ fn section(account_allocation: &AccountAllocation) -> String {
 const NO_HOLDINGS: &str =
     "<p>No holdings are on record, so there is nothing to look through yet.</p>";
 
+/// [`NO_HOLDINGS`] as the text of a [`Block::Note`].
+const NO_HOLDINGS_TEXT: &str =
+    "No holdings are on record, so there is nothing to look through yet.";
+
 /// Holdings, but no filing behind a single one of them: the state every
 /// database is in until something populates `fund_mix`.
 const NO_COMPOSITION: &str =
     "<p>No fund composition has been fetched, so there is nothing to look through yet.</p>";
+
+/// [`NO_COMPOSITION`] as the text of a [`Block::Note`].
+const NO_COMPOSITION_TEXT: &str =
+    "No fund composition has been fetched, so there is nothing to look through yet.";
 
 /// The portfolio, then one stacked section per investment account.
 ///
@@ -277,6 +286,134 @@ pub(super) fn sections(allocation: &Allocation) -> String {
     }
     html.extend(allocation.accounts.iter().map(section));
     html
+}
+
+fn plain_row(c: Vec<Cell>) -> Row {
+    Row {
+        c,
+        k: None,
+        h: None,
+        d: None,
+        m: None,
+    }
+}
+
+/// [`percent`] as a cell: the share, or the same `--`.
+fn percent_cell(share: Option<BasisPoints>) -> Cell {
+    Cell::Text(match share {
+        Some(share) => format!("{share}%"),
+        None => "--".to_string(),
+    })
+}
+
+/// [`delta`] as a cell, toned `neg` on the same test.
+fn delta_cell(share: Option<BasisPoints>) -> Cell {
+    match share {
+        Some(share) if share.0 < 0 => Cell::Toned(format!("{share}%"), "neg".to_string()),
+        other => percent_cell(other),
+    }
+}
+
+fn summary_block(rows: &[allocation::SummaryRow]) -> Block {
+    Block::Table {
+        class: "fs",
+        head: SUMMARY_HEADER.iter().map(|(l, _)| l.to_string()).collect(),
+        rows: rows
+            .iter()
+            .map(|row| {
+                plain_row(vec![
+                    Cell::Text(row.class.label().to_string()),
+                    percent_cell(row.target),
+                    percent_cell(Some(row.actual)),
+                    delta_cell(row.delta),
+                ])
+            })
+            .collect(),
+    }
+}
+
+/// [`bar`]'s segments, cut at the same cumulative share, as data: the width
+/// and the class's place in [`palette::CLASSES`].
+fn bar_block(slices: &[Slice]) -> Block {
+    let (mut segments, mut legend) = (Vec::new(), Vec::new());
+    let (mut cumulative, mut drawn) = (0i64, 0i64);
+    for class in Class::ALL {
+        let share = class.actual(slices);
+        cumulative += share.0;
+        let end = cumulative.clamp(0, BasisPoints::ONE.0).max(drawn);
+        segments.push((BasisPoints(end - drawn).to_string(), class.index()));
+        legend.push((format!("{} {share}%", class.label()), class.index()));
+        drawn = end;
+    }
+    Block::Bar { segments, legend }
+}
+
+fn coverage_note(lookthrough: &crate::allocation::Allocation, blocks: &mut Vec<Block>) {
+    if let Some(coverage) = lookthrough.coverage() {
+        blocks.push(Block::Note {
+            text: coverage.to_string(),
+        });
+    }
+}
+
+fn holdings_block(rows: &[Holding]) -> Block {
+    Block::Table {
+        class: "fh",
+        head: HOLDINGS_HEADER.iter().map(|(l, _)| l.to_string()).collect(),
+        rows: rows
+            .iter()
+            .map(|row| {
+                let as_of = match row.as_of {
+                    Some(date) => date.to_string(),
+                    None => "--".to_string(),
+                };
+                plain_row(vec![
+                    Cell::Text(row.ticker.clone()),
+                    whole(row.balance),
+                    Cell::Text(as_of),
+                ])
+            })
+            .collect(),
+    }
+}
+
+/// The Funds tab as data, in the order [`sections`] draws it.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) fn view(allocation: &Allocation, acc: &mut Accounts) -> TabView {
+    let mut blocks = Vec::new();
+    if allocation.accounts.is_empty() {
+        blocks.push(Block::Note {
+            text: NO_HOLDINGS_TEXT.to_string(),
+        });
+    } else {
+        if allocation.summary.is_empty() {
+            blocks.push(Block::Note {
+                text: NO_COMPOSITION_TEXT.to_string(),
+            });
+        } else {
+            blocks.push(Block::Heading {
+                text: Cell::Text("Allocation".to_string()),
+            });
+            coverage_note(&allocation.lookthrough, &mut blocks);
+            blocks.push(summary_block(&allocation.summary));
+            blocks.push(bar_block(&allocation.lookthrough.slices));
+        }
+        for a in &allocation.accounts {
+            blocks.push(Block::Heading {
+                text: acc.cell(&a.account),
+            });
+            if !a.summary.is_empty() {
+                coverage_note(&a.lookthrough, &mut blocks);
+                blocks.push(summary_block(&a.summary));
+                blocks.push(bar_block(&a.lookthrough.slices));
+            }
+            blocks.push(holdings_block(&a.holdings));
+        }
+    }
+    TabView {
+        id: "funds",
+        blocks,
+    }
 }
 
 #[cfg(test)]
@@ -622,5 +759,108 @@ mod tests {
             panel.contains(super::NO_COMPOSITION),
             "the wrong nothing: {panel}"
         );
+    }
+
+    mod view_tests {
+        use super::super::super::fixture::{json, snapshot};
+        use super::super::{NO_COMPOSITION_TEXT, NO_HOLDINGS_TEXT, view};
+        use crate::allocation::{self, Class};
+        use crate::report::view::Accounts;
+        use serde_json::json;
+
+        fn blocks(a: &crate::report::Allocation) -> Vec<serde_json::Value> {
+            json(&view(a, &mut Accounts::new()))["blocks"]
+                .as_array()
+                .unwrap()
+                .clone()
+        }
+
+        #[test]
+        fn no_holdings_says_so() {
+            let mut a = snapshot(vec![], 1_000).allocation;
+            a.accounts.clear();
+            a.summary.clear();
+            assert_eq!(
+                blocks(&a),
+                vec![json!({"t": "Note", "text": NO_HOLDINGS_TEXT})]
+            );
+        }
+
+        #[test]
+        fn no_composition_says_so() {
+            let mut a = snapshot(vec![], 1_000).allocation;
+            a.summary.clear();
+            a.lookthrough = allocation::Allocation::default();
+            let drawn = blocks(&a);
+            assert_eq!(drawn[0], json!({"t": "Note", "text": NO_COMPOSITION_TEXT}));
+            assert_eq!(drawn[1]["t"], "Heading", "the accounts still list");
+        }
+
+        #[test]
+        fn the_portfolio_is_a_heading_a_summary_a_bar_then_each_account() {
+            let a = snapshot(vec![], 1_000).allocation;
+            let drawn = blocks(&a);
+            assert_eq!(drawn[0], json!({"t": "Heading", "text": "Allocation"}));
+            let at = |i: usize| drawn[i]["t"].as_str().unwrap().to_string();
+            let from = if drawn[1]["t"] == "Note" { 2 } else { 1 };
+            assert_eq!((at(from), at(from + 1)), ("Table".into(), "Bar".into()));
+            assert_eq!(drawn[from]["class"], "fs");
+            assert_eq!(
+                drawn[from]["head"],
+                json!(["Class", "Target", "Actual", "\u{394}"])
+            );
+            let fh = drawn
+                .iter()
+                .find(|b| b["class"] == "fh")
+                .expect("no holdings table");
+            assert_eq!(fh["head"], json!(["Ticker", "Balance", "As of"]));
+            assert!(
+                fh["rows"].to_string().contains("\"--\""),
+                "no as-of dash: {fh}"
+            );
+        }
+
+        #[test]
+        fn a_short_class_delta_is_negative() {
+            let a = snapshot(vec![], 1_000).allocation;
+            let drawn = blocks(&a);
+            let rows = drawn.iter().find(|b| b["class"] == "fs").unwrap()["rows"].to_string();
+            assert!(rows.contains(",\"neg\"]"), "no toned delta: {rows}");
+        }
+
+        #[test]
+        fn the_bar_segments_never_exceed_the_whole() {
+            let a = snapshot(vec![], 1_000).allocation;
+            for block in blocks(&a).iter().filter(|b| b["t"] == "Bar") {
+                let total: f64 = block["segments"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|s| s[0].as_str().unwrap().parse::<f64>().unwrap())
+                    .sum();
+                assert!(total <= 100.0 + 1e-9, "{total}");
+                assert_eq!(block["legend"].as_array().unwrap().len(), Class::ALL.len());
+                assert!(
+                    block["legend"][0][0]
+                        .as_str()
+                        .unwrap()
+                        .starts_with(Class::ALL[0].label())
+                );
+                assert_eq!(block["legend"][0][1], 0);
+            }
+        }
+
+        #[test]
+        fn coverage_is_a_note() {
+            let a = snapshot(vec![], 1_000).allocation;
+            let drawn = blocks(&a);
+            assert!(
+                drawn
+                    .iter()
+                    .any(|b| b["t"] == "Note"
+                        && b["text"].as_str().unwrap().contains("3 of 4 holdings")),
+                "{drawn:?}"
+            );
+        }
     }
 }

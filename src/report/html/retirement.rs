@@ -10,6 +10,7 @@ use crate::calc::Month;
 use crate::calc::retirement::{self, BAND_DASH, Band, Status};
 use crate::money::Cents;
 use crate::palette;
+use crate::report::view::{Accounts, Block, Cell, Row, TabView, money as money_cell};
 use crate::retirement::Retirement;
 
 /// What a figure that cannot be stated draws as -- the screen's word too.
@@ -179,24 +180,40 @@ fn y((low, high): (Cents, Cents), cents: Cents) -> f64 {
     TOP + (high.0 - cents.0) as f64 / (high.0 - low.0) as f64 * plot
 }
 
+/// How a line is inked. The page's own markup spells a color on the element;
+/// the data form leaves it to the element's class and the stylesheet.
+#[derive(Clone, Copy)]
+enum Ink<'a> {
+    Hex(&'a str),
+    Class,
+}
+
 /// One line, as a polyline -- and, where it is a single month, a dot, since
 /// a polyline of one point draws nothing.
-fn line(charts: &Charts, points: &[(Month, Cents)], stroke: &str, class: &str) -> String {
+fn line(charts: &Charts, points: &[(Month, Cents)], ink: Ink, class: &str) -> String {
     let coords: Vec<(f64, f64)> = points
         .iter()
         .map(|(m, c)| (x(charts.months, *m), y(charts.cents, *c)))
         .collect();
     match coords.as_slice() {
-        [(cx, cy)] => format!(
-            "<circle class=\"{class}\" cx=\"{cx:.1}\" cy=\"{cy:.1}\" r=\"3\" fill=\"{stroke}\"/>"
-        ),
+        [(cx, cy)] => {
+            let fill = match ink {
+                Ink::Hex(hex) => format!(" fill=\"{hex}\""),
+                Ink::Class => String::new(),
+            };
+            format!("<circle class=\"{class}\" cx=\"{cx:.1}\" cy=\"{cy:.1}\" r=\"3\"{fill}/>")
+        }
         _ => {
             let points: Vec<String> = coords
                 .iter()
                 .map(|(px, py)| format!("{px:.1},{py:.1}"))
                 .collect();
+            let stroke = match ink {
+                Ink::Hex(hex) => format!(" stroke=\"{hex}\""),
+                Ink::Class => String::new(),
+            };
             format!(
-                "<polyline class=\"{class}\" points=\"{}\" fill=\"none\" stroke=\"{stroke}\" \
+                "<polyline class=\"{class}\" points=\"{}\" fill=\"none\"{stroke} \
                  stroke-width=\"2\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/>",
                 points.join(" ")
             )
@@ -204,18 +221,9 @@ fn line(charts: &Charts, points: &[(Month, Cents)], stroke: &str, class: &str) -
     }
 }
 
-/// One chart: gridlines at the three figures the screen labels, the
-/// accounts in their own colors, the Total over them where there is one, and
-/// a legend under it.
-///
-/// The Total is drawn last so it is never hidden under an account it sums,
-/// and carries the `total` class so the dark scheme can swap its ink; its
-/// legend entry is a swatch beside plain text, being no account's.
-fn chart(title: &str, chart: &Chart, charts: &Charts, empty: &str) -> String {
-    let heading = format!("<h4>{}</h4>", escape(title));
-    if chart.series.is_empty() {
-        return format!("{heading}<p class=\"note\">{}</p>", escape(empty));
-    }
+/// The gridlines with their figures and the month labels under them: what
+/// every chart draws before its first line.
+fn frame(charts: &Charts) -> String {
     let mut svg = String::new();
     for cents in charts.ticks() {
         let at = y(charts.cents, cents);
@@ -244,12 +252,28 @@ fn chart(title: &str, chart: &Chart, charts: &Charts, empty: &str) -> String {
             last.label()
         )),
     }
+    svg
+}
+
+/// One chart: gridlines at the three figures the screen labels, the
+/// accounts in their own colors, the Total over them where there is one, and
+/// a legend under it.
+///
+/// The Total is drawn last so it is never hidden under an account it sums,
+/// and carries the `total` class so the dark scheme can swap its ink; its
+/// legend entry is a swatch beside plain text, being no account's.
+fn chart(title: &str, chart: &Chart, charts: &Charts, empty: &str) -> String {
+    let heading = format!("<h4>{}</h4>", escape(title));
+    if chart.series.is_empty() {
+        return format!("{heading}<p class=\"note\">{}</p>", escape(empty));
+    }
+    let mut svg = frame(charts);
     let mut legend = String::new();
     for series in &chart.series {
         let color = series
             .account
             .render_with(|_, color| palette::hex(palette::account(color)));
-        svg.push_str(&line(charts, &series.points, &color, "series"));
+        svg.push_str(&line(charts, &series.points, Ink::Hex(&color), "series"));
         legend.push_str(&format!(
             "<span class=\"item\"><span class=\"key\" style=\"background:{color}\"></span>{}</span>",
             account(&series.account)
@@ -257,7 +281,7 @@ fn chart(title: &str, chart: &Chart, charts: &Charts, empty: &str) -> String {
     }
     if !chart.total.is_empty() {
         let total = palette::hex(palette::TOTAL);
-        svg.push_str(&line(charts, &chart.total, &total, "total"));
+        svg.push_str(&line(charts, &chart.total, Ink::Hex(&total), "total"));
         legend.push_str(&format!(
             "<span class=\"item\"><span class=\"key total\" style=\"background:{total}\"></span>Total</span>"
         ));
@@ -287,13 +311,6 @@ fn charts(charts: Option<&Charts>) -> String {
 }
 
 pub(super) fn panel(r: &Retirement, history: Option<&Charts>) -> String {
-    let mut title = String::from("Retirement");
-    if let Some(age) = r.age {
-        title.push_str(&format!(" · Age {age}"));
-    }
-    if let Some(salary) = r.salary {
-        title.push_str(&format!(" · Salary {}", dollars(salary)));
-    }
     // The milestones stand on their own, as on the screen; only the account
     // list needs something marked.
     let held = match r.held.is_empty() {
@@ -302,11 +319,246 @@ pub(super) fn panel(r: &Retirement, history: Option<&Charts>) -> String {
     };
     format!(
         "<h3>{}</h3>{}{}{held}{}",
-        escape(&title),
+        escape(&title(r)),
         standing(r),
         milestones(r),
         charts(history)
     )
+}
+
+fn plain_row(c: Vec<Cell>) -> Row {
+    Row {
+        c,
+        k: None,
+        h: None,
+        d: None,
+        m: None,
+    }
+}
+
+/// [`dollar_cell`] as a cell.
+fn dollar_data(cents: Cents) -> Cell {
+    money_cell(
+        palette::Sense::Natural,
+        dollars(cents),
+        cents.trunc_to_dollar(),
+    )
+}
+
+/// [`status`] as a cell: the tone is a class, `neg`, `mid` or `pos`.
+fn status_cell(status: Status, short_by: Option<Cents>) -> Cell {
+    let text = match short_by {
+        Some(gap) => format!("{} {}", status.label(), dollars(gap)),
+        None => status.label().to_string(),
+    };
+    let tone = match status {
+        Status::Short => "neg",
+        Status::OnTrack => "mid",
+        Status::Ahead => "pos",
+    };
+    Cell::Toned(text, tone.to_string())
+}
+
+fn text(s: impl Into<String>) -> Cell {
+    Cell::Text(s.into())
+}
+
+/// [`standing`] as a block: the table, or the sentence in its place.
+fn standing_block(r: &Retirement) -> Block {
+    if r.held.is_empty() {
+        return Block::Note {
+            text: "Mark investment accounts as Retirement on the Accounts screen.".into(),
+        };
+    }
+    let Some(now) = r.now() else {
+        return Block::Note {
+            text: "Set a birth date on the Retirement screen.".into(),
+        };
+    };
+    let saved = match (r.multiple(), r.saved_status()) {
+        (Some(multiple), Some((s, gap))) => plain_row(vec![
+            text("Saved"),
+            dollar_data(r.saved),
+            text(multiple.to_string()),
+            text(now.saved.to_string()),
+            status_cell(s, gap),
+        ]),
+        _ => plain_row(vec![
+            text("Saved"),
+            dollar_data(r.saved),
+            text("Set a salary on the Retirement screen."),
+        ]),
+    };
+    let tax_free = match (r.tax_free_share(), r.tax_free_status()) {
+        (Some(share), Some((s, gap))) => plain_row(vec![
+            text("Tax-free"),
+            dollar_data(r.tax_free),
+            text(format!("{}%", share.tenth_percent())),
+            text(now.tax_free.to_string()),
+            status_cell(s, gap),
+        ]),
+        _ => plain_row(vec![
+            text("Tax-free"),
+            dollar_data(r.tax_free),
+            text(ABSENT),
+        ]),
+    };
+    Block::Table {
+        class: "rs",
+        head: ["", "Balance", "Now", "Target", ""]
+            .map(String::from)
+            .to_vec(),
+        rows: vec![saved, tax_free],
+    }
+}
+
+fn milestones_block(r: &Retirement) -> Block {
+    let rows = r
+        .rows
+        .iter()
+        .map(|row| {
+            let label = match row.now {
+                true => format!("Now ({})", row.age),
+                false => format!("By {}", row.age),
+            };
+            let multiple = match r.salary {
+                Some(_) => row.saved.to_string(),
+                None => ABSENT.to_string(),
+            };
+            let target = row
+                .saved_dollars
+                .map(dollar_band)
+                .unwrap_or_else(|| ABSENT.to_string());
+            plain_row(vec![
+                text(label),
+                text(multiple),
+                text(target),
+                text(row.tax_free.to_string()),
+            ])
+        })
+        .collect();
+    Block::Table {
+        class: "rm",
+        head: ["Milestone", "\u{d7} salary", "Saved $", "Tax-free"]
+            .map(String::from)
+            .to_vec(),
+        rows,
+    }
+}
+
+fn accounts_block(r: &Retirement, acc: &mut Accounts) -> Block {
+    let rows = r
+        .held
+        .iter()
+        .map(|h| {
+            let share = h
+                .share_of(r.saved)
+                .map_or(ABSENT.to_string(), |s| format!("{s}%"));
+            plain_row(vec![
+                acc.cell(&h.account),
+                text(h.tax_label()),
+                dollar_data(h.balance),
+                text(share),
+            ])
+        })
+        .collect();
+    Block::Table {
+        class: "ra",
+        head: ["Account", "Tax", "Balance", "Share"]
+            .map(String::from)
+            .to_vec(),
+        rows,
+    }
+}
+
+/// [`chart`] as data: the same coordinates, every line inked by class
+/// (`ln a-<color>`, `ln total`) rather than by a hex on the element.
+fn chart_block(
+    title: &str,
+    chart: &Chart,
+    charts: &Charts,
+    empty: &str,
+    acc: &mut Accounts,
+) -> Vec<Block> {
+    if chart.series.is_empty() {
+        return vec![
+            Block::Subheading {
+                text: title.to_string(),
+            },
+            Block::Note {
+                text: empty.to_string(),
+            },
+        ];
+    }
+    let mut svg = frame(charts);
+    let mut legend = Vec::new();
+    for series in &chart.series {
+        let class = series
+            .account
+            .render_with(|_, color| format!("ln a-{}", color.as_str()));
+        svg.push_str(&line(charts, &series.points, Ink::Class, &class));
+        legend.push(acc.cell(&series.account));
+    }
+    if !chart.total.is_empty() {
+        svg.push_str(&line(charts, &chart.total, Ink::Class, "ln total"));
+        legend.push(Cell::Toned("Total".to_string(), "total".to_string()));
+    }
+    vec![Block::Chart {
+        title: title.to_string(),
+        svg,
+        legend,
+    }]
+}
+
+/// The Retirement tab as data, in the order [`panel`] draws it.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) fn view(r: &Retirement, history: Option<&Charts>, acc: &mut Accounts) -> TabView {
+    let mut blocks = vec![
+        Block::Heading {
+            text: Cell::Text(title(r)),
+        },
+        standing_block(r),
+        milestones_block(r),
+    ];
+    if !r.held.is_empty() {
+        blocks.push(accounts_block(r, acc));
+    }
+    match history {
+        Some(charts) => {
+            for (name, chart) in [
+                (CASH_TITLE, &charts.cash),
+                (INVESTMENT_TITLE, &charts.investment),
+            ] {
+                blocks.extend(chart_block(name, chart, charts, NO_HISTORY, acc));
+            }
+        }
+        None => {
+            for name in [CASH_TITLE, INVESTMENT_TITLE] {
+                blocks.push(Block::Subheading {
+                    text: name.to_string(),
+                });
+                blocks.push(Block::Note {
+                    text: NO_HISTORY.to_string(),
+                });
+            }
+        }
+    }
+    TabView {
+        id: "retirement",
+        blocks,
+    }
+}
+
+/// The heading both forms open on.
+fn title(r: &Retirement) -> String {
+    let mut title = String::from("Retirement");
+    if let Some(age) = r.age {
+        title.push_str(&format!(" \u{b7} Age {age}"));
+    }
+    if let Some(salary) = r.salary {
+        title.push_str(&format!(" \u{b7} Salary {}", dollars(salary)));
+    }
+    title
 }
 
 #[cfg(test)]
@@ -484,5 +736,136 @@ mod tests {
         let html = panel(&retirement(), None);
         assert_eq!(html.matches("Nothing recorded yet").count(), 2, "{html}");
         assert!(!html.contains("<svg"), "{html}");
+    }
+
+    mod view_tests {
+        use super::super::super::super::view::Accounts;
+        use super::super::super::fixture::json;
+        use super::super::view;
+        use super::{charts, retirement};
+        use crate::money::Cents;
+        use crate::retirement::Retirement;
+        use serde_json::{Value, json};
+
+        fn blocks(r: &Retirement, c: Option<&crate::balance_history::Charts>) -> Vec<Value> {
+            json(&view(r, c, &mut Accounts::new()))["blocks"]
+                .as_array()
+                .unwrap()
+                .clone()
+        }
+
+        fn table<'a>(blocks: &'a [Value], class: &str) -> &'a Value {
+            blocks
+                .iter()
+                .find(|b| b["class"] == class)
+                .unwrap_or_else(|| panic!("no {class} table: {blocks:?}"))
+        }
+
+        #[test]
+        fn retirement_without_marked_accounts_says_where_to_mark_them() {
+            let drawn = blocks(&Retirement::default(), None);
+            assert_eq!(drawn[0], json!({"t": "Heading", "text": "Retirement"}));
+            assert_eq!(
+                drawn[1],
+                json!({"t": "Note",
+                       "text": "Mark investment accounts as Retirement on the Accounts screen."})
+            );
+            assert!(
+                drawn.iter().all(|b| b["class"] != "ra"),
+                "no accounts to list"
+            );
+        }
+
+        #[test]
+        fn the_title_names_the_age_and_the_salary() {
+            let drawn = blocks(&retirement(), None);
+            assert_eq!(
+                drawn[0]["text"],
+                "Retirement \u{b7} Age 37 \u{b7} Salary $100,000"
+            );
+        }
+
+        #[test]
+        fn a_short_status_is_negative_and_names_the_gap() {
+            let drawn = blocks(&retirement(), None);
+            let saved = &table(&drawn, "rs")["rows"][0]["c"];
+            assert_eq!(saved[0], "Saved");
+            assert_eq!(saved[1], "$330,000");
+            assert_eq!(saved[4], json!(["Short $10,000", "neg"]));
+        }
+
+        #[test]
+        fn an_on_track_status_is_mid() {
+            let mut r = retirement();
+            r.saved = Cents::from_dollars(350_000);
+            let drawn = blocks(&r, None);
+            let saved = &table(&drawn, "rs")["rows"][0]["c"];
+            assert_eq!(saved[4][1], "mid", "{saved}");
+        }
+
+        #[test]
+        fn the_milestones_start_at_now_with_their_dollar_bands() {
+            let drawn = blocks(&retirement(), None);
+            let rm = table(&drawn, "rm");
+            assert_eq!(
+                rm["head"],
+                json!(["Milestone", "\u{d7} salary", "Saved $", "Tax-free"])
+            );
+            assert_eq!(rm["rows"][0]["c"][0], "Now (37)");
+            assert!(rm.to_string().contains("$400K \u{2013} $450K"), "{rm}");
+        }
+
+        #[test]
+        fn the_held_accounts_follow_the_milestones() {
+            let drawn = blocks(&retirement(), None);
+            let ra = table(&drawn, "ra");
+            assert_eq!(ra["head"], json!(["Account", "Tax", "Balance", "Share"]));
+            assert_eq!(ra["rows"][0]["c"][3], "100.00%");
+        }
+
+        #[test]
+        fn a_charts_lines_carry_their_account_class_and_no_hex() {
+            let c = charts();
+            let drawn = blocks(&retirement(), Some(&c));
+            let charts: Vec<&Value> = drawn.iter().filter(|b| b["t"] == "Chart").collect();
+            assert_eq!(charts.len(), 2);
+            for chart in &charts {
+                let svg = chart["svg"].as_str().unwrap();
+                let bytes = svg.as_bytes();
+                for (i, _) in svg.match_indices('#') {
+                    assert!(
+                        !bytes[i + 1..].iter().take(6).all(u8::is_ascii_hexdigit),
+                        "a hex color in {svg}"
+                    );
+                }
+                assert!(!svg.contains("stroke=\""), "{svg}");
+            }
+            let investment = charts[1]["svg"].as_str().unwrap();
+            assert!(investment.contains("class=\"ln a-copper\""), "{investment}");
+            assert!(investment.contains("class=\"ln total\""), "{investment}");
+            let legend = charts[1]["legend"].as_array().unwrap();
+            assert_eq!(legend.last().unwrap(), &json!(["Total", "total"]));
+            assert_eq!(legend.len(), 3);
+        }
+
+        #[test]
+        fn a_chart_of_one_account_draws_no_total() {
+            let c = charts();
+            let drawn = blocks(&retirement(), Some(&c));
+            let cash = drawn.iter().find(|b| b["t"] == "Chart").unwrap();
+            assert_eq!(cash["legend"].as_array().unwrap().len(), 1);
+            assert!(!cash["svg"].as_str().unwrap().contains("ln total"));
+        }
+
+        #[test]
+        fn with_nothing_recorded_each_chart_says_so() {
+            let drawn = blocks(&retirement(), None);
+            let notes = drawn
+                .iter()
+                .filter(|b| b["text"] == crate::balance_history::NO_HISTORY)
+                .count();
+            assert_eq!(notes, 2);
+            assert!(drawn.iter().all(|b| b["t"] != "Chart"));
+        }
     }
 }

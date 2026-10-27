@@ -143,6 +143,9 @@ pub fn amount(sense: Sense, cents: Cents) -> Option<Rgb> {
 /// mark is supposed to read as.
 const RAMP_LOW: Rgb = (200, 60, 60);
 const RAMP_MID: Rgb = (200, 180, 60);
+
+/// The middle stop as a status color: on track, between short and ahead.
+pub const STANDING_MID: Rgb = RAMP_MID;
 const RAMP_HIGH: Rgb = (70, 170, 70);
 
 /// Where [`RAMP_MID`] sits, and so the width of each leg.
@@ -183,7 +186,7 @@ pub fn standing(status: crate::calc::retirement::Status) -> Rgb {
     use crate::calc::retirement::Status;
     match status {
         Status::Short => NEGATIVE,
-        Status::OnTrack => RAMP_MID,
+        Status::OnTrack => STANDING_MID,
         Status::Ahead => POSITIVE,
     }
 }
