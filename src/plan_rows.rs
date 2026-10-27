@@ -15,8 +15,9 @@
 //!
 //! [`Row::depth`] is the one place the two mediums genuinely differ and it is
 //! carried as a number for that reason: the screen spends two spaces a level
-//! and the page spends a `sub{n}` class a level, and neither spelling belongs
-//! in a list both of them read.
+//! and the page sets it as the `--d` custom property of a row and indents the
+//! label a rem a level from it, and neither spelling belongs in a list both
+//! of them read.
 
 use crate::account_label::Account;
 use crate::calc::planning::{Plan, PlanSettings, per_period};

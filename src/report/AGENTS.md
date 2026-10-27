@@ -27,7 +27,7 @@ about a figure, one of them is wrong.
   from `Cents`' `Display`. What `report.js` decides is only placement — which element a cell
   becomes, which grid row it lands on — so a payload test is a test of the page's content, and
   `html::page_view` is what those tests assert against.
-- **The payload is safe inside a `<script>` by one rule: every `<` is `<`.**
+- **The payload is safe inside a `<script>` by one rule: every `<` is written `\u003c`.**
   `finance-utils`' `script_json` applies it, which covers `</script>` and `<!--` in any string,
   and JSON reads the escape back as the character it stands for. The script then inserts owner
   text through `textContent` only. The one `innerHTML` is a chart's SVG, which `html::retirement`

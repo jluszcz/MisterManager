@@ -233,6 +233,8 @@
   dialog.id = "hist";
   var head = el("header");
   var title = el("h3");
+  title.id = "hist-title";
+  dialog.setAttribute("aria-labelledby", "hist-title");
   var close = el("button", "x", "×");
   close.type = "button";
   close.setAttribute("aria-label", "Close");

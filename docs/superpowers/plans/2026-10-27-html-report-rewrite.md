@@ -20,7 +20,7 @@
 - Light and dark follow `prefers-color-scheme` only. There is no toggle.
 - **JS decides nothing.** Every figure's text, sign class, color, rounding, order and label comes from Rust. JS only builds DOM, switches tabs and filters months, opens histories, and joins a ledger row's month key with its day.
 - Owner text reaches the DOM only through `textContent`. The single exception is the chart SVG, which Rust builds with `escape`.
-- JSON embedded in `<script>` has every `<` written as `<`.
+- JSON embedded in `<script>` has every `<` written as `\u003c`.
 - Content matches today's report exactly: the same columns (Funds without tax columns or `Stock%`, Savings without `$/Pay`), `HISTORY_MONTHS`, the `Earlier` line, and the same empty-state sentences.
 - Fixtures use only the invented vocabulary in `AGENTS.md`. No real data goes into any tracked file or commit.
 - Never commit a `[patch]` of `finance-utils` into any `Cargo.toml`.
@@ -76,12 +76,12 @@
   It sets no table metrics.
 
 - [ ] **Step 1: Write the failing tests** in `html.rs`'s `mod tests`:
-  - `script_json_escapes_every_angle_bracket`: `script_json(r#"{"a":"</script><!--"}"#)` contains no `<` and contains `</script>`.
+  - `script_json_escapes_every_angle_bracket`: `script_json(r#"{"a":"</script><!--"}"#)` contains no `<` and contains `\u003c/script>`.
   - `app_page_hides_every_panel_but_the_open_one`: with three tabs and `open: 1`, exactly two `<section` tags carry `hidden`, and `id="b-panel"` does not.
   - `a_tab_list_with_icons_draws_the_icon_bar_and_one_without_draws_the_wrapping_row`: `class="tabs icons"` versus `class="tabs wrap"`.
   - `app_page_embeds_data_and_scripts_in_order`: the JSON block comes before `<script>` holding shell.js, which comes before the app script.
   - `app_page_makes_no_external_request`: no `http` in the output (the favicon is base64).
-  - In `mod.rs`: `minified_page_keeps_its_json_and_script`: minify an `app_page` with data `{"k":"v<"}` and a script `document.body.dataset.ok=1`, then assert that the output contains `<` and `dataset.ok`.
+  - In `mod.rs`: `minified_page_keeps_its_json_and_script`: minify an `app_page` with data `{"k":"v<"}` and a script `document.body.dataset.ok=1`, then assert that the output contains `\u003c` and `dataset.ok`.
 - [ ] **Step 2:** Run `cargo test --all-features report::` and check that they FAIL (the items are undefined).
 - [ ] **Step 3:** Implement `NavTab`, `App`, `app_page` and `script_json`, plus the two static files pulled in with `include_str!`. Set `minify_js: true` in `minify`.
 - [ ] **Step 4:** Run `cargo test --all-features` and `cargo clippy --all-targets --all-features -- -D warnings`. Expect a PASS.
@@ -305,7 +305,7 @@
   - legible dark colors
 
   Fix what you see, then check once more.
-- [ ] **Step 6: Device check.** Write the same fixture page to `~/Dropbox/Money/ReportPreview.html` (invented data only). Ask the owner to open it on the iPhone and iPad and report back, and fix what they report. Then the owner runs `cargo run --bin mm -- report` on the real database, and you compare `Written::bytes` against 158,159.
+- [ ] **Step 6: Device check.** Write the same fixture page to `ReportPreview.html` in the report directory (invented data only). Ask the owner to open it on the iPhone and iPad and report back, and fix what they report. Then the owner runs `cargo run --bin mm -- report` on the real database, and you compare `Written::bytes` against the current page's size.
 - [ ] **Step 7:** Rewrite `src/report/AGENTS.md` around the new facts:
   - script plus JSON
   - Rust decides, JS lays out
@@ -315,7 +315,7 @@
   - the palette tokens and the single hex exception
   - `HISTORY_MONTHS`, the quit gate, the rename and minify-on-write, all unchanged
 
-  Update `AGENTS.md` to match. Delete `~/Dropbox/Money/ScriptTest.html`, and `ReportPreview.html` once the owner is happy with it.
+  Update `AGENTS.md` to match. Delete `ScriptTest.html` from the report directory, and `ReportPreview.html` once the owner is happy with it.
 - [ ] **Step 8:** Confirm that the Task 1 PR is merged, remove the local `[patch]`, run `cargo update -p jluszcz_finance_utils`, and re-run the full gate. Commit `feat(report)!: rewrite the HTML report as a responsive, script-drawn page`, with `Cargo.lock`. Then push and open a PR.
 
 ---

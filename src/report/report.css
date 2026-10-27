@@ -64,7 +64,7 @@ button.goal:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 /* Planning: one line a row, the label indented a level at a time. */
 .pl{grid-template-columns:minmax(0,1fr) 5rem minmax(5rem,max-content)}
 .pl>:first-child{padding-left:calc((var(--d,1) - 1) * 1rem)}
-.sub>:first-child{color:var(--mut)}
+:where(.sub>:first-child){color:var(--mut)}
 .pl.head{min-height:0;padding-top:1.1rem;border-bottom:0;font-size:.8rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
 .pl.note{color:var(--mut)}
 

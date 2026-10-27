@@ -27,7 +27,7 @@ use super::view::{Accounts, Page, tokens_css};
 use jluszcz_finance_utils::report::html::{App, NavTab, app_page, script_json};
 
 // Owner text reaches the page two ways, and neither is markup: the payload,
-// where `script_json` turns every `<` into `<` so no string can end the
+// where `script_json` turns every `<` into `\u003c` so no string can end the
 // block, and the script, which inserts every string through `textContent`.
 // The one exception is a chart's SVG, built here, whose only text is a
 // compact figure and a month label -- `retirement` still escapes them, so the
@@ -151,7 +151,7 @@ pub fn page(snapshot: &Snapshot) -> String {
     })
 }
 
-/// The JSON block a page carries, parsed: `<` arrives as `<`, which
+/// The JSON block a page carries, parsed: `<` arrives as `\u003c`, which
 /// JSON reads back as the character it stands for. Tolerates the
 /// minifier's unquoted attributes.
 #[cfg(test)]

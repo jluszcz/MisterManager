@@ -2,18 +2,18 @@
 
 ## Intent
 
-`mm` writes `Money.html` into a Dropbox folder on quit (and on `mm report`). The owner opens it
-when MisterManager and the database are out of reach, usually on an iPhone or iPad inside the
-Dropbox app, sometimes on a computer. It is read-only.
+`mm` writes `Money.html` into the report directory on quit (and on `mm report`). The owner opens it
+when MisterManager and the database are out of reach, usually on an iPhone or iPad inside a
+file-sync app, sometimes on a computer. It is read-only.
 
 The page has grown tab by tab since it was first written, and two things have gone wrong:
 
 - **On phones and tablets the touch targets are too small and the information is too dense.**
   The page shrinks its type on a narrow screen (0.82rem tables, 0.25rem padding, ~22px rows)
   instead of re-laying out.
-- **It is larger than it needs to be.** 158 KB minified on the owner's database. Savings is 66 KB,
-  mostly ~360 goal-history popovers rendered as full HTML whether opened or not. Credit is 48 KB,
-  Cash 17 KB, and the CSS 10 KB, with many generated per-tab, per-month and per-level rules and an
+- **It is larger than it needs to be.** The current page is large on a real database. Most of it is
+  goal histories, one popover per goal rendered as full HTML whether opened or not, and the Credit
+  ledger; the CSS is a small share, with many generated per-tab, per-month and per-level rules and an
   inline `style=` on most percentages.
 
 At the same time, desktop gets no benefit from its width: the page is capped at 40rem everywhere.
@@ -31,7 +31,7 @@ This is a ground-up rewrite of the page in MisterManager, and of the shared page
    side-by-side sections where that helps (Savings' containers).
 3. **Smaller file.** Shared styles, no per-row repetition of anything the stylesheet can say once,
    and data carried as compact JSON instead of markup. My estimate, not a measurement: roughly
-   70–90 KB against today's 158 KB. Success means materially smaller on the same database, as
+   half of the current page. Success means materially smaller on the same database, as
    reported by `Written::bytes`.
 4. **Light and dark follow the system setting.** No toggle.
 5. **Same content.** What the report shows today is the owner's stated minimum. Nothing is dropped
@@ -66,7 +66,7 @@ then Funds, Retirement and Planning.
 
 - **Self-contained single file:** inline CSS, inline JS, inline data, favicon as a `data:` URI.
   It is read from a sync folder, possibly offline.
-- **Verified viewer:** the Dropbox iOS app's preview (WKWebView, iOS 18.7) runs JavaScript and
+- **Verified viewer:** the file-sync iOS app's preview (WKWebView, iOS 18.7) runs JavaScript and
   supports `:has()` and `popover`, tested on 2026-10-27 with a probe page. Recent Safari, Chrome
   and Firefox on desktop are the other targets.
 - **Minified on the way to disk** by `finance-utils`' `report::write`, which today runs
@@ -170,7 +170,7 @@ gutter `max(16px, safe-area)`. Treat these as a starting point.
 
   JS turns an integer of cents into `1,234.56` or `1,234` and nothing more. One JS formatter must
   match `Cents`' `Display`, and a test should pin a few values on both sides.
-- **The JSON must be safe inside `<script>`.** Escape `<` as `<` (which covers `</script>` and
+- **The JSON must be safe inside `<script>`.** Escape `<` as `\u003c` (which covers `</script>` and
   `<!--`) when embedding. The script inserts owner text only through `textContent` or a single
   escape helper. The rule `escape` states today still holds.
 - **The CSS and JS are static files** in `src/report/` (`report.css`, `report.js`), pulled in with
@@ -205,10 +205,10 @@ gutter `max(16px, safe-area)`. Treat these as a starting point.
   - owner text containing `</script>` cannot break out
 - **JS rendering:** whether to add a headless browser or a Node smoke test is the builder's call,
   given what the dev machine and CI have. At minimum, check the rendered page by hand in a desktop
-  browser at phone and desktop widths in both themes, and on the owner's phone through Dropbox,
+  browser at phone and desktop widths in both themes, and on the owner's phone through the file-sync app,
   before calling it done.
 - **On-device handoff:** the builder writes a page rendered from the invented test fixture (no
-  real data) into the owner's Dropbox `Money` folder under a name other than `Money.html`, as the
+  real data) into the report directory under a name other than `Money.html`, as the
   script probe was. The owner opens it on the iPhone and iPad and reports back. After that, the
   owner runs `mm report` on the real database for the final look. No preview mode is added, and
   the `--demo` refusal stays. My call.
@@ -256,5 +256,5 @@ Docs describe the code as it is, not how it got here:
 - The tab bar has two forms: bottom bar with icons for MisterManager, and a wrapping top row for
   icon-less tabs such as Paychecker's years.
 - The shell's base styles leave table sizing to each app.
-- On-device checks use a fixture-rendered page in the Dropbox folder, then a real `mm report`.
+- On-device checks use a fixture-rendered page in the report directory, then a real `mm report`.
 - `finance-utils` keeps the old tab helpers until both apps have moved.
