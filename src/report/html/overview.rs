@@ -2,6 +2,8 @@
 
 use super::{account, escape, money};
 use crate::overview::{Balances, Overview, Section};
+use crate::palette::Sense;
+use crate::report::view::{Accounts, Block, Cell, Row, TabView, money as money_cell};
 
 /// The three `Balances` columns, in Overview order: To-Date, Paycheck-Eve,
 /// Month-End. Keeps its cents, the same precision the Overview screen shows.
@@ -77,10 +79,131 @@ pub(super) fn table(overview: &Overview) -> String {
     )
 }
 
+/// A balance row's three money cells, to the cent.
+fn money_cells(b: Balances) -> Vec<Cell> {
+    [b.to_date, b.adhoc, b.month_end]
+        .into_iter()
+        .map(|c| money_cell(Sense::Natural, c.to_string(), c))
+        .collect()
+}
+
+fn view_row(first: Cell, balances: Balances, total: bool) -> Row {
+    let mut c = vec![first];
+    c.extend(money_cells(balances));
+    Row {
+        c,
+        k: total.then(|| "tot".to_string()),
+        h: None,
+        d: None,
+        m: None,
+    }
+}
+
+/// The Overview as data: one table of the same rows [`table`] draws. Each
+/// section's first row carries `sep`, which is where the script rules a line
+/// between the sections the markup keeps as separate `<tbody>`s.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) fn view(o: &Overview, acc: &mut Accounts) -> TabView {
+    let d = o.dates;
+    let head = std::iter::once(String::new())
+        .chain([d.to_date, d.adhoc, d.month_end].map(|d| d.format("%Y-%m-%d").to_string()))
+        .collect();
+    let mut rows = Vec::new();
+    let mut push_section = |section: &Section, rows: &mut Vec<Row>| {
+        let start = rows.len();
+        for band in &section.bands {
+            for line in &band.lines {
+                let label = match &line.account {
+                    Some(a) => acc.cell(a),
+                    None => Cell::Text(line.label.clone()),
+                };
+                rows.push(view_row(label, line.balances, false));
+            }
+            if section.breaks_down() {
+                let label = Cell::Text(band.group.label().to_string());
+                rows.push(view_row(label, band.total, true));
+            }
+        }
+        let label = Cell::Text(section.kind.label().to_string());
+        rows.push(view_row(label, section.total, true));
+        mark_separated(&mut rows[start]);
+    };
+    push_section(&o.cash, &mut rows);
+    push_section(&o.credit, &mut rows);
+    let start = rows.len();
+    rows.push(view_row(Cell::Text("Net".to_string()), o.net, true));
+    mark_separated(&mut rows[start]);
+    TabView {
+        id: "overview",
+        blocks: vec![Block::Table {
+            class: "ov",
+            head,
+            rows,
+        }],
+    }
+}
+
+fn mark_separated(row: &mut Row) {
+    row.k = Some(match row.k.take() {
+        Some(k) => format!("sep {k}"),
+        None => "sep".to_string(),
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::fixture::{panel, row, snapshot, tables};
+    use super::super::fixture::{json, panel, row, snapshot, tables};
     use super::super::page;
+    use super::view;
+    use crate::report::view::Accounts;
+    use serde_json::json;
+
+    fn table(snapshot: &crate::report::Snapshot) -> serde_json::Value {
+        json(&view(&snapshot.overview, &mut Accounts::new()))["blocks"][0].clone()
+    }
+
+    #[test]
+    fn the_three_projection_dates_head_the_overview() {
+        let t = table(&snapshot(vec![], 1_000));
+        assert_eq!(t["t"], "Table");
+        assert_eq!(t["class"], "ov");
+        assert_eq!(
+            t["head"],
+            json!(["", "2026-08-21", "2026-08-27", "2026-09-01"])
+        );
+    }
+
+    #[test]
+    fn credit_totals_are_bold_and_net_closes_the_table() {
+        let t = table(&snapshot(vec![], 1_000));
+        let rows = t["rows"].as_array().unwrap();
+        let label = |r: &serde_json::Value| r["c"][0].clone();
+        // Cash: one account line, then its total; Credit likewise; then Net.
+        assert_eq!(rows.len(), 5);
+        assert_eq!(label(&rows[1]), "Cash");
+        assert_eq!(rows[1]["k"], "tot");
+        assert_eq!(label(&rows[3]), "Credit");
+        assert_eq!(rows[3]["k"], "tot");
+        let net = rows.last().unwrap();
+        assert_eq!(label(net), "Net");
+        assert_eq!(net["k"], "sep tot");
+        assert_eq!(net["c"][1], "1,000.00");
+    }
+
+    #[test]
+    fn each_sections_first_row_is_set_apart_and_a_single_band_has_no_subtotal() {
+        let t = table(&snapshot(vec![], 1_000));
+        let rows = t["rows"].as_array().unwrap();
+        assert_eq!(rows[0]["k"], "sep");
+        assert_eq!(rows[2]["k"], "sep");
+        assert!(rows[0]["c"][0].is_number(), "an account is an index");
+    }
+
+    #[test]
+    fn a_negative_cash_balance_is_toned() {
+        let t = table(&snapshot(vec![], -1_000));
+        assert_eq!(t["rows"][0]["c"][1], json!(["-1,000.00", "neg"]));
+    }
 
     /// A date labels the column beneath it, so it has to be that column's
     /// header: set above the table as a line of prose it lined up with

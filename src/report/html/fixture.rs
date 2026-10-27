@@ -524,3 +524,8 @@ pub(super) fn without_positional_tables(page: &str) -> String {
         rest = &rest[at + end + close.len()..];
     }
 }
+
+/// A view type as the JSON the script is handed, for assertions on its shape.
+pub(super) fn json(v: &impl serde::Serialize) -> serde_json::Value {
+    serde_json::to_value(v).unwrap()
+}

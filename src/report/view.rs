@@ -97,7 +97,13 @@ pub struct History {
     pub name: String,
     pub note: Option<String>,
     pub rows: Vec<Row>,
+    /// What the script says in place of a table when `rows` is empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub empty: Option<&'static str>,
 }
+
+/// What a goal with no allocations at all is told.
+pub const NO_ALLOCATIONS: &str = "No allocations yet.";
 
 #[derive(Debug, Serialize)]
 pub struct TabView {
