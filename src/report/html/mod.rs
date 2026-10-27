@@ -1,8 +1,9 @@
 //! The report as one page.
 //!
-//! Self-contained by requirement: inline CSS, no script, no font, no image, no
-//! request of any kind. A phone opening this out of a sync folder may be
-//! offline, and anything fetched would render half-drawn or not at all. That
+//! Self-contained by requirement: inline CSS, no script, no font, no image
+//! beyond the favicon inlined as a `data:` URI, no request of any kind. A
+//! phone opening this out of a sync folder may be offline, and anything
+//! fetched would render half-drawn or not at all. That
 //! is also why every control here is a radio button and a sibling selector,
 //! or a `popover` attribute: the tabs and the ledgers' month filter are CSS
 //! and a goal's history is HTML, because a click handler would be the one
@@ -491,6 +492,7 @@ pub fn page(snapshot: &Snapshot) -> String {
     );
     shared::page(
         "Money",
+        Some("\u{1F4B0}"),
         &format!("{STYLE}{rules}"),
         &format!("{}{body}", tab_bar()),
         &format!("Generated {}", snapshot.generated_at.format(STAMP_FORMAT)),
@@ -514,6 +516,20 @@ mod tests {
         ));
         assert!(!page.contains("http"), "the page reaches out of itself");
         assert!(!page.contains("<script"), "the page carries script");
+    }
+
+    /// The favicon is the one image on the page, and it has to arrive inline
+    /// for the reason everything else does.
+    #[test]
+    fn the_page_carries_its_favicon_inline() {
+        let page = page(&snapshot(
+            vec![fixture::row("Rainy Day", 500, 1_000)],
+            1_000,
+        ));
+        assert!(
+            page.contains("<link rel=\"icon\" href=\"data:image/svg+xml;base64,"),
+            "the page has no inline favicon"
+        );
     }
 
     /// Seven tabs, seven panels, and the switch wired between them. A tab whose
