@@ -287,6 +287,7 @@ mod tests {
     use crate::tui::modal::Modal;
     use crate::tui::search::Search;
     use crate::tui::{goal_form, worksheet as worksheet_screen};
+    use jluszcz_finance_utils::tui::app::App as _;
     use ratatui::crossterm::event::KeyCode;
 
     /// The payday worksheet opens on the Tab container with `per_paycheck`
@@ -427,6 +428,30 @@ mod tests {
         let after: Vec<Cents> = worksheet(&app).lines().iter().map(|l| l.amount).collect();
         assert_eq!(before, after, "s must not spread while the date is focused");
         assert!(worksheet(&app).date_text().ends_with('s'));
+    }
+
+    /// A paste on a line is a figure, not a run of operators: the `/` in a
+    /// pasted `1/2` must not divide by the `2` after it, nor a pasted `s`
+    /// spread the pot. The line takes the digits, exactly as typing them would.
+    #[test]
+    fn a_paste_on_a_worksheet_line_types_its_digits_and_runs_no_operator() {
+        let open_on_lines = || {
+            let mut app = app();
+            press(&mut app, KeyCode::Char('4'));
+            press(&mut app, KeyCode::Char('A'));
+            press(&mut app, KeyCode::Tab);
+            press(&mut app, KeyCode::Tab);
+            app
+        };
+        let mut pasted = open_on_lines();
+        pasted.on_paste("1/2 s".to_string());
+        let mut typed = open_on_lines();
+        type_str(&mut typed, "12");
+
+        let amounts =
+            |app: &App| -> Vec<Cents> { worksheet(app).lines().iter().map(|l| l.amount).collect() };
+        assert_eq!(amounts(&pasted), amounts(&typed));
+        assert!(!worksheet(&pasted).is_searching());
     }
 
     /// The worksheet's date is a text field with a key handler of its own,

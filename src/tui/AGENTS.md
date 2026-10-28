@@ -431,6 +431,11 @@ deferred to nothing.
 
 ## Invariants worth knowing before editing a screen
 
+- **A paste types only where a key would reach a buffer, and is dropped everywhere else.**
+  `App::on_paste` gates on `Topic::takes_editing_keys` and the Help panel, then dispatches the
+  paste's characters — trimmed, line breaks dropped — as one action. A screen reads a character as
+  a command, so a paste typed there would switch screens on its digits; the worksheet's two digit
+  focuses read everything else as an operator, so a paste there keeps only its digits.
 - **No screen formats a `Cents` itself.** Every figure a screen draws goes through `tui::amount`,
   `amount_in`, `whole_amount`, `money_span`, `money_text` or `whole_money_span` — or, where it
   lands in prose rather than a cell, through `demo::figure`/`whole_figure` directly. Two reasons,
