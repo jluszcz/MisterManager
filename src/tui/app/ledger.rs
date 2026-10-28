@@ -909,6 +909,40 @@ mod tests {
         assert!(drawn(&mut app).contains("Target $1,200.00"));
     }
 
+    /// A figure copied off a statement brings the line breaks around it. The
+    /// paste lands in the field whole and the form waits for `Enter`, rather
+    /// than the break saving an empty target and the digits after it
+    /// switching screens.
+    #[test]
+    fn a_pasted_target_lands_in_the_field_without_its_line_breaks() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('r'));
+        app.on_paste("\n$1,200.00\r\n".to_string());
+
+        assert_eq!(app.screen, Screen::Cash);
+        let Some(Modal::Value(ValueTarget::Reconcile(_), form)) = &app.modal else {
+            panic!("the paste must leave the form open: {:?}", app.status);
+        };
+        assert_eq!(form.value(), "$1,200.00");
+
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.cash.target(), Some(Cents(120_000)));
+    }
+
+    /// With no caret on screen a paste has nowhere to go, and reading it as
+    /// keys would run its characters as commands.
+    #[test]
+    fn a_paste_with_no_field_open_is_dropped() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        app.on_paste("1q".to_string());
+
+        assert_eq!(app.screen, Screen::Cash);
+        assert!(!app.should_quit());
+    }
+
     /// Under All the border quotes the whole kind's balance, which no
     /// statement names. The key says so rather than opening a form over a
     /// figure it cannot check.

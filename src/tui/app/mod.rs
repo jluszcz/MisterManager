@@ -1097,6 +1097,39 @@ impl jluszcz_finance_utils::tui::app::App for App {
         self.start_status_clock();
     }
 
+    /// Type a paste into whatever holds a caret, and drop it anywhere else: a
+    /// screen reads a character as a command, and a pasted `$1,000.00` would
+    /// switch screens on its digits.
+    ///
+    /// The worksheet's two digit focuses read every other character as an
+    /// operator -- `-` clears the selection, `s` spreads the pot, and the `/`
+    /// in a pasted `10/28` divides by the `2` after it -- so there the paste
+    /// is cut to its digits, which is all those focuses ever type. The paste
+    /// is one action rather than a run of presses: the status is cleared once,
+    /// and the first refusal stops it and stays on screen rather than being
+    /// wiped by the next character.
+    fn on_paste(&mut self, text: String) {
+        if self.help.is_some() || !self.topic().takes_editing_keys() {
+            return;
+        }
+        let digits_only = matches!(
+            &self.modal,
+            Some(Modal::Worksheet(sheet))
+                if !sheet.is_searching() && sheet.focus() != super::worksheet::Focus::Date
+        );
+        self.status.clear();
+        for key in jluszcz_finance_utils::tui::app::paste_keys(&text) {
+            if digits_only && !matches!(key.code, KeyCode::Char(c) if c.is_ascii_digit()) {
+                continue;
+            }
+            if let Err(err) = self.dispatch(key) {
+                self.status = format!("{err:#}");
+                break;
+            }
+        }
+        self.start_status_clock();
+    }
+
     /// Run that work, and report it the way a key press reports its own.
     ///
     /// Called by the event loop immediately after the draw, which is the
