@@ -170,7 +170,7 @@ pub const NOTHING_TO_TRANSFER: &str = "nothing to transfer";
 /// as the condition it reports got worse.
 ///
 /// One rule rather than one per sink: the Planning screen draws this in a
-/// table cell and the report in a `<td>`, and two of them deciding
+/// table cell and the report as a row of the Planning tab's payload, and two of them deciding
 /// separately when a payday is under-funded is two chances to disagree about
 /// the one thing the owner reads either of them for.
 pub fn unmet_asks(plug: Cents, asked: Cents) -> Option<Cents> {

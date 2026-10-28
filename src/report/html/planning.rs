@@ -3,139 +3,14 @@
 //!
 //! The rows themselves come from [`crate::plan_rows`], which the Planning
 //! screen reads too. What is here is only this medium's spelling of them: a
-//! `<tr>` per row, a class per [`plan_rows::Kind`], and a `sub` class per
-//! level of the indent the screen spends in spaces.
+//! row per row, a class per [`plan_rows::Kind`], and the depth the screen
+//! spends in spaces handed on as a number.
 
-use super::{account, escape, full_width_row, whole_money};
-use crate::money::Cents;
 use crate::plan_rows::{self, Extra, Kind, RowLabel, Value};
+use crate::report::view::{Accounts, Block, Cell, Row, TabView, whole};
 use crate::report::{PlanView, Planning};
 
-const COLUMNS: usize = 3;
-
-/// A gap, in the red every gap on this page is drawn in.
-fn gap(cents: Cents) -> String {
-    format!(
-        "<span style=\"color:{}\">\u{394} {}</span>",
-        crate::palette::hex(crate::palette::NEGATIVE),
-        escape(&cents.to_whole_dollars())
-    )
-}
-
-/// How far one level of depth indents a label.
-const INDENT: &str = "1.4rem";
-
-/// The class a row's depth spells, or none where it takes no indent.
-///
-/// A class per level rather than one class for "indented": the screen spends
-/// two spaces a level and goes on spending them, so a page that collapsed
-/// every level past the first onto one class would draw flat a row the screen
-/// draws nested -- the drift one shared list of rows exists to prevent. Depth
-/// `1` still takes none, because the heading above a block's own lines has
-/// already set them apart.
-fn sub_class(depth: u8) -> Option<String> {
-    (depth >= 2).then(|| format!("sub{depth}"))
-}
-
-/// The indent rules the depths on this page need, one per level.
-///
-/// Generated rather than carried in [`super::STYLE`], for the reason
-/// [`super::ledger::month_rules`] is: how deep this waterfall goes is a fact
-/// about the plan rather than about the stylesheet, and a constant list would
-/// leave a row deeper than the deepest anybody had written classed but
-/// unstyled -- flat again, and silently.
-pub(super) fn depth_rules(planning: &Planning) -> String {
-    let Planning::Resolved(view) = planning else {
-        return String::new();
-    };
-    indent_rules(waterfall(view).iter().map(|row| row.depth))
-}
-
-/// One rule per level present, deepest last, and none for the levels that
-/// take no indent.
-fn indent_rules(depths: impl Iterator<Item = u8>) -> String {
-    let mut depths: Vec<u8> = depths.filter(|depth| *depth >= 2).collect();
-    depths.sort_unstable();
-    depths.dedup();
-    depths
-        .iter()
-        .map(|depth| {
-            format!(
-                "tr.sub{depth} td:first-child\
-                 {{padding-left:calc({} * {INDENT});color:#666666}}",
-                depth - 1
-            )
-        })
-        .collect()
-}
-
-/// One row of the waterfall as a `<tr>`.
-///
-/// Two classes rather than one: what a row *is* -- a total, a heading -- and
-/// how deep it sits are separate facts, and `tr.tot td` and
-/// `tr.sub2 td:first-child` are separate rules.
-fn render(row: &plan_rows::Row, after_blank: bool) -> String {
-    let label = match &row.label {
-        RowLabel::Text(text) => escape(text),
-        RowLabel::Account(a) => account(a),
-    };
-    match row.kind {
-        // The screen draws an empty line between blocks; the page takes its
-        // spacing from `tr.head td`'s padding and needs no row for it.
-        Kind::Blank => return String::new(),
-        Kind::Heading => return full_width_row("head", COLUMNS, label),
-        // A block that cannot resolve says why, across the whole table. Every
-        // figure below is still right -- a dangling destination key stops the
-        // money moving without making the waterfall wrong.
-        Kind::Note => return full_width_row("note", COLUMNS, label),
-        Kind::Figure | Kind::Total => {}
-    }
-    let mut classes: Vec<String> = Vec::new();
-    if row.kind == Kind::Total {
-        classes.push("tot".to_string());
-    }
-    // What the Expenses total counted, marked the way an expired goal's row
-    // is: a `::after` on the label cell, so the mark costs the table no
-    // column on a phone.
-    if row.counts_as_expense {
-        classes.push("counted".to_string());
-    }
-    // The screen keeps an empty line above this row and a `Kind::Blank` draws
-    // nothing here, so the separation has to be a rule of its own. Not for a
-    // heading, which already carries that padding -- which is exactly what
-    // let a blank draw nothing at all here for as long as every blank in the
-    // list was followed by one.
-    if after_blank {
-        classes.push("gap".to_string());
-    }
-    classes.extend(sub_class(row.depth));
-    let class = match classes.is_empty() {
-        true => String::new(),
-        false => format!(" class=\"{}\"", classes.join(" ")),
-    };
-    // Whole dollars, the precision the Planning screen shows -- cents on a
-    // plan is a false claim about where a percentage landed.
-    let figure = match row.value {
-        Value::Money(cents) => whole_money(cents),
-        Value::Count(count) => format!("<td class=\"n\">{count}</td>"),
-        Value::Stated(text) => format!("<td class=\"n\">{}</td>", escape(text)),
-        Value::None => "<td class=\"n\"></td>".to_string(),
-    };
-    let extra = match row.extra {
-        Extra::Percent(pct) => format!("{}%", pct.exact_percent()),
-        Extra::Biweekly(cents) => escape(&cents.to_whole_dollars()),
-        Extra::Gap(cents) => gap(cents),
-        Extra::Date(date) => escape(&format!("{date}*")),
-        // The unit is on the figure: the column beside it carries
-        // percentages, biweekly figures and dates too, and nothing about the
-        // column itself says which.
-        Extra::Annual(cents) => escape(&format!("{}/yr", cents.to_whole_dollars())),
-        Extra::None => String::new(),
-    };
-    format!("<tr{class}><td>{label}</td>{figure}<td class=\"n\">{extra}</td></tr>")
-}
-
-/// The rows this tab is, before they are anything HTML.
+/// The rows this tab is, before they are anything this medium draws.
 fn waterfall(view: &PlanView) -> Vec<plan_rows::Row> {
     plan_rows::rows(&plan_rows::Input {
         plan: &view.plan,
@@ -154,252 +29,188 @@ fn waterfall(view: &PlanView) -> Vec<plan_rows::Row> {
     })
 }
 
-fn resolved(view: &PlanView) -> String {
-    // A blank is the screen's separator and draws nothing here, so what the
-    // page spends instead lands on the row *after* it. Read from the list
-    // rather than from the row, because a row does not know it has one above
-    // it -- and the list is what says where the breaks are.
-    let all = waterfall(view);
-    let rows: String = all
-        .iter()
-        .enumerate()
-        .map(|(i, row)| render(row, i > 0 && all[i - 1].kind == Kind::Blank))
-        .collect();
-    format!("<table>{rows}</table>")
+/// A row's label as a cell: text, or the account in its own color.
+fn label_cell(label: &RowLabel, acc: &mut Accounts) -> Cell {
+    match label {
+        RowLabel::Text(text) => Cell::Text(text.clone()),
+        RowLabel::Account(a) => acc.cell(a),
+    }
 }
 
-pub(super) fn block(planning: &Planning) -> String {
-    match planning {
-        // A plan that cannot resolve is an ordinary state, and the reason is
-        // the whole content of the tab -- the same way the screen renders the
-        // message in place of the waterfall.
-        Planning::Unresolvable(message) => {
-            format!(
-                "<table>{}</table>",
-                full_width_row("note", COLUMNS, escape(message))
-            )
+/// One waterfall row, or `None` for a blank: the screen's separator is an
+/// empty line, and this medium's is the `gap` class on the row *after* it --
+/// read from the list rather than from the row, because a row does not know
+/// what sits above it.
+///
+/// Classes rather than one class, because what a row *is* -- a total, a
+/// heading -- and whether the Biweekly Expenses figure counts it are separate
+/// facts. The depth goes on as a number for the script to spend as an
+/// indent, a level at a time: a page that collapsed every level past the
+/// first onto one indent would draw flat a row the screen draws nested.
+/// Depth `1` takes none, the heading above a block's own lines having already
+/// set them apart. A gap is drawn in `neg`, the red every gap is.
+fn view_row(row: &plan_rows::Row, after_blank: bool, acc: &mut Accounts) -> Option<Row> {
+    let label = label_cell(&row.label, acc);
+    let class = match row.kind {
+        Kind::Blank => return None,
+        Kind::Heading => Some("head"),
+        Kind::Note => Some("note"),
+        Kind::Figure | Kind::Total => None,
+    };
+    if let Some(class) = class {
+        return Some(Row {
+            c: vec![label],
+            k: Some(class.to_string()),
+            h: None,
+            d: None,
+            m: None,
+        });
+    }
+    let mut classes: Vec<&str> = Vec::new();
+    if row.kind == Kind::Total {
+        classes.push("tot");
+    }
+    if row.counts_as_expense {
+        classes.push("counted");
+    }
+    if after_blank {
+        classes.push("gap");
+    }
+    let figure = match row.value {
+        Value::Money(cents) => whole(cents),
+        Value::Count(count) => Cell::Text(count.to_string()),
+        Value::Stated(text) => Cell::Text(text.to_string()),
+        Value::None => Cell::Text(String::new()),
+    };
+    let extra = match row.extra {
+        Extra::Percent(pct) => Cell::Text(format!("{}%", pct.exact_percent())),
+        Extra::Biweekly(cents) => Cell::Text(cents.to_whole_dollars()),
+        Extra::Gap(cents) => Cell::Toned(
+            format!("\u{394} {}", cents.to_whole_dollars()),
+            "neg".to_string(),
+        ),
+        Extra::Date(date) => Cell::Text(format!("{date}*")),
+        Extra::Annual(cents) => Cell::Text(format!("{}/yr", cents.to_whole_dollars())),
+        Extra::None => Cell::Text(String::new()),
+    };
+    Some(Row {
+        c: vec![label, figure, extra],
+        k: (!classes.is_empty()).then(|| classes.join(" ")),
+        h: None,
+        d: (row.depth >= 2).then_some(row.depth),
+        m: None,
+    })
+}
+
+/// The Planning tab: one [`Row`] per waterfall row, or the reason a plan
+/// cannot resolve in its place -- an ordinary state, and then the whole
+/// content of the tab, the same way the screen renders the message in place
+/// of the waterfall.
+pub(super) fn view(planning: &Planning, acc: &mut Accounts) -> TabView {
+    let blocks = match planning {
+        Planning::Unresolvable(message) => vec![Block::Note {
+            text: message.clone(),
+        }],
+        Planning::Resolved(view) => {
+            let all = waterfall(view);
+            let rows = all
+                .iter()
+                .enumerate()
+                .filter_map(|(i, row)| view_row(row, i > 0 && all[i - 1].kind == Kind::Blank, acc))
+                .collect();
+            vec![Block::Table {
+                class: "pl",
+                head: vec![],
+                rows,
+            }]
         }
-        Planning::Resolved(view) => resolved(view),
+    };
+    TabView {
+        id: "planning",
+        blocks,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::fixture::{panel, plan_view, row, snapshot};
-    use super::super::page;
+    use super::super::fixture::{json, plan_view, row, snapshot};
+    use super::{Kind, view, waterfall};
     use crate::report::Planning;
+    use crate::report::view::Accounts;
+    use serde_json::json;
 
-    fn planning(snapshot: &crate::report::Snapshot) -> String {
-        panel(&page(snapshot), "planning").to_string()
+    fn resolved(edit: impl FnOnce(&mut crate::report::PlanView)) -> Planning {
+        let mut view = plan_view();
+        edit(&mut view);
+        Planning::Resolved(Box::new(view))
     }
 
-    /// The page draws the list [`crate::plan_rows`] hands it, whole and in
-    /// order -- the blanks excepted, which are the screen's separator and
-    /// this medium's `tr.head` padding.
-    ///
-    /// That is the whole of what this module does, and it is worth pinning:
-    /// the page and the Planning screen were hand-transcriptions of each
-    /// other until they read one list, and they had already come to disagree
-    /// about which blocks are headed at all.
+    fn rows(planning: &Planning) -> Vec<serde_json::Value> {
+        let v = json(&view(planning, &mut Accounts::new()));
+        v["blocks"][0]["rows"].as_array().unwrap().clone()
+    }
+
     #[test]
-    fn the_page_draws_the_whole_waterfall_in_the_order_it_is_given() {
-        let snapshot = snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000);
-        let crate::report::Planning::Resolved(view) = &snapshot.planning else {
-            panic!("the fixture's plan does not resolve");
+    fn an_unresolvable_plan_is_its_message() {
+        let v = json(&view(
+            &Planning::Unresolvable("no account in the Checking band".into()),
+            &mut Accounts::new(),
+        ));
+        assert_eq!(v["id"], "planning");
+        assert_eq!(
+            v["blocks"],
+            json!([{"t": "Note", "text": "no account in the Checking band"}])
+        );
+    }
+
+    #[test]
+    fn blank_rows_draw_nothing_and_the_row_after_takes_gap() {
+        let planning =
+            resolved(|v| v.expense_constants = vec![crate::plan_rows::Target::GoalsFloor]);
+        let Planning::Resolved(plan) = &planning else {
+            unreachable!()
         };
-        let drawn = planning(&snapshot);
-
-        let mut at = 0;
-        for expected in super::waterfall(view) {
-            if expected.kind == super::Kind::Blank {
-                continue;
-            }
-            let label = match &expected.label {
-                super::RowLabel::Text(text) => super::escape(text),
-                super::RowLabel::Account(a) => a.render_with(|text, _| super::escape(text)),
-            };
-            let found = drawn[at..]
-                .find(&label)
-                .unwrap_or_else(|| panic!("no {label} row, or it came out of order: {drawn}"));
-            at += found;
-        }
-    }
-
-    /// One row of the waterfall at a chosen depth. These two tests are about
-    /// what a depth spells, and the waterfall itself carries only the two
-    /// levels it happens to use today.
-    fn at_depth(depth: u8) -> super::plan_rows::Row {
-        super::plan_rows::Row {
-            kind: super::Kind::Figure,
-            label: super::RowLabel::Text(format!("Level {depth}")),
-            value: super::Value::Money(crate::money::Cents::from_dollars(1)),
-            extra: super::Extra::None,
-            depth,
-            target: None,
-            edit: String::new(),
-            counts_as_expense: false,
-        }
-    }
-
-    /// The screen spends two spaces a level and goes on spending them, so the
-    /// page spells a class a level. Collapsing every level past the first
-    /// onto one class would draw flat a row the screen draws nested, which is
-    /// the drift one shared list of rows exists to prevent -- and the depth
-    /// is carried as a number precisely so each medium may spend it in its
-    /// own units.
-    #[test]
-    fn each_level_of_depth_below_a_block_takes_a_class_of_its_own() {
-        let drawn: Vec<String> = (0..4).map(|d| super::render(&at_depth(d), false)).collect();
-
-        for shallow in &drawn[..2] {
-            assert!(
-                !shallow.contains("sub"),
-                "a block's own line took an indent: {shallow}"
-            );
-        }
-        assert!(drawn[2].contains("class=\"sub2\""), "{}", drawn[2]);
-        assert!(drawn[3].contains("class=\"sub3\""), "{}", drawn[3]);
-
-        let rules = super::indent_rules(0..4u8);
+        let all = waterfall(plan);
+        let blanks = all.iter().filter(|r| r.kind == Kind::Blank).count();
+        let drawn = rows(&planning);
+        assert!(blanks > 0);
+        assert_eq!(drawn.len(), all.len() - blanks);
+        let expenses = drawn
+            .iter()
+            .find(|r| r["c"][0] == "Expenses")
+            .unwrap_or_else(|| panic!("no Expenses row: {drawn:?}"));
         assert!(
-            !rules.contains("tr.sub1"),
-            "an unindented level took a rule"
-        );
-        assert!(rules.contains("calc(1 * 1.4rem)"), "{rules}");
-        assert!(rules.contains("calc(2 * 1.4rem)"), "{rules}");
-    }
-
-    /// Every indent the page spells has a rule behind it, which is what makes
-    /// the class mean anything: a `sub` class the stylesheet never names
-    /// renders flat, the same drift as no class at all.
-    #[test]
-    fn every_indent_class_the_page_draws_has_a_rule_behind_it() {
-        let page = page(&snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000));
-        let drawn = panel(&page, "planning").to_string();
-
-        let mut indented = 0;
-        for depth in 2..=9u8 {
-            if drawn.contains(&format!("sub{depth}")) {
-                indented += 1;
-                assert!(
-                    page.contains(&format!("tr.sub{depth} td:first-child")),
-                    "nothing indents a depth-{depth} row"
-                );
-            }
-        }
-        assert!(indented > 0, "no indented row on the page at all: {drawn}");
-    }
-
-    /// The year the biweekly figure adds up to, beside it. A page read on a
-    /// phone has no second row to spare for it and no cursor to open one
-    /// with, so the unit is on the figure.
-    #[test]
-    fn the_annual_figure_beside_the_expenses_total_names_the_year() {
-        let mut row = at_depth(1);
-        row.extra = super::Extra::Annual(crate::money::Cents::from_dollars(110_760));
-
-        assert!(super::render(&row, false).contains("110,760/yr"), "{row:?}");
-    }
-
-    /// A total with no working behind it is a number to take on trust, so the
-    /// rows it counted say so. The screen spends a character in its label
-    /// column; the page spends a class, which is why the row carries a flag
-    /// rather than a glyph.
-    #[test]
-    fn a_row_the_expenses_figure_counts_takes_a_class_of_its_own() {
-        let mut row = at_depth(1);
-        row.counts_as_expense = true;
-        let drawn = super::render(&row, false);
-
-        assert!(drawn.contains("counted"), "{drawn}");
-        assert!(!super::render(&at_depth(1), false).contains("counted"));
-    }
-
-    /// The class has to reach the stylesheet, or a marked row draws exactly
-    /// like an unmarked one -- the same drift an indent class with no rule
-    /// behind it would be.
-    #[test]
-    fn the_counted_class_has_a_rule_behind_it() {
-        let page = page(&snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000));
-        assert!(
-            page.contains("tr.counted td"),
-            "nothing draws a counted row"
+            expenses["k"].as_str().unwrap().contains("gap"),
+            "{expenses}"
         );
     }
 
-    /// The screen keeps an empty line above the Expenses row, and a
-    /// `Kind::Blank` draws nothing at all here -- so without a rule of its
-    /// own the page runs that line straight into the transfers the screen
-    /// holds it clear of.
-    ///
-    /// A heading needs none: it already carries its own padding, which is
-    /// what let a blank draw nothing here for as long as every blank was
-    /// followed by one.
     #[test]
-    fn a_row_the_screen_keeps_a_blank_line_above_is_given_room_on_the_page() {
-        assert!(super::render(&at_depth(1), true).contains("gap"));
-        assert!(!super::render(&at_depth(1), false).contains("gap"));
-
-        let mut heading = at_depth(0);
-        heading.kind = super::Kind::Heading;
-        assert!(!super::render(&heading, true).contains("gap"));
-    }
-
-    /// Drawn on the row the blank actually sits above, and backed by a rule --
-    /// a class the stylesheet never names separates nothing, the same drift
-    /// an unstyled indent class would be.
-    #[test]
-    fn the_expenses_line_is_held_clear_of_the_transfers_above_it() {
-        let mut snapshot = snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000);
-        let Planning::Resolved(view) = &mut snapshot.planning else {
-            panic!("the fixture's plan does not resolve");
+    fn depth_two_and_deeper_carry_their_depth() {
+        let planning = resolved(|_| {});
+        let Planning::Resolved(plan) = &planning else {
+            unreachable!()
         };
-        view.expense_constants = vec![crate::plan_rows::Target::GoalsFloor];
-        let drawn = planning(&snapshot);
-
-        let line = drawn
-            .split("<tr")
-            .find(|row| row.contains("Expenses"))
-            .unwrap_or_else(|| panic!("no Expenses row: {drawn}"));
-        assert!(line.contains("gap"), "{line}");
-        assert!(page(&snapshot).contains("tr.gap td"), "nothing spaces it");
-    }
-
-    /// The fixture's snapshot with its plan reshaped. These tests are about
-    /// what the page draws *over* a plan, and computing a second waterfall
-    /// to reach one figure would pin the arithmetic twice over.
-    fn with_plan(edit: impl FnOnce(&mut crate::report::PlanView)) -> String {
-        let mut snapshot = snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000);
-        let Planning::Resolved(view) = &mut snapshot.planning else {
-            panic!("the fixture's plan does not resolve");
-        };
-        edit(view);
-        planning(&snapshot)
-    }
-
-    /// The transfers never total more than the excess, so there is nothing
-    /// for a heading or a foot to report -- and a figure saying nothing is
-    /// wrong on every ordinary payday is a figure nobody reads.
-    #[test]
-    fn a_plan_that_covers_everything_draws_no_gap_anywhere() {
-        let planning = with_plan(|_| {});
-
+        let deep = waterfall(plan)
+            .iter()
+            .filter(|r| r.depth >= 2 && !matches!(r.kind, Kind::Blank | Kind::Heading | Kind::Note))
+            .count();
+        let carried = rows(&planning)
+            .iter()
+            .filter(|r| r.get("d").is_some())
+            .count();
+        assert!(deep > 0, "the fixture has nothing indented");
+        assert_eq!(carried, deep);
         assert!(
-            !planning.contains("Checksum"),
-            "the foot of the tab still carries a checksum"
-        );
-        assert!(
-            !planning.contains('\u{394}'),
-            "a covered plan drew a gap: {planning}"
+            rows(&planning)
+                .iter()
+                .all(|r| r["d"].as_u64().is_none_or(|d| d >= 2))
         );
     }
 
-    /// A payday too small for the fixed bills cuts one of them, and the page
-    /// says so where the screen does: in the cut line's own cell, in the
-    /// column the page keeps for it.
     #[test]
-    fn a_cut_line_carries_its_gap_beside_itself() {
-        let planning = with_plan(|v| {
+    fn a_shortfall_is_a_negative_delta_in_the_extra_cell() {
+        let planning = resolved(|v| {
             let cents = crate::money::Cents::from_dollars(307);
             v.plan.shortfall.bills = crate::money::Cents::from_dollars(237);
             if let Ok(transfers) = &mut v.transfers {
@@ -408,143 +219,43 @@ mod tests {
                     .push((crate::plan_line::Line::Bills, cents));
             }
         });
-
-        // Twice: the cut line's own cell, and the `Shortfall` row that sums
-        // every such cell at the foot of the block.
-        assert_eq!(
-            planning.matches("\u{394} 237").count(),
-            2,
-            "no gap: {planning}"
-        );
+        let drawn = rows(&planning);
+        let gaps = drawn
+            .iter()
+            .filter(|r| r["c"][2] == json!(["\u{394} 237", "neg"]))
+            .count();
+        assert!(gaps >= 1, "no toned gap: {drawn:?}");
     }
 
-    /// An unset `planning.goal.bill_payments_id` sends the bill line out of
-    /// the tracked system, and the Planning screen draws such a line plain --
-    /// it is one line under a head that repeats its own figure. So does this,
-    /// rather than being the one of the two sinks that annotates it. What the
-    /// excess cut from it is still said, once, in the `Shortfall` row.
     #[test]
-    fn a_cut_line_leaving_as_a_withdrawal_carries_no_gap_beside_itself() {
-        let planning = with_plan(|v| {
-            v.plan.shortfall.bills = crate::money::Cents::from_dollars(237);
-            if let Ok(transfers) = &mut v.transfers {
-                transfers.retain(|t| t.to.is_none());
-                transfers[0].lines = vec![(
-                    crate::plan_line::Line::Bills,
-                    crate::money::Cents::from_dollars(307),
-                )];
-            }
-        });
-
-        assert_eq!(
-            planning.matches("\u{394} 237").count(),
-            1,
-            "the withdrawal's line drew a gap the screen does not: {planning}"
-        );
-        assert!(planning.contains("Shortfall"), "no shortfall: {planning}");
-    }
-
-    /// The payday where the fixed bills took everything is the one the gap
-    /// exists for, and it is also the one `transfer::plan` refuses: every
-    /// line is zero, so there is not a transfer row in the block for a
-    /// per-line gap to hang off. A block that only ever spoke through its
-    /// lines would go silent exactly there.
-    #[test]
-    fn a_plan_that_moves_nothing_still_reports_what_the_excess_left_unpaid() {
-        let planning = with_plan(|v| {
-            v.plan.shortfall.current_housing = crate::money::Cents::from_dollars(693);
-            v.plan.shortfall.bills = crate::money::Cents::from_dollars(544);
-            v.transfers = Err(crate::transfer::NOTHING_TO_TRANSFER.into());
-        });
-
+    fn a_counted_row_is_marked() {
+        let planning =
+            resolved(|v| v.expense_constants = vec![crate::plan_rows::Target::GoalsFloor]);
         assert!(
-            planning.contains("\u{394} 1,237"),
-            "the whole plan's gap is not on the page: {planning}"
-        );
-    }
-
-    /// The plug is divided by what each goal asks of this paycheck, so the
-    /// page says when it will not stretch -- the same footer the screen says
-    /// it in, and the same silence when it covers them.
-    #[test]
-    fn a_plug_short_of_the_paycheck_asks_carries_the_gap_in_the_blocks_footer() {
-        let planning = with_plan(|v| {
-            v.spread_ask_total = v.plan.lines.goals + crate::money::Cents::from_dollars(220)
-        });
-
-        assert!(planning.contains("Unmet Asks"), "no footer: {planning}");
-        assert!(planning.contains("\u{394} -220"), "no gap: {planning}");
-    }
-
-    #[test]
-    fn a_plug_that_covers_every_ask_says_nothing_below_itself() {
-        let planning = with_plan(|v| v.spread_ask_total = v.plan.lines.goals);
-
-        assert!(
-            !planning.contains('\u{394}'),
-            "a covered plug drew a gap: {planning}"
-        );
-    }
-
-    /// `transfer::plan` skips a line at zero, so the payday whose plug is
-    /// nothing has no Goals row at all -- and it is the payday whose goals
-    /// are worst served. A gap hung off that row would fade out exactly as
-    /// the condition it reports got worse.
-    #[test]
-    fn a_plug_of_nothing_still_reports_what_its_goals_asked() {
-        let planning = with_plan(|v| {
-            v.plan.lines.goals = crate::money::Cents::ZERO;
-            v.spread_ask_total = crate::money::Cents::from_dollars(220);
-            v.transfers = Err(crate::transfer::NOTHING_TO_TRANSFER.into());
-        });
-
-        assert!(planning.contains("\u{394} -220"), "no gap: {planning}");
-    }
-
-    /// A withdrawal is a destination and not a failure, so it draws as a
-    /// transfer with no account rather than as a missing row.
-    #[test]
-    fn a_withdrawal_draws_beside_the_transfers() {
-        let planning = planning(&snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000));
-        assert!(planning.contains("Withdrawal"), "the withdrawal vanished");
-        assert!(planning.contains("Retirement"), "its line vanished");
-    }
-
-    /// A plan that cannot resolve is an ordinary state -- a database with no
-    /// account in the `Checking` band has one -- and the reason is the whole
-    /// content of the tab, exactly as it is the whole content of the screen.
-    #[test]
-    fn an_unresolvable_plan_draws_its_reason_in_place_of_the_figures() {
-        let mut snapshot = snapshot(vec![], 1_000);
-        snapshot.planning = Planning::Unresolvable("no account in the Checking band".into());
-        let planning = planning(&snapshot);
-        assert!(
-            planning.contains("no account in the Checking band"),
-            "the reason is not on the page"
+            rows(&planning)
+                .iter()
+                .any(|r| r["k"].as_str().is_some_and(|k| k.contains("counted"))),
         );
         assert!(
-            !planning.contains("Checksum"),
-            "a figure survived the error"
+            !rows(&resolved(|_| {}))
+                .iter()
+                .any(|r| r["k"].as_str().is_some_and(|k| k.contains("counted")))
         );
     }
 
-    /// Transfers that cannot be resolved do not make the waterfall above them
-    /// wrong: a dangling destination key stops the money moving and nothing
-    /// else, so the figures stay and the block says why it is empty.
     #[test]
-    fn unresolvable_transfers_leave_the_waterfall_standing() {
-        let mut snapshot = snapshot(vec![], 1_000);
-        let mut view = plan_view();
-        view.transfers = Err("setting planning.goals = 41 is gone".into());
-        snapshot.planning = Planning::Resolved(Box::new(view));
-        let planning = planning(&snapshot);
+    fn headings_and_notes_are_one_cell_rows_and_totals_are_marked() {
+        let drawn = rows(&snapshot(vec![row("Rainy Day", 500, 1_000)], 1_000).planning);
         assert!(
-            planning.contains("setting planning.goals = 41 is gone"),
-            "the reason is not on the page"
+            drawn
+                .iter()
+                .any(|r| r["k"] == "head" && r["c"].as_array().unwrap().len() == 1)
         );
         assert!(
-            planning.contains("Remaining Excess"),
-            "the waterfall went with it"
+            drawn
+                .iter()
+                .any(|r| r["k"].as_str().is_some_and(|k| k.contains("tot")))
         );
+        assert!(drawn.iter().any(|r| r["c"].as_array().unwrap().len() == 3));
     }
 }

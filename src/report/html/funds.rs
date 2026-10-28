@@ -9,83 +9,25 @@
 //! and the accounts stacked rather than cycled, a page having no `Tab` to
 //! offer.
 //!
-//! **The bar is CSS widths on a `<div>` and nothing else.** The page carries
-//! no script and is read offline on a phone, so a charting library is the one
-//! thing on it that could fail to arrive; every share is baked into a
-//! `style="width:..."` at render time, and the percentage is written out
-//! beside it so the bar is a picture of something the reader can also read.
+//! **The bar is widths, settled here.** A charting library is the one thing
+//! on a page read offline that could fail to arrive, so every segment's share
+//! is computed now and the script only sets it, and the percentage is written
+//! out in the legend so the bar is a picture of something the reader can also
+//! read.
 
-use super::{account, escape, whole_money};
 use crate::allocation::{self, Class};
 use crate::db::fund_mix::Slice;
-use crate::palette;
 use crate::rate::BasisPoints;
-use crate::report::{AccountAllocation, Allocation, Holding};
+use crate::report::view::{Accounts, Block, Cell, Row, TabView, whole};
+use crate::report::{Allocation, Holding};
 
-/// One class's color, as `#rrggbb`.
-///
-/// By its place in `Class::ALL`, which is the order [`palette::CLASSES`] is
-/// written in -- nothing stores that position, so the two move together, and
-/// the Funds screen tints its own bar off the same table.
-fn color(class: Class) -> String {
-    palette::hex(palette::CLASSES[class.index()])
-}
-
-/// A share, or the `--` this page draws an absence with.
-///
-/// **Never a zero.** A bond target with no birth date behind it is a
-/// question rather than a share of nothing, and a cell reading `0.00%` would
-/// answer it -- wrongly, and with a figure the Δ beside it would then measure
-/// the whole portfolio against. The birth date the rule counts from is
-/// imported from the workbook's `Constants` sheet, so a database nobody has
-/// imported into has no age to derive a bond target from -- and until it
-/// does, there is nothing here to state.
-///
-/// The mark is `savings::percent`'s, because the page has one. A reader meets
-/// this column beside that one with no way to hover
-/// for an explanation, and a second spelling of "nothing here" would be a
-/// difference they had to work out the meaning of.
-fn percent(share: Option<BasisPoints>) -> String {
-    match share {
-        Some(share) => format!("<td class=\"n\">{share}%</td>"),
-        None => "<td class=\"n\">--</td>".to_string(),
-    }
-}
-
-/// The same cell, red where the portfolio is short of what the rule asks.
-///
-/// A gap is the only thing in this table a reader has to act on, and
-/// `palette::NEGATIVE` is what the page already spells every other shortfall
-/// with -- the decision [`super::money`] makes from a `Cents`, made here from
-/// a share, which is all this column has.
-///
-/// `SummaryRow::delta` is `actual - target`, so short is the negative one and
-/// this reads the same way [`super::money`] does. The screen's own `delta`
-/// closure makes the identical test, which is what keeps the two mediums from
-/// coloring opposite halves of the same column.
-fn delta(share: Option<BasisPoints>) -> String {
-    match share {
-        Some(share) if share.0 < 0 => format!(
-            "<td class=\"n\" style=\"color:{}\">{share}%</td>",
-            palette::hex(palette::NEGATIVE),
-        ),
-        other => percent(other),
-    }
-}
-
-/// The summary's own header, in the Funds screen's column order and wording,
-/// each column carrying the class its cells below carry -- and three of its
-/// seven columns short. The screen's tax columns (`Taxable`, `Tax-deferred`,
-/// `Tax-free`) are a second question about the same portfolio, where it is
-/// held rather than what it holds, and seven columns do not fit a phone; the
-/// question the page is opened to answer is the allocation against the age
-/// rule, which is these four.
-const SUMMARY_HEADER: [(&str, &str); 4] = [
-    ("Class", ""),
-    ("Target", "n"),
-    ("Actual", "n"),
-    ("\u{394}", "n"),
-];
+/// The summary's own header, in the Funds screen's column order and wording
+/// -- and three of its seven columns short. The screen's tax columns
+/// (`Taxable`, `Tax-deferred`, `Tax-free`) are a second question about the
+/// same portfolio, where it is held rather than what it holds, and seven
+/// columns do not fit a phone; the question the page is opened to answer is
+/// the allocation against the age rule, which is these four.
+const SUMMARY_HEADER: [&str; 4] = ["Class", "Target", "Actual", "\u{394}"];
 
 /// The holdings' header: the screen's own wording, three of its six columns
 /// short.
@@ -103,50 +45,85 @@ const SUMMARY_HEADER: [(&str, &str); 4] = [
 /// rows below it is the bond fund. That is what the tab costs a reader on a
 /// phone, and it is the price of not having two answers on record to one
 /// question about one fund.
-const HOLDINGS_HEADER: [(&str, &str); 3] = [("Ticker", ""), ("Balance", "n"), ("As of", "d")];
+const HOLDINGS_HEADER: [&str; 3] = ["Ticker", "Balance", "As of"];
 
-/// A header row, each cell aligned the way the column under it is -- a
-/// header that took its own alignment would sit over the wrong edge of every
-/// figure beneath it.
-fn header(columns: &[(&str, &str)]) -> String {
-    let cells: String = columns
-        .iter()
-        .map(|(label, class)| match class.is_empty() {
-            true => format!("<th>{label}</th>"),
-            false => format!("<th class=\"{class}\">{label}</th>"),
-        })
-        .collect();
-    format!("<thead><tr>{cells}</tr></thead>")
+/// Nothing entered: no investment account holds a holding.
+///
+/// Named apart from [`NO_COMPOSITION`], because telling the two nothings
+/// apart is the whole of what the sentences do -- a test standing in one
+/// branch says which by the constant it reads rather than by restating prose
+/// it would then drift from.
+const NO_HOLDINGS: &str = "No holdings are on record, so there is nothing to look through yet.";
+
+/// Holdings, but no filing behind a single one of them: the state every
+/// database is in until something populates `fund_mix`.
+const NO_COMPOSITION: &str =
+    "No fund composition has been fetched, so there is nothing to look through yet.";
+
+fn plain_row(c: Vec<Cell>) -> Row {
+    Row {
+        c,
+        k: None,
+        h: None,
+        d: None,
+        m: None,
+    }
 }
 
-/// Class, Target, Actual, Δ -- the three classes the age rule targets, then
-/// the ones it says nothing about.
+/// A share, or the `--` this page draws an absence with.
 ///
-/// The untargeted rows carry no target and so no gap: the age rule has
-/// nothing to say about cash, and a target for money a filing could not place
-/// would be a claim about nothing. `Cash` keeps its row at zero and
-/// `Unclassified` has one only when something went unplaced, which is
-/// [`allocation::apportion`]'s doing rather than this table's -- a defect
-/// report reading "none" every time is one nobody finishes reading.
+/// **Never a zero.** A bond target with no birth date behind it is a
+/// question rather than a share of nothing, and a cell reading `0.00%` would
+/// answer it -- wrongly, and with a figure the Δ beside it would then measure
+/// the whole portfolio against. The mark is the Savings tab's, because the
+/// page has one: a second spelling of "nothing here" would be a difference a
+/// reader had to work out the meaning of.
+fn percent_cell(share: Option<BasisPoints>) -> Cell {
+    Cell::Text(match share {
+        Some(share) => format!("{share}%"),
+        None => "--".to_string(),
+    })
+}
+
+/// The same cell, `neg` where the portfolio is short of what the rule asks.
+///
+/// A gap is the only thing in this table a reader has to act on, and
+/// `palette::NEGATIVE` is what the page already spells every other shortfall
+/// with. `SummaryRow::delta` is `actual - target`, so short is the negative
+/// one; the screen's own `delta` closure makes the identical test, which is
+/// what keeps the two mediums from coloring opposite halves of one column.
+fn delta_cell(share: Option<BasisPoints>) -> Cell {
+    match share {
+        Some(share) if share.0 < 0 => Cell::Toned(format!("{share}%"), "neg".to_string()),
+        other => percent_cell(other),
+    }
+}
+
+/// Class, Target, Actual, Δ. The untargeted rows carry no target and so no
+/// gap: the age rule has nothing to say about cash or about money a filing
+/// could not place.
 ///
 /// The class labels take no color, where the bar below them does -- and
 /// where the Funds screen's do. This page has the room for a legend under
 /// its bar and spends it; a terminal does not, so the screen puts the color
 /// on the label instead. Either way a class is named in its own color
-/// exactly once, and tinting the label *and* keeping the legend would spend
-/// two marks on one fact.
-fn summary(rows: &[allocation::SummaryRow]) -> String {
-    let mut out = header(&SUMMARY_HEADER);
-    for row in rows {
-        out.push_str(&format!(
-            "<tr><td>{}</td>{}{}{}</tr>",
-            row.class.label(),
-            percent(row.target),
-            percent(Some(row.actual)),
-            delta(row.delta),
-        ));
+/// exactly once.
+fn summary_block(rows: &[allocation::SummaryRow]) -> Block {
+    Block::Table {
+        class: "fs",
+        head: SUMMARY_HEADER.map(str::to_string).to_vec(),
+        rows: rows
+            .iter()
+            .map(|row| {
+                plain_row(vec![
+                    Cell::Text(row.class.label().to_string()),
+                    percent_cell(row.target),
+                    percent_cell(Some(row.actual)),
+                    delta_cell(row.delta),
+                ])
+            })
+            .collect(),
     }
-    format!("<table>{out}</table>")
 }
 
 /// The whole of a look-through as one bar, and the legend that names it.
@@ -154,473 +131,285 @@ fn summary(rows: &[allocation::SummaryRow]) -> String {
 /// **This is the one thing in the summary that splits the bonds**, for the
 /// reason the screen's is: the age rule produces a single bond number, so the
 /// row beside it cannot say whether the share is domestic or foreign. What
-/// the four leave over is cash, the classifier's residual and whatever no
-/// filing placed -- drawn as the track the segments sit on rather than as a
-/// fifth segment, so the bar cannot read as though these four were the whole
-/// portfolio.
+/// the four leave over is drawn as the track the segments sit on rather than
+/// as a fifth segment, so the bar cannot read as though these four were the
+/// whole portfolio.
 ///
-/// Segments are cut at the *cumulative* share and differenced, exactly as
-/// `tui::fund::summary_bar` cuts its glyphs: a filing that over-foots leaves
-/// a negative `Unclassified` and puts the four classes past 100% between
-/// them, and a segment that ran backwards would draw over the one before it.
-/// The legend quotes each class's own share rather than the clamped segment,
-/// since a figure is what a reader checks the picture against.
-fn bar(slices: &[Slice]) -> String {
-    let mut segments = String::new();
-    let mut legend = String::new();
+/// A segment is a width and its class's place in `Class::ALL`, which is the
+/// order [`crate::palette::CLASSES`] is written in -- nothing stores that
+/// position, so the two move together. Segments are cut at the *cumulative*
+/// share and differenced, exactly as `tui::fund::summary_bar` cuts its
+/// glyphs: a filing that over-foots leaves a negative residual and puts the
+/// four classes past 100% between them, and a segment that ran backwards
+/// would draw over the one before it. The legend quotes each class's own
+/// share rather than the clamped segment, since a figure is what a reader
+/// checks the picture against.
+fn bar_block(slices: &[Slice]) -> Block {
+    let (mut segments, mut legend) = (Vec::new(), Vec::new());
     let (mut cumulative, mut drawn) = (0i64, 0i64);
     for class in Class::ALL {
-        let (share, color) = (class.actual(slices), color(class));
+        let share = class.actual(slices);
         cumulative += share.0;
         let end = cumulative.clamp(0, BasisPoints::ONE.0).max(drawn);
-        segments.push_str(&format!(
-            "<span style=\"width:{}%;background:{color}\"></span>",
-            BasisPoints(end - drawn),
-        ));
-        legend.push_str(&format!(
-            "<span class=\"item\"><span class=\"key\" style=\"background:{color}\"></span>\
-             {} {share}%</span>",
-            class.label(),
-        ));
+        segments.push((BasisPoints(end - drawn).to_string(), class.index()));
+        legend.push((format!("{} {share}%", class.label()), class.index()));
         drawn = end;
     }
-    format!("<div class=\"bar\">{segments}</div><p class=\"legend\">{legend}</p>")
+    Block::Bar { segments, legend }
 }
 
-/// What the summary above covers, when it does not cover everything.
-///
+/// What the summary covers, when it does not cover everything:
 /// [`crate::allocation::Allocation::coverage`]'s own wording, which is what
-/// the screen puts in the panel's title -- drawn only when it has something
-/// to say, for the reason stated there.
-fn coverage(lookthrough: &crate::allocation::Allocation) -> String {
-    match lookthrough.coverage() {
-        Some(coverage) => format!("<p class=\"stamp\">{coverage}</p>"),
-        None => String::new(),
+/// the screen puts in the panel's title.
+fn coverage_note(lookthrough: &crate::allocation::Allocation, blocks: &mut Vec<Block>) {
+    if let Some(coverage) = lookthrough.coverage() {
+        blocks.push(Block::Note {
+            text: coverage.to_string(),
+        });
     }
 }
 
 /// One account's holdings: the ticker, the balance the owner typed, and the
-/// filing the fund's composition was read out of.
-///
-/// The `--` under `As of` is the whole of what a holding outside the summary
-/// gets to say, and it is enough: no filing on record is exactly what put it
-/// there, and the coverage line above has already counted it. The page's own
-/// absence mark, for [`percent`]'s reason -- one spelling per page.
-fn holdings(rows: &[Holding]) -> String {
-    let mut table = header(&HOLDINGS_HEADER);
-    for row in rows {
-        let as_of = match row.as_of {
-            Some(date) => escape(&date.to_string()),
-            None => "--".to_string(),
-        };
-        table.push_str(&format!(
-            "<tr><td class=\"w\">{}</td>{}<td class=\"d\">{as_of}</td></tr>",
-            escape(&row.ticker),
-            whole_money(row.balance),
-        ));
+/// filing the fund's composition was read out of. The `--` under `As of` is
+/// the whole of what a holding outside the summary gets to say, and it is
+/// enough: no filing on record is exactly what put it there.
+fn holdings_block(rows: &[Holding]) -> Block {
+    Block::Table {
+        class: "fh",
+        head: HOLDINGS_HEADER.map(str::to_string).to_vec(),
+        rows: rows
+            .iter()
+            .map(|row| {
+                let as_of = match row.as_of {
+                    Some(date) => date.to_string(),
+                    None => "--".to_string(),
+                };
+                plain_row(vec![
+                    Cell::Text(row.ticker.clone()),
+                    whole(row.balance),
+                    Cell::Text(as_of),
+                ])
+            })
+            .collect(),
     }
-    format!("<table>{table}</table>")
 }
-
-/// One account: its own look-through, and the holdings behind it.
-///
-/// Both halves, because `Tab` on the screen narrows both together. The
-/// summary is absent where the account has no composition at all, which is
-/// what the screen does with the panel when nothing on it carries a mix --
-/// the rows are still worth listing, and a table of dashes over every class
-/// says only that a key has not been pressed yet.
-fn section(account_allocation: &AccountAllocation) -> String {
-    let mut html = format!("<h3>{}</h3>", account(&account_allocation.account));
-    if !account_allocation.summary.is_empty() {
-        html.push_str(&coverage(&account_allocation.lookthrough));
-        html.push_str(&summary(&account_allocation.summary));
-        html.push_str(&bar(&account_allocation.lookthrough.slices));
-    }
-    html.push_str(&holdings(&account_allocation.holdings));
-    html
-}
-
-/// Nothing entered: no investment account holds a holding.
-///
-/// Named rather than written into [`sections`], and named apart from
-/// [`NO_COMPOSITION`], because telling the two nothings apart is the whole
-/// of what the sentences do -- a test standing in one branch says which by
-/// the constant it reads rather than by restating prose it would then drift
-/// from.
-const NO_HOLDINGS: &str =
-    "<p>No holdings are on record, so there is nothing to look through yet.</p>";
-
-/// Holdings, but no filing behind a single one of them: the state every
-/// database is in until something populates `fund_mix`.
-const NO_COMPOSITION: &str =
-    "<p>No fund composition has been fetched, so there is nothing to look through yet.</p>";
 
 /// The portfolio, then one stacked section per investment account.
 ///
-/// Each empty state says which one it is in a sentence. An empty
-/// `<section>` would be a tab a reader taps and gets a blank page from, with
-/// no way to tell a page with nothing to say from one that failed to build --
-/// the same reason the screen draws `—` in the mix column rather than leaving
-/// the row's cells empty.
-pub(super) fn sections(allocation: &Allocation) -> String {
+/// Each account carries both halves, because `Tab` on the screen narrows both
+/// together; its summary is absent where it has no composition at all, a
+/// table of dashes over every class saying only that a key has not been
+/// pressed yet. Each empty state says which one it is in a sentence: an empty
+/// panel would be a tab a reader taps and gets a blank page from, with no way
+/// to tell a page with nothing to say from one that failed to build.
+pub(super) fn view(allocation: &Allocation, acc: &mut Accounts) -> TabView {
+    let mut blocks = Vec::new();
     if allocation.accounts.is_empty() {
-        return NO_HOLDINGS.to_string();
-    }
-    let mut html = String::new();
-    if allocation.summary.is_empty() {
-        html.push_str(NO_COMPOSITION);
+        blocks.push(Block::Note {
+            text: NO_HOLDINGS.to_string(),
+        });
     } else {
-        html.push_str("<h3>Allocation</h3>");
-        html.push_str(&coverage(&allocation.lookthrough));
-        html.push_str(&summary(&allocation.summary));
-        html.push_str(&bar(&allocation.lookthrough.slices));
+        if allocation.summary.is_empty() {
+            blocks.push(Block::Note {
+                text: NO_COMPOSITION.to_string(),
+            });
+        } else {
+            blocks.push(Block::Heading {
+                text: Cell::Text("Allocation".to_string()),
+            });
+            coverage_note(&allocation.lookthrough, &mut blocks);
+            blocks.push(summary_block(&allocation.summary));
+            blocks.push(bar_block(&allocation.lookthrough.slices));
+        }
+        for a in &allocation.accounts {
+            blocks.push(Block::Heading {
+                text: acc.cell(&a.account),
+            });
+            if !a.summary.is_empty() {
+                coverage_note(&a.lookthrough, &mut blocks);
+                blocks.push(summary_block(&a.summary));
+                blocks.push(bar_block(&a.lookthrough.slices));
+            }
+            blocks.push(holdings_block(&a.holdings));
+        }
     }
-    html.extend(allocation.accounts.iter().map(section));
-    html
+    TabView {
+        id: "funds",
+        blocks,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::fixture::{self, panel, snapshot};
-    use super::super::page;
-    use crate::allocation::{self, Class, Held, SummaryRow};
-    use crate::db::account::TaxTreatment;
-    use crate::db::fund_mix::{AssetClass, Slice};
-    use crate::money::Cents;
-    use crate::palette;
-    use crate::rate::BasisPoints;
+    use super::super::fixture::{json, snapshot};
+    use super::{NO_COMPOSITION, NO_HOLDINGS, view};
+    use crate::allocation::{self, Class};
+    use crate::report::view::Accounts;
+    use serde_json::json;
 
-    /// The fixture's page, and the Funds panel of it.
-    fn funds_panel(snapshot: &crate::report::Snapshot) -> String {
-        panel(&page(snapshot), "funds").to_string()
+    fn blocks(a: &crate::report::Allocation) -> Vec<serde_json::Value> {
+        json(&view(a, &mut Accounts::new()))["blocks"]
+            .as_array()
+            .unwrap()
+            .clone()
     }
 
-    /// Every control on this page is CSS, and a tab that reached for a
-    /// script would be the one thing on a phone's offline copy that could
-    /// fail to arrive. The bar is the reason to check it here as well as
-    /// page-wide: a stacked bar is the shape somebody reaches for a chart
-    /// library to draw.
     #[test]
-    fn the_allocation_tab_carries_no_script() {
-        let html = page(&snapshot(vec![], 1_000));
-        assert!(!html.contains("<script"), "the report grew a script");
-        assert!(!html.contains("http"), "the tab reaches out of itself");
+    fn no_holdings_says_so() {
+        let mut a = snapshot(vec![], 1_000).allocation;
+        a.accounts.clear();
+        a.summary.clear();
+        assert_eq!(blocks(&a), vec![json!({"t": "Note", "text": NO_HOLDINGS})]);
     }
 
-    /// Color alone is a key a reader has to hold, so every class the bar
-    /// draws is named in words and priced in figures beside it.
     #[test]
-    fn every_band_bar_has_a_width_and_a_percentage_beside_it() {
-        let snapshot = snapshot(vec![], 1_000);
-        let panel = funds_panel(&snapshot);
-        let slices = &snapshot.allocation.lookthrough.slices;
-        for class in Class::ALL {
-            let share = class.actual(slices);
-            assert!(
-                panel.contains(class.label()),
-                "{} is not labelled",
-                class.label()
-            );
-            assert!(
-                panel.contains(&format!(
-                    "width:{share}%;background:{}",
-                    super::color(class)
-                )),
-                "{} has no segment: {panel}",
-                class.label()
-            );
-            assert!(
-                panel.contains(&format!("{} {share}%", class.label())),
-                "{} has no percentage beside its segment: {panel}",
-                class.label()
-            );
-        }
+    fn no_composition_says_so() {
+        let mut a = snapshot(vec![], 1_000).allocation;
+        a.summary.clear();
+        a.lookthrough = allocation::Allocation::default();
+        let drawn = blocks(&a);
+        assert_eq!(drawn[0], json!({"t": "Note", "text": NO_COMPOSITION}));
+        assert_eq!(drawn[1]["t"], "Heading", "the accounts still list");
     }
 
-    /// The tab is a spelling of the screen: the same four rows, off the
-    /// same `crate::fund::targets_from_db`, and a page quoting a target the
-    /// terminal did not would be two answers to one question about one age.
     #[test]
-    fn the_allocation_tab_draws_the_same_targets_the_screen_does() {
-        let snapshot = snapshot(vec![], 1_000);
-        let panel = funds_panel(&snapshot);
-        assert!(!snapshot.allocation.summary.is_empty(), "nothing to check");
-        for row in &snapshot.allocation.summary {
-            let Some(target) = row.target else { continue };
-            assert!(
-                panel.contains(&format!("{target}%")),
-                "{:?}'s target is missing from the page",
-                row.class
-            );
-            assert!(
-                panel.contains(&format!("{}%", row.actual)),
-                "{:?}'s actual is missing from the page",
-                row.class
-            );
-        }
-    }
-
-    /// The tax split is the screen's and not the page's: three more
-    /// columns put the summary past a phone.
-    #[test]
-    fn the_tax_columns_are_left_off_the_page() {
-        let panel = funds_panel(&snapshot(vec![], 1_000));
-        for treatment in TaxTreatment::ALL {
-            assert!(
-                !panel.contains(&format!(">{}<", treatment.label())),
-                "{} has a column: {panel}",
-                treatment.label()
-            );
-        }
-    }
-
-    /// A shortfall is the one figure on this table a reader has to act on,
-    /// and the page spells it the color every other shortfall on it is.
-    #[test]
-    fn a_negative_delta_is_drawn_in_the_pages_negative_color() {
-        let snapshot = snapshot(vec![], 1_000);
-        let panel = funds_panel(&snapshot);
-        let red = palette::hex(palette::NEGATIVE);
-        assert!(
-            panel.contains(&format!("style=\"color:{red}\"")),
-            "no shortfall is colored: {panel}"
+    fn the_portfolio_is_a_heading_a_summary_a_bar_then_each_account() {
+        let a = snapshot(vec![], 1_000).allocation;
+        let drawn = blocks(&a);
+        assert_eq!(drawn[0], json!({"t": "Heading", "text": "Allocation"}));
+        let at = |i: usize| drawn[i]["t"].as_str().unwrap().to_string();
+        let from = if drawn[1]["t"] == "Note" { 2 } else { 1 };
+        assert_eq!((at(from), at(from + 1)), ("Table".into(), "Bar".into()));
+        assert_eq!(drawn[from]["class"], "fs");
+        assert_eq!(
+            drawn[from]["head"],
+            json!(["Class", "Target", "Actual", "\u{394}"])
         );
-        assert!(
-            !panel.contains(&format!("style=\"color:{red}\">18.00%")),
-            "a class inside its target was colored as a shortfall: {panel}"
-        );
-    }
-
-    /// No birth date on record is a question rather than a zero, so neither
-    /// the target nor the gap from it states a figure -- the screen's own
-    /// answer, spelled in this page's own mark.
-    #[test]
-    fn a_bond_target_with_no_birth_date_states_no_figure_in_either_of_its_cells() {
-        let mut snapshot = snapshot(vec![], 1_000);
-        snapshot.allocation = fixture::funds(crate::calc::fund::targets(None, BasisPoints(4_000)));
-        let actual = Class::Bonds.actual(&snapshot.allocation.lookthrough.slices);
-        assert!(
-            funds_panel(&snapshot).contains(&format!(
-                "<td>Bonds</td><td class=\"n\">--</td><td class=\"n\">{actual}%</td>\
-                 <td class=\"n\">--</td>"
-            )),
-            "the bond row states a figure it has none of: {}",
-            funds_panel(&snapshot)
-        );
-    }
-
-    /// A holding no filing covers is outside every figure above it, so the
-    /// page says how much it is summarising and the row itself says which
-    /// holding is missing.
-    #[test]
-    fn a_holding_with_no_filing_is_outside_the_summary_and_says_so_on_its_own_row() {
-        let snapshot = snapshot(vec![], 1_000);
-        let panel = funds_panel(&snapshot);
-        assert!(
-            panel.contains("3 of 4 holdings"),
-            "the coverage went unreported: {panel}"
-        );
-        assert!(
-            panel.contains(
-                "<td class=\"w\">UNC</td><td class=\"n\">1,000</td><td class=\"d\">--</td>"
-            ),
-            "the unpriced holding does not say so: {panel}"
-        );
-    }
-
-    /// A filing that does not foot is a miss, and the miss has to reach a
-    /// figure rather than being renormalised away across the classes that
-    /// were placed. `Other` is where it lands, beside the cash.
-    #[test]
-    fn what_a_filing_left_unplaced_reaches_the_other_row_rather_than_vanishing() {
-        let whole = snapshot(vec![], 1_000);
-        assert!(
-            !funds_panel(&whole).contains(AssetClass::Unclassified.label()),
-            "a residual of nothing was reported"
-        );
-
-        let mut short = snapshot(vec![], 1_000);
-        let placed = vec![Slice {
-            class: AssetClass::UsStock,
-            weight: BasisPoints(9_900),
-        }];
-        short.allocation.lookthrough = allocation::apportion(&[Held {
-            balance: Cents::from_dollars(1_000),
-            treatment: Some(TaxTreatment::Taxable),
-            tax_free: BasisPoints::ZERO,
-            mix: Some(placed.as_slice()),
-        }]);
-        short.allocation.summary = Class::ALL
+        let fh = drawn
             .iter()
-            .map(|class| {
-                SummaryRow::new(
-                    *class,
-                    &short.allocation.lookthrough.slices,
-                    fixture::targets(),
-                )
-            })
-            .collect();
-        let panel = funds_panel(&short);
+            .find(|b| b["class"] == "fh")
+            .expect("no holdings table");
+        assert_eq!(fh["head"], json!(["Ticker", "Balance", "As of"]));
         assert!(
-            panel.contains(Class::Other.label()),
-            "the gap has no row to land in: {panel}"
+            fh["rows"].to_string().contains("\"--\""),
+            "no as-of dash: {fh}"
         );
-        assert!(panel.contains("1.00%"), "the gap has no figure: {panel}");
     }
 
-    /// The same rule with the sign flipped: a mix claiming more than the
-    /// whole of itself leaves a negative residual and puts the four classes
-    /// past 100% between them. The row states the negative share --
-    /// that is what says the composition over-foots -- while the bar's own
-    /// segments are cut at the cumulative share and clamped, so none of them
-    /// runs backwards over the one before it.
+    #[test]
+    fn a_short_class_delta_is_negative() {
+        let a = snapshot(vec![], 1_000).allocation;
+        let drawn = blocks(&a);
+        let rows = drawn.iter().find(|b| b["class"] == "fs").unwrap()["rows"].to_string();
+        assert!(rows.contains(",\"neg\"]"), "no toned delta: {rows}");
+    }
+
+    #[test]
+    fn the_bar_segments_never_exceed_the_whole() {
+        let a = snapshot(vec![], 1_000).allocation;
+        for block in blocks(&a).iter().filter(|b| b["t"] == "Bar") {
+            let total: f64 = block["segments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s[0].as_str().unwrap().parse::<f64>().unwrap())
+                .sum();
+            assert!(total <= 100.0 + 1e-9, "{total}");
+            assert_eq!(block["legend"].as_array().unwrap().len(), Class::ALL.len());
+            assert!(
+                block["legend"][0][0]
+                    .as_str()
+                    .unwrap()
+                    .starts_with(Class::ALL[0].label())
+            );
+            assert_eq!(block["legend"][0][1], 0);
+        }
+    }
+
+    #[test]
+    fn coverage_is_a_note() {
+        let a = snapshot(vec![], 1_000).allocation;
+        let drawn = blocks(&a);
+        assert!(
+            drawn.iter().any(
+                |b| b["t"] == "Note" && b["text"].as_str().unwrap().contains("3 of 4 holdings")
+            ),
+            "{drawn:?}"
+        );
+    }
+
+    /// A filing that over-foots puts the four classes past the whole between
+    /// them: the residual is stated as the negative share it is, and the bar
+    /// clamps at the whole rather than drawing a segment past it or one
+    /// running backwards over the one before.
     #[test]
     fn a_mix_that_over_foots_states_a_negative_residual_and_draws_no_backwards_segment() {
-        let mut over = snapshot(vec![], 1_000);
+        use crate::allocation::{Held, SummaryRow};
+        use crate::db::account::TaxTreatment;
+        use crate::db::fund_mix::{AssetClass, Slice};
+        use crate::money::Cents;
+        use crate::rate::BasisPoints;
+        let mut a = snapshot(vec![], 1_000).allocation;
         let claimed = vec![Slice {
             class: AssetClass::UsStock,
             weight: BasisPoints(10_100),
         }];
-        over.allocation.lookthrough = allocation::apportion(&[Held {
+        a.lookthrough = allocation::apportion(&[Held {
             balance: Cents::from_dollars(1_000),
             treatment: Some(TaxTreatment::Taxable),
             tax_free: BasisPoints::ZERO,
             mix: Some(claimed.as_slice()),
         }]);
-        over.allocation.summary = Class::ALL
+        a.summary = Class::ALL
             .iter()
             .map(|class| {
                 SummaryRow::new(
                     *class,
-                    &over.allocation.lookthrough.slices,
-                    fixture::targets(),
+                    &a.lookthrough.slices,
+                    super::super::fixture::targets(),
                 )
             })
             .collect();
-
-        let panel = funds_panel(&over);
-        assert!(
-            panel.contains(Class::Other.label()),
-            "the excess has no row to land in: {panel}"
-        );
-        assert!(
-            panel.contains("-1.00%"),
-            "the excess is not stated as a negative share: {panel}"
-        );
-        assert!(
-            !panel.contains("width:-"),
-            "a segment ran backwards over the one before it: {panel}"
-        );
+        let drawn = blocks(&a);
+        let fs = drawn.iter().find(|b| b["class"] == "fs").unwrap();
+        let other = fs["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["c"][0] == Class::Other.label())
+            .expect("the excess has no row to land in");
+        assert_eq!(other["c"][2], "-1.00%", "{other}");
+        let bar = drawn.iter().find(|b| b["t"] == "Bar").unwrap();
+        let widths: Vec<f64> = bar["segments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s[0].as_str().unwrap().parse().unwrap())
+            .collect();
+        assert!(widths.iter().all(|w| *w >= 0.0), "{widths:?}");
+        assert_eq!(widths[0], 100.0, "{widths:?}");
+        assert_eq!(widths.iter().sum::<f64>(), 100.0, "{widths:?}");
+        assert_eq!(bar["legend"][0][0], "U.S. Stock 101.00%");
     }
 
-    /// `Tab` on the screen narrows the summary and the list together, and a
-    /// page has no `Tab` -- so each account is a section carrying both,
-    /// under its own name in its own color.
+    /// No birth date means no bond target: the row states neither a target
+    /// nor a gap rather than measuring the portfolio against a zero.
     #[test]
-    fn each_investment_account_carries_its_own_summary_and_its_own_holdings() {
-        let snapshot = snapshot(vec![], 1_000);
-        let panel = funds_panel(&snapshot);
-        for (color, name, ticker) in [
-            (crate::db::account::AccountColor::Copper, "Holdings", "USM"),
-            (crate::db::account::AccountColor::Violet, "Long Haul", "USB"),
-        ] {
-            let heading = format!(
-                "<h3><span class=\"{}\">{name}</span></h3>",
-                super::super::account_class(color)
-            );
-            let at = panel
-                .find(&heading)
-                .unwrap_or_else(|| panic!("no {name} section: {panel}"));
-            let section = &panel[at..];
-            assert!(
-                section.contains(&format!("<td class=\"w\">{ticker}</td>")),
-                "{name} lost its holdings: {section}"
-            );
-            assert!(
-                section.contains("<th class=\"n\">Target</th>"),
-                "{name} lost its own summary: {section}"
-            );
-        }
-        // The second account holds no stock at all, so its own summary must
-        // differ from the portfolio's rather than repeating it.
-        assert!(
-            panel.contains("<td>Bonds</td><td class=\"n\">18.00%</td><td class=\"n\">100.00%</td>"),
-            "an account's summary is the whole portfolio's: {panel}"
-        );
-    }
-
-    /// A ticker is owner-typed text and reaches the page the way a goal name
-    /// does: escaped, or the table it sits in ends at its own row.
-    #[test]
-    fn a_ticker_reaches_the_page_escaped() {
-        let mut snapshot = snapshot(vec![], 1_000);
-        snapshot.allocation.accounts[0].holdings[0].ticker = "US<b>M".to_string();
-        let panel = funds_panel(&snapshot);
-        assert!(
-            panel.contains("US&lt;b&gt;M"),
-            "the ticker was not escaped: {panel}"
-        );
-        assert!(!panel.contains("<b>"), "the ticker reached the page raw");
-    }
-
-    /// A database nobody has entered a holding into is not a tab that failed
-    /// to build -- and it is not a database whose funds nobody has fetched a
-    /// filing for either. Both draw one sentence and no table, so the
-    /// sentence itself is the only thing that tells them apart.
-    #[test]
-    fn a_database_with_no_holdings_says_so_in_a_sentence() {
-        let mut snapshot = snapshot(vec![], 1_000);
-        snapshot.allocation = crate::report::Allocation {
-            lookthrough: allocation::Allocation::default(),
-            summary: Vec::new(),
-            accounts: Vec::new(),
-        };
-        let panel = funds_panel(&snapshot);
-        assert_eq!(panel, super::NO_HOLDINGS, "the wrong nothing, or a table");
-    }
-
-    /// Holdings with no filing behind any of them still list: the screen
-    /// draws the rows and no summary panel, which is what a database nobody
-    /// has run the fetcher against looks like.
-    #[test]
-    fn a_portfolio_with_no_filing_on_record_lists_its_holdings_and_draws_no_summary() {
-        let mut snapshot = snapshot(vec![], 1_000);
-        for account in &mut snapshot.allocation.accounts {
-            account.lookthrough = allocation::apportion(
-                &account
-                    .holdings
-                    .iter()
-                    .map(|h| Held {
-                        balance: h.balance,
-                        treatment: Some(TaxTreatment::Taxable),
-                        tax_free: BasisPoints::ZERO,
-                        mix: None,
-                    })
-                    .collect::<Vec<_>>(),
-            );
-            account.summary = Vec::new();
-            for holding in &mut account.holdings {
-                holding.as_of = None;
-            }
-        }
-        snapshot.allocation.lookthrough = allocation::Allocation::default();
-        snapshot.allocation.summary = Vec::new();
-
-        let panel = funds_panel(&snapshot);
-        assert!(
-            panel.contains("<td class=\"w\">USM</td>"),
-            "the holdings vanished with the filings: {panel}"
-        );
-        assert!(
-            !panel.contains("<th class=\"n\">Target</th>"),
-            "a summary was drawn against no composition: {panel}"
-        );
-        // The other nothing: these holdings exist, and a sentence saying
-        // none do would send the owner looking for rows on the screen in
-        // front of them.
-        assert!(
-            panel.contains(super::NO_COMPOSITION),
-            "the wrong nothing: {panel}"
+    fn a_bond_target_with_no_birth_date_states_no_figure_in_either_of_its_cells() {
+        use crate::rate::BasisPoints;
+        let a = super::super::fixture::funds(crate::calc::fund::targets(None, BasisPoints(4_000)));
+        let actual = Class::Bonds.actual(&a.lookthrough.slices);
+        let drawn = blocks(&a);
+        let fs = drawn.iter().find(|b| b["class"] == "fs").unwrap();
+        let bonds = fs["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["c"][0] == Class::Bonds.label())
+            .unwrap();
+        assert_eq!(
+            bonds["c"],
+            json!(["Bonds", "--", format!("{actual}%"), "--"])
         );
     }
 }

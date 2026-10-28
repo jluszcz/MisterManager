@@ -1,12 +1,16 @@
 //! The standing HTML report: what the screens show, as one page a phone can
-//! open -- the Overview, both ledgers, Savings, Planning and Funds, each a tab
-//! of it.
+//! open -- the Overview, both ledgers, Savings, Planning, Funds and
+//! Retirement, each a tab of it.
 //!
-//! `html` writes the page readably and `write` minifies it on the way to the
-//! disk, so what a test asserts against and what a phone downloads are the
-//! same page in two forms.
+//! `Snapshot` reads everything in one pass; `view` is what the page's script
+//! is handed, every decision already made; `html` builds that payload per tab
+//! and puts it in `finance-utils`' shell beside `report.js`, which draws it,
+//! and `report.css`. `write` minifies the page on the way to the disk, so
+//! what a test asserts against and what a phone downloads are the same page
+//! in two forms.
 
 pub mod html;
+pub mod view;
 
 use crate::account_label::Account;
 use crate::allocation::{Class, Held, SummaryRow};
@@ -1011,36 +1015,37 @@ mod tests {
         assert_eq!(before, after, "the page was rewritten");
     }
 
-    /// The bar is a row of empty `<span>`s whose whole content is an inline
-    /// width, which is the one shape on the page an aggressive minifier
-    /// could take for nothing at all -- and a blank track would draw as a
-    /// portfolio holding none of anything. No other test would see it:
-    /// `html`'s own run before any of this.
+    /// The bar's widths are strings in the payload, which is the one shape
+    /// a minifier reaching into a `<script>` could rewrite -- and a blank
+    /// track would draw as a portfolio holding none of anything.
     #[test]
     fn minification_leaves_the_allocation_bar_its_widths() {
         let dir = scratch("bar");
         let written = write(&with_holdings(), &dir, today()).unwrap();
         let page = std::fs::read_to_string(&written.path).unwrap();
-        // Quotes come off ahead of the match rather than into it, so which
-        // attributes the minifier unquotes stays its business.
-        // `75.00%` as `html` writes it: the CSS minifier reaches inside a
-        // `style` attribute too, and drops a trailing zero the same as it
-        // would in the stylesheet.
-        let unquoted = page.replace('"', "");
-        assert!(
-            unquoted.contains("width:75%"),
-            "the U.S. stock segment lost its width: {page}"
-        );
-        assert!(
-            page.contains("div.bar{"),
-            "the bar lost the rule that gives it a track"
+        let payload = html::payload(&page);
+        let funds = payload["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == "funds")
+            .unwrap();
+        let bar = funds["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["t"] == "Bar")
+            .expect("no bar");
+        assert_eq!(
+            bar["segments"][0],
+            serde_json::json!(["75.00", 0]),
+            "the U.S. stock segment lost its width: {bar}"
         );
     }
 
     /// A goal's history is read off the database with the rest of the page,
-    /// and the popover that draws it is two attributes a minifier could
-    /// rename or drop -- either way the goal's name would render and then do
-    /// nothing.
+    /// and reaches the disk as an entry the goal's row points at by index --
+    /// a row pointing at the wrong entry would open another goal's history.
     #[test]
     fn a_goals_history_reaches_the_disk_and_still_opens() {
         let db = seeded();
@@ -1080,60 +1085,77 @@ mod tests {
 
         let dir = scratch("history");
         let written = write(&db, &dir, today()).unwrap();
-        let page = std::fs::read_to_string(&written.path)
-            .unwrap()
-            .replace('"', "");
-        let id = format!("history-{}", couch.0);
-        // Matched without the attributes beside each, whose order is the
-        // minifier's to choose.
-        assert!(page.contains(&format!("popovertarget={id} ")), "{page}");
-        assert!(page.contains(&format!("id={id} popover>")), "{page}");
+        let payload = html::payload(&std::fs::read_to_string(&written.path).unwrap());
+        let savings = &payload["tabs"][3];
+        assert_eq!(savings["id"], "savings");
+        let goal = &savings["blocks"][1]["rows"][0];
+        assert_eq!(goal["c"][0], "Couch");
+        let history = &payload["histories"][goal["h"].as_u64().unwrap() as usize];
+        assert_eq!(history["name"], "Couch", "the name opens another history");
+        let rows = history["rows"].to_string();
         assert!(
-            page.contains("400.12"),
-            "the history lost its cents: {page}"
+            rows.contains("400.12"),
+            "the history lost its cents: {rows}"
         );
         assert!(
-            page.contains("300.12"),
-            "the history lost its total: {page}"
+            rows.contains("300.12"),
+            "the history lost its total: {rows}"
         );
     }
 
-    /// Every tab and the menu are a radio and a sibling selector, so a
-    /// minifier that dropped an `id`, unquoted one the CSS matches on, or
-    /// reordered an input past the panel it shows would leave a page that
-    /// renders and then does nothing -- and no other test would see it,
-    /// because `html`'s own tests run before any of this.
+    /// A goal whose name spells the data block's closer, in a container of
+    /// its own: what the payload must carry through the minifier as text.
+    fn with_a_hostile_goal() -> Db {
+        let db = seeded();
+        let container =
+            account::insert(&db, "SAV", "Rainy Day", account::Kind::Cash, 1, None).unwrap();
+        crate::db::goal::insert(
+            &db,
+            &crate::db::goal::NewGoal {
+                name: HOSTILE.to_string(),
+                container_account_id: container,
+                base_cents: Cents::from_dollars(1_000),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 0,
+                taxed: false,
+                floating: false,
+                note: None,
+            },
+        )
+        .unwrap();
+        db
+    }
+
+    const HOSTILE: &str = "a</script><b>&\"";
+
+    /// The minifier rewrites the whole file, and the page is nothing without
+    /// two things in it: the data block, parsing back to the very view `html`
+    /// built, and the script that draws it.
     #[test]
-    fn minification_leaves_every_tab_and_its_switch_intact() {
-        let dir = scratch("switches");
-        let written = write(&seeded(), &dir, today()).unwrap();
+    fn minification_keeps_the_payload_and_the_renderer() {
+        let db = with_a_hostile_goal();
+        let dir = scratch("payload");
+        let written = write(&db, &dir, today()).unwrap();
         let page = std::fs::read_to_string(&written.path).unwrap();
 
         assert!(is_the_page(&page), "the doctype did not survive");
-        // Both halves of a control are matched by something only the element
-        // carries, because the CSS names each of them too: `Cash` and
-        // `Credit` are Overview band labels as well as tab labels, and
-        // `{id}-panel` is a substring of the very selector below. So the
-        // label is matched paired with its `for`, and the panel by its
-        // `id=`, which no selector spells. Quotes come off ahead of the
-        // match rather than into it, so which attributes the minifier
-        // unquotes stays its business.
+        let snapshot = Snapshot::load(&db, today(), Local::now()).unwrap();
+        let payload = html::payload(&page);
+        assert_eq!(
+            payload,
+            serde_json::to_value(html::page_view(&snapshot)).unwrap()
+        );
+        assert_eq!(payload["histories"][0]["name"], HOSTILE);
+        assert!(page.contains("JSON.parse("), "the renderer is gone");
         let unquoted = page.replace('"', "");
-        for (id, name) in html::TABS {
+        for tab in html::TABS {
             assert!(
-                unquoted.contains(&format!("for={id}>{name}</label>")),
-                "no {id} tab label"
-            );
-            assert!(
-                unquoted.contains(&format!("id={id}-panel")),
-                "no {id} panel"
-            );
-            assert!(
-                page.contains(&format!("#{id}:checked~#{id}-panel")),
-                "nothing switches the {id} panel on"
+                unquoted.contains(&format!("id={}-panel", tab.id)),
+                "no {} panel",
+                tab.id
             );
         }
-        assert!(unquoted.contains("for=menu>"), "no menu button");
-        assert!(page.contains("#menu:checked~nav"), "nothing opens the menu");
     }
 }

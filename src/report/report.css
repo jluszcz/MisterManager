@@ -1,0 +1,182 @@
+/* The report's layout, after the shell's base and the palette tokens.
+   Mobile first: below 48rem rows take their two-line shapes and the tab bar
+   sits at the bottom; above it every table is one line in its columns. Row
+   height follows the pointer, not the width, so every iPad is touch-sized. */
+:root{--fav:#fff4cc}
+@media (prefers-color-scheme:dark){:root{--fav:#3a3215}}
+main{max-width:72rem;margin:0 auto}
+h3{font-size:1.05rem;margin:1.2rem 0 .3rem}
+h4{font-size:.95rem;margin:1rem 0 .3rem}
+p.note{color:var(--mut);font-size:.88rem;margin:.5rem 0}
+.tbl{margin:0 0 1rem}
+
+/* Rows: one grid each, its cells placed by position under the table's class. */
+.row{display:grid;align-items:center;gap:2px 10px;min-height:32px;padding:5px 0;border-bottom:1px solid var(--rule);font-variant-numeric:tabular-nums}
+.row>*{min-width:0;overflow-wrap:break-word}
+.span{grid-column:var(--from)/-1}
+.hd{min-height:0;padding:4px 0;font-size:.75rem;font-weight:600;color:var(--mut)}
+.tot{font-weight:600}
+.sep{margin-top:.8rem}
+.gap{padding-top:1rem}
+.future{opacity:.55}
+.fav{background:var(--fav);margin:0 -8px;padding-left:8px;padding-right:8px}
+.expired>:first-child::after{content:" !"}
+.counted>:first-child::after{content:" \2022"}
+.sec{font-size:.82rem;color:var(--mut)}
+
+button.goal{all:unset;min-width:0;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;overflow-wrap:break-word}
+button.goal:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+/* Figures and dates hold their line and sit right; text wraps at its spaces. */
+.ov>:nth-child(n+2),.lg>:nth-child(4),.sv>:nth-child(2),.sv>:nth-child(3),.sv>:nth-child(4),.pl>:nth-child(n+2),
+.fs>:nth-child(n+2),.fh>:nth-child(2),.rs>:nth-child(2),.rs>:nth-child(3),.rs>:nth-child(4),.rm>:nth-child(n+2),
+.ra>:nth-child(n+3),.hs>:nth-child(3){text-align:right;white-space:nowrap}
+.lg>:first-child,.sv>:nth-child(5),.fh>:nth-child(3),.hs>:first-child{white-space:nowrap}
+
+/* Overview: the name, then its three figures under the three dates. */
+.ov{grid-template-columns:repeat(3,minmax(0,1fr))}
+.ov>:first-child{grid-column:1/-1}
+.ov.hd>:first-child{display:none}
+
+/* Ledgers: date and account in small type, then the description and amount. */
+.lg{grid-template-columns:auto minmax(0,1fr) auto}
+.lg.hd{display:none}
+.lg>:nth-child(1){grid-area:1/1;font-size:.82rem;color:var(--mut)}
+.lg>:nth-child(2){grid-area:1/2/2/4;font-size:.82rem}
+.lg>:nth-child(2)::before{content:"\00b7  ";color:var(--mut)}
+.lg>:nth-child(3){grid-area:2/1/3/3}
+.lg>:nth-child(4){grid-area:2/3}
+
+/* Savings: the name and %, then current of goal and the date, then a meter. */
+.sv{grid-template-columns:auto auto minmax(0,1fr) auto}
+.sv.hd{display:none}
+.sv>:nth-child(1){grid-area:1/1/2/4}
+.sv>:nth-child(4){grid-area:1/4;font-weight:600}
+.sv>:nth-child(2){grid-area:2/1;font-size:.82rem}
+.sv>:nth-child(3){grid-area:2/2;font-size:.82rem;color:var(--mut);text-align:left}
+.sv>:nth-child(3):not(:empty)::before{content:"of "}
+.sv>:nth-child(5){grid-area:2/3/3/5;font-size:.82rem;color:var(--mut);text-align:right}
+.sv>:nth-child(5):not(:empty)::before{content:"Due "}
+.sv.unalloc>:nth-child(2){grid-area:1/4;font-size:inherit}
+.meter{grid-area:3/1/4/-1;height:3px;margin-top:4px;background:var(--rule);border-radius:2px;overflow:hidden}
+.meter i{display:block;height:100%;background:currentColor}
+
+/* Planning: one line a row, the label indented a level at a time. */
+.pl{grid-template-columns:minmax(0,1fr) 5rem minmax(5rem,max-content)}
+.pl>:first-child{padding-left:calc((var(--d,1) - 1) * 1rem)}
+:where(.sub>:first-child){color:var(--mut)}
+.pl.head{min-height:0;padding-top:1.1rem;border-bottom:0;font-size:.8rem;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+.pl.note{color:var(--mut)}
+
+/* Funds: the summary on one line; a holding's ticker over its figures. */
+.fs{grid-template-columns:minmax(0,1fr) repeat(3,4.25rem);column-gap:8px}
+.fh{grid-template-columns:minmax(0,1fr) auto}
+.fh>:nth-child(1){grid-area:1/1/2/3}
+.fh>:nth-child(2){grid-area:2/1;text-align:left}
+.fh>:nth-child(3){grid-area:2/2;font-size:.82rem;color:var(--mut);text-align:right}
+.fh.hd>*{font-size:inherit}
+.bar{display:flex;height:.6rem;margin:.5rem 0 .4rem;border-radius:.3rem;overflow:hidden;background:var(--rule)}
+.bar i{display:block;height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:.2rem .9rem;margin:0 0 1rem;font-size:.75rem;color:var(--mut)}
+.item{display:inline-flex;align-items:center;gap:.3rem;white-space:nowrap}
+.key{display:inline-block;width:.6rem;height:.6rem;border-radius:.15rem;background:currentColor}
+
+/* Retirement: each standing, milestone and account on two lines -- the
+   label and its dollars, then the figures read against them. */
+.rs{grid-template-columns:minmax(0,1fr) auto auto}
+.rs>:nth-child(1){grid-area:1/1/2/3}
+.rs>:nth-child(2){grid-area:1/3}
+.rs>:nth-child(3){grid-area:2/1;text-align:left}
+.rs>:nth-child(4){grid-area:2/2}
+.rs>:nth-child(5){grid-area:2/3;text-align:right}
+.rs>:nth-child(n+3){font-size:.82rem}
+.rs>:nth-child(n+3):not(.neg):not(.pos):not(.mid){color:var(--mut)}
+.rs>.span{grid-column:1/-1;text-align:left}
+.rs.hd>*{font-size:inherit}
+.rm{grid-template-columns:minmax(0,1fr) auto}
+.rm>:nth-child(1){grid-area:1/1}
+.rm>:nth-child(3){grid-area:1/2}
+.rm>:nth-child(2){grid-area:2/1;text-align:left;font-size:.82rem;color:var(--mut)}
+.rm>:nth-child(4){grid-area:2/2;font-size:.82rem;color:var(--mut)}
+.rm.hd>*{font-size:inherit}
+.ra{grid-template-columns:minmax(0,1fr) auto}
+.ra>:nth-child(1){grid-area:1/1}
+.ra>:nth-child(3){grid-area:1/2}
+.ra>:nth-child(2){grid-area:2/1;font-size:.82rem;color:var(--mut)}
+.ra>:nth-child(4){grid-area:2/2;font-size:.82rem;color:var(--mut)}
+.ra.hd>*{font-size:inherit}
+.chart{max-width:32rem}
+svg.chart{display:block;width:100%;height:auto}
+svg.chart line.grid{stroke:var(--rule);stroke-width:1}
+svg.chart text.axis{fill:var(--mut);font-size:10px}
+.ln{stroke:currentColor}
+circle.ln{fill:currentColor}
+.total{color:var(--total)}
+
+/* A goal's history: date, note, amount. */
+.hs{grid-template-columns:6rem minmax(0,1fr) auto}
+
+/* The month filter. */
+label.pick{display:flex;align-items:center;gap:.6rem;margin:.3rem 0 .6rem;font-size:.82rem;color:var(--mut)}
+select{font:inherit;font-size:1rem;color:var(--fg);background:var(--bg);border:1px solid var(--rule);border-radius:8px;padding:6px 10px}
+
+/* The history sheet: a bottom sheet on a phone, a centered modal above. */
+#hist{border:0;padding:0;width:100%;max-width:100%;max-height:85dvh;margin:auto 0 0;border-radius:14px 14px 0 0;background:var(--bg);color:var(--fg);overflow:hidden;flex-direction:column}
+#hist[open]{display:flex}
+#hist::backdrop{background:rgba(0,0,0,.45)}
+#hist header{display:flex;align-items:center;gap:8px;padding:2px 4px 2px 16px;border-bottom:1px solid var(--rule)}
+#hist h3{flex:1;margin:0;min-width:0;font-size:1rem;overflow-wrap:break-word}
+#hist .x{font:inherit;font-size:1.5rem;line-height:1;min-width:44px;min-height:44px;border:0;background:none;color:inherit;cursor:pointer}
+#hist .body{overflow-y:auto;overscroll-behavior:contain;padding:0 16px calc(16px + env(safe-area-inset-bottom))}
+@media (prefers-reduced-motion:no-preference){#hist[open]{animation:up .2s ease-out}}
+@keyframes up{from{transform:translateY(24px);opacity:0}}
+
+@media (min-width:48rem){
+nav.tabs,footer{padding-left:max(16px,env(safe-area-inset-left),calc(50% - 36rem + 16px))}
+.row{font-size:.9375rem}
+.lg>:nth-child(n),.sv>:nth-child(n),.fh>:nth-child(n),.rm>:nth-child(n),.rs>:nth-child(n),.ra>:nth-child(n),.sv.unalloc>:nth-child(n){grid-area:auto;font-size:inherit}
+.rs>.span{grid-column:var(--from)/-1}
+.lg>:nth-child(2)::before,.sv>:nth-child(n):not(:empty)::before{content:none}
+.lg.hd,.sv.hd{display:grid}
+.lg>:first-child{color:inherit}
+.ov{grid-template-columns:minmax(8rem,1fr) repeat(3,9rem)}
+.ov>:first-child{grid-column:auto}
+.ov.hd>:first-child{display:block}
+.lg{grid-template-columns:6.5rem minmax(6rem,10rem) minmax(0,1fr) 7.5rem}
+.sv{grid-template-columns:minmax(0,1fr) 5.5rem 5.5rem 3.25rem 6rem}
+.sv>:nth-child(3),.sv>:nth-child(5){color:inherit}
+.sv>:nth-child(3){text-align:right}
+.sv>:nth-child(5){text-align:left}
+.sv>:nth-child(4){font-weight:inherit}
+.meter{display:none}
+#savings-panel .groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,30rem),1fr));gap:0 2rem}
+.fs{grid-template-columns:minmax(0,1fr) repeat(3,6rem)}
+.fh{grid-template-columns:minmax(0,1fr) 8rem 7rem}
+.fh>:nth-child(2){text-align:right}
+.fh>:nth-child(3){color:inherit;text-align:left}
+.rm{grid-template-columns:minmax(0,1fr) 7rem 10rem 8rem}
+.rs{grid-template-columns:minmax(0,1fr) 8rem 6rem 8rem 9rem}
+.rs>:nth-child(3){text-align:right}
+.rs>:nth-child(5){text-align:left}
+.rs>:nth-child(n+3):not(.neg):not(.pos):not(.mid){color:inherit}
+.ra{grid-template-columns:minmax(0,1fr) 8rem 8rem 6rem}
+.ra>:nth-child(2),.ra>:nth-child(4){color:inherit}
+.ra>:nth-child(2){text-align:left}
+.rm>:nth-child(2){text-align:right;color:inherit}
+.rm>:nth-child(4){color:inherit}
+#hist{max-width:34rem;max-height:80vh;margin:auto;border-radius:12px}
+}
+
+@media (pointer:coarse){
+.row{min-height:44px}
+.row.hd{min-height:0}
+select{min-height:44px}
+}
+@media (pointer:coarse) and (max-width:47.999rem){
+.ov:not(.hd),.lg,.sv:not(.hd),.fh:not(.hd),.rm:not(.hd),.rs:not(.hd),.ra:not(.hd){min-height:48px}
+}
+
+/* Tones last, so a cell's own sign outranks its column's secondary color. */
+.row>.neg{color:var(--neg)}
+.row>.pos{color:var(--pos)}
+.row>.mid{color:var(--mid)}
