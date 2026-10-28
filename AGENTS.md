@@ -836,6 +836,11 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
     the figure is odd — and `a_note_at_the_limit_is_drawn_whole_on_the_form` is what ties the number
     to the width. That test focuses the Note field, because the caret is only drawn on the line that
     has focus and an unfocused one would pass at any limit a column too wide.
+- **A card payment out of the Bill Payments goal's container spends from that goal.** `p` on a
+  ledger writes through `transfer::pay_card`, which deducts the payment from `Line::Bills`' goal
+  in the same transaction when the `From` account holds it, noted `<card name> Payment`. `t` never
+  does, even to a card. The deduction is no batch, so `U` cannot strip it from a payment that
+  stands; why, and why a dangling key refuses the payment, are on `pay_card`.
 - **One worksheet commit is one `batch`.** `goal::insert_allocations` opens the batch itself, so a
   fumbled payday is one `delete_batch` rather than dozens of deletions. `U` undoes the most recent
   batch by insert order and **never an `Import` batch** — that one holds every opening balance in the

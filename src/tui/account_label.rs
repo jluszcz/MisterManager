@@ -203,6 +203,13 @@ mod tests {
             // carried apart rather than never separated.
             ("transfer.rs", "name: a.name.as_str().to_string()"),
             ("transfer.rs", "name: account.name.as_str().to_string()"),
+            // `pay_card`'s note on the Bill Payments deduction. Not a display:
+            // it is written to the allocation row, as `goal::move_value`'s
+            // note is.
+            (
+                "transfer.rs",
+                "\"{} Payment\", account::get(db, card)?.name.as_str()",
+            ),
             // Seeds the Accounts form's editable Name field -- the owner then
             // owns the text.
             ("tui/accounts.rs", "Field::given(account.name.as_str()"),
