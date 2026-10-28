@@ -442,6 +442,13 @@ impl TransferForm {
         self.description.value()
     }
 
+    /// Whether `p` opened the form, which is what decides that committing it
+    /// may spend from the Bill Payments goal: `t` moves money, and a `t` to
+    /// a card is the owner choosing not to call it a payment.
+    pub fn is_payment(&self) -> bool {
+        self.kind == TransferKind::Payment
+    }
+
     pub fn display(&self, field: TransferField) -> Label {
         let account = |list: &[account::Account], i: usize| match list.get(i) {
             // Spelled against both lists, never against the one the field

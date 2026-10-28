@@ -10,6 +10,7 @@ use crate::db::{account, setting, txn};
 use crate::default_source::Source;
 use crate::description;
 use crate::money::Cents;
+use crate::transfer;
 use crate::tui::autocomplete::Autocomplete;
 use crate::tui::cursor;
 use crate::tui::form::{self, DateField, ValueForm};
@@ -303,21 +304,38 @@ impl App {
         };
         let moved = form.commit()?;
         // One description, used for both legs.
-        txn::insert_transfer(
-            &self.db,
-            moved.from_account_id,
-            moved.to_account_id,
-            moved.date,
-            moved.cents,
-            &moved.description,
-            &moved.description,
-        )?;
+        let deducted = if form.is_payment() {
+            transfer::pay_card(
+                &self.db,
+                moved.from_account_id,
+                moved.to_account_id,
+                moved.date,
+                moved.cents,
+                &moved.description,
+            )?
+        } else {
+            txn::insert_transfer(
+                &self.db,
+                moved.from_account_id,
+                moved.to_account_id,
+                moved.date,
+                moved.cents,
+                &moved.description,
+                &moved.description,
+            )?;
+            None
+        };
         // Both legs are new rows, so this is a statement about the day being
         // entered for in the way an `e` is not, and it names its date for the
         // reason `commit_txn_form` does.
         self.entry_date = Some(moved.date);
+        // The deduction is named because nothing on the ledger shows it: it
+        // lands on a goal, on another screen.
+        let from_goal = deducted
+            .map(|goal| format!(", from {}", crate::demo::text(&goal.name)))
+            .unwrap_or_default();
         self.status = format!(
-            "{} {} on {}",
+            "{} {} on {}{from_goal}",
             description::render(&moved.description),
             crate::demo::figure(moved.cents),
             moved.date
@@ -334,7 +352,7 @@ mod tests {
     use crate::db::AccountId;
     use crate::db::account::{self, Group, Kind};
     use crate::money::Cents;
-    use crate::test_support::day;
+    use crate::test_support::{day, walk_until};
     use crate::tui::app::test_support::*;
     use crate::tui::ledger_form::{TransferField, TxnField};
     use crate::tui::modal::{Modal, ValueTarget};
@@ -1335,5 +1353,85 @@ mod tests {
 
         assert_eq!(app.cash.search(), "");
         assert_eq!(app.credit.search(), "card");
+    }
+
+    /// A Bill Payments goal in Rainy Day, recorded under the Bills line's
+    /// key the way an import records it, with Rainy Day as what both money
+    /// forms open on.
+    fn with_bill_payments(app: &App) -> (AccountId, crate::db::GoalId) {
+        let savings = account::list_by_kind(&app.db, Kind::Cash).unwrap()[1].id;
+        let bills = crate::db::goal::insert(
+            &app.db,
+            &crate::db::goal::NewGoal {
+                name: "Bill Payments".to_string(),
+                container_account_id: savings,
+                base_cents: Cents(100_000),
+                goal_date: None,
+                recurring_goal_id: None,
+                interest_eligible: true,
+                sort: 2,
+                taxed: false,
+                floating: false,
+                note: None,
+            },
+        )
+        .unwrap();
+        setting::set(
+            &app.db,
+            destination_key(crate::plan_line::Line::Bills),
+            bills,
+        )
+        .unwrap();
+        setting::set(&app.db, Source::Payment.key(), savings).unwrap();
+        setting::set(&app.db, Source::Transfer.key(), savings).unwrap();
+        (savings, bills)
+    }
+
+    fn commit_amount(app: &mut App, amount: &str) {
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Transfer(f)) if f.focus == TransferField::Amount),
+            press(app, KeyCode::Tab),
+        );
+        type_str(app, amount);
+        press(app, KeyCode::Enter);
+        assert!(app.modal.is_none(), "the form stayed open: {}", app.status);
+    }
+
+    #[test]
+    fn p_from_the_bill_payments_container_deducts_the_payment_from_that_goal() {
+        let mut app = app();
+        let (_, bills) = with_bill_payments(&app);
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('p'));
+        commit_amount(&mut app, "10");
+
+        let history = crate::db::goal::allocations(&app.db, bills).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].cents, Cents(-1_000));
+        assert_eq!(history[0].note.as_deref(), Some("Card One Payment"));
+        assert!(app.status.contains("Bill Payments"), "{}", app.status);
+    }
+
+    /// `t` to a card is the owner declining to call it a payment, so it
+    /// spends nothing from the goal even out of the goal's own container.
+    #[test]
+    fn t_to_a_card_from_the_bill_payments_container_deducts_nothing() {
+        let mut app = app();
+        let (_, bills) = with_bill_payments(&app);
+        let card = account::list_by_kind(&app.db, Kind::Credit).unwrap()[0].id;
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('t'));
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Transfer(f)) if f.focus == TransferField::To),
+            press(&mut app, KeyCode::Tab),
+        );
+        walk_until!(opens_on(&app).1 == card, press(&mut app, KeyCode::Right));
+        commit_amount(&mut app, "10");
+
+        assert!(
+            crate::db::goal::allocations(&app.db, bills)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

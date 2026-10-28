@@ -879,6 +879,55 @@ pub fn execute(db: &Db, from: AccountId, date: NaiveDate, rows: &[Row]) -> Resul
     })
 }
 
+/// A card payment, and the deduction it makes from [`Line::Bills`]' goal when
+/// that goal is held in the account paying.
+///
+/// The goal is where bill money is set aside, so a card settled out of its
+/// container has spent from it: left alone, the goal would go on claiming
+/// cash the account no longer holds and the container would reconcile short
+/// by the payment. Paid from any other account, the goal's cash never moved
+/// and nothing is deducted. A closed goal is skipped for the same reason a
+/// closed goal is offered nothing anywhere else.
+///
+/// The key is read strictly: one naming a goal that is gone refuses the whole
+/// payment rather than writing it undeducted, which would leave the goal
+/// overstated with nothing on screen to say so.
+///
+/// The allocation is no batch, so `U` cannot reverse it on its own and leave
+/// the payment standing without the deduction it made. Its note is the
+/// card's *name*, where the ledger rows carry its code -- a goal's history is
+/// read without the ledger beside it, by someone looking for which card.
+///
+/// Returns the goal deducted from, if any.
+///
+/// **Must be called at top level, not inside another [`Db::transaction`].**
+pub fn pay_card(
+    db: &Db,
+    from: AccountId,
+    card: AccountId,
+    date: NaiveDate,
+    cents: Cents,
+    description: &str,
+) -> Result<Option<Goal>> {
+    let Destination::Goal(key) = Line::Bills.destination() else {
+        unreachable!("the Bills line lands in a goal");
+    };
+    // Unmasked for the reason `goal::move_value`'s note gives: it is written
+    // to the row.
+    let note = format!("{} Payment", account::get(db, card)?.name.as_str());
+    db.transaction(|db| {
+        // Read under the write's own lock, so the goal deducted from is the
+        // goal the key names when the payment lands.
+        let bills = resolve_goal(db, key, Reading::Strict)?
+            .filter(|goal| !goal.closed && goal.container_account_id == from);
+        txn::write_transfer(db, from, card, date, cents, description, description)?;
+        if let Some(goal) = &bills {
+            goal::insert_allocation(db, goal.id, date, -cents, Some(&note), None)?;
+        }
+        Ok(bills)
+    })
+}
+
 /// Which of `dates` the source ledger already carries this payday's rows on,
 /// in the order asked.
 ///
@@ -2122,5 +2171,91 @@ mod tests {
             already_written(&db, checking, &scanned, &rows).unwrap(),
             vec![day(2026, 8, 20), day(2026, 8, 24)]
         );
+    }
+
+    /// [`configured`] and a card to pay, with the Bills line's goal.
+    fn paying() -> (db::Db, AccountId, AccountId, GoalId) {
+        let (db, savings, _) = configured();
+        let card = account::insert(&db, "CC1", "Card One", Kind::Credit, 0, None).unwrap();
+        let bills = setting::get(&db, key_of(Line::Bills)).unwrap().unwrap();
+        (db, savings, card, bills)
+    }
+
+    #[test]
+    fn a_payment_from_the_bill_payments_container_deducts_it_under_the_cards_name() {
+        let (db, savings, card, bills) = paying();
+        let paid = Cents::from_dollars(250);
+
+        let deducted = pay_card(&db, savings, card, day(2026, 8, 20), paid, "CC1 Payment").unwrap();
+
+        assert_eq!(deducted.map(|g| g.id), Some(bills));
+        let history = goal::allocations(&db, bills).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].cents, -paid);
+        assert_eq!(history[0].date, day(2026, 8, 20));
+        assert_eq!(history[0].note.as_deref(), Some("Card One Payment"));
+        assert_eq!(txn::balance_all_time(&db, savings).unwrap(), -paid);
+        assert_eq!(txn::balance_all_time(&db, card).unwrap(), -paid);
+    }
+
+    #[test]
+    fn a_payment_from_another_account_leaves_bill_payments_alone() {
+        let (db, _, card, bills) = paying();
+        let checking = account::checking(&db).unwrap().id;
+
+        let deducted = pay_card(
+            &db,
+            checking,
+            card,
+            day(2026, 8, 20),
+            Cents::from_dollars(250),
+            "CC1 Payment",
+        )
+        .unwrap();
+
+        assert!(deducted.is_none());
+        assert!(goal::allocations(&db, bills).unwrap().is_empty());
+        assert_eq!(txn::count(&db).unwrap(), 2);
+    }
+
+    #[test]
+    fn a_closed_bill_payments_goal_is_not_deducted_from() {
+        let (db, savings, card, bills) = paying();
+        goal::close(&db, bills).unwrap();
+
+        let deducted = pay_card(
+            &db,
+            savings,
+            card,
+            day(2026, 8, 20),
+            Cents::from_dollars(250),
+            "CC1 Payment",
+        )
+        .unwrap();
+
+        assert!(deducted.is_none());
+        assert!(goal::allocations(&db, bills).unwrap().is_empty());
+    }
+
+    /// Writing the payment undeducted would leave the goal claiming cash the
+    /// account no longer holds, so a dangling key refuses both halves.
+    #[test]
+    fn a_dangling_bill_payments_key_refuses_the_payment_and_writes_nothing() {
+        let (db, savings, card, _) = paying();
+        setting::set(&db, key_of(Line::Bills), GoalId(9_999)).unwrap();
+
+        let refusal = pay_card(
+            &db,
+            savings,
+            card,
+            day(2026, 8, 20),
+            Cents::from_dollars(250),
+            "CC1 Payment",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(refusal.contains(key_of(Line::Bills).name()), "{refusal}");
+        assert_eq!(txn::count(&db).unwrap(), 0);
     }
 }
