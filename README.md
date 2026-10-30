@@ -481,8 +481,8 @@ asked for outright is the point.
 The page carries seven tabs, in the order the screens are numbered: Overview,
 Cash, Credit, Savings, Planning, Funds, Retirement. It opens on Overview. The
 page is one file with its data and a small script inside it, so it works on a
-phone with no network and nothing to load. On a phone the tabs sit in a bar
-along the bottom and each row folds onto two lines; on a wider screen the tabs
+phone with no network and nothing to load. On a phone the tabs fold into a
+menu at the top and each row folds onto two lines; on a wider screen the tabs
 run along the top and every row is one line. Each container's goals sit under
 its own heading, and tapping a goal opens its history. The Planning tab shows
 the transfers and the biweekly expenses over the waterfall that produced them,

@@ -34,13 +34,12 @@ use jluszcz_finance_utils::report::html::{App, NavTab, app_page, script_json};
 // rule has no case to argue.
 use jluszcz_finance_utils::report::escape;
 
-/// One tab of the bar: its id, which names its panel; the label the wide bar
-/// shows and the shorter one under its icon; and the icon, the inside of a
-/// 24x24 `<svg>` the shell strokes in the text color.
+/// One tab: its id, which names its panel; its label; and the icon the narrow
+/// page's menu draws beside it, the inside of a 24x24 `<svg>` the shell
+/// strokes in the text color.
 pub(super) struct Tab {
     pub id: &'static str,
     pub label: &'static str,
-    pub short: &'static str,
     pub icon: &'static str,
 }
 
@@ -54,46 +53,39 @@ pub(super) const TABS: [Tab; 7] = [
     Tab {
         id: "overview",
         label: "Overview",
-        short: "Overview",
         icon: "<path d=\"M4 19V9M10 19V5M16 19v-7M22 19H2\"/>",
     },
     Tab {
         id: "cash",
         label: "Cash",
-        short: "Cash",
         icon: "<rect x=\"2\" y=\"6\" width=\"20\" height=\"12\" rx=\"2\"/>\
                <circle cx=\"12\" cy=\"12\" r=\"2.5\"/>",
     },
     Tab {
         id: "credit",
         label: "Credit",
-        short: "Credit",
         icon: "<rect x=\"2\" y=\"5\" width=\"20\" height=\"14\" rx=\"2\"/>\
                <path d=\"M2 10h20M6 15h4\"/>",
     },
     Tab {
         id: "savings",
         label: "Savings",
-        short: "Savings",
         icon: "<circle cx=\"12\" cy=\"12\" r=\"9\"/><circle cx=\"12\" cy=\"12\" r=\"5\"/>\
                <circle cx=\"12\" cy=\"12\" r=\"1\"/>",
     },
     Tab {
         id: "planning",
         label: "Planning",
-        short: "Plan",
         icon: "<path d=\"M4 5h16M7 10h13M10 15h10M13 20h7\"/>",
     },
     Tab {
         id: "funds",
         label: "Funds",
-        short: "Funds",
         icon: "<path d=\"M12 3v9l7 4\"/><circle cx=\"12\" cy=\"12\" r=\"9\"/>",
     },
     Tab {
         id: "retirement",
         label: "Retirement",
-        short: "Retire",
         icon: "<path d=\"M3 20h18M6 20V10l6-5 6 5v10M10 20v-5h4v5\"/>",
     },
 ];
@@ -135,7 +127,7 @@ pub fn page(snapshot: &Snapshot) -> String {
         .expect("the view holds only strings, numbers and lists");
     let tabs: Vec<NavTab> = TABS
         .iter()
-        .map(|t| NavTab::new(t.id, t.label).short(t.short).icon(t.icon))
+        .map(|t| NavTab::new(t.id, t.label).icon(t.icon))
         .collect();
     let panels = vec![String::new(); TABS.len()];
     app_page(&App {
@@ -237,8 +229,8 @@ mod tests {
         );
     }
 
-    /// Every tab carries an icon, so the shell draws the bottom bar on a
-    /// phone; one missing would drop the whole bar to the wrapping row.
+    /// Every tab carries an icon, so the shell folds the tabs into its menu
+    /// on a phone; one missing would drop the whole bar to the wrapping row.
     #[test]
     fn the_bar_is_the_icon_form() {
         assert!(page(&fixture()).contains("class=\"tabs icons\""));
