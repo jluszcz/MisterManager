@@ -48,8 +48,9 @@ about a figure, one of them is wrong.
   token it redefines, black on that ground being no line at all, so `--total` follows the shell's
   `--fg`. A lighter dark variant of any other color would come from `palette.rs` the same way.
 - **Two switches, independent: width decides a row's shape, the pointer decides its height.**
-  Below 48rem rows take their two-line shapes and the shell puts the tab bar at the bottom with
-  icons and short labels; above it every table is one line in its columns under a top tab row.
+  Below 48rem rows take their two-line shapes and the shell folds the tabs into a menu at the
+  top, never a bar along the bottom edge, where a phone viewer such as a sync app's answers taps
+  with its own toolbar; above it every table is one line in its columns under a top tab row.
   Under `(pointer: coarse)` every row and control is at least 44px, and the two-line forms 48px;
   under a fine pointer the wide rows are the dense ~32px ones. So every iPad, in either
   orientation, gets touch-sized rows, single-line wherever it is wide enough.

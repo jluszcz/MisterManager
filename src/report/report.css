@@ -1,6 +1,6 @@
 /* The report's layout, after the shell's base and the palette tokens.
-   Mobile first: below 48rem rows take their two-line shapes and the tab bar
-   sits at the bottom; above it every table is one line in its columns. Row
+   Mobile first: below 48rem rows take their two-line shapes and the tabs sit
+   in a menu at the top; above it every table is one line in its columns. Row
    height follows the pointer, not the width, so every iPad is touch-sized. */
 :root{--fav:#fff4cc}
 @media (prefers-color-scheme:dark){:root{--fav:#3a3215}}
