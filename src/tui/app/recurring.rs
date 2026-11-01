@@ -1063,9 +1063,10 @@ mod tests {
         add_mortgage_rule(&mut app);
         endless_mortgage(&mut app);
         press(&mut app, KeyCode::Char('g'));
+        // 11-01 is a Sunday, so the last occurrence lands on the Monday.
         assert_eq!(
             app.recurring_txn.rows()[0].last_owned,
-            Some(day(2026, 11, 1))
+            Some(day(2026, 11, 2))
         );
 
         press(&mut app, KeyCode::Char('x'));
@@ -1379,7 +1380,7 @@ mod tests {
         .unwrap();
 
         // Move the recurring transaction's whole schedule off the 1st and onto
-        // the 15th.
+        // the 9th, which falls on a weekday all three months.
         press(&mut app, KeyCode::Char('e'));
         press(&mut app, KeyCode::Tab); // Amount
         press(&mut app, KeyCode::Tab); // Account
@@ -1389,7 +1390,7 @@ mod tests {
         for _ in 0..10 {
             press(&mut app, KeyCode::Backspace);
         }
-        type_str(&mut app, "2026-09-15");
+        type_str(&mut app, "2026-09-09");
         press(&mut app, KeyCode::Enter);
         assert!(app.modal.is_none(), "{}", app.status);
 
@@ -1410,7 +1411,7 @@ mod tests {
         assert!(!given_back.edited, "a released row is nobody's correction");
 
         // The released row stays in, not filtered out: a spurious second
-        // insert at 09-01 must fail this the same way a missing 09-15 would.
+        // insert at 09-01 must fail this the same way a missing 09-09 would.
         let mortgage_dates: Vec<NaiveDate> = rows
             .iter()
             .filter(|t| t.description == "Mortgage")
@@ -1420,9 +1421,9 @@ mod tests {
             mortgage_dates,
             vec![
                 day(2026, 9, 1),
-                day(2026, 9, 15),
-                day(2026, 10, 15),
-                day(2026, 11, 15),
+                day(2026, 9, 9),
+                day(2026, 10, 9),
+                day(2026, 11, 9),
             ],
             "the recurring transaction regenerated on the new schedule, leaving the released row behind rather than folding it in"
         );

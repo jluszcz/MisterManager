@@ -265,13 +265,18 @@ fn regenerate_within(
     let owned = recurring_txn::owned_dates(db, recurring_txn.id, today)?;
     let legs = legs(db, recurring_txn)?;
     let to = horizon(db, recurring_txn, today)?;
-    let occurrences = schedule::occurrences(
+    let occurrences = schedule::occurrences_due(
         recurring_txn.anchor_date,
         step(recurring_txn.cadence),
         today,
         to,
     )?;
-    let scheduled: HashSet<NaiveDate> = occurrences.iter().copied().collect();
+    // An occurrence is accounted for by a row on either of its dates: where
+    // it lands, or the weekend day it was due -- which is where the workbook,
+    // or a correction made before the roll, may already have put it. Reading
+    // only the landed date would release or skip that row and insert a second
+    // payment beside it.
+    let scheduled: HashSet<NaiveDate> = occurrences.iter().flat_map(|o| [o.due, o.lands]).collect();
 
     // 1b. A correction the schedule no longer produces accounts for nothing,
     //     so it goes back to the ledger unowned rather than blocking the
@@ -300,22 +305,29 @@ fn regenerate_within(
         .into_iter()
         .filter(|(date, _)| scheduled.contains(date))
         .collect();
-    for date in occurrences {
+    for occurrence in occurrences {
+        let date = occurrence.lands;
         for &(account_id, cents) in &legs {
-            if already_owned.contains(&(date, account_id)) {
+            if already_owned.contains(&(date, account_id))
+                || already_owned.contains(&(occurrence.due, account_id))
+            {
                 continue;
             }
             // 2. Adopt a matching unclaimed row -- the workbook already holds
-            //    every future occurrence as an ordinary row -- before
+            //    every future occurrence as an ordinary row, landed or still
+            //    on its due date -- before
             // 3. inserting, when there was nothing to adopt.
-            let adopted = recurring_txn::adopt(
-                db,
-                recurring_txn.id,
-                date,
-                account_id,
-                &recurring_txn.description,
-                cents,
-            )?;
+            let adopt = |on| {
+                recurring_txn::adopt(
+                    db,
+                    recurring_txn.id,
+                    on,
+                    account_id,
+                    &recurring_txn.description,
+                    cents,
+                )
+            };
+            let adopted = adopt(date)? || (occurrence.due != date && adopt(occurrence.due)?);
             if adopted {
                 report.adopted += 1;
             } else {
@@ -441,8 +453,9 @@ mod tests {
     }
 
     /// The rolling horizon is three months, so from 2026-08-16 the mortgage
-    /// generates 09-01, 10-01 and 11-01 -- and not 12-01, which the recurring
-    /// transaction's own horizon still permits.
+    /// generates 09-01, 10-01 and 11-01 -- landing on 11-02, since the 1st is
+    /// a Sunday -- and not 12-01, which the recurring transaction's own
+    /// horizon still permits.
     #[test]
     fn a_first_regenerate_inserts_every_occurrence_inside_the_rolling_horizon() {
         let (db, _, id) = fresh();
@@ -461,7 +474,7 @@ mod tests {
         let dates: Vec<NaiveDate> = rows(&db).iter().map(|t| t.date).collect();
         assert_eq!(
             dates,
-            vec![day(2026, 9, 1), day(2026, 10, 1), day(2026, 11, 1)]
+            vec![day(2026, 9, 1), day(2026, 10, 1), day(2026, 11, 2)]
         );
         assert!(rows(&db).iter().all(|t| t.recurring_txn_id == Some(id)));
         assert!(rows(&db).iter().all(|t| !t.edited));
@@ -588,7 +601,7 @@ mod tests {
         assert_eq!(
             report,
             Regenerated {
-                // 10-01 and 11-01 are unedited, so they are rewritten as
+                // 10-01 and 11-02 are unedited, so they are rewritten as
                 // always; 09-05 is the released one, and 09-01 comes back.
                 removed: 2,
                 released: 1,
@@ -615,7 +628,7 @@ mod tests {
             .collect();
         assert_eq!(
             owned,
-            vec![day(2026, 9, 1), day(2026, 10, 1), day(2026, 11, 1)],
+            vec![day(2026, 9, 1), day(2026, 10, 1), day(2026, 11, 2)],
             "the recurring transaction owns its three occurrences and nothing else"
         );
         assert_eq!(
@@ -654,7 +667,8 @@ mod tests {
     #[test]
     fn a_correction_beyond_a_shrunken_horizon_is_left_owned() {
         let (db, checking, id) = fresh();
-        write(&db, checking, day(2026, 11, 1), -300_000, "Mortgage");
+        // 11-01 is a Sunday, so the occurrence lands on the Monday.
+        write(&db, checking, day(2026, 11, 2), -300_000, "Mortgage");
         regenerate(&db, id, today()).unwrap();
         setting::set(&db, key::RECURRING_TXN_HORIZON_MONTHS, 1).unwrap();
 
@@ -663,10 +677,50 @@ mod tests {
         assert_eq!(report.released, 0);
         let beyond = rows(&db)
             .into_iter()
-            .find(|t| t.date == day(2026, 11, 1))
+            .find(|t| t.date == day(2026, 11, 2))
             .unwrap();
         assert_eq!(beyond.recurring_txn_id, Some(id));
         assert!(beyond.edited);
+    }
+
+    /// The workbook holds the 11-01 mortgage on the Sunday it was due. That
+    /// row is the occurrence landing on 11-02, so it is adopted where it
+    /// sits rather than joined by a second payment on the Monday.
+    #[test]
+    fn a_row_on_the_weekend_due_date_is_adopted_rather_than_duplicated() {
+        let (db, checking, id) = fresh();
+        write(&db, checking, day(2026, 11, 1), -120_000, "Mortgage");
+
+        let report = regenerate(&db, id, today()).unwrap();
+
+        assert_eq!(report.adopted, 1);
+        assert_eq!(report.inserted, 2);
+        let dates: Vec<NaiveDate> = rows(&db).iter().map(|t| t.date).collect();
+        assert_eq!(
+            dates,
+            vec![day(2026, 9, 1), day(2026, 10, 1), day(2026, 11, 1)]
+        );
+        assert!(rows(&db).iter().all(|t| t.recurring_txn_id == Some(id)));
+    }
+
+    /// A correction owned on the weekend due date still accounts for its
+    /// occurrence: it is neither released nor joined by a Monday row.
+    #[test]
+    fn an_owned_correction_on_the_weekend_due_date_still_accounts_for_it() {
+        let (db, checking, id) = fresh();
+        write(&db, checking, day(2026, 11, 1), -300_000, "Mortgage");
+        regenerate(&db, id, today()).unwrap();
+
+        let report = regenerate(&db, id, today()).unwrap();
+
+        assert_eq!(report.released, 0);
+        let november: Vec<Txn> = rows(&db)
+            .into_iter()
+            .filter(|t| t.date >= day(2026, 11, 1))
+            .collect();
+        assert_eq!(november.len(), 1, "{november:?}");
+        assert_eq!(november[0].recurring_txn_id, Some(id));
+        assert!(november[0].edited);
     }
 
     /// Rows the workbook pre-entered beyond the horizon stay unclaimed and
@@ -785,7 +839,7 @@ mod tests {
         let dates: Vec<NaiveDate> = rows(&db).iter().map(|t| t.date).collect();
         assert_eq!(
             dates,
-            vec![day(2026, 9, 1), day(2026, 10, 1), day(2026, 11, 1)]
+            vec![day(2026, 9, 1), day(2026, 10, 1), day(2026, 11, 2)]
         );
     }
 
@@ -909,9 +963,10 @@ mod tests {
         let extended = extend_all(&db, day(2026, 11, 1), today()).unwrap();
 
         assert_eq!(extended.extended, 1);
+        // 11-01 is a Sunday, landing on the Monday the window still reaches.
         assert_eq!(
             rows(&db).iter().map(|t| t.date).max(),
-            Some(day(2026, 11, 1))
+            Some(day(2026, 11, 2))
         );
     }
 
