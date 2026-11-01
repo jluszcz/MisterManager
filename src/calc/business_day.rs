@@ -21,11 +21,28 @@ pub fn add(date: NaiveDate, days: i64) -> Result<NaiveDate> {
     let mut left = days;
     while left > 0 {
         at = at.checked_add_days(Days::new(1)).with_context_date(at)?;
-        if !matches!(at.weekday(), Weekday::Sat | Weekday::Sun) {
+        if !is_weekend(at) {
             left -= 1;
         }
     }
     Ok(at)
+}
+
+/// `date` itself on a weekday, or the Monday after it on a weekend.
+///
+/// What a scheduled payment does when its day falls on a weekend: it lands
+/// on the next business day. Unlike [`add`] of zero, rounding forward *is* the
+/// question here.
+pub fn on_or_after(date: NaiveDate) -> Result<NaiveDate> {
+    if is_weekend(date) {
+        add(date, 1)
+    } else {
+        Ok(date)
+    }
+}
+
+fn is_weekend(date: NaiveDate) -> bool {
+    matches!(date.weekday(), Weekday::Sat | Weekday::Sun)
 }
 
 /// `date` moved back by `days` business days -- [`add`]'s mirror, counting
@@ -40,7 +57,7 @@ fn sub(date: NaiveDate, days: i64) -> Result<NaiveDate> {
     let mut left = days;
     while left > 0 {
         at = at.checked_sub_days(Days::new(1)).with_context_date(at)?;
-        if !matches!(at.weekday(), Weekday::Sat | Weekday::Sun) {
+        if !is_weekend(at) {
             left -= 1;
         }
     }
@@ -154,6 +171,17 @@ mod tests {
     #[test]
     fn zero_business_days_returns_the_date_unchanged() {
         assert_eq!(add(day(2026, 8, 22), 0).unwrap(), day(2026, 8, 22));
+    }
+
+    #[test]
+    fn a_weekday_is_already_on_or_after_itself() {
+        assert_eq!(on_or_after(day(2026, 8, 21)).unwrap(), day(2026, 8, 21));
+    }
+
+    #[test]
+    fn a_saturday_and_a_sunday_both_roll_to_the_monday_after() {
+        assert_eq!(on_or_after(day(2026, 8, 22)).unwrap(), day(2026, 8, 24));
+        assert_eq!(on_or_after(day(2026, 8, 23)).unwrap(), day(2026, 8, 24));
     }
 
     /// A negative count has no meaning for a transfer date and no caller, so

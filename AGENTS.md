@@ -881,6 +881,15 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   row the owner can keep or delete, but nothing decides that a moved row *consumes* its original
   occurrence — that needs the transaction↔occurrence link recorded (a `txn.occurrence_date` column),
   which is not there.
+- **An occurrence on a weekend lands on the Monday after, and the schedule does not follow it.**
+  `calc::schedule` rolls each occurrence through `business_day::on_or_after` and counts every one
+  from the anchor, so a monthly 10th that lands on the 12th is back on the 10th the month after.
+  Both regeneration and `recurring_txn::next_paycheck` read the landed date, so Paycheck-Eve is the
+  eve of the day the row is on; the horizon caps the landed date too. **A row on the weekend due
+  date still accounts for its occurrence** -- adopted if unclaimed, kept if owned -- because the
+  workbook and any correction made on that day put it there; `schedule::occurrences_due` carries
+  both dates so `regenerate_within` can tell, and reading the landed date alone would write a
+  second payment beside it.
 - **A recurring transaction's horizon is `min(recurring_txn.horizon,
   max(today + RECURRING_TXN_HORIZON_MONTHS, recurring_txn.generate_through))`**, the setting clamped
   `1..=120` months — the upper end matters too, since every occurrence inside the horizon is a row
