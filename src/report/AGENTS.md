@@ -209,8 +209,14 @@ about a figure, one of them is wrong.
   time, and every line is inked by class (`ln a-<color>`, `ln total`) in `currentColor`, so the
   tokens are the only thing that colors one. They span the whole history, since a page has no key
   to move the screen's window, and share the screen's one scale for the screen's reason. They are
-  stacked rather than side by side, each being half a phone otherwise, and carry no hover layer;
-  the gridline figures and the legend are what a reader checks a line against.
+  stacked rather than side by side, each being half a phone otherwise. **The readout is the chart's
+  figures, not the script's**: `view::Hover` carries, per month, its `x` in the SVG's `viewBox`, its
+  label, and each line's height and its figure to the nearest thousand (`$54K`), or tenth of a
+  million from a million on (`$1.2M`), by legend index, so the script only snaps the pointer to the
+  nearest `x` and places what it was handed. It reads every line at that month rather than the one
+  under the pointer, since a 2px line is no target for a finger, and the chart is `touch-action:
+  pan-y` so a sideways drag scrubs while an upward one still scrolls. A mouse leaving hides it; a
+  lifted finger leaves it up until the next touch outside the chart.
 - **The report is renamed onto its name, never written to it.** A sync client
   watching the directory will upload a half-written page, and a phone would then
   show a report that ends mid-table with no sign that it had. The temporary file

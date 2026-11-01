@@ -111,6 +111,19 @@ svg.chart line.grid{stroke:var(--rule);stroke-width:1}
 svg.chart text.axis{fill:var(--mut);font-size:10px}
 .ln{stroke:currentColor}
 circle.ln{fill:currentColor}
+/* The readout: a guide, a dot on each line and a box of figures beside the
+   guide, flipped to its left when the right has no room. `pan-y` keeps a vertical drag
+   scrolling the page while a horizontal one scrubs the months. */
+.plot{position:relative;touch-action:pan-y;-webkit-user-select:none;user-select:none}
+.plot .hover,.plot .tip{visibility:hidden}
+.plot.on .hover,.plot.on .tip{visibility:visible}
+svg.chart line.guide{stroke:var(--mut);stroke-width:1;stroke-dasharray:3 3}
+svg.chart circle.dot{fill:currentColor;stroke:var(--bg);stroke-width:1.5}
+.tip{position:absolute;top:0;left:calc(var(--at) + 10px);pointer-events:none;padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--bg);box-shadow:0 2px 8px rgba(0,0,0,.15);font-size:.75rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tip.flip{left:auto;right:calc(100% - var(--at) + 10px)}
+.tip .when{font-weight:600;margin-bottom:2px}
+.tip .item{display:flex}
+.tip .fig{margin-left:auto;padding-left:1rem;color:var(--fg)}
 .total{color:var(--total)}
 
 /* A goal's history: date, note, amount. */
