@@ -10,8 +10,9 @@ use crate::calc::Month;
 use crate::calc::retirement::{self, BAND_DASH, Band, Status};
 use crate::money::Cents;
 use crate::palette;
-use crate::report::view::{Accounts, Block, Cell, Row, TabView, money as money_cell};
+use crate::report::view::{Accounts, Block, Cell, Hover, Row, TabView, money as money_cell};
 use crate::retirement::Retirement;
+use std::collections::BTreeMap;
 
 /// What a figure that cannot be stated draws as -- the screen's word too.
 const ABSENT: &str = "--";
@@ -64,6 +65,60 @@ fn x((first, last): (Month, Month), month: Month) -> f64 {
 fn y((low, high): (Cents, Cents), cents: Cents) -> f64 {
     let plot = HEIGHT - TOP - BOTTOM;
     TOP + (high.0 - cents.0) as f64 / (high.0 - low.0) as f64 * plot
+}
+
+/// A readout figure: the nearest thousand dollars, `$54K`, or from a
+/// million on the nearest tenth of a million, `$1.2M`, a whole million
+/// dropping its `.0`. Halves round away from zero. Rounded rather than
+/// truncated like [`compact`], because a readout names where the line is,
+/// where an axis label names a gridline.
+fn readout_figure(cents: Cents) -> String {
+    let sign = if cents.0 < 0 { "-" } else { "" };
+    let k = nearest(cents.0.abs(), 100_000);
+    match k < 1_000 {
+        true if k == 0 => "$0K".to_string(),
+        true => format!("{sign}${k}K"),
+        false => {
+            let tenths = nearest(cents.0.abs(), 10_000_000);
+            match tenths % 10 {
+                0 => format!("{sign}${}M", tenths / 10),
+                t => format!("{sign}${}.{t}M", tenths / 10),
+            }
+        }
+    }
+}
+
+/// `n` in whole `unit`s, halves rounding up; `n` is never negative here.
+fn nearest(n: i64, unit: i64) -> i64 {
+    (n + unit / 2) / unit
+}
+
+/// A coordinate as the SVG spells it, to a tenth of a unit, so the readout
+/// lands on the line it was taken from.
+fn tenth(v: f64) -> f64 {
+    (v * 10.0).round() / 10.0
+}
+
+/// The readout: per month, every line with a point there, by its place in
+/// the legend -- `lines` being in legend order.
+fn hover(charts: &Charts, lines: &[&[(Month, Cents)]]) -> Vec<Hover> {
+    let mut months: BTreeMap<Month, Vec<(usize, f64, String)>> = BTreeMap::new();
+    for (i, points) in lines.iter().enumerate() {
+        for (m, c) in *points {
+            months
+                .entry(*m)
+                .or_default()
+                .push((i, tenth(y(charts.cents, *c)), readout_figure(*c)));
+        }
+    }
+    months
+        .into_iter()
+        .map(|(m, r)| Hover {
+            x: tenth(x(charts.months, m)),
+            m: m.label(),
+            r,
+        })
+        .collect()
 }
 
 /// One line, as a polyline -- and, where it is a single month, a dot, since
@@ -299,7 +354,9 @@ fn chart_block(
     }
     let mut svg = frame(charts);
     let mut legend = Vec::new();
+    let mut lines: Vec<&[(Month, Cents)]> = Vec::new();
     for series in &chart.series {
+        lines.push(&series.points);
         let class = series
             .account
             .render_with(|_, color| format!("ln a-{}", color.as_str()));
@@ -308,6 +365,7 @@ fn chart_block(
     }
     if !chart.total.is_empty() {
         svg.push_str(&line(charts, &chart.total, "ln total"));
+        lines.push(&chart.total);
         legend.push(Cell::Toned("Total".to_string(), "total".to_string()));
     }
     vec![Block::Chart {
@@ -318,6 +376,7 @@ fn chart_block(
             escape(title)
         ),
         legend,
+        hover: hover(charts, &lines),
     }]
 }
 
@@ -485,6 +544,49 @@ mod tests {
         let legend = charts[1]["legend"].as_array().unwrap();
         assert_eq!(legend.last().unwrap(), &json!(["Total", "total"]));
         assert_eq!(legend.len(), 3);
+    }
+
+    #[test]
+    fn a_charts_readout_names_each_line_at_each_month_by_its_legend_place() {
+        let c = charts();
+        let drawn = blocks(&retirement(), Some(&c));
+        let investment = drawn.iter().filter(|b| b["t"] == "Chart").nth(1).unwrap();
+        let hover = investment["hover"].as_array().unwrap();
+        let xs: Vec<f64> = hover.iter().map(|h| h["x"].as_f64().unwrap()).collect();
+        assert!(xs.windows(2).all(|w| w[0] < w[1]), "{xs:?}");
+        assert_eq!(*xs.last().unwrap(), super::WIDTH - super::RIGHT);
+        let last = hover.last().unwrap();
+        assert_eq!(last["m"], super::Month::label(c.months.1));
+        let figures: Vec<(u64, &str)> = last["r"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r[0].as_u64().unwrap(), r[2].as_str().unwrap()))
+            .collect();
+        assert_eq!(figures, [(0, "$12K"), (1, "$8K"), (2, "$20K")]);
+        let svg = investment["svg"].as_str().unwrap();
+        for r in last["r"].as_array().unwrap() {
+            let at = format!("{:.1},{:.1}", xs.last().unwrap(), r[1].as_f64().unwrap());
+            let dot = format!("cy=\"{:.1}\"", r[1].as_f64().unwrap());
+            assert!(
+                svg.contains(&at) || svg.contains(&dot),
+                "{at} is on no line in {svg}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_readout_figure_rounds_to_the_nearest_thousand_or_tenth_of_a_million() {
+        let k = |cents| super::readout_figure(Cents(cents));
+        assert_eq!(k(5_449_999), "$54K");
+        assert_eq!(k(5_450_000), "$55K");
+        assert_eq!(k(40_000), "$0K");
+        assert_eq!(k(-5_450_000), "-$55K");
+        assert_eq!(k(99_940_000), "$999K");
+        assert_eq!(k(99_960_000), "$1M");
+        assert_eq!(k(124_999_999), "$1.2M");
+        assert_eq!(k(125_000_000), "$1.3M");
+        assert_eq!(k(-1_000_000_000), "-$10M");
     }
 
     #[test]

@@ -3,7 +3,8 @@
 // Every decision is already in the payload: a cell's tone, an account's
 // class, a bar's widths, a chart's coordinates. What is here is layout only.
 // Owner text goes in through `textContent` and nothing else; the one
-// `innerHTML` is a chart's SVG, which Rust built and escaped.
+// `innerHTML` is a chart's SVG, which Rust built and escaped; its readout's
+// figures and coordinates come from the payload like everything else.
 (function () {
   "use strict";
   var D = JSON.parse(document.getElementById("d").textContent);
@@ -159,33 +160,118 @@
 
   // Each entry is `[tone class or null, parts]`; the tone colors the whole
   // entry, so a swatch in `currentColor` matches its name.
+  // One `[tone, parts]` entry as an item: the legend's, and the readout's.
+  function entry(tag, e) {
+    var item = el(tag, "item");
+    if (e[0]) item.classList.add(e[0]);
+    e[1].forEach(function (part) {
+      item.appendChild(part);
+    });
+    return item;
+  }
+
   function legend(items) {
     var p = el("p", "legend");
-    items.forEach(function (entry) {
-      var item = el("span", "item");
-      if (entry[0]) item.classList.add(entry[0]);
-      entry[1].forEach(function (part) {
-        item.appendChild(part);
-      });
-      p.appendChild(item);
+    items.forEach(function (e) {
+      p.appendChild(entry("span", e));
     });
     return p;
   }
 
-  // A legend entry is an account or the Total, each a swatch in the entry's
-  // own `currentColor` beside its name.
+  // A swatch in the entry's own `currentColor` beside its name: an account
+  // or the Total, in the legend and in the readout alike.
+  function keyed(c) {
+    var name = fill(el("span"), c);
+    var tone = name.className;
+    name.className = "";
+    return [tone, [el("span", "key"), name]];
+  }
+
+  // The namespace is read off the chart rather than written out, so the
+  // script carries no URL for the page's no-external-request check to find.
+  function mark(svg, tag, cls, attrs) {
+    var e = document.createElementNS(svg.namespaceURI, tag);
+    e.setAttribute("class", cls);
+    Object.keys(attrs).forEach(function (k) {
+      e.setAttribute(k, attrs[k]);
+    });
+    return e;
+  }
+
+  // The readout: the pointer snaps to the nearest month in `b.hover`, which
+  // carries every coordinate and figure; a guide and a dot per line go into
+  // the SVG in its own units, the figures into a box beside the guide. A
+  // mouse leaving hides it; a finger lifting leaves it up until the next
+  // touch lands outside the chart.
+  function readout(plot, b) {
+    var svg = plot.querySelector("svg");
+    if (!svg || !b.hover.length) return;
+    var box = svg.viewBox.baseVal;
+    var layer = mark(svg, "g", "hover", {});
+    var guide = mark(svg, "line", "guide", { y1: box.y, y2: box.y + box.height });
+    layer.appendChild(guide);
+    svg.appendChild(layer);
+    var tip = el("div", "tip");
+    tip.setAttribute("aria-hidden", "true");
+    plot.appendChild(tip);
+    var shown = -1;
+
+    function hide() {
+      shown = -1;
+      plot.classList.remove("on");
+    }
+
+    function show(e) {
+      var rect = svg.getBoundingClientRect();
+      if (!rect.width) return;
+      var at = box.x + (e.clientX - rect.left) / rect.width * box.width;
+      var near = 0;
+      b.hover.forEach(function (h, i) {
+        if (Math.abs(h.x - at) < Math.abs(b.hover[near].x - at)) near = i;
+      });
+      plot.classList.add("on");
+      if (near === shown) return;
+      shown = near;
+      var h = b.hover[near];
+      guide.setAttribute("x1", h.x);
+      guide.setAttribute("x2", h.x);
+      while (layer.childNodes.length > 1) layer.removeChild(layer.lastChild);
+      tip.textContent = "";
+      tip.appendChild(el("div", "when", h.m));
+      h.r.forEach(function (r) {
+        var line = keyed(b.legend[r[0]]);
+        var dot = mark(svg, "circle", "dot " + line[0], { cx: h.x, cy: r[1], r: 3.5 });
+        layer.appendChild(dot);
+        var item = entry("div", line);
+        item.appendChild(el("span", "fig", r[2]));
+        tip.appendChild(item);
+      });
+      // Beside the guide on whichever side holds it: a fixed midpoint would
+      // let a box of long names run off a phone's edge and scroll the page.
+      var left = (h.x - box.x) / box.width;
+      var room = rect.width * (1 - left) - 10;
+      tip.style.setProperty("--at", left * 100 + "%");
+      tip.classList.toggle("flip", tip.offsetWidth > room && rect.width * left > room);
+    }
+
+    plot.addEventListener("pointerdown", show);
+    plot.addEventListener("pointermove", show);
+    plot.addEventListener("pointerleave", function (e) {
+      if (e.pointerType === "mouse") hide();
+    });
+    document.addEventListener("pointerdown", function (e) {
+      if (!plot.contains(e.target)) hide();
+    });
+  }
+
   function chart(b) {
     var wrap = el("div", "chart");
     wrap.appendChild(el("h4", null, b.title));
-    var svg = el("div");
-    svg.innerHTML = b.svg;
-    wrap.appendChild(svg);
-    wrap.appendChild(legend(b.legend.map(function (c) {
-      var name = fill(el("span"), c);
-      var tone = name.className;
-      name.className = "";
-      return [tone, [el("span", "key"), name]];
-    })));
+    var plot = el("div", "plot");
+    plot.innerHTML = b.svg;
+    wrap.appendChild(plot);
+    readout(plot, b);
+    wrap.appendChild(legend(b.legend.map(keyed)));
     return wrap;
   }
 

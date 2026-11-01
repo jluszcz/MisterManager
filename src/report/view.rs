@@ -80,12 +80,25 @@ pub enum Block {
     /// `svg` is the whole `<svg>` element, built in Rust, its lines colored
     /// by class. A legend
     /// entry is an account ([`Cell::Account`]) or the Total line
-    /// (`Cell::Toned("Total", "total")`).
+    /// (`Cell::Toned("Total", "total")`). `hover` is one entry per month
+    /// drawn, in month order, for the script's readout.
     Chart {
         title: String,
         svg: String,
         legend: Vec<Cell>,
+        hover: Vec<Hover>,
     },
+}
+
+/// One month of a chart's readout: where it sits across the SVG's
+/// `viewBox`, its label, and every line with a point there as
+/// `(legend index, height in the viewBox, figure)`. The script snaps the
+/// pointer to the nearest `x` and draws the rest as given.
+#[derive(Debug, Serialize)]
+pub struct Hover {
+    pub x: f64,
+    pub m: String,
+    pub r: Vec<(usize, f64, String)>,
 }
 
 /// A ledger month. A row's cells are the day (`03`), the account, the
