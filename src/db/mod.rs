@@ -173,7 +173,7 @@ fn lock(path: &Path) -> Result<File> {
     match file.try_lock() {
         Ok(()) => Ok(file),
         Err(TryLockError::WouldBlock) => anyhow::bail!(
-            "{} is already open -- quit that one first",
+            "{} is already open -- quit the other instance of MisterManager first",
             path.display()
         ),
         Err(TryLockError::Error(e)) => {
@@ -442,7 +442,7 @@ mod tests {
             Ok(_) => panic!("a database already open was opened again"),
         };
         assert!(
-            format!("{err:#}").contains("already open in another mm"),
+            format!("{err:#}").contains("is already open"),
             "{err:#}"
         );
     }
