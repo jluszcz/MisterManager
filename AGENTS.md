@@ -231,6 +231,12 @@ one exception and says so at its definition: `transfer::wiring` must *draw* a da
 instead of refusing, and the destination picker opens on a line's goal even once it is closed — both
 tell "gone" from "corrupt" using context only they hold. A new one follows `account::get`.
 
+**One database, one `Db`, across processes.** `db::open` takes an exclusive lock on `<db>.lock`
+beside the file and `Db` holds it until dropped, so a second `mm` against the same path — any
+subcommand that opens it, the TUI included — is refused before SQLite migrates anything. Why it is
+a separate file and not a lock on the database is on `db::open`. `mm backup` never opens a `Db`,
+so it is not refused; it copies through SQLite, which is safe beside a live session.
+
 Multi-statement writes go through `Db::transaction`, which commits only if its closure returns `Ok`.
 It issues a bare `BEGIN` and is **not reentrant** — anything reachable from inside another
 `transaction` must not call it. `db::clear_imported_data` is the standing example: it relies on its

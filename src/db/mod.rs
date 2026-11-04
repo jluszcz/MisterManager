@@ -35,7 +35,8 @@ pub use id::{
 use anyhow::{Context, Result};
 use jluszcz_finance_utils::sqlite;
 use rusqlite::Connection;
-use std::path::Path;
+use std::fs::{File, OpenOptions, TryLockError};
+use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 use migration::SCHEMA_VERSION;
@@ -52,6 +53,9 @@ pub const FILE_NAME: &str = "money.db";
 /// field, since privacy extends to a module's descendants.
 pub struct Db {
     conn: Connection,
+    /// Held, never read: the open file *is* the lock, and dropping it is the
+    /// release. `None` for an in-memory database, which nothing else can reach.
+    _lock: Option<File>,
 }
 
 impl Db {
@@ -98,16 +102,84 @@ impl Db {
     }
 }
 
+/// Open the database at `path`, refusing if another `mm` already has it open.
+///
+/// SQLite's own locking keeps the file consistent, but not the session: the
+/// TUI holds what it read in memory and writes on the strength of it, so two
+/// running against one file each overwrite what the other wrote, and a
+/// migration run by the second would change the schema under the first. The
+/// lock is taken before SQLite opens anything, so the second run migrates
+/// nothing.
+///
+/// It is a separate file beside the database rather than a lock on the
+/// database itself: SQLite takes POSIX locks on that file, and those are
+/// dropped when *any* descriptor the process holds on it closes, so a second
+/// handle opened here would silently release SQLite's. The lock is the
+/// kernel's, so a crashed run releases it with its process and the file left
+/// behind is inert. Keyed on the resolved path: a symlink to the database
+/// shares its lock, while a `--db` or `--scratch` run stands beside it.
 pub fn open(path: &Path) -> Result<Db> {
+    let lock = lock(path)?;
     Ok(Db {
         conn: sqlite::open(path, &migration::DATABASE)?,
+        _lock: Some(lock),
     })
 }
 
 pub fn open_in_memory() -> Result<Db> {
     Ok(Db {
         conn: sqlite::open_in_memory(&migration::DATABASE)?,
+        _lock: None,
     })
+}
+
+/// The lock file guarding the database at `path`: its name with `.lock`
+/// appended, the way SQLite names its `-wal` and `-shm` beside it.
+fn lock_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+/// `path` with every symlink resolved, so two spellings of one database --
+/// a symlinked file, or a directory reached through a link -- take one lock
+/// rather than one each. A file not yet created resolves through its
+/// directory, which `lock` has just made sure exists.
+fn resolved(path: &Path) -> PathBuf {
+    if let Ok(real) = std::fs::canonicalize(path) {
+        return real;
+    }
+    let dir = match path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        Some(dir) => dir,
+        None => Path::new("."),
+    };
+    match (std::fs::canonicalize(dir), path.file_name()) {
+        (Ok(dir), Some(name)) => dir.join(name),
+        _ => path.to_path_buf(),
+    }
+}
+
+fn lock(path: &Path) -> Result<File> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    let lock_path = lock_path(&resolved(path));
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("opening {}", lock_path.display()))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(TryLockError::WouldBlock) => anyhow::bail!(
+            "{} is already open in another mm -- quit that one first",
+            path.display()
+        ),
+        Err(TryLockError::Error(e)) => {
+            Err(e).with_context(|| format!("locking {}", lock_path.display()))
+        }
+    }
 }
 
 /// Write a consistent copy of the database at `src` to `dest`, which must not
@@ -285,7 +357,7 @@ mod tests {
             "mistermanager_test_{label}_{}.sqlite",
             std::process::id()
         ));
-        for suffix in ["", "-wal", "-shm"] {
+        for suffix in ["", "-wal", "-shm", ".lock"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
         open(&path).unwrap();
@@ -334,6 +406,7 @@ mod tests {
         );
 
         std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(lock_path(&path)).unwrap();
     }
 
     #[test]
@@ -355,6 +428,61 @@ mod tests {
         }
 
         std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(lock_path(&path)).unwrap();
+    }
+
+    /// The case the lock exists for: `mm` left running in one terminal and
+    /// started again in another.
+    #[test]
+    fn a_second_open_of_a_database_already_open_is_refused() {
+        let (path, _first) = reopened("lock_held");
+
+        let err = match open(&path) {
+            Err(err) => err,
+            Ok(_) => panic!("a database already open was opened again"),
+        };
+        assert!(
+            format!("{err:#}").contains("already open in another mm"),
+            "{err:#}"
+        );
+    }
+
+    /// Dropping the `Db` is the release, so quitting the first run is all it
+    /// takes for the next one to start.
+    #[test]
+    fn a_database_can_be_opened_again_once_the_first_is_dropped() {
+        let (path, first) = reopened("lock_released");
+        drop(first);
+        open(&path).unwrap();
+    }
+
+    #[test]
+    fn the_lock_is_per_database_so_a_second_path_opens_alongside() {
+        let (_path, _first) = reopened("lock_first_path");
+        let (_other, _second) = reopened("lock_other_path");
+    }
+
+    /// A symlink is a second spelling of the same file, and a lock keyed on
+    /// the spelling would let both run at once.
+    #[cfg(unix)]
+    #[test]
+    fn a_database_reached_through_a_symlink_shares_its_lock() {
+        let (path, _first) = reopened("lock_symlink");
+        let link = path.with_extension("link.sqlite");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+
+        let refused = open(&link).is_err();
+        std::fs::remove_file(&link).unwrap();
+        assert!(refused, "a symlink to an open database opened it again");
+    }
+
+    #[test]
+    fn the_lock_file_sits_beside_the_database_it_guards() {
+        assert_eq!(
+            lock_path(Path::new("/data/money.db")),
+            Path::new("/data/money.db.lock")
+        );
     }
 
     #[test]
