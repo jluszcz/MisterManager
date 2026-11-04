@@ -173,7 +173,7 @@ fn lock(path: &Path) -> Result<File> {
     match file.try_lock() {
         Ok(()) => Ok(file),
         Err(TryLockError::WouldBlock) => anyhow::bail!(
-            "{} is already open in another mm -- quit that one first",
+            "{} is already open -- quit the other instance of MisterManager first",
             path.display()
         ),
         Err(TryLockError::Error(e)) => {
@@ -441,10 +441,7 @@ mod tests {
             Err(err) => err,
             Ok(_) => panic!("a database already open was opened again"),
         };
-        assert!(
-            format!("{err:#}").contains("already open in another mm"),
-            "{err:#}"
-        );
+        assert!(format!("{err:#}").contains("is already open"), "{err:#}");
     }
 
     /// Dropping the `Db` is the release, so quitting the first run is all it
