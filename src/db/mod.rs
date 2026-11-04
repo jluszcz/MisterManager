@@ -441,10 +441,7 @@ mod tests {
             Err(err) => err,
             Ok(_) => panic!("a database already open was opened again"),
         };
-        assert!(
-            format!("{err:#}").contains("is already open"),
-            "{err:#}"
-        );
+        assert!(format!("{err:#}").contains("is already open"), "{err:#}");
     }
 
     /// Dropping the `Db` is the release, so quitting the first run is all it
