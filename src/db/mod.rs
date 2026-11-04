@@ -173,7 +173,7 @@ fn lock(path: &Path) -> Result<File> {
     match file.try_lock() {
         Ok(()) => Ok(file),
         Err(TryLockError::WouldBlock) => anyhow::bail!(
-            "{} is already open in another mm -- quit that one first",
+            "{} is already open -- quit that one first",
             path.display()
         ),
         Err(TryLockError::Error(e)) => {
