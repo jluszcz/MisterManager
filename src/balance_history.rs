@@ -538,7 +538,7 @@ mod tests {
             std::process::id()
         ));
         let remove = || {
-            for suffix in ["", "-wal", "-shm"] {
+            for suffix in ["", "-wal", "-shm", ".lock"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
             }
         };
