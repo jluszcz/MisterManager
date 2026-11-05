@@ -2040,7 +2040,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jluszcz_finance_utils"
 version = "0.1.0"
-source = "git+https://github.com/jluszcz/finance-utils#2ecd00b9b94577e76bc1358447e382cea82997e4"
+source = "git+https://github.com/jluszcz/finance-utils#fa329bc7b1eaa460e0a0582179ff74a1df8f1321"
 dependencies = [
  "anyhow",
  "aws-config",
