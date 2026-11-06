@@ -27,6 +27,29 @@ pub fn tax(price: Cents, rate: BasisPoints) -> Result<Cents> {
     Ok(Cents(units * increment))
 }
 
+/// The pre-tax price of an amount paid with tax in it: `paid / (1 + rate)`,
+/// to the nearest cent, half up.
+///
+/// Not an inverse of [`tax`], which rounds up to a whole dollar or five: no
+/// base taxes to exactly an arbitrary figure, so this is the part of what was
+/// paid that was price rather than tax, and what a taxed goal's base falls
+/// by when that much is spent towards it. Refuses a negative amount, which
+/// is no payment, rather than rounding it the other way.
+pub fn pretax(paid: Cents, rate: BasisPoints) -> Result<Cents> {
+    const SCALE: i64 = BasisPoints::ONE.0;
+    anyhow::ensure!(
+        paid >= Cents::ZERO,
+        "cannot untax a negative amount: {paid}"
+    );
+    let denom = SCALE + rate.0;
+    anyhow::ensure!(denom > 0, "a tax rate of {rate} leaves no price to recover");
+    let num = paid
+        .0
+        .checked_mul(2 * SCALE)
+        .with_context(|| format!("amount is too large to untax: {paid}"))?;
+    Ok(Cents((num + denom) / (2 * denom)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,6 +88,28 @@ mod tests {
         assert!(tax(widest, rate).is_ok());
         let err = tax(Cents(widest.0 + 1), rate).unwrap_err();
         assert!(err.to_string().contains("too large"), "{err}");
+    }
+
+    #[test]
+    fn pretax_takes_the_tax_back_out_to_the_nearest_cent() {
+        let rate = BasisPoints(625);
+        // 106.25 is exactly 100 with 6.25% on it.
+        assert_eq!(pretax(Cents(10_625), rate).unwrap(), Cents(10_000));
+        // 80 / 1.0625 = 75.294...
+        assert_eq!(pretax(Cents::from_dollars(80), rate).unwrap(), Cents(7_529));
+        // 0.17 / 1.0625 = 0.16 exactly; 0.18 / 1.0625 = 0.1694... rounds up.
+        assert_eq!(pretax(Cents(17), rate).unwrap(), Cents(16));
+        assert_eq!(pretax(Cents(18), rate).unwrap(), Cents(17));
+        assert_eq!(pretax(Cents::ZERO, rate).unwrap(), Cents::ZERO);
+        assert_eq!(
+            pretax(Cents(4_200), BasisPoints::ZERO).unwrap(),
+            Cents(4_200)
+        );
+    }
+
+    #[test]
+    fn pretax_refuses_a_negative_amount() {
+        assert!(pretax(Cents(-100), BasisPoints(625)).is_err());
     }
 
     #[test]

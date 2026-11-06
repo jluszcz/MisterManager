@@ -15,7 +15,7 @@ pub use month::Month;
 pub use paycheck::{
     biweekly, fit, month_end_projection, per_paycheck, per_paycheck_over_years, period_days,
 };
-pub use tax::tax;
+pub use tax::{pretax, tax};
 
 /// Ceiling division for positive divisors, correct for negative dividends.
 ///

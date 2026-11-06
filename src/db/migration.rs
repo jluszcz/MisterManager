@@ -496,6 +496,21 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // transaction, which is what `NULL` reads as.
         data: None,
     },
+    Migration {
+        version: 22,
+        // What a goal transfer took off the source goal's base, so `U` can
+        // put it back: the base is a column on `goal` rather than a row in a
+        // batch, and deleting the batch's allocations alone would leave the
+        // target lowered under money that came back. Both or neither, and a
+        // positive amount, since a zero reduction is no reduction and is
+        // written as `NULL`.
+        sql: "ALTER TABLE batch ADD COLUMN lowered_goal_id INTEGER REFERENCES goal(id);
+              ALTER TABLE batch ADD COLUMN lowered_base_cents INTEGER
+                CHECK ((lowered_base_cents IS NULL) = (lowered_goal_id IS NULL)
+                       AND (lowered_base_cents IS NULL OR lowered_base_cents > 0));",
+        // Nothing to move: no existing batch lowered anything.
+        data: None,
+    },
 ];
 
 /// Arm 19's data half: every stored Planning percentage, whole percent to

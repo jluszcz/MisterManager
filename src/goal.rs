@@ -19,6 +19,7 @@ use crate::money::Cents;
 use crate::rate::BasisPoints;
 use crate::reading::Reading;
 use anyhow::{Context, Result};
+use chrono::NaiveDate;
 
 /// What a taxed goal with no rate on record reports, on the read side and on
 /// the form that would otherwise write one.
@@ -85,7 +86,13 @@ pub fn target(goal: &Goal, current: Cents, rate: Option<BasisPoints>) -> Result<
     if !goal.taxed {
         return Ok(goal.base_cents);
     }
-    let rate = rate.with_context(|| {
+    crate::calc::tax(goal.base_cents, taxed_rate(goal, rate)?)
+}
+
+/// The rate a taxed goal is priced at, or the [`NO_TAX_RATE`] refusal naming
+/// the goal -- the one sentence [`target`] and [`spent_base`] both refuse with.
+fn taxed_rate(goal: &Goal, rate: Option<BasisPoints>) -> Result<BasisPoints> {
+    rate.with_context(|| {
         format!(
             "{:?} is taxed but {} is unset: {NO_TAX_RATE}",
             // The Planning screen renders this in place of the plan, so the
@@ -94,8 +101,7 @@ pub fn target(goal: &Goal, current: Cents, rate: Option<BasisPoints>) -> Result<
             crate::demo::text(&goal.name),
             key::TAX_RATE
         )
-    })?;
-    crate::calc::tax(goal.base_cents, rate)
+    })
 }
 
 /// The rate once, for a whole list. Reading it per goal would be one query
@@ -176,6 +182,58 @@ pub fn shortfall(db: &Db, goal_id: GoalId) -> Result<Cents> {
     })
 }
 
+/// What spending `amount` towards a goal takes off its base: the amount
+/// itself for an untaxed goal, and its pre-tax part for a taxed one.
+///
+/// A spend is paid at the register, tax included, so it is the taxed figure
+/// the target has to fall by -- and a taxed target is `calc::tax` of the
+/// base, which no base reaches exactly, so the base falls by what the spend
+/// was before tax, in whole dollars, and the target lands within the
+/// lambda's rounding of falling by the amount. A floating goal takes the same rule: its target
+/// already follows its balance, and the base it keeps for when the flag is
+/// turned off is a goal of which this much has now been bought.
+///
+/// Refuses a taxed goal with no rate on record with [`NO_TAX_RATE`], for
+/// the reason [`target`] does: this is a figure that is about to be written.
+pub fn spent_base(goal: &Goal, amount: Cents, rate: Option<BasisPoints>) -> Result<Cents> {
+    if !goal.taxed {
+        return Ok(amount);
+    }
+    // Floored to a whole dollar, because goal figures are whole dollars: a
+    // base left carrying cents is one the goal form can no longer commit.
+    // Down rather than to the nearest, so the target never falls further
+    // than the spend did.
+    Ok(crate::calc::pretax(amount, taxed_rate(goal, rate)?)?.floor_to_dollar())
+}
+
+/// Move `amount` from one goal to another, and -- when `spent` -- lower the
+/// source's target by it as well: money spent towards a goal before it was
+/// funded, which leaves that much less of it to fund.
+///
+/// The move and its refusals are `db::goal::transfer_value`'s; what this adds
+/// is the figure the base falls by, which needs the rate `db` cannot reach.
+/// Returns that figure, zero when nothing was spent.
+///
+/// **Must be called at top level, not inside another [`Db::transaction`].**
+pub fn transfer_value(
+    db: &Db,
+    from: GoalId,
+    to: GoalId,
+    amount: Cents,
+    date: NaiveDate,
+    note: Option<&str>,
+    spent: bool,
+) -> Result<Cents> {
+    let lowered = if spent {
+        let source = goal::get(db, from)?.with_context(|| format!("no goal with id {from}"))?;
+        spent_base(&source, amount, setting::get(db, key::TAX_RATE)?)?
+    } else {
+        Cents::ZERO
+    };
+    goal::transfer_value(db, from, to, amount, date, note, lowered)?;
+    Ok(lowered)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,6 +262,101 @@ mod tests {
             floating: false,
             note: None,
         }
+    }
+
+    /// 1,000 of 1,200, 100 spent, leaves 900 of 1,100 -- and the 100 lands
+    /// in the other goal.
+    #[test]
+    fn spending_from_an_untaxed_goal_lowers_its_balance_and_target_alike() {
+        let (db, savings) = seeded();
+        let couch = db::goal::insert(&db, &new_goal("Couch", savings, 1_200, false)).unwrap();
+        let rug = db::goal::insert(&db, &new_goal("Rug", savings, 500, false)).unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap();
+        db::goal::insert_allocation(&db, couch, date, Cents::from_dollars(1_000), None, None)
+            .unwrap();
+
+        let lowered =
+            transfer_value(&db, couch, rug, Cents::from_dollars(100), date, None, true).unwrap();
+
+        assert_eq!(lowered, Cents::from_dollars(100));
+        let funded = list_with_balances(&db, savings).unwrap();
+        let couch_row = funded.iter().find(|f| f.goal.id == couch).unwrap();
+        assert_eq!(couch_row.current, Cents::from_dollars(900));
+        assert_eq!(couch_row.target, Cents::from_dollars(1_100));
+        let rug_row = funded.iter().find(|f| f.goal.id == rug).unwrap();
+        assert_eq!(rug_row.current, Cents::from_dollars(100));
+        assert_eq!(rug_row.target, Cents::from_dollars(500));
+    }
+
+    #[test]
+    fn a_transfer_not_spent_leaves_the_target_alone() {
+        let (db, savings) = seeded();
+        let couch = db::goal::insert(&db, &new_goal("Couch", savings, 1_200, false)).unwrap();
+        let rug = db::goal::insert(&db, &new_goal("Rug", savings, 500, false)).unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap();
+
+        let lowered =
+            transfer_value(&db, couch, rug, Cents::from_dollars(100), date, None, false).unwrap();
+
+        assert_eq!(lowered, Cents::ZERO);
+        assert_eq!(
+            shortfall(&db, couch).unwrap(),
+            Cents::from_dollars(1_200 + 100)
+        );
+    }
+
+    /// A spend is paid tax included, so a taxed base falls by the pre-tax
+    /// part and the target lands within the lambda's rounding of falling by
+    /// the amount: $1,000 at 6.25% is $1,065; $106.25 spent is $100 of base,
+    /// and $900 taxes to $960 -- $105 lower, the $5 step's nearest.
+    #[test]
+    fn spending_from_a_taxed_goal_lowers_its_base_by_the_pre_tax_part() {
+        let (db, savings) = seeded();
+        setting::set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
+        let couch = db::goal::insert(&db, &new_goal("Couch", savings, 1_000, true)).unwrap();
+        let rug = db::goal::insert(&db, &new_goal("Rug", savings, 500, false)).unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap();
+
+        let lowered = transfer_value(&db, couch, rug, Cents(10_625), date, None, true).unwrap();
+
+        assert_eq!(lowered, Cents(10_000));
+        let funded = list_with_balances(&db, savings).unwrap();
+        let couch_row = funded.iter().find(|f| f.goal.id == couch).unwrap();
+        assert_eq!(couch_row.goal.base_cents, Cents::from_dollars(900));
+        assert_eq!(couch_row.target, Cents::from_dollars(960));
+    }
+
+    /// $80 at 6.25% is $75.29 before tax; the base falls by $75, so it stays
+    /// a whole-dollar figure the goal form can commit.
+    #[test]
+    fn spending_from_a_taxed_goal_leaves_its_base_in_whole_dollars() {
+        let (db, savings) = seeded();
+        setting::set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
+        let couch = db::goal::insert(&db, &new_goal("Couch", savings, 1_000, true)).unwrap();
+        let rug = db::goal::insert(&db, &new_goal("Rug", savings, 500, false)).unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap();
+
+        let lowered =
+            transfer_value(&db, couch, rug, Cents::from_dollars(80), date, None, true).unwrap();
+
+        assert_eq!(lowered, Cents::from_dollars(75));
+        let base = db::goal::get(&db, couch).unwrap().unwrap().base_cents;
+        assert_eq!(base, Cents::from_dollars(925));
+    }
+
+    /// The spend is about to be written, so a missing rate is the strict
+    /// refusal rather than a guess -- and nothing moves.
+    #[test]
+    fn spending_from_a_taxed_goal_with_no_rate_is_refused_and_moves_nothing() {
+        let (db, savings) = seeded();
+        let couch = db::goal::insert(&db, &new_goal("Couch", savings, 1_000, true)).unwrap();
+        let rug = db::goal::insert(&db, &new_goal("Rug", savings, 500, false)).unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap();
+
+        let err = transfer_value(&db, couch, rug, Cents(8_000), date, None, true).unwrap_err();
+
+        assert!(err.to_string().contains(NO_TAX_RATE), "{err}");
+        assert_eq!(db::goal::balance(&db, rug).unwrap(), Cents::ZERO);
     }
 
     /// Most goals are not taxed, and for those the stored figure is the

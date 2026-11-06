@@ -259,13 +259,18 @@ impl App {
             .map(|(_, c)| *c)
             .filter(|c| *c > Cents::ZERO)
             .sum();
-        let label = format!(
+        let mut label = format!(
             "{} {} · {} goals · {}",
             batch.kind.as_str(),
             batch.date,
             shares.len(),
             crate::demo::figure(total)
         );
+        // A transfer that lowered a target raises it back too, which no
+        // share says: the base is a column, not a row in the batch.
+        if let Some((_, cents)) = goal::lowered_base(&self.db, batch.id)? {
+            label.push_str(&format!(" · base +{}", crate::demo::figure(cents)));
+        }
         self.modal = Some(Modal::Confirm {
             action: Confirm::UndoBatch(batch.id),
             label,
