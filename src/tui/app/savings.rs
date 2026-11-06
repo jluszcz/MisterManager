@@ -340,15 +340,24 @@ impl App {
             return Ok(());
         };
         let moved = form.commit()?;
-        goal::transfer_value(
+        let lowered = goal_engine::transfer_value(
             &self.db,
             form.goal_id,
             moved.to,
             moved.cents,
             moved.date,
             moved.note.as_deref(),
+            moved.spent,
         )?;
-        self.status = format!("moved {} · U undoes it", crate::demo::figure(moved.cents));
+        self.status = if lowered > Cents::ZERO {
+            format!(
+                "moved {}, base lowered {} · U undoes both",
+                crate::demo::figure(moved.cents),
+                crate::demo::figure(lowered)
+            )
+        } else {
+            format!("moved {} · U undoes it", crate::demo::figure(moved.cents))
+        };
         self.close_modal();
         self.reload()
     }
@@ -1152,6 +1161,45 @@ mod tests {
         assert!(app.modal.is_none(), "{}", app.status);
         assert_eq!(app.savings.rows()[0].current, Cents(25_000));
         assert_eq!(app.savings.rows()[1].current, Cents(1_000_000));
+    }
+
+    /// Money spent towards a goal before it was funded leaves that much less
+    /// of it to fund: with `Lower target` on, the balance and the target fall
+    /// together, and `U` puts both back.
+    #[test]
+    fn t_with_lower_target_takes_the_amount_off_the_goal_as_well_and_u_restores_it() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
+        let before = app.savings.rows()[1].clone();
+
+        press(&mut app, KeyCode::Char('t'));
+        type_str(&mut app, "80");
+        walk_until!(
+            matches!(
+                &app.modal,
+                Some(Modal::GoalTransfer(form))
+                    if form.focus == goal_form::GoalTransferField::LowerTarget
+            ),
+            press(&mut app, KeyCode::Tab)
+        );
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        let after = &app.savings.rows()[1];
+        assert_eq!(after.goal_id, before.goal_id);
+        assert_eq!(after.current, before.current - Cents(8_000));
+        assert_eq!(after.goal, before.goal - Cents(8_000));
+        assert!(app.status.contains("U undoes both"), "{}", app.status);
+
+        press(&mut app, KeyCode::Char('U'));
+        press(&mut app, KeyCode::Char('y'));
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        let undone = &app.savings.rows()[1];
+        assert_eq!(undone.current, before.current);
+        assert_eq!(undone.goal, before.goal);
     }
 
     /// There is nowhere for the value to go, so the form does not open over a

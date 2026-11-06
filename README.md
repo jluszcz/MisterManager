@@ -71,7 +71,9 @@ Nothing is written: quitting forgets every target.
 Every open goal with the container it belongs to. `Tab` filters by container, `[` and `]` by goal
 date, `a` allocates against the selected goal, `e` edits it, `t` moves part of its value to another
 goal in the same container — typing on its `To` field narrows the goals offered, and an
-optional note is recorded on both goals' histories — and `c` ends it — returning its value to unallocated, or moving it to
+optional note is recorded on both goals' histories; turning on `Lower target` says the money was
+spent towards the goal, so its target falls with its balance (a taxed goal's by the pre-tax part),
+and `U` restores both — and `c` ends it — returning its value to unallocated, or moving it to
 another goal in that container.
 
 Goals with no date lead the list, in an order you set with `Shift`+`↑`/`↓`; goals with one follow,

@@ -695,14 +695,16 @@ pub enum GoalTransferField {
     Amount,
     Destination,
     Note,
+    LowerTarget,
 }
 
 impl GoalTransferField {
-    pub const ORDER: [GoalTransferField; 4] = [
+    pub const ORDER: [GoalTransferField; 5] = [
         GoalTransferField::Date,
         GoalTransferField::Amount,
         GoalTransferField::Destination,
         GoalTransferField::Note,
+        GoalTransferField::LowerTarget,
     ];
 
     pub fn label(self) -> &'static str {
@@ -711,6 +713,7 @@ impl GoalTransferField {
             GoalTransferField::Amount => "Amount",
             GoalTransferField::Destination => "To",
             GoalTransferField::Note => "Note",
+            GoalTransferField::LowerTarget => "Lower target",
         }
     }
 }
@@ -722,6 +725,9 @@ pub struct GoalTransfer {
     pub cents: Cents,
     pub to: GoalId,
     pub note: Option<String>,
+    /// The amount was spent towards the source goal, so its target falls
+    /// with its balance -- `goal::transfer_value`'s `spent`.
+    pub spent: bool,
 }
 
 /// Moving part of a goal's value to another goal. Backs `t` on Savings.
@@ -752,6 +758,10 @@ pub struct GoalTransferForm {
     /// at the far end. What commits is still the id under `destination`.
     needle: Field,
     note: Field,
+    /// Off on every open: a transfer that leaves the target alone is the
+    /// ordinary one, and a lowered target is the change `U` has to reach to
+    /// take back.
+    lower_target: bool,
 }
 
 impl GoalTransferForm {
@@ -779,6 +789,7 @@ impl GoalTransferForm {
             destination: 0,
             needle: Field::default(),
             note: Field::default(),
+            lower_target: false,
         }
     }
 
@@ -831,6 +842,9 @@ impl GoalTransferForm {
                 .map(|(_, name)| crate::demo::text(name).into_owned())
                 .unwrap_or_default(),
             GoalTransferField::Note => crate::demo::text(self.note.value()).into_owned(),
+            GoalTransferField::LowerTarget => {
+                if self.lower_target { "yes" } else { "no" }.to_string()
+            }
         })
     }
 
@@ -845,6 +859,7 @@ impl GoalTransferForm {
             to: *to,
             // An empty note is no note, the reading the allocation form takes.
             note: (!note.is_empty()).then_some(note),
+            spent: self.lower_target,
         })
     }
 }
@@ -854,10 +869,15 @@ impl FormFields for GoalTransferForm {
         self.focus = next_in(&GoalTransferField::ORDER, self.focus, step);
     }
 
-    // `←`/`→` step the date on one field and cycle the destination on
-    // another, and neither may reach across. The cycle is over what the
-    // needle left, so a narrowed list wraps within its matches.
+    // `←`/`→` step the date on one field, flip the toggle on another, and
+    // cycle the destination on a third, and none may reach across. The cycle
+    // is over what the needle left, so a narrowed list wraps within its
+    // matches.
     fn cycle(&mut self, step: Step) {
+        if self.focus == GoalTransferField::LowerTarget {
+            self.lower_target = !self.lower_target;
+            return;
+        }
         let matches = self.matches();
         if let Some(at) = matches.iter().position(|&i| i == self.destination) {
             self.destination = matches[step_index(at, matches.len(), step.direction())];
@@ -883,6 +903,7 @@ impl FormFields for GoalTransferForm {
             GoalTransferField::Amount => Focused::Text(&mut self.amount),
             GoalTransferField::Destination => Focused::Filter(&mut self.needle),
             GoalTransferField::Note => Focused::Text(&mut self.note),
+            GoalTransferField::LowerTarget => Focused::Selector,
         }
     }
 }
@@ -2138,6 +2159,46 @@ mod tests {
         let mut form = transfer();
         typed_transfer(&mut form, GoalTransferField::Amount, "250.50");
         assert!(form.commit().is_err(), "cents are a typo in a whole field");
+    }
+
+    /// Off unless flipped, so a transfer nobody asked to lower a target with
+    /// writes what it always did; either arrow flips it.
+    #[test]
+    fn a_goal_transfers_lower_target_toggle_starts_off_and_flips_on_either_arrow() {
+        let mut form = transfer();
+        typed_transfer(&mut form, GoalTransferField::Amount, "80");
+        assert!(!form.commit().unwrap().spent);
+        assert_eq!(
+            form.display(GoalTransferField::LowerTarget).plain_text(),
+            "no"
+        );
+
+        walk_until!(
+            form.focus == GoalTransferField::LowerTarget,
+            form.next_field()
+        );
+        form.choice(Step::NEXT);
+        assert!(form.commit().unwrap().spent);
+        assert_eq!(
+            form.display(GoalTransferField::LowerTarget).plain_text(),
+            "yes"
+        );
+        form.choice(Step::PREVIOUS);
+        assert!(!form.commit().unwrap().spent);
+    }
+
+    /// The toggle must not reach across into the destination it sits beside.
+    #[test]
+    fn flipping_lower_target_leaves_the_destination_where_it_was() {
+        let mut form = transfer();
+        typed_transfer(&mut form, GoalTransferField::Amount, "80");
+        let to = form.commit().unwrap().to;
+        walk_until!(
+            form.focus == GoalTransferField::LowerTarget,
+            form.next_field()
+        );
+        form.choice(Step::NEXT);
+        assert_eq!(form.commit().unwrap().to, to);
     }
 
     /// The note is optional, and blank or whitespace reads as none, so a

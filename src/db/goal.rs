@@ -375,8 +375,20 @@ pub fn insert_batch(db: &Db, kind: BatchKind, date: NaiveDate) -> Result<BatchId
 /// Not currently reachable from `import::import_all`, which wraps the whole
 /// import in its own transaction -- keep it that way, or thread a shared
 /// transaction through instead of calling this from inside one.
+///
+/// A batch that lowered a goal's base -- a [`transfer_value`] with a
+/// `lower_base` -- raises it back by the same amount, so an undone transfer
+/// leaves the target where it stood as well as the money. Added back rather
+/// than restored to a stored figure, so an edit made to the base since is
+/// kept.
 pub fn delete_batch(db: &Db, batch_id: BatchId) -> Result<()> {
     db.transaction(|db| {
+        if let Some((goal_id, cents)) = lowered_base(db, batch_id)? {
+            db.conn.execute(
+                "UPDATE goal SET base_cents = base_cents + ?2 WHERE id = ?1",
+                params![goal_id, cents.0],
+            )?;
+        }
         db.conn.execute(
             "DELETE FROM allocation WHERE batch_id = ?1",
             params![batch_id],
@@ -574,6 +586,24 @@ pub fn most_recent_batch(db: &Db) -> Result<Option<Batch>> {
         )
         .optional()?;
     Ok(found)
+}
+
+/// The goal whose base a batch lowered, and by how much -- what
+/// [`delete_batch`] gives back. `None` for every batch but a
+/// [`transfer_value`] that lowered one.
+pub fn lowered_base(db: &Db, batch_id: BatchId) -> Result<Option<(GoalId, Cents)>> {
+    let found: Option<(Option<GoalId>, Option<i64>)> = db
+        .conn
+        .query_row(
+            "SELECT lowered_goal_id, lowered_base_cents FROM batch WHERE id = ?1",
+            params![batch_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    Ok(match found {
+        Some((Some(goal_id), Some(cents))) => Some((goal_id, Cents(cents))),
+        _ => None,
+    })
 }
 
 /// What one batch put into each goal, one row per goal.
@@ -802,10 +832,18 @@ pub fn move_value(db: &Db, from: GoalId, to: Option<GoalId>, date: NaiveDate) ->
 /// `note` is the owner's reason, appended to both rows so either goal's
 /// history says why the value moved.
 ///
+/// `lower_base` is what to take off the source's base in the same write --
+/// money spent towards the goal before it was funded, which leaves less of
+/// it to fund. Zero lowers nothing; what figure a spend comes to is
+/// `crate::goal::spent_base`'s to say. A reduction past the base is let
+/// through, leaving a negative target: what was spent is what was spent, and
+/// every reader of a target already treats one at or below zero as funded.
+///
 /// The pair is one [`BatchKind::Adhoc`] batch, so `U` reverses a fumbled
-/// transfer whole. An ending is deliberately no batch, because an undo could
-/// not reopen the goal it closed; a transfer closes nothing, so nothing here
-/// stands in the way.
+/// transfer whole -- the lowered base included, which the batch records for
+/// [`delete_batch`] to give back. An ending is deliberately no batch, because
+/// an undo could not reopen the goal it closed; a transfer closes nothing, so
+/// nothing here stands in the way.
 ///
 /// **Must be called at top level, not inside another [`Db::transaction`].**
 pub fn transfer_value(
@@ -815,10 +853,15 @@ pub fn transfer_value(
     amount: Cents,
     date: NaiveDate,
     note: Option<&str>,
+    lower_base: Cents,
 ) -> Result<()> {
     ensure!(
         amount > Cents::ZERO,
         "a transfer moves a positive amount; pick the other goal to send it the other way"
+    );
+    ensure!(
+        lower_base >= Cents::ZERO,
+        "a transfer lowers a target, never raises one"
     );
     let source = open_source(db, from)?;
     let destination = open_destination(db, &source, to)?;
@@ -839,6 +882,16 @@ pub fn transfer_value(
         let batch = insert_batch(db, BatchKind::Adhoc, date)?;
         insert_allocation(db, from, date, -amount, Some(&out), Some(batch))?;
         insert_allocation(db, to, date, amount, Some(&into), Some(batch))?;
+        if lower_base > Cents::ZERO {
+            db.conn.execute(
+                "UPDATE goal SET base_cents = base_cents - ?2 WHERE id = ?1",
+                params![from, lower_base.0],
+            )?;
+            db.conn.execute(
+                "UPDATE batch SET lowered_goal_id = ?2, lowered_base_cents = ?3 WHERE id = ?1",
+                params![batch, from, lower_base.0],
+            )?;
+        }
         Ok(())
     })
 }
@@ -1639,7 +1692,16 @@ mod tests {
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
         let before = container_excess(&db, savings).unwrap();
 
-        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), None).unwrap();
+        transfer_value(
+            &db,
+            couch,
+            rug,
+            Cents(25_000),
+            day(2026, 8, 16),
+            None,
+            Cents::ZERO,
+        )
+        .unwrap();
 
         assert_eq!(balance(&db, couch).unwrap(), Cents(35_000));
         assert_eq!(balance(&db, rug).unwrap(), Cents(25_000));
@@ -1659,7 +1721,16 @@ mod tests {
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
 
-        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), None).unwrap();
+        transfer_value(
+            &db,
+            couch,
+            rug,
+            Cents(25_000),
+            day(2026, 8, 16),
+            None,
+            Cents::ZERO,
+        )
+        .unwrap();
 
         let batch = last_batch(&db, BatchKind::Adhoc, savings)
             .unwrap()
@@ -1691,7 +1762,16 @@ mod tests {
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
 
-        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), None).unwrap();
+        transfer_value(
+            &db,
+            couch,
+            rug,
+            Cents(25_000),
+            day(2026, 8, 16),
+            None,
+            Cents::ZERO,
+        )
+        .unwrap();
 
         let note = |goal: GoalId| -> String {
             db.conn
@@ -1721,6 +1801,7 @@ mod tests {
             Cents(25_000),
             day(2026, 8, 16),
             Some("couch came in under"),
+            Cents::ZERO,
         )
         .unwrap();
 
@@ -1744,7 +1825,16 @@ mod tests {
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
 
-        transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), Some("  ")).unwrap();
+        transfer_value(
+            &db,
+            couch,
+            rug,
+            Cents(25_000),
+            day(2026, 8, 16),
+            Some("  "),
+            Cents::ZERO,
+        )
+        .unwrap();
 
         let note = |goal| allocations(&db, goal).unwrap().pop().unwrap().note;
         assert_eq!(note(couch).as_deref(), Some("To Rug"));
@@ -1763,8 +1853,16 @@ mod tests {
         let emergency = insert(&db, &new_goal("Emergency Savings", brokerage, 1_066)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
 
-        let err = transfer_value(&db, couch, emergency, Cents(25_000), day(2026, 8, 16), None)
-            .unwrap_err();
+        let err = transfer_value(
+            &db,
+            couch,
+            emergency,
+            Cents(25_000),
+            day(2026, 8, 16),
+            None,
+            Cents::ZERO,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("different containers"), "{err}");
         assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
         assert_eq!(balance(&db, emergency).unwrap(), Cents::ZERO);
@@ -1781,8 +1879,16 @@ mod tests {
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
         close(&db, rug).unwrap();
 
-        let err =
-            transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), None).unwrap_err();
+        let err = transfer_value(
+            &db,
+            couch,
+            rug,
+            Cents(25_000),
+            day(2026, 8, 16),
+            None,
+            Cents::ZERO,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("closed"), "{err}");
         assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
         assert_eq!(balance(&db, rug).unwrap(), Cents::ZERO);
@@ -1800,11 +1906,121 @@ mod tests {
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
         close(&db, couch).unwrap();
 
-        let err =
-            transfer_value(&db, couch, rug, Cents(25_000), day(2026, 8, 16), None).unwrap_err();
+        let err = transfer_value(
+            &db,
+            couch,
+            rug,
+            Cents(25_000),
+            day(2026, 8, 16),
+            None,
+            Cents::ZERO,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("closed"), "{err}");
         assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
         assert_eq!(balance(&db, rug).unwrap(), Cents::ZERO);
+    }
+
+    /// The base falls in the same write as the money moves, and the batch
+    /// remembers by how much so `U` gives it back -- added back rather than
+    /// restored, so an edit made to the base in between is kept.
+    #[test]
+    fn a_transfer_lowering_the_base_is_undone_with_its_batch() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
+        insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
+
+        transfer_value(
+            &db,
+            couch,
+            rug,
+            Cents(8_000),
+            day(2026, 8, 16),
+            None,
+            Cents(8_000),
+        )
+        .unwrap();
+
+        let base = |id| get(&db, id).unwrap().unwrap().base_cents;
+        assert_eq!(base(couch), Cents(92_000));
+        assert_eq!(
+            base(rug),
+            Cents(100_000),
+            "the destination's target is untouched"
+        );
+        let batch = most_recent_batch(&db).unwrap().unwrap();
+        assert_eq!(
+            lowered_base(&db, batch.id).unwrap(),
+            Some((couch, Cents(8_000)))
+        );
+
+        db.conn
+            .execute(
+                "UPDATE goal SET base_cents = 95000 WHERE id = ?1",
+                params![couch],
+            )
+            .unwrap();
+        delete_batch(&db, batch.id).unwrap();
+        assert_eq!(base(couch), Cents(103_000));
+        assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
+    }
+
+    /// A transfer that lowers nothing records nothing, so undoing it leaves
+    /// the base alone.
+    #[test]
+    fn a_transfer_lowering_nothing_records_no_base_on_its_batch() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
+        let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
+
+        transfer_value(
+            &db,
+            couch,
+            rug,
+            Cents(8_000),
+            day(2026, 8, 16),
+            None,
+            Cents::ZERO,
+        )
+        .unwrap();
+
+        let batch = most_recent_batch(&db).unwrap().unwrap();
+        assert_eq!(lowered_base(&db, batch.id).unwrap(), None);
+        assert_eq!(get(&db, couch).unwrap().unwrap().base_cents, Cents(100_000));
+    }
+
+    /// Spending past a goal's target is a real state -- the purchase came in
+    /// over -- so the base goes negative rather than the transfer being
+    /// refused, and `U` still gives the whole reduction back.
+    #[test]
+    fn lowering_a_base_past_zero_leaves_it_negative_and_undo_restores_it() {
+        let db = db::open_in_memory().unwrap();
+        let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
+        let couch = insert(&db, &new_goal("Couch", savings, 50)).unwrap();
+        let rug = insert(&db, &new_goal("Rug", savings, 1_000)).unwrap();
+        insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
+
+        transfer_value(
+            &db,
+            couch,
+            rug,
+            Cents(8_000),
+            day(2026, 8, 16),
+            None,
+            Cents(8_000),
+        )
+        .unwrap();
+
+        let base = |id| get(&db, id).unwrap().unwrap().base_cents;
+        assert_eq!(base(couch), Cents(-3_000));
+        assert_eq!(balance(&db, couch).unwrap(), Cents(52_000));
+
+        let batch = most_recent_batch(&db).unwrap().unwrap();
+        delete_batch(&db, batch.id).unwrap();
+        assert_eq!(base(couch), Cents(5_000));
     }
 
     #[test]
@@ -1814,7 +2030,18 @@ mod tests {
         let couch = insert(&db, &new_goal("Couch", savings, 1_000)).unwrap();
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
 
-        assert!(transfer_value(&db, couch, couch, Cents(25_000), day(2026, 8, 16), None).is_err());
+        assert!(
+            transfer_value(
+                &db,
+                couch,
+                couch,
+                Cents(25_000),
+                day(2026, 8, 16),
+                None,
+                Cents::ZERO
+            )
+            .is_err()
+        );
         assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));
     }
 
@@ -1830,7 +2057,8 @@ mod tests {
         insert_allocation(&db, couch, day(2026, 1, 1), Cents(60_000), None, None).unwrap();
 
         for amount in [Cents::ZERO, Cents(-25_000)] {
-            let err = transfer_value(&db, couch, rug, amount, day(2026, 8, 16), None).unwrap_err();
+            let err = transfer_value(&db, couch, rug, amount, day(2026, 8, 16), None, Cents::ZERO)
+                .unwrap_err();
             assert!(err.to_string().contains("positive"), "{err}");
         }
         assert_eq!(balance(&db, couch).unwrap(), Cents(60_000));

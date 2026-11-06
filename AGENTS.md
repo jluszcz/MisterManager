@@ -782,6 +782,14 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
     is deliberately no batch because an undo could not reopen the goal it closed. Returning part of
     a goal's value to unallocated has no key of its own: that is `a` with a negative amount, and a
     second spelling of it on the transfer form would be a second spelling of an ending.
+  - **`Lower target` on that form is money spent towards the source goal, and it lowers the base
+    in the same write.** `crate::goal::transfer_value` prices the reduction through
+    `goal::spent_base` — the amount itself, or a taxed goal's pre-tax part floored to a whole
+    dollar, since a target is `calc::tax` of the base and no base taxes to an arbitrary figure —
+    and `db::goal::transfer_value` writes it, past zero if the spend outran the target. The base is
+    a column rather than a row in the batch, so the batch records what it took in
+    `batch.lowered_goal_id`/`lowered_base_cents`, and `delete_batch` adds it back: without that,
+    `U` would return the money under a target that stayed lowered.
 - **A goal's target is derived, never stored, and the derived figure is the target everywhere.**
   `goal::target` turns `base_cents`, `taxed` and `floating` into a figure on every read, and that
   figure is what the shortfall behind a Planning gate, the percentage complete, `$/Pay`, the payday
