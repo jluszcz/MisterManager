@@ -1436,12 +1436,14 @@ deferred to nothing.
     non-positive target — so `savings::rows` sets `Some(Percent(100))` for a floating goal and the
     ramp draws it green whatever it holds. The Goal column is the balance, and the report's Savings
     tab reads the same rows.
-- **`$/Pay` divides a runway by the pay cadence, and the cadence arrives per reload.**
-  `Savings::set_goals` takes `periods_per_year` beside its goals, the way
-  `RecurringGoals::set_entries` takes it beside the tax rate and for the same reason: it is
-  `Target::PeriodsPerYear` on the Planning screen, whose commit reloads this one, and a copy held
-  on the screen would leave the column quoting the cadence the app opened with. `App` holds no copy
-  either -- `App::periods_per_year` reads it. The days between two paydays are
+- **`$/Pay` divides a runway by the paychecks left, and they arrive per reload.**
+  `Savings::set_goals` takes a `calc::Paydays` beside its goals — the paycheck rule's schedule, or
+  the cadence count when nothing is flagged — the way
+  `RecurringGoals::set_entries` takes the count beside the tax rate and for the same reason: the
+  count is `Target::PeriodsPerYear` on the Planning screen, whose commit reloads this one, and a copy held
+  on the screen would leave the column quoting the cadence the app opened with; `P`, `e` and `d` on
+  the recurring transactions and every payday worksheet commit move the schedule's half, and all of
+  them reload. `App` holds no copy either -- `App::paydays` reads it. The days between two paydays are
   `calc::period_days` of that count rather than a setting of their own; see the root `AGENTS.md`.
 - **A filter narrows what is *looked at*, never where value may go.** The Savings title above
   counts the visible rows because that is the question it asks; the destination lists `c` and `t`

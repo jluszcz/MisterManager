@@ -5,7 +5,9 @@
 //! `db::recurring_txn` stays CRUD plus the queries regeneration needs; the
 //! horizon, the adoption order, and what a cadence *is* all live here.
 
+use crate::calc::Paydays;
 use crate::calc::schedule::{self, Step};
+use crate::db::goal::{self, BatchKind};
 use crate::db::recurring_txn::{self, Cadence, RecurringTxn};
 use crate::db::setting::{self, key};
 use crate::db::{AccountId, Db, RecurringTxnId, txn};
@@ -389,6 +391,30 @@ pub fn next_paycheck(db: &Db, after: NaiveDate) -> Result<Option<NaiveDate>> {
         step(recurring_txn.cadence),
         after,
     ))
+}
+
+/// What a goal's `$/Pay` counts its runway in: the paycheck recurring
+/// transaction's own schedule, or the cadence setting when nothing carries
+/// the flag.
+///
+/// Here rather than in `calc` for [`next_paycheck`]'s reason: the
+/// `Cadence -> Step` match is this module's. The horizon is ignored for the
+/// same reason it is there -- it governs how far ahead rows are written, not
+/// when paychecks land -- so a goal dated past a lapsed paycheck rule is still
+/// counted in that rule's paydays rather than collapsing to one.
+///
+/// The payday batches are what say which paychecks have already been
+/// allocated; `Paydays::scheduled` is where they are read.
+pub fn paydays(db: &Db, today: NaiveDate, periods_per_year: i64) -> Result<Paydays> {
+    let Some(paycheck) = recurring_txn::paycheck(db)? else {
+        return Ok(Paydays::Cadence(periods_per_year));
+    };
+    Paydays::scheduled(
+        paycheck.anchor_date,
+        step(paycheck.cadence),
+        today,
+        |from, to| goal::batch_dates(db, BatchKind::Paycheck, from, to),
+    )
 }
 
 #[cfg(test)]
@@ -1226,6 +1252,51 @@ mod tests {
             Some(day(2026, 9, 11)),
             "on payday itself the runway is to the next one"
         );
+    }
+
+    /// Without a flagged rule the runway is the cadence setting's, which is
+    /// the workbook's own lambda.
+    #[test]
+    fn paydays_without_a_paycheck_rule_fall_back_to_the_cadence() {
+        let db = db::open_in_memory().unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        recurring_txn::insert(&db, &mortgage(checking)).unwrap();
+        assert_eq!(paydays(&db, today(), 26).unwrap(), Paydays::Cadence(26));
+    }
+
+    /// The flagged rule's schedule, starting at the paycheck that landed
+    /// last -- and past it once a payday batch is dated beside it, from
+    /// whichever container's goals that batch funded.
+    #[test]
+    fn paydays_start_past_a_paycheck_a_payday_batch_has_claimed() {
+        let db = db::open_in_memory().unwrap();
+        let checking = account::insert(&db, "CHK", "Everyday", Kind::Cash, 0, None).unwrap();
+        let pay = recurring_txn::insert(
+            &db,
+            &NewRecurringTxn {
+                description: "Salary".to_string(),
+                cents: Cents(500_000),
+                account_id: checking,
+                to_account_id: None,
+                cadence: Cadence::Biweekly,
+                anchor_date: day(2026, 8, 14),
+                horizon: None,
+            },
+        )
+        .unwrap();
+        recurring_txn::set_paycheck(&db, pay).unwrap();
+        let from = |db: &Db| match paydays(db, today(), 26).unwrap() {
+            Paydays::Scheduled { from, .. } => from,
+            other => panic!("expected the paycheck's schedule, got {other:?}"),
+        };
+        assert_eq!(from(&db), day(2026, 8, 14));
+
+        // An interest batch is not a payday, whatever its date.
+        goal::insert_batch(&db, BatchKind::Interest, day(2026, 8, 14)).unwrap();
+        assert_eq!(from(&db), day(2026, 8, 14));
+
+        goal::insert_batch(&db, BatchKind::Paycheck, day(2026, 8, 18)).unwrap();
+        assert_eq!(from(&db), day(2026, 8, 28));
     }
 
     /// A freshly imported database has no paycheck recurring transaction until

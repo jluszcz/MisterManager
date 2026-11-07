@@ -6,6 +6,7 @@
 //! container.
 
 use crate::account_label::Account;
+use crate::calc::Paydays;
 use crate::db::account;
 use crate::db::goal;
 use crate::db::{AccountId, Db, GoalId};
@@ -102,7 +103,7 @@ pub fn unallocated(excess: Cents) -> Cents {
 
 /// What one goal asks of this paycheck, or `None` when it asks nothing.
 ///
-/// The one place a goal is unpacked into [`crate::calc::per_paycheck`]'s four
+/// The one place a goal is unpacked into [`crate::calc::per_paycheck`]'s
 /// arguments. Three callers want the same number and would otherwise each
 /// unpack it themselves: the Savings screen's `$/Pay` column, the payday
 /// worksheet `A` prefills, and the one Planning's `t` prefills. A figure the
@@ -115,17 +116,13 @@ pub fn unallocated(excess: Cents) -> Cents {
 ///
 /// The target, not the base: a goal due next paycheck asks for all it lacks,
 /// and what a taxed one lacks includes the tax.
-pub fn paycheck_ask(
-    goal: &Funding,
-    today: NaiveDate,
-    periods_per_year: i64,
-) -> Result<Option<Cents>> {
+pub fn paycheck_ask(goal: &Funding, today: NaiveDate, paydays: Paydays) -> Result<Option<Cents>> {
     crate::calc::per_paycheck(
         goal.current,
         goal.target,
         goal.goal.goal_date,
         today,
-        periods_per_year,
+        paydays,
     )
 }
 
@@ -142,11 +139,11 @@ pub fn rows(
     goals: Vec<Funding>,
     accounts: &[account::Account],
     today: NaiveDate,
-    periods_per_year: i64,
+    paydays: Paydays,
 ) -> Result<Vec<Row>> {
     let mut rows = Vec::with_capacity(goals.len());
     for g in goals {
-        let per_paycheck = paycheck_ask(&g, today, periods_per_year)?;
+        let per_paycheck = paycheck_ask(&g, today, paydays)?;
         rows.push(Row {
             goal_id: g.goal.id,
             container: Account::named(accounts, g.goal.container_account_id),
@@ -290,7 +287,7 @@ mod tests {
             vec![floating(goal(1, 1, "Brokerage", 0, 0, None))],
             &accounts(),
             today(),
-            26,
+            Paydays::Cadence(26),
         )
         .unwrap();
 
@@ -310,7 +307,7 @@ mod tests {
             ],
             &accounts(),
             today(),
-            26,
+            Paydays::Cadence(26),
         )
         .unwrap();
 
@@ -330,7 +327,7 @@ mod tests {
             ],
             &accounts(),
             today(),
-            26,
+            Paydays::Cadence(26),
         )
         .unwrap();
 
@@ -348,7 +345,7 @@ mod tests {
             vec![floating(goal(1, 1, "Brokerage", 50_000, 0, Some(past)))],
             &accounts(),
             today(),
-            26,
+            Paydays::Cadence(26),
         )
         .unwrap();
 
@@ -382,7 +379,7 @@ mod tests {
     /// truncated, or 13,000/15,000 would read 86%.
     #[test]
     fn the_percent_column_rounds_to_the_nearest_whole_percent() {
-        let rows = rows(goals(), &accounts(), today(), 26).unwrap();
+        let rows = rows(goals(), &accounts(), today(), Paydays::Cadence(26)).unwrap();
         let percents: Vec<Option<Percent>> = rows.iter().map(|r| r.percent).collect();
         assert_eq!(
             percents,
@@ -398,7 +395,7 @@ mod tests {
     /// Column F of the sheet goes blank for undated and already-met goals.
     #[test]
     fn per_paycheck_is_blank_for_undated_and_met_goals() {
-        let rows = rows(goals(), &accounts(), today(), 26).unwrap();
+        let rows = rows(goals(), &accounts(), today(), Paydays::Cadence(26)).unwrap();
         assert_eq!(rows[0].per_paycheck, None, "Bill Payments is undated");
         assert_eq!(rows[1].per_paycheck, Some(Cents(800)), "Apple Watch");
         assert_eq!(rows[2].per_paycheck, Some(Cents(7_500)), "Dropbox");
@@ -418,7 +415,7 @@ mod tests {
             )],
             &accounts(),
             today(),
-            26,
+            Paydays::Cadence(26),
         )
         .unwrap();
         assert_eq!(rows[0].per_paycheck, None);
@@ -437,7 +434,7 @@ mod tests {
             ],
             &accounts(),
             today(),
-            26,
+            Paydays::Cadence(26),
         )
         .unwrap();
         let expired: Vec<bool> = rows.iter().map(|r| r.expired).collect();
@@ -457,7 +454,7 @@ mod tests {
             )],
             &accounts(),
             today(),
-            26,
+            Paydays::Cadence(26),
         )
         .unwrap();
 
@@ -479,7 +476,7 @@ mod tests {
             ],
             &accounts(),
             today(),
-            26,
+            Paydays::Cadence(26),
         )
         .unwrap();
 
@@ -502,7 +499,7 @@ mod tests {
             )],
             &accounts(),
             today(),
-            26,
+            Paydays::Cadence(26),
         )
         .unwrap();
 
@@ -525,7 +522,7 @@ mod tests {
             )],
             &accounts(),
             today(),
-            26,
+            Paydays::Cadence(26),
         )
         .unwrap();
 
@@ -534,7 +531,7 @@ mod tests {
 
     #[test]
     fn each_row_names_its_own_goals_container() {
-        let rows = rows(goals(), &accounts(), today(), 26).unwrap();
+        let rows = rows(goals(), &accounts(), today(), Paydays::Cadence(26)).unwrap();
         let names: Vec<String> = rows.iter().map(|r| r.container.text()).collect();
         assert_eq!(names, ["Rainy Day", "Rainy Day", "Rainy Day", "Brokerage"]);
     }
@@ -551,7 +548,7 @@ mod tests {
             ],
             &accounts(),
             today(),
-            26,
+            Paydays::Cadence(26),
         )
         .unwrap();
         let marked: Vec<bool> = rows.iter().map(|r| r.favorite).collect();

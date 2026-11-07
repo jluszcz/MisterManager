@@ -161,9 +161,10 @@ impl App {
             self.status = "no container holds goals yet".to_string();
             return Ok(None);
         };
+        let paydays = self.paydays()?;
         let mut prefill = Vec::new();
         for g in goal_engine::list_with_balances(&self.db, container)? {
-            let ask = crate::savings::paycheck_ask(&g, self.today, self.periods_per_year()?)?;
+            let ask = crate::savings::paycheck_ask(&g, self.today, paydays)?;
             prefill.push((g.goal.id, g.goal.name, ask.unwrap_or(Cents::ZERO)));
         }
         let account = account::get(&self.db, container)?;

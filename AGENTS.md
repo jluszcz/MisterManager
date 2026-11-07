@@ -547,7 +547,7 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
 - **The pay cadence is one setting, and the days between paydays are derived from it.**
   `key::PAY_PERIODS_PER_YEAR` is the count; `calc::period_days` divides a year of whole weeks
   (`52 × 7`) by it, clamped at both ends, and that is what `calc::per_paycheck` counts a deadline's
-  runway in. Weeks rather than the calendar's 365 days because a pay cadence counts in weeks — `364`
+  runway in when no paycheck is on record. Weeks rather than the calendar's 365 days because a pay cadence counts in weeks — `364`
   divides exactly by every whole-week cadence, and the 365th day belongs to no pay period. The workbook states the
   cadence twice — `Constants!G2` and `Constants!H2` — and only `G2` is imported, because two cells
   for one fact can disagree: `26` beside `15` is a pay cadence nobody works, and it would have every
@@ -560,7 +560,20 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   the two screens that divide by it take it as an argument per reload rather than as a field:
   `savings::Savings::set_goals` beside its goals, `recurring_goal::RecurringGoals::set_entries`
   beside its tax rate, exactly as that rate already arrived. Both writers are pinned by an
-  `editing_the_pay_period_count_moves_…` test.
+  `editing_the_pay_period_count_moves_…` test. What `set_goals` takes is `calc::Paydays`, through
+  `App::paydays`, since `$/Pay` counts the paycheck's own dates when one is flagged — see below.
+- **`$/Pay` counts the paychecks not yet allocated, not the days to the deadline.** With a
+  recurring transaction marked `is_paycheck`, `recurring_txn::paydays` hands `calc::per_paycheck`
+  that rule's schedule, and the runway is the paychecks landing from the first one no `Paycheck`
+  batch has claimed through the goal date, both ends counted. A batch claims the paycheck its date
+  is nearest, so a payday allocated the Monday after the paycheck landed, or on its eve, or dated
+  for when the transfers land, all retire the paycheck they were for — and a paycheck that landed
+  unallocated goes on counting until one does. Only the last paycheck to land can be owed that
+  way: a database with no payday batch at all counts one, not every paycheck since the anchor.
+  `Paydays::scheduled` is where the claiming is argued. With nothing flagged it is
+  `Paydays::Cadence`, the workbook's own lambda, which is what a freshly imported database reads
+  and so what the workbook oracle still asserts. The horizon is ignored for `next_paycheck`'s
+  reason.
 - **The Planning waterfall is one ordered list, read twice.** `plan_rows::rows` is the sequence —
   which blocks there are, what they are headed, what each row is called, and which of them the two
   footers sit under. `tui::planning::view::build` maps it into a terminal `Row` and `report::html::planning`

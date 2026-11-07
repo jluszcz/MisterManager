@@ -569,6 +569,28 @@ pub fn last_batch(db: &Db, kind: BatchKind, container: AccountId) -> Result<Opti
     Ok(found)
 }
 
+/// The date of every batch of one kind dated in `from ..= to`, oldest first,
+/// whatever container its goals are in -- what decides which paychecks have
+/// been allocated, payday running one worksheet per container.
+pub fn batch_dates(
+    db: &Db,
+    kind: BatchKind,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> Result<Vec<NaiveDate>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT id, kind, date FROM batch
+          WHERE kind = ?1 AND date BETWEEN ?2 AND ?3
+          ORDER BY date, id",
+    )?;
+    let rows = stmt.query_map(params![kind.as_str(), iso(from), iso(to)], batch_from_row)?;
+    let mut dates = Vec::new();
+    for batch in rows {
+        dates.push(batch?.date);
+    }
+    Ok(dates)
+}
+
 /// The last batch entered, whatever it was -- what `U` undoes.
 ///
 /// Ordered by id, not date: undo means "the last thing I did", and a payday

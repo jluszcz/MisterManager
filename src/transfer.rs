@@ -5,6 +5,7 @@
 //! groups by that answer, and sums. Nothing here decides *amounts* -- `calc`
 //! does that -- and nothing in `calc` decides destinations.
 
+use crate::calc::Paydays;
 use crate::calc::planning::Lines;
 use crate::db::account::{self, AccountColor};
 use crate::db::goal::Goal;
@@ -139,11 +140,11 @@ impl Asks {
 /// A goal with nothing to ask -- undated, or already at its target -- comes
 /// back at zero rather than dropping out: it is in the set, and `fit` reads
 /// a zero ask as "hand this one nothing".
-pub fn spread_asks(db: &Db, today: NaiveDate, periods_per_year: i64) -> Result<Asks> {
+pub fn spread_asks(db: &Db, today: NaiveDate, paydays: Paydays) -> Result<Asks> {
     let unclaimed = unclaimed_with_balances(db, Reading::Strict)?;
     let mut priced = Vec::new();
     for funding in shares_of(&unclaimed) {
-        let ask = crate::savings::paycheck_ask(funding, today, periods_per_year)?;
+        let ask = crate::savings::paycheck_ask(funding, today, paydays)?;
         priced.push((funding.goal.clone(), ask.unwrap_or(Cents::ZERO)));
     }
     Ok(Asks(priced))
@@ -1176,7 +1177,7 @@ mod tests {
         )
         .unwrap();
 
-        let priced: Vec<(String, Cents)> = spread_asks(&db, day(2026, 8, 22), 26)
+        let priced: Vec<(String, Cents)> = spread_asks(&db, day(2026, 8, 22), Paydays::Cadence(26))
             .unwrap()
             .priced()
             .iter()
@@ -1798,7 +1799,7 @@ mod tests {
     #[test]
     fn a_handed_in_spread_set_plans_the_same_as_one_read_here() {
         let (db, _, _) = configured();
-        let asks = spread_asks(&db, day(2026, 8, 22), 26).unwrap();
+        let asks = spread_asks(&db, day(2026, 8, 22), Paydays::Cadence(26)).unwrap();
         assert_eq!(
             plan(&db, &lines(), Some(&asks)).unwrap(),
             plan(&db, &lines(), None).unwrap()
@@ -1812,7 +1813,7 @@ mod tests {
     fn a_handed_in_spread_set_refuses_an_ambiguous_plug_the_same_way() {
         let (db, _, brokerage) = configured();
         insert_goal(&db, brokerage, "Sabbatical");
-        let asks = spread_asks(&db, day(2026, 8, 22), 26).unwrap();
+        let asks = spread_asks(&db, day(2026, 8, 22), Paydays::Cadence(26)).unwrap();
         assert_eq!(
             format!("{:#}", plan(&db, &lines(), Some(&asks)).unwrap_err()),
             format!("{:#}", plan(&db, &lines(), None).unwrap_err())

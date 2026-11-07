@@ -222,7 +222,7 @@ fn per_paycheck_reproduces_the_sheets_column_f() {
             g.target,
             g.goal.goal_date,
             today,
-            periods_per_year,
+            mistermanager::calc::Paydays::Cadence(periods_per_year),
         )
         .unwrap();
         assert_eq!(

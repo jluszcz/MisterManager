@@ -72,7 +72,7 @@ impl App {
     pub(super) fn reload_savings(&mut self) -> Result<()> {
         self.savings.set_goals(
             goal_engine::all_with_balances(&self.db, Reading::Tolerant)?,
-            self.periods_per_year()?,
+            self.paydays()?,
         )?;
         let excess = crate::savings::containers_with_excess(&self.db)?;
         let containers = excess.iter().map(|(id, _)| *id).collect();
@@ -411,8 +411,8 @@ mod tests {
     use jluszcz_finance_utils::tui::app::App as _;
     use ratatui::crossterm::event::KeyCode;
 
-    /// `PAY_PERIODS_PER_YEAR` is the only thing `$/Pay` divides a runway by,
-    /// it is editable on the Planning screen, and that commit reloads this
+    /// With no paycheck on record, `PAY_PERIODS_PER_YEAR` is what `$/Pay`
+    /// divides a runway by, it is editable on the Planning screen, and that commit reloads this
     /// one -- so the column follows the setting rather than the cadence the
     /// app opened with. The other half of the same read is the Recurring
     /// Goals title, which
@@ -436,6 +436,47 @@ mod tests {
             .unwrap();
         app.reload().unwrap();
         assert_eq!(ask(&app), Some(Cents::from_dollars(1_000)));
+    }
+
+    /// With a paycheck on record, `$/Pay` divides by the paychecks left
+    /// rather than by the days: the fixture's 8/14 paycheck has landed and
+    /// nothing has been allocated from it, so it still counts on 8/15, and
+    /// stops counting once a payday batch claims it.
+    #[test]
+    fn the_per_paycheck_column_counts_the_paychecks_not_yet_allocated() {
+        let mut app = app();
+        let ask = |app: &App| {
+            app.savings
+                .rows()
+                .iter()
+                .find(|r| r.name == "Vacation 2027")
+                .expect("the fixture's one dated goal")
+                .per_paycheck
+        };
+        let checking = account::by_code(&app.db, "CHK", Kind::Cash)
+            .unwrap()
+            .expect("the fixture's current account");
+        let pay = db::recurring_txn::insert(
+            &app.db,
+            &db::recurring_txn::NewRecurringTxn {
+                description: "Salary".to_string(),
+                cents: Cents(500_000),
+                account_id: checking.id,
+                to_account_id: None,
+                cadence: db::recurring_txn::Cadence::Biweekly,
+                anchor_date: day(2026, 8, 14),
+                horizon: None,
+            },
+        )
+        .unwrap();
+        db::recurring_txn::set_paycheck(&app.db, pay).unwrap();
+        app.reload().unwrap();
+        // $5,000 short over the eleven Fridays 8/14 ..= 1/1: 454.55.
+        assert_eq!(ask(&app), Some(Cents::from_dollars(455)));
+
+        goal::insert_batch(&app.db, goal::BatchKind::Paycheck, day(2026, 8, 17)).unwrap();
+        app.reload().unwrap();
+        assert_eq!(ask(&app), Some(Cents::from_dollars(500)));
     }
 
     /// One container holding three undated goals and one dated, for the
