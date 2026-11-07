@@ -568,8 +568,9 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   batch has claimed through the goal date, both ends counted. A batch claims the paycheck its date
   is nearest, so a payday allocated the Monday after the paycheck landed, or on its eve, or dated
   for when the transfers land, all retire the paycheck they were for — and a paycheck that landed
-  unallocated goes on counting until one does. Only the last paycheck to land can be owed that
-  way: a database with no payday batch at all counts one, not every paycheck since the anchor.
+  unallocated goes on counting until one does — or until the next paycheck lands, since only the
+  last paycheck to land can be owed that way. A paycheck skipped outright is given up on then, and a
+  database with no payday batch at all counts one, not every paycheck since the anchor.
   `Paydays::scheduled` is where the claiming is argued. With nothing flagged it is
   `Paydays::Cadence`, the workbook's own lambda, which is what a freshly imported database reads
   and so what the workbook oracle still asserts. The horizon is ignored for `next_paycheck`'s

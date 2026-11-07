@@ -96,6 +96,12 @@ impl Paydays {
     /// starts at the most recent paycheck to have landed, stepping past each
     /// one a batch has claimed.
     ///
+    /// Never further back than that: a paycheck skipped outright -- no payday
+    /// run for it at all -- stops being owed the day the next one lands. The
+    /// money it would have funded is in the containers' unallocated remainder
+    /// by then rather than in a paycheck still to come, so dividing a goal's
+    /// remainder by it would ask too little of every paycheck that is.
+    ///
     /// `allocated` is asked for the dates of the payday batches in a window
     /// of paychecks around today; the window is all the claiming can reach,
     /// since a batch outside it is nearer a paycheck outside it.
@@ -548,6 +554,19 @@ mod tests {
         let today = day(2026, 8, 28);
         let batches = [july_allocated(), day(2026, 8, 14), today];
         assert_eq!(fridays(today, &batches).through(today, by).unwrap(), 1);
+    }
+
+    /// A paycheck skipped outright is waited on only until the next one
+    /// lands: the 14th goes unallocated, and from the 28th the count starts
+    /// there instead.
+    #[test]
+    fn a_skipped_paycheck_stops_counting_once_the_next_one_lands() {
+        let by = day(2026, 9, 11);
+        let batches = [july_allocated()];
+        let before = day(2026, 8, 27);
+        assert_eq!(fridays(before, &batches).through(before, by).unwrap(), 3);
+        let after = day(2026, 8, 28);
+        assert_eq!(fridays(after, &batches).through(after, by).unwrap(), 2);
     }
 
     /// A database with no payday batch at all counts the one paycheck that
