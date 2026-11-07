@@ -72,7 +72,7 @@ fn screen(db: &db::Db, today: NaiveDate) -> Savings {
     savings
         .set_goals(
             goal_engine::all_with_balances(db, Reading::Strict).unwrap(),
-            periods_per_year,
+            mistermanager::recurring_txn::paydays(db, today, periods_per_year).unwrap(),
         )
         .unwrap();
     let excess = savings::containers_with_excess(db).unwrap();

@@ -402,7 +402,8 @@ fn plan_view(db: &Db, today: NaiveDate, adhoc: NaiveDate) -> Result<PlanView> {
     // The read just made, handed on rather than made again: `plan` resolves
     // the plug's container off exactly these goals. A read that failed hands
     // over nothing and leaves `plan` to fail on its own terms.
-    let asks = transfer::spread_asks(db, today, periods);
+    let asks = crate::recurring_txn::paydays(db, today, periods)
+        .and_then(|paydays| transfer::spread_asks(db, today, paydays));
     let spread_ask_total = asks
         .as_ref()
         .map(transfer::Asks::total)
@@ -439,7 +440,7 @@ impl Snapshot {
             goal_engine::all_with_balances(db, Reading::Tolerant)?,
             &accounts,
             today,
-            periods_per_year,
+            crate::recurring_txn::paydays(db, today, periods_per_year)?,
         )?;
 
         let history_from = history_start(today);

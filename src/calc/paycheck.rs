@@ -1,6 +1,7 @@
+use super::schedule::{self, Step};
 use crate::money::Cents;
 use anyhow::Result;
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, Days, NaiveDate};
 
 /// The workbook's `Biweekly()` lambda: a monthly amount spread over the
 /// year's pay periods, rounded up to a whole dollar.
@@ -54,6 +55,136 @@ pub fn period_days(periods_per_year: i64) -> i64 {
     (WEEKS_PER_YEAR * DAYS_PER_WEEK / periods_per_year.max(1)).max(1)
 }
 
+/// The paydays a goal's runway is counted in.
+///
+/// Two answers to "how many paychecks are left before this date", because a
+/// database may or may not say when its paychecks land. When it does, the
+/// count is of those paychecks themselves: a runway measured in days and
+/// divided by a period drifts against the real paydays, so a goal three weeks
+/// out reads as two paychecks the day before one lands and as one the day
+/// after, and its `$/Pay` doubles overnight with nothing having changed.
+/// Counted off the schedule, the figure moves only when a paycheck is
+/// allocated.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Paydays {
+    /// The paycheck recurring transaction's own schedule -- every occurrence
+    /// counted from `anchor`, each on the business day it lands on -- and
+    /// `from`, the first of them no payday batch has been applied to yet.
+    /// Built by [`Paydays::scheduled`], which is where `from` is decided.
+    Scheduled {
+        anchor: NaiveDate,
+        step: Step,
+        from: NaiveDate,
+    },
+    /// No paycheck on record: the cadence setting alone, counted the way the
+    /// workbook's `PerPaycheck()` lambda counts it.
+    Cadence(i64),
+}
+
+impl Paydays {
+    /// The paycheck schedule, starting from the first paycheck not yet
+    /// allocated.
+    ///
+    /// A payday is allocated after the paycheck lands as often as before it,
+    /// so "the paychecks from today on" is wrong both ways round: a paycheck
+    /// that landed on Friday and is allocated on Monday is still this
+    /// payday's money, and one allocated on its eve has been spent before it
+    /// lands. What decides it is the payday batches themselves. Each one
+    /// claims the paycheck its date is nearest -- the earlier on a tie --
+    /// which holds whichever side of payday it was entered on and whether it
+    /// was dated for today or for when the transfers land. The count then
+    /// starts at the most recent paycheck to have landed, stepping past each
+    /// one a batch has claimed.
+    ///
+    /// Never further back than that: a paycheck skipped outright -- no payday
+    /// run for it at all -- stops being owed the day the next one lands. The
+    /// money it would have funded is in the containers' unallocated remainder
+    /// by then rather than in a paycheck still to come, so dividing a goal's
+    /// remainder by it would ask too little of every paycheck that is.
+    ///
+    /// `allocated` is asked for the dates of the payday batches in a window
+    /// of paychecks around today; the window is all the claiming can reach,
+    /// since a batch outside it is nearer a paycheck outside it.
+    pub fn scheduled(
+        anchor: NaiveDate,
+        step: Step,
+        today: NaiveDate,
+        allocated: impl FnOnce(NaiveDate, NaiveDate) -> Result<Vec<NaiveDate>>,
+    ) -> Result<Paydays> {
+        // The two most recent paychecks to have landed, and enough after them
+        // that the last one claimable has a neighbour on each side.
+        let landed = schedule::occurrences(anchor, step, anchor, today)?;
+        let mut around: Vec<NaiveDate> = landed.iter().rev().take(2).rev().copied().collect();
+        let start = around.len().saturating_sub(1);
+        let mut after = today;
+        while around.len() < start + 4 {
+            let Some(next) = schedule::next_after(anchor, step, after) else {
+                break;
+            };
+            around.push(next);
+            after = next;
+        }
+        let (Some(&first), Some(&last)) = (around.first(), around.last()) else {
+            return Ok(Paydays::Scheduled {
+                anchor,
+                step,
+                from: today,
+            });
+        };
+        // A batch entered on `first`'s eve is `first`'s, and when `first` is
+        // the start -- the rule's first paycheck has yet to land, or only it
+        // has -- nothing earlier in `around` is there to stand in for it. So
+        // the window reaches back to the last day nearer `first` than the
+        // paycheck a period before it, the tie going to that earlier one.
+        let reach = around
+            .get(1)
+            .map_or(0, |&second| ((second - first).num_days() - 1) / 2);
+        let since = first
+            .checked_sub_days(Days::new(reach.max(0) as u64))
+            .unwrap_or(first);
+        let claimed: Vec<usize> = allocated(since, last)?
+            .into_iter()
+            .filter_map(|date| {
+                // `min_by_key` keeps the first of equal keys: the earlier
+                // paycheck on a tie.
+                (0..around.len()).min_by_key(|&i| (date - around[i]).num_days().abs())
+            })
+            .collect();
+        let mut i = start;
+        while i < around.len() && claimed.contains(&i) {
+            i += 1;
+        }
+        let from = match around.get(i) {
+            Some(&from) => from,
+            None => schedule::next_after(anchor, step, last).unwrap_or(last),
+        };
+        Ok(Paydays::Scheduled { anchor, step, from })
+    }
+
+    /// How many paychecks fund a goal due on `by`, never fewer than one.
+    ///
+    /// Scheduled, it is the paychecks landing in `from ..= by`. `by` is in it
+    /// because money arriving on the deadline arrives in time.
+    ///
+    /// At least one, at both branches: a goal whose date has passed, or comes
+    /// before the next paycheck, owes its whole remainder to this one -- the
+    /// workbook's `MAX(1, ...)`.
+    pub fn through(self, today: NaiveDate, by: NaiveDate) -> Result<i64> {
+        let count = match self {
+            Paydays::Scheduled { anchor, step, from } => {
+                schedule::occurrences(anchor, step, from, by)?.len() as i64
+            }
+            // The cadence in days, which is where `period_days`'s clamp keeps
+            // a nonsense setting off `div_ceil`'s divide -- the same call
+            // `biweekly` makes above for the same reason.
+            Paydays::Cadence(periods_per_year) => {
+                super::div_ceil((by - today).num_days(), period_days(periods_per_year))?
+            }
+        };
+        Ok(count.max(1))
+    }
+}
+
 /// The workbook's `PerPaycheck()` lambda: what to set aside each payday to
 /// reach `goal` by `by`, rounded up to a whole dollar.
 ///
@@ -62,6 +193,9 @@ pub fn period_days(periods_per_year: i64) -> i64 {
 ///    CEILING((goal - cur) / MAX(1, CEILING((by - today) / period, 1)), 1))
 /// ```
 ///
+/// The divisor is [`Paydays::through`], which is that lambda's only when no
+/// paycheck is on record.
+///
 /// Returns `None` where the sheet shows blank: undated goals, and goals
 /// already at or past their target.
 pub fn per_paycheck(
@@ -69,18 +203,13 @@ pub fn per_paycheck(
     goal: Cents,
     by: Option<NaiveDate>,
     today: NaiveDate,
-    periods_per_year: i64,
+    paydays: Paydays,
 ) -> Result<Option<Cents>> {
     let Some(by) = by else { return Ok(None) };
     if current >= goal {
         return Ok(None);
     }
-    // The cadence in days, which is where `period_days`'s clamp keeps a
-    // nonsense setting off `div_ceil`'s divide -- the same call `biweekly`
-    // makes above for the same reason.
-    let period_days = period_days(periods_per_year);
-    let days = (by - today).num_days();
-    let periods = super::div_ceil(days, period_days)?.max(1);
+    let periods = paydays.through(today, by)?;
     let remaining = goal.0 - current.0;
     Ok(Some(Cents(
         super::div_ceil(remaining, periods * 100)? * 100,
@@ -222,7 +351,9 @@ mod tests {
     fn per_paycheck_divides_the_remainder_over_the_paychecks_left() {
         let d = Cents::from_dollars;
         let today = day(2026, 8, 12);
-        let case = |cur, goal, by| per_paycheck(d(cur), d(goal), Some(by), today, 26).unwrap();
+        let case = |cur, goal, by| {
+            per_paycheck(d(cur), d(goal), Some(by), today, Paydays::Cadence(26)).unwrap()
+        };
 
         // 20 days out -> 2 paychecks, 20/2
         assert_eq!(case(480, 500, day(2026, 9, 1)), Some(d(10)));
@@ -240,16 +371,30 @@ mod tests {
         let today = day(2026, 8, 12);
         // An undated goal has no per-paycheck figure: nothing says by when.
         assert_eq!(
-            per_paycheck(d(4_000), d(7_000), None, today, 26).unwrap(),
+            per_paycheck(d(4_000), d(7_000), None, today, Paydays::Cadence(26)).unwrap(),
             None
         );
         // A goal sitting at or past its target asks for nothing.
         assert_eq!(
-            per_paycheck(d(7_500), d(7_500), Some(day(2026, 12, 1)), today, 26).unwrap(),
+            per_paycheck(
+                d(7_500),
+                d(7_500),
+                Some(day(2026, 12, 1)),
+                today,
+                Paydays::Cadence(26)
+            )
+            .unwrap(),
             None
         );
         assert_eq!(
-            per_paycheck(d(8_000), d(7_500), Some(day(2026, 12, 1)), today, 26).unwrap(),
+            per_paycheck(
+                d(8_000),
+                d(7_500),
+                Some(day(2026, 12, 1)),
+                today,
+                Paydays::Cadence(26)
+            )
+            .unwrap(),
             None
         );
     }
@@ -260,9 +405,191 @@ mod tests {
         let today = day(2026, 8, 12);
         // A goal whose date has passed still owes the full remainder now.
         assert_eq!(
-            per_paycheck(d(100), d(250), Some(day(2026, 7, 1)), today, 26).unwrap(),
+            per_paycheck(
+                d(100),
+                d(250),
+                Some(day(2026, 7, 1)),
+                today,
+                Paydays::Cadence(26)
+            )
+            .unwrap(),
             Some(d(150))
         );
+    }
+
+    /// A biweekly paycheck landing on Fridays -- 7/31, 8/14, 8/28 and 9/11
+    /// of 2026 among them -- read on `today` against payday batches dated
+    /// `batches`.
+    fn fridays(today: NaiveDate, batches: &[NaiveDate]) -> Paydays {
+        Paydays::scheduled(day(2026, 7, 31), Step::Days(14), today, |_, _| {
+            Ok(batches.to_vec())
+        })
+        .unwrap()
+    }
+
+    /// 7/31's paycheck, allocated the Monday after it landed.
+    fn july_allocated() -> NaiveDate {
+        day(2026, 8, 3)
+    }
+
+    /// Fifteen days out is two periods to the cadence and one paycheck to
+    /// the schedule: only the 14th lands before the 27th.
+    #[test]
+    fn a_scheduled_runway_counts_the_paychecks_that_land_before_the_deadline() {
+        let d = Cents::from_dollars;
+        let today = day(2026, 8, 12);
+        let by = Some(day(2026, 8, 27));
+        assert_eq!(
+            per_paycheck(d(0), d(150), by, today, Paydays::Cadence(26)).unwrap(),
+            Some(d(75))
+        );
+        let paydays = fridays(today, &[july_allocated()]);
+        assert_eq!(
+            per_paycheck(d(0), d(150), by, today, paydays).unwrap(),
+            Some(d(150))
+        );
+    }
+
+    /// Three paychecks left divide the remainder in three, rounded up to the
+    /// dollar: 125 / 3 is 41.67.
+    #[test]
+    fn a_scheduled_ask_is_the_remainder_over_the_paychecks_left_rounded_up() {
+        let d = Cents::from_dollars;
+        let today = day(2026, 8, 12);
+        let paydays = fridays(today, &[july_allocated()]);
+        let ask = per_paycheck(d(1_375), d(1_500), Some(day(2026, 9, 11)), today, paydays);
+        assert_eq!(ask.unwrap(), Some(d(42)));
+    }
+
+    /// The 14th has landed and nothing has been allocated from it, so it is
+    /// still this payday's paycheck on the Monday after -- and stops being
+    /// one once its batch is entered, dated for when the transfers land.
+    #[test]
+    fn a_paycheck_landed_but_not_yet_allocated_still_counts() {
+        let today = day(2026, 8, 17);
+        let by = day(2026, 9, 11);
+        assert_eq!(
+            fridays(today, &[july_allocated()])
+                .through(today, by)
+                .unwrap(),
+            3
+        );
+        let late = [july_allocated(), day(2026, 8, 19)];
+        assert_eq!(fridays(today, &late).through(today, by).unwrap(), 2);
+    }
+
+    /// Allocated on its eve, the 14th has been spent before it lands, whether
+    /// the batch is dated for today or for when the transfers arrive.
+    #[test]
+    fn a_paycheck_allocated_on_its_eve_no_longer_counts() {
+        let today = day(2026, 8, 13);
+        let by = day(2026, 9, 11);
+        for dated in [today, day(2026, 8, 17)] {
+            let batches = [july_allocated(), dated];
+            assert_eq!(
+                fridays(today, &batches).through(today, by).unwrap(),
+                2,
+                "{dated}"
+            );
+        }
+    }
+
+    /// The rule's first paycheck, allocated on its eve: the batch is dated
+    /// before every paycheck the schedule has, and still claims the first,
+    /// whether it is read that eve or once the paycheck has landed.
+    #[test]
+    fn a_first_paycheck_allocated_on_its_eve_no_longer_counts() {
+        let anchor = day(2026, 8, 14);
+        let eve = day(2026, 8, 13);
+        let by = day(2026, 9, 11);
+        for today in [eve, day(2026, 8, 17)] {
+            let paydays = Paydays::scheduled(anchor, Step::Days(14), today, |from, to| {
+                Ok([eve]
+                    .into_iter()
+                    .filter(|d| (from..=to).contains(d))
+                    .collect())
+            })
+            .unwrap();
+            assert_eq!(paydays.through(today, by).unwrap(), 2, "{today}");
+        }
+    }
+
+    /// A batch dated halfway between two paychecks is the earlier one's,
+    /// being the later one's only if it was entered a week early.
+    #[test]
+    fn a_batch_midway_between_two_paychecks_claims_the_earlier() {
+        let today = day(2026, 8, 21);
+        let batches = [july_allocated(), day(2026, 8, 21)];
+        assert_eq!(
+            fridays(today, &batches)
+                .through(today, day(2026, 9, 11))
+                .unwrap(),
+            2
+        );
+    }
+
+    /// A paycheck landing today and not yet allocated is the one being
+    /// allocated, and one landing on the deadline arrives in time, so both
+    /// ends count.
+    #[test]
+    fn a_paycheck_on_today_or_on_the_deadline_counts_toward_the_runway() {
+        let today = day(2026, 8, 14);
+        let paydays = fridays(today, &[july_allocated()]);
+        assert_eq!(paydays.through(today, day(2026, 8, 28)).unwrap(), 2);
+    }
+
+    /// The figure moves only when a paycheck is allocated, not as the days
+    /// between two of them run down -- nor on the day the next one lands.
+    #[test]
+    fn a_scheduled_runway_holds_steady_until_the_next_paycheck_is_allocated() {
+        let by = day(2026, 9, 11);
+        let batches = [july_allocated(), day(2026, 8, 14)];
+        for today in [day(2026, 8, 15), day(2026, 8, 20), day(2026, 8, 28)] {
+            assert_eq!(
+                fridays(today, &batches).through(today, by).unwrap(),
+                2,
+                "{today}"
+            );
+        }
+        let today = day(2026, 8, 28);
+        let batches = [july_allocated(), day(2026, 8, 14), today];
+        assert_eq!(fridays(today, &batches).through(today, by).unwrap(), 1);
+    }
+
+    /// A paycheck skipped outright is waited on only until the next one
+    /// lands: the 14th goes unallocated, and from the 28th the count starts
+    /// there instead.
+    #[test]
+    fn a_skipped_paycheck_stops_counting_once_the_next_one_lands() {
+        let by = day(2026, 9, 11);
+        let batches = [july_allocated()];
+        let before = day(2026, 8, 27);
+        assert_eq!(fridays(before, &batches).through(before, by).unwrap(), 3);
+        let after = day(2026, 8, 28);
+        assert_eq!(fridays(after, &batches).through(after, by).unwrap(), 2);
+    }
+
+    /// A database with no payday batch at all counts the one paycheck that
+    /// last landed, not every paycheck since the anchor.
+    #[test]
+    fn with_no_batch_on_record_only_the_last_paycheck_to_land_counts() {
+        let today = day(2026, 8, 12);
+        assert_eq!(
+            fridays(today, &[])
+                .through(today, day(2026, 8, 27))
+                .unwrap(),
+            2
+        );
+    }
+
+    /// A deadline before the next paycheck, or already behind today, owes
+    /// the whole remainder to this one rather than dividing by nothing.
+    #[test]
+    fn a_scheduled_runway_with_no_paycheck_left_is_one_paycheck() {
+        let today = day(2026, 8, 15);
+        let paydays = fridays(today, &[july_allocated(), day(2026, 8, 14)]);
+        assert_eq!(paydays.through(today, day(2026, 8, 27)).unwrap(), 1);
+        assert_eq!(paydays.through(today, day(2026, 7, 1)).unwrap(), 1);
     }
 
     /// `periods_per_year` comes straight from a workbook cell
@@ -273,7 +600,14 @@ mod tests {
     fn per_paycheck_tolerates_a_zero_period() {
         let d = Cents::from_dollars;
         let today = day(2026, 8, 12);
-        let result = per_paycheck(d(100), d(250), Some(day(2026, 9, 1)), today, 0).unwrap();
+        let result = per_paycheck(
+            d(100),
+            d(250),
+            Some(day(2026, 9, 1)),
+            today,
+            Paydays::Cadence(0),
+        )
+        .unwrap();
         assert!(result.is_some());
     }
 

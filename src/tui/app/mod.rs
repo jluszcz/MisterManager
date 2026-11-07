@@ -398,6 +398,13 @@ impl App {
         setting::get_or(&self.db, key::PAY_PERIODS_PER_YEAR, 26)
     }
 
+    /// What `$/Pay` counts a runway in, read per reload for the reason the
+    /// count above is: `P`, `e` and `d` on the recurring transactions move the
+    /// paycheck, and all three reload.
+    pub(super) fn paydays(&self) -> Result<crate::calc::Paydays> {
+        crate::recurring_txn::paydays(&self.db, self.today, self.periods_per_year()?)
+    }
+
     pub fn new(db: Db, today: NaiveDate, sec_contact: Option<String>) -> Result<App> {
         let dates = projection::dates(&db, today)?;
         let range = txn::date_range(&db)?;

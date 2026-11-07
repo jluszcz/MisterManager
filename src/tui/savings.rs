@@ -1,6 +1,7 @@
 use super::cursor::{Cursor, Viewport};
 use super::month::{MonthCycle, YearMonth};
 use super::search::{Search, SearchBox};
+use crate::calc::Paydays;
 use crate::db::account::Account;
 use crate::db::{AccountId, GoalId};
 use crate::goal::Funding;
@@ -60,13 +61,13 @@ impl Savings {
     /// Every column that asks "how far along is this goal" reads `target`, so
     /// a taxed goal is measured against what the item costs at the register.
     ///
-    /// `periods_per_year` arrives with the goals rather than being held on the
-    /// type, the way it reaches `RecurringGoals::set_entries`: it is the
-    /// owner's setting, editable on the Planning screen, and a copy taken at
-    /// startup would leave `$/Pay` dividing by a cadence the rest of the app
-    /// had moved off.
-    pub fn set_goals(&mut self, goals: Vec<Funding>, periods_per_year: i64) -> Result<()> {
-        self.all = crate::savings::rows(goals, &self.accounts, self.today, periods_per_year)?;
+    /// `paydays` arrives with the goals rather than being held on the type,
+    /// the way the cadence reaches `RecurringGoals::set_entries`: the paycheck
+    /// rule, the payday batches and the cadence setting all change inside a
+    /// session, and a copy taken at startup would leave `$/Pay` dividing by a
+    /// runway the rest of the app had moved off.
+    pub fn set_goals(&mut self, goals: Vec<Funding>, paydays: Paydays) -> Result<()> {
+        self.all = crate::savings::rows(goals, &self.accounts, self.today, paydays)?;
         self.rebuild_months();
         self.refilter();
         Ok(())
@@ -516,7 +517,7 @@ mod tests {
                     goal(3, 1, "Dropbox", 0, 15_000, Some(day(2026, 9, 1))),
                     goal(4, 2, "Emergency Savings", 10_600_195, 10_000_000, None),
                 ],
-                26,
+                Paydays::Cadence(26),
             )
             .unwrap();
         savings.set_excess(vec![(AccountId(1), Cents(23)), (AccountId(2), Cents::ZERO)]);
@@ -548,7 +549,7 @@ mod tests {
                     ),
                     goal(5, 2, "Lego", 5_000, 20_000, Some(day(2026, 8, 3))),
                 ],
-                26,
+                Paydays::Cadence(26),
             )
             .unwrap();
         savings
@@ -676,7 +677,7 @@ mod tests {
         goals[2].goal.favorite = true;
         let mut savings = Savings::new(accounts(), today());
         savings.set_containers(vec![AccountId(1), AccountId(2)]);
-        savings.set_goals(goals, 26).unwrap();
+        savings.set_goals(goals, Paydays::Cadence(26)).unwrap();
 
         savings.toggle_favorites_only();
         assert_eq!(names(&savings), vec!["Apple Watch", "Lego"]);
@@ -716,7 +717,7 @@ mod tests {
         savings
             .set_goals(
                 vec![goal(1, 1, "Bill Payments", 1_200_000, 1_500_000, None)],
-                26,
+                Paydays::Cadence(26),
             )
             .unwrap();
         savings.next_month();
@@ -1029,7 +1030,7 @@ mod tests {
                     goal(1, 1, "Future", 0, 10_000, Some(day(2026, 11, 27))),
                     goal(2, 1, "Late", 5_000, 10_000, Some(day(2026, 7, 1))),
                 ],
-                26,
+                Paydays::Cadence(26),
             )
             .unwrap();
 
@@ -1058,7 +1059,7 @@ mod tests {
                     goal(7, 1, "Lego", 0, 10_000, None),
                     goal(8, 2, "Emergency", 0, 10_000, None),
                 ],
-                26,
+                Paydays::Cadence(26),
             )
             .unwrap();
 
@@ -1097,7 +1098,7 @@ mod tests {
                     goal(2, 1, "Funded", 10_000, 10_000, None),
                     goal(3, 1, "No target", 5_000, 0, None),
                 ],
-                26,
+                Paydays::Cadence(26),
             )
             .unwrap();
 
@@ -1156,7 +1157,7 @@ mod tests {
                         None,
                     )),
                 ],
-                26,
+                Paydays::Cadence(26),
             )
             .unwrap();
 
@@ -1190,7 +1191,7 @@ mod tests {
                     goal(2, 1, "Apple Watch", 48_500, 50_000, Some(day(2026, 9, 1))),
                     favorited(goal(3, 1, "Dropbox", 0, 15_000, Some(day(2026, 9, 1)))),
                 ],
-                26,
+                Paydays::Cadence(26),
             )
             .unwrap();
         savings
@@ -1478,7 +1479,10 @@ mod tests {
     fn a_sub_dollar_negative_balance_is_neither_signed_nor_red() {
         let mut savings = savings();
         savings
-            .set_goals(vec![goal(3, 1, "Dropbox", -23, 15_000, None)], 26)
+            .set_goals(
+                vec![goal(3, 1, "Dropbox", -23, 15_000, None)],
+                Paydays::Cadence(26),
+            )
             .unwrap();
         let buffer = band_buffer(&savings);
         // The `Current` column's figure: the first `0` past a name holding

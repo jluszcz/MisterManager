@@ -33,6 +33,13 @@ date has passed, the remaining periods go zero or negative, and without the clam
 either blows up or hands back a negative set-aside. Clamped, the full remainder comes due now,
 which is the honest answer.
 
+**The divisor is the lambda's only without a paycheck on record.** `Paydays::Cadence` is the
+`CEILING((by − today) / period, 1)` above; `Paydays::Scheduled` counts the paycheck rule's own
+landing dates from the first one no payday batch has claimed, and the `MAX(1, …)` clamp holds at
+both. The days-over-a-period count drifts against real paydays — a goal three weeks out is two
+periods the day before a paycheck and one the day after, so its ask doubles overnight — which is
+the whole reason for the departure. `Paydays::scheduled` carries the claiming rule.
+
 **`per_paycheck_over_years` has no lambda behind it.** The recurring-goal block carries a month of
 the year and a cadence and no dates, so there is no runway for `PerPaycheck` to divide: the runway
 *is* the cadence — one round's cost spread over every paycheck before it comes round again. It is
@@ -262,7 +269,8 @@ reintroduce a bare divide.
 
 **The days between two paydays are `period_days` of that same count, never a setting of their
 own.** The sheet carries both (`G2` and `H2`) and the two can disagree; one setting has nothing to
-reconcile, and it means `per_paycheck`, which counts a deadline's runway in days, and `biweekly`
+reconcile, and it means `per_paycheck`, which counts a deadline's runway in days when no paycheck
+is on record, and `biweekly`
 and `per_paycheck_over_years`, which spread a cost over the count, cannot come to describe
 different pay cadences. `period_days` divides `WEEKS_PER_YEAR * DAYS_PER_WEEK` by the count and
 clamps at both ends, so it is also where the clamp for `per_paycheck`'s divide now lives. A year of

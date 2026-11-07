@@ -282,7 +282,7 @@ impl App {
     /// are that function's, so the Planning screen's coverage check and the
     /// prefill `t` writes cannot come to disagree about either.
     pub(super) fn spread_asks(&self) -> Result<transfer::Asks> {
-        transfer::spread_asks(&self.db, self.today, self.periods_per_year()?)
+        transfer::spread_asks(&self.db, self.today, self.paydays()?)
     }
 
     /// The goals this line could point at, with the withdrawal among them.
