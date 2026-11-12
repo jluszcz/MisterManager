@@ -87,8 +87,8 @@ pub fn render_transfers(frame: &mut Frame, confirm: &TransferConfirm) {
         .map(|row| {
             let (label, cents) = match row {
                 // The account's own name, which `transfer::plan` carries
-                // unmasked because it is also the description the ledger row
-                // is written under. The transfers block on the screen behind
+                // unmasked; the ledger rows themselves are written under
+                // `transfer::TRANSFER_DESCRIPTION`. The transfers block on the screen behind
                 // this modal reaches the same name through
                 // `plan_rows::RowLabel::Account`, which masks; this is the
                 // other consumer, and it has no `Account` to inherit that

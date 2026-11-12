@@ -354,7 +354,7 @@ impl TransferForm {
             kind: TransferKind::Transfer,
             date,
             amount: Field::default(),
-            description: Field::prefilled("Transfer"),
+            description: Field::prefilled(crate::transfer::TRANSFER_DESCRIPTION),
             spelling: spelling(&cash, &accounts),
             from_accounts: cash,
             from,

@@ -994,11 +994,11 @@ deferred to nothing.
     - **The payday confirmation's destination column**, in `planning/confirm.rs`'s `render_transfers`:
       `transfer::Row::Transfer`'s own `name`, drawn as the left half of a plain `TextLine` because
       the modal is a preview of the ledger rows rather than a table. `transfer::plan` carries that
-      name unmasked — it is also the description the row is written under, and
-      `transfer::already_written` matches against it — so it reaches `demo::text` here, at the one
-      draw. The transfers block on the screen behind the modal is the other consumer and is not
-      among these: it reaches the same name through `plan_rows::RowLabel::Account`, so its colour
-      and its mask both come from `Account`.
+      name unmasked, so it reaches `demo::text` here, at the one draw. It names the destination
+      only: the rows themselves are written under `transfer::TRANSFER_DESCRIPTION`. The transfers
+      block on the screen behind the modal is the other consumer and is not among these: it
+      reaches the same name through `plan_rows::RowLabel::Account`, so its colour and its mask
+      both come from `Account`.
     - **`transfer::Container`'s `String` name, in the Planning screen's Destinations block.** Those
       rows tint an account through `planning::Tint` (below) rather than through
       `account_label::Account`: `wiring` already has the account row in hand, and `Account` would
