@@ -19,6 +19,14 @@ use crate::reading::Reading;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use chrono::NaiveDate;
 
+/// What both legs of a transfer between tracked accounts are described as,
+/// whether a payday writes it or `t` prefills it.
+///
+/// Not the destination's name: each leg sits on a ledger that already says
+/// which account it is, so the destination leg would read as its own name, and
+/// the line a transfer carries is a Planning fact the ledger has no use for.
+pub const TRANSFER_DESCRIPTION: &str = "Transfer";
+
 /// One row a payday writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
@@ -852,9 +860,15 @@ pub fn execute(db: &Db, from: AccountId, date: NaiveDate, rows: &[Row]) -> Resul
     db.transaction(|db| {
         for row in rows {
             match row {
-                Row::Transfer {
-                    to, name, cents, ..
-                } => txn::write_transfer(db, from, *to, date, *cents, name, name)?,
+                Row::Transfer { to, cents, .. } => txn::write_transfer(
+                    db,
+                    from,
+                    *to,
+                    date,
+                    *cents,
+                    TRANSFER_DESCRIPTION,
+                    TRANSFER_DESCRIPTION,
+                )?,
                 // A withdrawal is one signed row, not half a transfer: the
                 // money has left the tracked system, so there is no second
                 // leg to write. Negated unconditionally, which is the cash
@@ -942,7 +956,8 @@ pub fn pay_card(
 /// A warning rather than a block: these are ordinary ledger rows, deletable
 /// one at a time, and a genuine second run -- the first one dated wrongly --
 /// is a real case. Matched on description and amount, which is what the rows
-/// carry; nothing marks a row as plan-generated.
+/// carry, and for a transfer on both legs; nothing marks a row as
+/// plan-generated.
 ///
 /// Negates every row's amount unconditionally, which is the cash sign
 /// convention rather than the general per-kind one `txn::write_transfer`
@@ -957,15 +972,28 @@ pub fn already_written(
     let mut clashing = Vec::new();
     for date in dates {
         let existing = txn::on_date(db, from, *date)?;
-        let clashes = rows.iter().any(|row| {
-            let (description, cents) = match row {
-                Row::Transfer { name, cents, .. } => (name.clone(), -*cents),
-                Row::Withdrawal { line, cents } => (line.label().to_string(), -*cents),
-            };
-            existing
-                .iter()
+        let carries = |rows: &[txn::Txn], description: &str, cents: Cents| {
+            rows.iter()
                 .any(|t| t.description == description && t.cents == cents)
-        });
+        };
+        let mut clashes = false;
+        for row in rows {
+            clashes = match row {
+                // Every transfer shares one description, so the source leg
+                // alone cannot tell a payday's transfer from a `t` of the same
+                // amount to another account; the destination leg can.
+                Row::Transfer { to, cents, .. } => {
+                    carries(&existing, TRANSFER_DESCRIPTION, -*cents) && {
+                        let (_, landed) = txn::transfer_legs(db, from, *to, *cents)?;
+                        carries(&txn::on_date(db, *to, *date)?, TRANSFER_DESCRIPTION, landed)
+                    }
+                }
+                Row::Withdrawal { line, cents } => carries(&existing, line.label(), -*cents),
+            };
+            if clashes {
+                break;
+            }
+        }
         if clashes {
             clashing.push(*date);
         }
@@ -2125,6 +2153,32 @@ mod tests {
         );
     }
 
+    /// Both legs of a payday transfer read `Transfer`, not the account the
+    /// money lands in.
+    #[test]
+    fn a_payday_transfer_is_described_as_a_transfer_on_both_legs() {
+        let (db, savings, _) = configured();
+        let checking = source(&db).unwrap();
+        let rows = plan(&db, &lines(), None).unwrap();
+        let date = day(2026, 8, 20);
+
+        execute(&db, checking, date, &rows).unwrap();
+
+        let landed = txn::on_date(&db, savings, date).unwrap();
+        assert!(!landed.is_empty());
+        assert!(
+            landed.iter().all(|t| t.description == TRANSFER_DESCRIPTION),
+            "{landed:?}"
+        );
+        let left: Vec<String> = txn::on_date(&db, checking, date)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.description)
+            .collect();
+        assert!(left.contains(&TRANSFER_DESCRIPTION.to_string()), "{left:?}");
+        assert!(!left.contains(&"Rainy Day".to_string()), "{left:?}");
+    }
+
     /// Re-firing is a real case -- a corrected date -- so it warns rather
     /// than blocks, and the warning has to be able to tell.
     #[test]
@@ -2146,6 +2200,38 @@ mod tests {
         );
         assert!(
             already_written(&db, checking, &[day(2026, 8, 21)], &rows)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// Every transfer shares one description, so a `t` of the payday's amount
+    /// to some other account matches the source leg alone; the destination
+    /// leg is what keeps it from reading as the payday.
+    #[test]
+    fn a_transfer_of_the_same_amount_elsewhere_is_not_a_payday_already_written() {
+        let (db, _, _) = configured();
+        let checking = source(&db).unwrap();
+        let rows = plan(&db, &lines(), None).unwrap();
+        let date = day(2026, 8, 20);
+        let other = account::insert(&db, "NST", "Nest Egg", Kind::Cash, 0, None).unwrap();
+        for row in &rows {
+            if let Row::Transfer { cents, .. } = row {
+                txn::insert_transfer(
+                    &db,
+                    checking,
+                    other,
+                    date,
+                    *cents,
+                    TRANSFER_DESCRIPTION,
+                    TRANSFER_DESCRIPTION,
+                )
+                .unwrap();
+            }
+        }
+
+        assert!(
+            already_written(&db, checking, &[date], &rows)
                 .unwrap()
                 .is_empty()
         );
