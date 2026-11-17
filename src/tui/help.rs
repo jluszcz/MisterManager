@@ -351,22 +351,22 @@ const PLANNING: [Entry; 9] = [
     Entry {
         key: "e",
         label: Label::Own("edit"),
-        detail: "Edit the selected row: a constant is typed into a field, a destination is chosen from a list of goals. The cursor settles on the nearest editable row after every move. Roth and Emergency Fund are read-only among the destinations. A figure typed into Excess (Used) pins it, in whole dollars. The three split percentages are bounded as a set: Goals takes what they leave, so a combination over 100 is refused.",
-    },
-    Entry {
-        key: "E",
-        label: Label::Shared("bill"),
-        detail: "Edit the selected bill in the monthly block.",
+        detail: "Edit the selected row: a constant is typed into a field, a bill opens its full form, a destination is chosen from a list of goals, and the Split heading renames the split profile. The cursor settles on the nearest editable row after every move. Roth and Emergency Fund are read-only among the destinations. A figure typed into Excess (Used) pins it, in whole dollars. The three splits may not total over 100.",
     },
     Entry {
         key: "a",
-        label: Label::Shared("bill"),
-        detail: "Add a bill. Housing bills and other bills reach different waterfall lines, so the category is part of the form.",
+        label: Label::Own("add"),
+        detail: "Add a bill. Housing bills and other bills reach different waterfall lines, so the category is part of the form. On the Split block, add a split profile instead: it starts as a copy of the one showing and becomes the active one.",
     },
     Entry {
         key: "d",
-        label: Label::Shared("bill"),
-        detail: "Delete the selected bill, after a confirmation. A dropped bill inflates the excess the waterfall has left, which moves every line below it.",
+        label: Label::Own("delete"),
+        detail: "Delete the selected bill, after a confirmation. A dropped bill inflates the excess the waterfall has left, which moves every line below it. On the Split block, delete the split profile showing instead; the next one takes over, and the last one cannot be deleted.",
+    },
+    Entry {
+        key: "←/→",
+        label: Label::Own("profile"),
+        detail: "On the Split block, switch to the previous or next split profile. The switch is live: the waterfall, the transfers t writes and the report all divide by the profile showing. Edits to a split percentage land in that profile alone.",
     },
     Entry {
         key: "t",
@@ -1589,7 +1589,7 @@ mod tests {
         );
         assert_eq!(
             Topic::Planning.footer(),
-            "e edit · E/a/d bill · t transfers · f expense · Enter why · p pin · P unpin"
+            "e edit · a add · d delete · ←/→ profile · t transfers · f expense · Enter why · p pin · P unpin"
         );
         assert_eq!(
             Topic::Funds.footer(),
@@ -1627,8 +1627,8 @@ mod tests {
     #[test]
     fn omitting_a_key_inside_a_shared_group_shrinks_it() {
         assert_eq!(
-            Topic::Planning.footer_without(&["a"]),
-            "e edit · E/d bill · t transfers · f expense · Enter why · p pin · P unpin"
+            Topic::Savings.footer_without(&["A"]),
+            "Tab acct · [ ] month · Esc clear · / search · a/i/t money · n/e/c/⇧↑↓/f/F/Enter goal · U undo"
         );
     }
 

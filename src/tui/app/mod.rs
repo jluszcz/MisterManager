@@ -931,6 +931,7 @@ impl App {
                 key,
                 match target {
                     ValueTarget::Planning(_) => App::commit_value,
+                    ValueTarget::NewSplitProfile => App::commit_new_split_profile,
                     ValueTarget::Reconcile(_) => App::commit_reconcile,
                 },
             ),
@@ -1870,7 +1871,6 @@ mod tests {
             ('4', KeyCode::Char('c')),
             ('4', KeyCode::Enter),
             ('5', KeyCode::Char('e')),
-            ('5', KeyCode::Char('E')),
             ('5', KeyCode::Char('a')),
             ('5', KeyCode::Char('t')),
             ('7', KeyCode::Char('e')),
@@ -2004,7 +2004,6 @@ mod tests {
             ('4', KeyCode::Char('c')),
             ('4', KeyCode::Enter),
             ('5', KeyCode::Char('e')),
-            ('5', KeyCode::Char('E')),
             ('5', KeyCode::Char('a')),
             ('5', KeyCode::Char('t')),
             ('7', KeyCode::Char('e')),
@@ -2352,7 +2351,7 @@ mod tests {
         );
         assert_eq!(
             footer_of(&mut app, '5'),
-            "e edit · E/a/d bill · t transfers · f expense · Enter why · p pin"
+            "e edit · a add · d delete · ←/→ profile · t transfers · f expense · Enter why · p pin"
         );
         assert_eq!(
             footer_of(&mut app, '7'),
@@ -2833,7 +2832,7 @@ mod tests {
             ),
             (
                 Topic::Planning,
-                &["e", "a", "E", "d", "t", "f", "Enter", "p", "P"],
+                &["e", "a", "d", "←/→", "t", "f", "Enter", "p", "P"],
             ),
             (
                 Topic::Funds,

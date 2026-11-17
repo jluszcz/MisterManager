@@ -121,7 +121,7 @@ month.
 The split percentages are user-editable, and the three are bounded **as a set** as well as one at a
 time: each inside `0..=100` on its own, and still wrong between them. Both writers hold both bounds
 — at the form, `tui::form::parse_percent` refuses a percentage outside the range and
-`write_split` refuses the set it would join; at the import, `plan::check_splits` refuses either,
+`write_split` refuses the set it would join; at the import, `plan::check_shares` refuses either,
 since `import::cell::as_rate_bp` reads whatever the sheet carries and a `150 / -60 / 5` totals 95.
 A share below zero is the one the set rule cannot catch on its own: `BasisPoints::of` does not clamp,
 so it reaches a line as a negative allocation, and nothing downstream reads a line's sign.
@@ -170,7 +170,7 @@ no cents leak between the two.
 
 The three discretionary splits are clamped the same way, each by what the ones above it left. That
 one is a backstop rather than a rule: `tui::planning::write_split` refuses a combination over 100%
-at the form and `plan::check_splits` refuses one at the import, so it binds only on a database
+at the form and `plan::check_shares` refuses one at the import, so it binds only on a database
 written before those existed. It is therefore **silent** — no line reports it — where the bills cap
 reports itself.
 
@@ -234,7 +234,7 @@ the whole remainder rather than being told a bond target that is really a questi
 as the ratio of two sheet cells, and `import::cell::as_rate_bp` reads whatever they carry — a
 negative `J3` against a larger positive `J4` stores a negative share, which unclamped is a negative
 international target beside a US target over 100%. The import refuses only a pair that sums to
-nothing, since the figure is drawn and never spent: unlike `check_splits`, whose percentages reach
+nothing, since the figure is drawn and never spent: unlike `check_shares`, whose percentages reach
 `transfer::plan` as real instructions to move money, nothing downstream of these three shares
 writes anything. The clamp is silent for the reason the discretionary clamp above it is — no screen
 in the app can write the setting, so there is nothing to report.

@@ -7,7 +7,7 @@
 
 use super::{App, DUPLICATE_SCAN_DAYS, NOTHING_SELECTED, WorksheetPrefill, add_share, destination};
 use crate::db::setting::{self, key};
-use crate::db::{GoalId, account, bill, goal};
+use crate::db::{GoalId, account, bill, goal, split_profile};
 use crate::money::Cents;
 use crate::plan_line::{Destination, Line};
 use crate::tui::cursor;
@@ -16,7 +16,7 @@ use crate::tui::modal::{Confirm, Modal, ValueTarget};
 use crate::tui::planning::{self as planning_screen, BillForm, Target, TransferConfirm};
 use crate::tui::search::{self, Search};
 use crate::{calc, plan, transfer};
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use chrono::NaiveDate;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
@@ -33,10 +33,19 @@ impl App {
         if cursor::scroll_key(&mut self.planning, key.code) {
             return Ok(());
         }
+        // The Split block's own rows take `←`/`→`, `a` and `d` for the split
+        // profile; everywhere else `a` and `d` add and delete bills.
+        let in_split = self
+            .planning
+            .selected_target()
+            .is_some_and(Target::in_split_block);
         match key.code {
+            KeyCode::Left if in_split => self.cycle_split_profile(false)?,
+            KeyCode::Right if in_split => self.cycle_split_profile(true)?,
             KeyCode::Char('e') => self.open_value_edit()?,
+            KeyCode::Char('a') if in_split => self.open_new_split_profile(),
             KeyCode::Char('a') => self.modal = Some(Modal::Bill(BillForm::add())),
-            KeyCode::Char('E') => self.open_bill_edit()?,
+            KeyCode::Char('d') if in_split => self.open_split_profile_delete()?,
             KeyCode::Char('d') => self.open_bill_delete()?,
             KeyCode::Char('p') => self.pin()?,
             KeyCode::Char('P') => self.unpin()?,
@@ -198,16 +207,29 @@ impl App {
             .map(|row| (row.editable, row.label.clone(), row.edit.clone()));
         match opened {
             None | Some((None, _, _)) => self.status = NOTHING_SELECTED.to_string(),
+            // A bill's label and category live nowhere else on the screen, so
+            // `e` opens the whole row rather than a box for its figure.
+            // Editing in place also keeps the bill's `sort`, which deleting
+            // and re-adding would not.
+            Some((Some(planning_screen::Editable::Constant(Target::Bill(id))), _, _)) => {
+                let found = bill::get(&self.db, id)?;
+                self.modal = Some(Modal::Bill(BillForm::edit(&found)));
+            }
+            // Prefilled from the database rather than the row, whose label
+            // carries the name masked for `--demo`: the buffer keeps the real
+            // text, and `ValueForm::name` masks only what it draws.
+            Some((Some(planning_screen::Editable::Constant(Target::SplitProfile)), _, _)) => {
+                let name = split_profile::active(&self.db)?.name;
+                self.modal = Some(Modal::Value(
+                    ValueTarget::Planning(Target::SplitProfile),
+                    ValueForm::name("Profile", &name),
+                ));
+            }
             Some((Some(planning_screen::Editable::Constant(target)), label, prefill)) => {
                 // A percentage and a count of pay periods open the same
                 // modal a target does, and only one of the three is money.
-                // A bill's label arrives already masked: `tui::planning::view::build`'s
-                // `bills` closure masks `plan_rows::Bill.label` before this row
-                // is ever built, so a second mask here would scramble the
-                // pseudonym itself rather than the name -- the double-mask
-                // `src/transfer.rs`'s own `diagnose`/`spread_container` split
-                // exists to avoid. Every other constant's label is the app's
-                // own word for it and was never masked at all.
+                // Every label reaching here is the app's own word for the
+                // constant and was never masked, so it is drawn as it is.
                 let label = label.trim().to_string();
                 let form = if target.is_money() {
                     ValueForm::money(label, &prefill)
@@ -421,17 +443,78 @@ impl App {
         self.reload()
     }
 
-    /// A bill's label and category live nowhere else on the screen, so `e`'s
-    /// one-field amount editor cannot reach them: `E` is the whole row. Editing
-    /// in place also keeps the bill's `sort`, which deleting and re-adding
-    /// would not.
-    fn open_bill_edit(&mut self) -> Result<()> {
-        let Some(Target::Bill(id)) = self.planning.selected_target() else {
-            self.status = "only a bill has fields to edit".to_string();
+    /// Step the active split profile to the next (`forward`) or previous one
+    /// by creation order, wrapping, and redraw the waterfall over it. The
+    /// switch is live: `t` and the report read the same profile.
+    fn cycle_split_profile(&mut self, forward: bool) -> Result<()> {
+        let profiles = split_profile::list(&self.db)?;
+        let count = profiles.len();
+        if count < 2 {
+            self.status = "only one split profile — a adds another".to_string();
+            return Ok(());
+        }
+        let at = profiles
+            .iter()
+            .position(|p| p.active)
+            .context("no active split profile")?;
+        let next = &profiles[if forward {
+            (at + 1) % count
+        } else {
+            (at + count - 1) % count
+        }];
+        split_profile::set_active(&self.db, next.id)?;
+        self.status = format!("split profile: {}", crate::demo::text(&next.name));
+        self.reload()
+    }
+
+    fn open_new_split_profile(&mut self) {
+        self.modal = Some(Modal::Value(
+            ValueTarget::NewSplitProfile,
+            ValueForm::name("New profile", ""),
+        ));
+    }
+
+    /// A new profile copies the active one's shares, since the next set is
+    /// usually a nudge to the current one, and becomes the active profile so
+    /// the edits that follow land in it.
+    pub(super) fn commit_new_split_profile(&mut self) -> Result<()> {
+        let Some(Modal::Value(ValueTarget::NewSplitProfile, form)) = &self.modal else {
             return Ok(());
         };
-        let found = bill::get(&self.db, id)?;
-        self.modal = Some(Modal::Bill(BillForm::edit(&found)));
+        let shares = split_profile::active(&self.db)?.shares;
+        // Refused before the modal closes, so a taken name keeps the form.
+        split_profile::insert_active(&self.db, form.value(), shares)?;
+        self.status = format!("{} added", crate::demo::text(form.value().trim()));
+        self.close_modal();
+        self.reload()
+    }
+
+    /// `d` on the Split block deletes the profile the screen is showing,
+    /// after a confirmation naming its shares. The last one is refused here
+    /// rather than in the dialog, which would otherwise ask a question whose
+    /// only answer is an error.
+    fn open_split_profile_delete(&mut self) -> Result<()> {
+        let profiles = split_profile::list(&self.db)?;
+        if profiles.len() < 2 {
+            self.status = "the last split profile cannot be deleted".to_string();
+            return Ok(());
+        }
+        let active = profiles
+            .into_iter()
+            .find(|p| p.active)
+            .context("no active split profile")?;
+        let s = active.shares;
+        let label = format!(
+            "{}  {}% / {}% / {}%",
+            crate::demo::text(&active.name),
+            s.future_housing.exact_percent(),
+            s.retirement.exact_percent(),
+            s.investment.exact_percent()
+        );
+        self.modal = Some(Modal::Confirm {
+            action: Confirm::DeleteSplitProfile(active.id),
+            label,
+        });
         Ok(())
     }
 
@@ -567,7 +650,14 @@ impl App {
             Ok(rows) => (rows, None),
             Err(e) => (Vec::new(), Some(format!("{e:#}"))),
         };
+        let profiles = split_profile::list(&self.db)?;
+        let active = profiles
+            .iter()
+            .find(|p| p.active)
+            .context("no active split profile")?;
         Ok(planning_screen::View {
+            split_profile: crate::demo::text(&active.name).into_owned(),
+            split_profiles: profiles.len(),
             plan,
             settings,
             wiring: wired.lines,
@@ -601,8 +691,6 @@ mod tests {
     use crate::tui::cursor::Scroll;
     use crate::tui::help::Topic;
     use crate::tui::modal::Modal;
-    #[cfg(feature = "demo")]
-    use crate::tui::modal::ValueTarget;
     use crate::tui::planning::{self as planning_screen, Target};
     use crate::tui::search::Search;
     use crate::{db, plan, transfer};
@@ -1007,14 +1095,14 @@ mod tests {
     }
 
     #[test]
-    fn capital_e_opens_the_selected_bill_prefilled() {
+    fn e_on_a_bill_opens_the_full_bill_form_prefilled() {
         use crate::tui::planning::BillField;
 
         let mut app = planning_app();
         press(&mut app, KeyCode::Char('5'));
         let bill = select_first_bill(&mut app);
 
-        press(&mut app, KeyCode::Char('E'));
+        press(&mut app, KeyCode::Char('e'));
 
         match &app.modal {
             Some(Modal::Bill(form)) => {
@@ -1030,12 +1118,12 @@ mod tests {
         }
     }
 
-    /// `E` prefills the bill's own figure and its own label, so the form is
+    /// `e` prefills the bill's own figure and its own label, so the form is
     /// where both would otherwise be published to whoever is watching -- the
     /// same rule every other amount and name field follows.
     #[cfg(feature = "demo")]
     #[test]
-    fn a_demo_scrambles_the_amount_capital_e_opens_a_bill_on() {
+    fn a_demo_scrambles_the_amount_and_label_e_opens_a_bill_on() {
         use crate::tui::planning::BillField;
 
         crate::demo::install_with_salt(7);
@@ -1044,7 +1132,7 @@ mod tests {
         let bill = select_first_bill(&mut app);
         let real = bill.cents.to_string();
 
-        press(&mut app, KeyCode::Char('E'));
+        press(&mut app, KeyCode::Char('e'));
 
         let Some(Modal::Bill(form)) = &app.modal else {
             panic!("no bill form is open");
@@ -1062,50 +1150,17 @@ mod tests {
         assert_eq!(committed.label, bill.label);
     }
 
-    /// `e` opens the same bill through a different path -- `open_value_edit`,
-    /// which reads the row `tui::planning::view::build` already produced. Its
-    /// `bills` closure masks `plan_rows::Bill.label` before `Row::bill` ever
-    /// sees it, so `open_value_edit` must not mask a second time -- doing so
-    /// would scramble the pseudonym instead of the name. The sweep cannot
-    /// hold this shut on its own: `select_first_bill` always lands on
-    /// `Mortgage`, which is excluded from the sweep's own check list as a
-    /// heading collision, so only a direct assertion here does.
-    #[cfg(feature = "demo")]
+    /// `e` on a bill is the whole row, so committing it must rewrite the bill
+    /// it opened on -- an insert would leave the old row behind and double
+    /// the category.
     #[test]
-    fn a_demo_scrambles_the_label_lowercase_e_opens_a_bill_on() {
-        crate::demo::install_with_salt(7);
-        let mut app = planning_app();
-        press(&mut app, KeyCode::Char('5'));
-        let bill = select_first_bill(&mut app);
-        assert_eq!(bill.label, "Mortgage");
-
-        press(&mut app, KeyCode::Char('e'));
-
-        let Some(Modal::Value(ValueTarget::Planning(target), form)) = &app.modal else {
-            panic!("no value form is open");
-        };
-        assert_eq!(*target, Target::Bill(bill.id));
-        let drawn = form.label().plain_text();
-        assert_ne!(drawn, "Mortgage");
-        assert_eq!(drawn, crate::demo::text("Mortgage"));
-        // The real label is untouched on record: this form only ever writes
-        // the figure back, through `Target::write`.
-        assert_eq!(
-            crate::db::bill::get(&app.db, bill.id).unwrap().label,
-            "Mortgage"
-        );
-    }
-
-    /// `E` is the whole row, so committing it must rewrite the bill it opened
-    /// on -- an insert would leave the old row behind and double the category.
-    #[test]
-    fn committing_capital_e_rewrites_the_bill_rather_than_adding_one() {
+    fn committing_e_on_a_bill_rewrites_the_bill_rather_than_adding_one() {
         let mut app = planning_app();
         press(&mut app, KeyCode::Char('5'));
         let bill = select_first_bill(&mut app);
         let before = crate::db::bill::list(&app.db, bill.category).unwrap().len();
 
-        press(&mut app, KeyCode::Char('E'));
+        press(&mut app, KeyCode::Char('e'));
         type_str(&mut app, " + PMI");
         press(&mut app, KeyCode::Enter);
 
@@ -1118,17 +1173,241 @@ mod tests {
         );
     }
 
-    /// Every other row is a constant, which `e` already edits in place.
+    /// `e` is the one edit key on this screen, so `E` is bound to nothing.
     #[test]
-    fn capital_e_on_a_row_that_is_not_a_bill_is_refused() {
+    fn capital_e_does_nothing_on_planning() {
         let mut app = planning_app();
         press(&mut app, KeyCode::Char('5'));
-        assert_eq!(app.planning.selected_target(), Some(Target::Target));
+        select_first_bill(&mut app);
 
         press(&mut app, KeyCode::Char('E'));
 
         assert!(app.modal.is_none());
-        assert!(app.status.contains("bill"), "{}", app.status);
+    }
+
+    fn select_split(app: &mut App, target: Target) {
+        walk_until!(
+            app.planning.selected_target() == Some(target),
+            press(app, KeyCode::Down)
+        );
+    }
+
+    fn split_shares(fh: i64, rt: i64, inv: i64) -> db::split_profile::Shares {
+        db::split_profile::Shares {
+            future_housing: BasisPoints(fh),
+            retirement: BasisPoints(rt),
+            investment: BasisPoints(inv),
+        }
+    }
+
+    /// The Planning app with a second profile, `Maxed`, after `Default`.
+    fn two_profile_app() -> App {
+        let mut app = planning_app();
+        db::split_profile::insert(&app.db, "Maxed", split_shares(1_000, 4_000, 2_000)).unwrap();
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('5'));
+        app
+    }
+
+    fn active_name(app: &App) -> String {
+        db::split_profile::active(&app.db).unwrap().name
+    }
+
+    #[test]
+    fn right_on_the_split_block_switches_the_live_plan_to_the_next_profile() {
+        let mut app = two_profile_app();
+        select_split(&mut app, Target::RetirementPct);
+        let before = planning_row(&app, "Retirement").value.clone();
+
+        press(&mut app, KeyCode::Right);
+
+        assert_eq!(active_name(&app), "Maxed");
+        assert_eq!(
+            plan::settings_from_db(&app.db).unwrap().retirement_pct,
+            BasisPoints(4_000)
+        );
+        assert_ne!(planning_row(&app, "Retirement").value, before);
+        assert_eq!(app.planning.selected_target(), Some(Target::RetirementPct));
+        assert!(app.status.contains("Maxed"), "{}", app.status);
+        assert!(has_row(&app, "Split · Maxed ◀▶"));
+    }
+
+    #[test]
+    fn left_from_the_first_profile_wraps_to_the_last() {
+        let mut app = two_profile_app();
+        db::split_profile::insert(&app.db, "Contributing", split_shares(0, 0, 0)).unwrap();
+        app.reload().unwrap();
+        select_split(&mut app, Target::SplitProfile);
+
+        press(&mut app, KeyCode::Left);
+
+        assert_eq!(active_name(&app), "Contributing");
+    }
+
+    #[test]
+    fn arrows_off_the_split_block_do_not_switch_profiles() {
+        let mut app = two_profile_app();
+        select_split(&mut app, Target::GoalsFloor);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(active_name(&app), "Default");
+    }
+
+    #[test]
+    fn arrows_with_one_profile_write_nothing_and_say_so() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        select_split(&mut app, Target::SplitProfile);
+
+        press(&mut app, KeyCode::Right);
+
+        assert_eq!(active_name(&app), "Default");
+        assert!(
+            app.status.contains("only one split profile"),
+            "{}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn a_on_the_split_block_adds_a_copy_of_the_active_profile_and_switches_to_it() {
+        let mut app = two_profile_app();
+        select_split(&mut app, Target::InvestmentPct);
+        press(&mut app, KeyCode::Right);
+
+        press(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, "Contributing");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        let active = db::split_profile::active(&app.db).unwrap();
+        assert_eq!(active.name, "Contributing");
+        assert_eq!(active.shares, split_shares(1_000, 4_000, 2_000));
+        assert_eq!(db::split_profile::list(&app.db).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_name_already_taken_keeps_the_new_profile_form_open() {
+        let mut app = two_profile_app();
+        select_split(&mut app, Target::SplitProfile);
+
+        press(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, "maxed");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_some());
+        assert_eq!(db::split_profile::list(&app.db).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_on_a_bill_row_still_opens_the_bill_form() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        select_first_bill(&mut app);
+
+        press(&mut app, KeyCode::Char('a'));
+
+        match &app.modal {
+            Some(Modal::Bill(form)) => assert_eq!(form.editing, None),
+            _ => panic!("no bill form is open"),
+        }
+    }
+
+    #[test]
+    fn d_on_the_split_block_deletes_the_active_profile_and_activates_a_neighbour() {
+        let mut app = two_profile_app();
+        select_split(&mut app, Target::FutureHousingPct);
+        press(&mut app, KeyCode::Right);
+
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Char('y'));
+
+        assert_eq!(db::split_profile::list(&app.db).unwrap().len(), 1);
+        assert_eq!(active_name(&app), "Default");
+        assert!(has_row(&app, "Split · Default"));
+        assert!(app.status.contains("Default"), "{}", app.status);
+    }
+
+    #[test]
+    fn d_on_the_only_profile_is_refused_without_a_dialog() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        select_split(&mut app, Target::SplitProfile);
+
+        press(&mut app, KeyCode::Char('d'));
+
+        assert!(app.modal.is_none());
+        assert!(app.status.contains("last split profile"), "{}", app.status);
+        assert_eq!(db::split_profile::list(&app.db).unwrap().len(), 1);
+    }
+
+    /// A profile name is the owner's own text, so a demo draws it as a
+    /// pseudoword on the heading and in the delete dialog alike.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_masks_the_split_profile_name_on_the_heading_and_the_delete_dialog() {
+        crate::demo::install_with_salt(7);
+        let mut app = two_profile_app();
+        assert!(has_row(
+            &app,
+            &format!("Split · {} ◀▶", crate::demo::text("Default"))
+        ));
+        select_split(&mut app, Target::SplitProfile);
+
+        press(&mut app, KeyCode::Char('d'));
+
+        let Some(Modal::Confirm { label, .. }) = &app.modal else {
+            panic!("no confirmation is open");
+        };
+        assert!(!label.contains("Default"), "{label}");
+        assert!(label.contains(&*crate::demo::text("Default")), "{label}");
+    }
+
+    /// The rename and add forms draw what they hold through the same mask
+    /// the heading does, while the buffer keeps the real text to commit.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_masks_the_split_profile_name_in_its_forms() {
+        crate::demo::install_with_salt(7);
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        select_split(&mut app, Target::SplitProfile);
+
+        press(&mut app, KeyCode::Char('e'));
+        let Some(Modal::Value(_, form)) = &app.modal else {
+            panic!("no value form is open");
+        };
+        assert_eq!(form.value(), "Default");
+        assert_eq!(form.display(), crate::demo::text("Default"));
+        press(&mut app, KeyCode::Esc);
+
+        press(&mut app, KeyCode::Char('a'));
+        type_str(&mut app, "Maxed");
+        let Some(Modal::Value(_, form)) = &app.modal else {
+            panic!("no value form is open");
+        };
+        assert_eq!(form.display(), crate::demo::text("Maxed"));
+    }
+
+    #[test]
+    fn e_on_the_split_heading_renames_the_profile() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        select_split(&mut app, Target::SplitProfile);
+
+        press(&mut app, KeyCode::Char('e'));
+        let Some(Modal::Value(_, form)) = &app.modal else {
+            panic!("no value form is open");
+        };
+        assert_eq!(form.value(), "Default", "prefilled with the real name");
+        for _ in 0.."Default".len() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_str(&mut app, "Contributing");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        assert_eq!(active_name(&app), "Contributing");
+        assert!(has_row(&app, "Split · Contributing"));
     }
 
     /// `d` on a constant would otherwise have to mean "delete a setting",
@@ -2313,9 +2592,17 @@ mod tests {
         setting::set(&db, key::PLANNING_BUFFER, Cents::ZERO).unwrap();
         setting::set(&db, key::BILL_PAYMENT_CAP, Cents::ZERO).unwrap();
         setting::set(&db, key::MOM_AND_DAD_ANNUAL, Cents::ZERO).unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(4_000)).unwrap();
-        setting::set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints(3_000)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(3_000)).unwrap();
+        let profile = crate::db::split_profile::active(&db).unwrap().id;
+        crate::db::split_profile::set_shares(
+            &db,
+            profile,
+            crate::db::split_profile::Shares {
+                future_housing: BasisPoints(4_000),
+                retirement: BasisPoints(3_000),
+                investment: BasisPoints(3_000),
+            },
+        )
+        .unwrap();
 
         let mut app = App::new(db, today(), None).unwrap();
         app.screen = Screen::Planning;

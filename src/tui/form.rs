@@ -771,12 +771,15 @@ enum Entry {
     /// and a split percentage through this same modal, and neither of those
     /// is money.
     Money(Field),
+    /// A name the owner chose, which a demo draws as a pseudoword -- the
+    /// split profile's, on Planning.
+    Name(Field),
 }
 
 impl Entry {
     fn value(&self) -> &str {
         match self {
-            Entry::Figure(field) | Entry::Money(field) => field.value(),
+            Entry::Figure(field) | Entry::Money(field) | Entry::Name(field) => field.value(),
         }
     }
 }
@@ -800,6 +803,15 @@ impl ValueForm {
         }
     }
 
+    /// The same form over a name the owner chose, which a demo masks the way
+    /// it masks every other piece of owner-entered text.
+    pub fn name(label: impl Into<Label>, prefill: &str) -> ValueForm {
+        ValueForm {
+            label: label.into(),
+            entry: Entry::Name(Field::given(prefill)),
+        }
+    }
+
     pub fn label(&self) -> &Label {
         &self.label
     }
@@ -814,7 +826,8 @@ impl ValueForm {
     pub fn display(&self) -> String {
         match &self.entry {
             Entry::Money(field) => crate::demo::typed(field.value()),
-            other => other.value().to_string(),
+            Entry::Name(field) => crate::demo::text(field.value()).into_owned(),
+            Entry::Figure(field) => field.value().to_string(),
         }
     }
 
@@ -837,7 +850,7 @@ impl FormFields for ValueForm {
     // Nothing to cycle either: the one field is always a text buffer.
     fn focused(&mut self) -> Focused<'_> {
         match &mut self.entry {
-            Entry::Figure(field) | Entry::Money(field) => Focused::Text(field),
+            Entry::Figure(field) | Entry::Money(field) | Entry::Name(field) => Focused::Text(field),
         }
     }
 }

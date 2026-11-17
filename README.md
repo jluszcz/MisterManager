@@ -102,6 +102,14 @@ The transfer instructions first — one per destination account — then what a 
 the waterfall that worked them out: the excess, the monthly bill block with its biweekly column, the
 gates, the split, and where each line lands. `↑`/`↓` move between the editable constants and skip
 everything computed. A percentage takes up to two decimals, so the split can be `10.5 / 20.5 / 69`.
+`e` edits the selected row; on a bill it opens the bill's whole form, label and category included.
+
+The split belongs to a named **split profile** — one for while a 401k is being funded and one for
+once it is maxed, say — and the Split heading names the one in use. With the cursor in the Split
+block, `←`/`→` switches profiles, `a` adds one copied from the current one, `d` deletes the current
+one, and `e` on the heading renames it; elsewhere `a` and `d` add and delete bills. A switch is
+live: the waterfall, `t` and the report all divide by the profile showing. An import writes the
+workbook's split into the current profile and leaves the others alone.
 
 `p` pins the excess so the plan stops moving underneath a payday; pressing it again re-pins at
 whatever the excess reads now, and `P` unpins. `Excess (Used)` is an editable constant like any
@@ -410,8 +418,8 @@ behind it.
 
 Draws the application exactly as an ordinary run does, with every absolute
 dollar figure's digits replaced by another figure's digits, and every account
-name and code, goal name, recurring-goal name, bill label, fund ticker, fund
-name and transaction description replaced by a same-length pronounceable pseudoword — both keyed on a salt drawn once
+name and code, goal name, recurring-goal name, bill label, split profile name,
+fund ticker, fund name and transaction description replaced by a same-length pronounceable pseudoword — both keyed on a salt drawn once
 per run, so one amount draws the same everywhere it appears, one word reads
 the same wherever it appears, and whole dollars agree with the figure they
 came from.

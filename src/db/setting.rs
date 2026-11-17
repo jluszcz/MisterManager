@@ -321,17 +321,6 @@ pub mod key {
 
     /// `Planning!F19`.
     pub const BILL_PAYMENT_PCT: Key<BasisPoints> = Key::new("planning.bill_payment_pct");
-    /// `Planning!F25` — the Future Housing share of the remainder.
-    ///
-    /// The stored string still says `down_payment`. It is the key an existing
-    /// database already holds this value under, and a renamed key reads as
-    /// "not configured", which would silently substitute the default.
-    pub const SPLIT_FUTURE_HOUSING_PCT: Key<BasisPoints> =
-        Key::new("planning.split_down_payment_pct");
-    /// `Planning!F26`.
-    pub const SPLIT_RETIREMENT_PCT: Key<BasisPoints> = Key::new("planning.split_retirement_pct");
-    /// `Planning!F27`.
-    pub const SPLIT_INVESTMENT_PCT: Key<BasisPoints> = Key::new("planning.split_investment_pct");
 
     /// Whether the Planning screen's Biweekly Expenses figure counts this
     /// constant.
@@ -375,9 +364,9 @@ mod tests {
         set(&db, key::PAY_PERIODS_PER_YEAR, 26).unwrap();
         assert_eq!(get(&db, key::PAY_PERIODS_PER_YEAR).unwrap(), Some(26));
 
-        set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints(1_500)).unwrap();
+        set(&db, key::BILL_PAYMENT_PCT, BasisPoints(1_500)).unwrap();
         assert_eq!(
-            get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(),
+            get(&db, key::BILL_PAYMENT_PCT).unwrap(),
             Some(BasisPoints(1_500))
         );
 
@@ -471,7 +460,7 @@ mod tests {
         let d = NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
         set(&db, key::PLANNING_TARGET, Cents::from_dollars(10_000)).unwrap();
         set(&db, key::PAY_PERIODS_PER_YEAR, 26).unwrap();
-        set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints(1_500)).unwrap();
+        set(&db, key::BILL_PAYMENT_PCT, BasisPoints(1_500)).unwrap();
         set(&db, key::PINNED_AT, d).unwrap();
 
         let snapshot = all(&db).unwrap();
@@ -482,7 +471,7 @@ mod tests {
         );
         assert_eq!(snapshot.get(key::PAY_PERIODS_PER_YEAR).unwrap(), Some(26));
         assert_eq!(
-            snapshot.get(key::SPLIT_RETIREMENT_PCT).unwrap(),
+            snapshot.get(key::BILL_PAYMENT_PCT).unwrap(),
             Some(BasisPoints(1_500))
         );
         assert_eq!(snapshot.get(key::PINNED_AT).unwrap(), Some(d));
@@ -576,9 +565,6 @@ mod tests {
             key::MOM_AND_DAD_ANNUAL.name(),
             key::GOALS_FLOOR.name(),
             key::BILL_PAYMENT_PCT.name(),
-            key::SPLIT_FUTURE_HOUSING_PCT.name(),
-            key::SPLIT_RETIREMENT_PCT.name(),
-            key::SPLIT_INVESTMENT_PCT.name(),
             key::RECURRING_TXN_HORIZON_MONTHS.name(),
         ];
         names.extend(crate::gate::Gate::ALL.iter().map(|g| g.key().name()));

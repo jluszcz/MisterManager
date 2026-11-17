@@ -5,15 +5,14 @@
 //! report reads the same list -- and its `write` is this screen's alone: the
 //! page has no editor to reach it from.
 
-use crate::calc::planning::PlanSettings;
 use crate::db::Db;
-use crate::db::bill;
 use crate::db::setting::{self, key};
+use crate::db::split_profile::{self, Shares};
 use crate::money::Cents;
 use crate::plan_line::Line;
 use crate::rate::BasisPoints;
 use crate::tui::form::{parse_amount, parse_percent, parse_whole_amount};
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use chrono::NaiveDate;
 
 pub use crate::plan_rows::Target;
@@ -55,22 +54,24 @@ fn parse_pinned_excess(raw: &str) -> Result<Cents> {
 /// inside `0..=100` on its own and still wrong between them.
 ///
 /// This is what makes the clamp in `calc::planning` a backstop rather than the
-/// rule. `others` reads through [`crate::plan::settings_from_db`] so the
-/// default an unset key stands for is the one the waterfall will use, rather
-/// than a second copy of it here.
+/// rule. The share lands in the active split profile, which is the set the
+/// waterfall divides and the one the screen is showing; `share` picks which
+/// of its three this is.
 ///
 /// The message quotes the headroom rather than the sum: what the owner needs
 /// is the number they may type, and a set already at 100 means something else
 /// must come down first.
 fn write_split(
     db: &Db,
-    key: crate::db::setting::Key<BasisPoints>,
     line: Line,
     raw: &str,
-    others: impl Fn(&PlanSettings) -> BasisPoints,
+    share: fn(&mut Shares) -> &mut BasisPoints,
 ) -> Result<()> {
     let value = parse_percent(raw)?;
-    let claimed = others(&crate::plan::settings_from_db(db)?);
+    let profile = split_profile::active(db)?;
+    let mut shares = profile.shares;
+    *share(&mut shares) = BasisPoints::ZERO;
+    let claimed = shares.total();
     ensure!(
         value + claimed <= BasisPoints::ONE,
         "{} leaves {}% at most: the other two splits already claim {}%",
@@ -78,7 +79,8 @@ fn write_split(
         BasisPoints::ONE.saturating_sub(claimed).exact_percent(),
         claimed.exact_percent()
     );
-    setting::set(db, key, value)
+    *share(&mut shares) = value;
+    split_profile::set_shares(db, profile.id, shares)
 }
 
 /// A count of pay periods.
@@ -120,30 +122,21 @@ impl Target {
                 setting::set(db, key::MOM_AND_DAD_ANNUAL, parse_amount(raw)?)
             }
             Target::GoalsFloor => setting::set(db, key::GOALS_FLOOR, parse_amount(raw)?),
-            Target::FutureHousingPct => write_split(
-                db,
-                key::SPLIT_FUTURE_HOUSING_PCT,
-                Line::FutureHousing,
-                raw,
-                |s| s.retirement_pct + s.investment_pct,
-            ),
-            Target::RetirementPct => {
-                write_split(db, key::SPLIT_RETIREMENT_PCT, Line::Retirement, raw, |s| {
-                    s.future_housing_pct + s.investment_pct
-                })
+            Target::FutureHousingPct => {
+                write_split(db, Line::FutureHousing, raw, |s| &mut s.future_housing)
             }
-            Target::InvestmentPct => {
-                write_split(db, key::SPLIT_INVESTMENT_PCT, Line::Investment, raw, |s| {
-                    s.future_housing_pct + s.retirement_pct
-                })
-            }
+            Target::RetirementPct => write_split(db, Line::Retirement, raw, |s| &mut s.retirement),
+            Target::InvestmentPct => write_split(db, Line::Investment, raw, |s| &mut s.investment),
             // Both keys, for the reason `p` moves both: a date with no amount
             // would render a line about a plan that is not pinned.
             Target::PinnedExcess => {
                 setting::set(db, key::PINNED_EXCESS, parse_pinned_excess(raw)?)?;
                 setting::set(db, key::PINNED_AT, today)
             }
-            Target::Bill(id) => bill::set_amount(db, id, parse_amount(raw)?),
+            // `e` on a bill opens the bill's own form, which writes the whole
+            // row through `bill::update`; no one-field editor reaches here.
+            Target::Bill(_) => bail!("a bill is edited through its form"),
+            Target::SplitProfile => split_profile::rename(db, split_profile::active(db)?.id, raw),
         }
     }
 
@@ -168,8 +161,21 @@ impl Target {
             | Target::BillPaymentPct
             | Target::FutureHousingPct
             | Target::RetirementPct
-            | Target::InvestmentPct => false,
+            | Target::InvestmentPct
+            | Target::SplitProfile => false,
         }
+    }
+
+    /// Whether this row belongs to the Split block, where `←`/`→`, `a` and
+    /// `d` act on the split profile rather than on what they mean elsewhere.
+    pub fn in_split_block(self) -> bool {
+        matches!(
+            self,
+            Target::SplitProfile
+                | Target::FutureHousingPct
+                | Target::RetirementPct
+                | Target::InvestmentPct
+        )
     }
 }
 
@@ -186,8 +192,74 @@ mod tests {
     use crate::rate::BasisPoints;
     use crate::test_support::day;
 
+    use crate::db::split_profile::{self, Shares};
     use crate::tui::planning::test_support::*;
     use crate::tui::planning::{Editable, Planning};
+
+    fn shares(fh: i64, rt: i64, inv: i64) -> Shares {
+        Shares {
+            future_housing: BasisPoints(fh),
+            retirement: BasisPoints(rt),
+            investment: BasisPoints(inv),
+        }
+    }
+
+    fn split(db: &Db) -> Shares {
+        split_profile::active(db).unwrap().shares
+    }
+
+    fn set_split(db: &Db, set: Shares) {
+        split_profile::set_shares(db, split_profile::active(db).unwrap().id, set).unwrap();
+    }
+
+    /// A split edit lands in the profile the screen is showing, and the
+    /// owner's other profiles keep what they were set to.
+    #[test]
+    fn a_split_edit_writes_only_the_active_profile() {
+        let db = db::open_in_memory().unwrap();
+        let first = split_profile::active(&db).unwrap().id;
+        let maxed = split_profile::insert(&db, "Maxed", shares(1_000, 4_000, 2_000)).unwrap();
+        split_profile::set_active(&db, maxed).unwrap();
+
+        Target::RetirementPct
+            .write(&db, day(2026, 8, 14), "45")
+            .unwrap();
+
+        assert_eq!(split(&db), shares(1_000, 4_500, 2_000));
+        assert_eq!(
+            split_profile::get(&db, first).unwrap().shares,
+            shares(3_000, 2_000, 1_000)
+        );
+    }
+
+    #[test]
+    fn writing_the_profile_target_renames_the_active_profile() {
+        let db = db::open_in_memory().unwrap();
+        Target::SplitProfile
+            .write(&db, day(2026, 8, 14), " Contributing ")
+            .unwrap();
+        assert_eq!(split_profile::active(&db).unwrap().name, "Contributing");
+        assert!(!Target::SplitProfile.is_money());
+    }
+
+    #[test]
+    fn only_the_profile_and_its_three_shares_are_in_the_split_block() {
+        for t in [
+            Target::SplitProfile,
+            Target::FutureHousingPct,
+            Target::RetirementPct,
+            Target::InvestmentPct,
+        ] {
+            assert!(t.in_split_block(), "{t:?}");
+        }
+        for t in [
+            Target::BillPaymentPct,
+            Target::GoalsFloor,
+            Target::Bill(BillId(1)),
+        ] {
+            assert!(!t.in_split_block(), "{t:?}");
+        }
+    }
 
     #[test]
     fn each_target_writes_its_own_setting() {
@@ -235,13 +307,11 @@ mod tests {
         assert_eq!(pct(key::BILL_PAYMENT_PCT), BasisPoints(6_000));
         assert_eq!(cents(key::MOM_AND_DAD_ANNUAL), Cents::from_dollars(4_000));
         assert_eq!(cents(key::GOALS_FLOOR), Cents::from_dollars(500));
-        assert_eq!(pct(key::SPLIT_FUTURE_HOUSING_PCT), BasisPoints(3_000));
-        assert_eq!(pct(key::SPLIT_RETIREMENT_PCT), BasisPoints(2_000));
-        assert_eq!(pct(key::SPLIT_INVESTMENT_PCT), BasisPoints(1_000));
+        assert_eq!(split(&db), shares(3_000, 2_000, 1_000));
     }
 
     #[test]
-    fn a_bill_target_writes_the_bill_rather_than_a_setting() {
+    fn a_bill_target_is_edited_through_its_form_rather_than_written_as_a_value() {
         let db = db::open_in_memory().unwrap();
         let id = crate::db::bill::insert(
             &db,
@@ -254,13 +324,13 @@ mod tests {
         )
         .unwrap();
 
-        Target::Bill(id)
+        let err = Target::Bill(id)
             .write(&db, day(2026, 8, 14), "3,100")
-            .unwrap();
+            .unwrap_err();
 
+        assert!(err.to_string().contains("form"), "{err}");
         let found = crate::db::bill::get(&db, id).unwrap();
-        assert_eq!(found.cents, Cents::from_dollars(3_100));
-        assert_eq!(found.label, "Mortgage");
+        assert_eq!(found.cents, Cents::from_dollars(1_200));
     }
 
     /// The pin is what `Excess (Used)` *is* when the plan is pinned, so the
@@ -367,10 +437,7 @@ mod tests {
         Target::RetirementPct
             .write(&db, day(2026, 8, 14), " 15% ")
             .unwrap();
-        assert_eq!(
-            setting::get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(),
-            Some(BasisPoints(1_500))
-        );
+        assert_eq!(split(&db).retirement, BasisPoints(1_500));
 
         for junk in ["fifteen", "", "%", ".", "1.2.3", "1e2", "+5", "-"] {
             assert!(
@@ -392,10 +459,7 @@ mod tests {
         write(Target::RetirementPct, "20.5%");
         write(Target::InvestmentPct, "69");
 
-        let pct = |k| setting::get(&db, k).unwrap().unwrap();
-        assert_eq!(pct(key::SPLIT_FUTURE_HOUSING_PCT), BasisPoints(1_050));
-        assert_eq!(pct(key::SPLIT_RETIREMENT_PCT), BasisPoints(2_050));
-        assert_eq!(pct(key::SPLIT_INVESTMENT_PCT), BasisPoints(6_900));
+        assert_eq!(split(&db), shares(1_050, 2_050, 6_900));
         assert_eq!(
             crate::plan::settings_from_db(&db).unwrap().goals_pct(),
             BasisPoints::ZERO
@@ -436,7 +500,7 @@ mod tests {
             .write(&db, day(2026, 8, 14), "10.125")
             .unwrap_err();
         assert!(err.to_string().contains("10.125"), "{err}");
-        assert_eq!(setting::get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(), None);
+        assert_eq!(split(&db).retirement, BasisPoints(2_000), "unchanged");
     }
 
     /// The headroom is quoted to the hundredth too, or a refusal over a
@@ -444,8 +508,7 @@ mod tests {
     #[test]
     fn the_headroom_is_quoted_to_the_hundredth() {
         let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(1_050)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(6_900)).unwrap();
+        set_split(&db, shares(1_050, 0, 6_900));
 
         let err = Target::RetirementPct
             .write(&db, day(2026, 8, 14), "20.51")
@@ -464,8 +527,7 @@ mod tests {
     #[test]
     fn a_split_pushing_the_three_over_one_hundred_is_refused() {
         let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(3_000)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(1_000)).unwrap();
+        set_split(&db, shares(3_000, 0, 1_000));
 
         let err = Target::RetirementPct
             .write(&db, day(2026, 8, 14), "70")
@@ -473,8 +535,8 @@ mod tests {
 
         assert!(err.to_string().contains("60"), "the headroom: {err}");
         assert_eq!(
-            setting::get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(),
-            None,
+            split(&db).retirement,
+            BasisPoints::ZERO,
             "the refused write must not have landed"
         );
     }
@@ -484,27 +546,23 @@ mod tests {
     #[test]
     fn a_split_landing_exactly_on_one_hundred_is_accepted() {
         let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(3_000)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(1_000)).unwrap();
+        set_split(&db, shares(3_000, 0, 1_000));
 
         Target::RetirementPct
             .write(&db, day(2026, 8, 14), "60")
             .unwrap();
 
-        assert_eq!(
-            setting::get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(),
-            Some(BasisPoints(6_000))
-        );
+        assert_eq!(split(&db).retirement, BasisPoints(6_000));
     }
 
-    /// An unset key reads as its default rather than as nothing, so the
-    /// headroom quoted is the headroom the waterfall will actually use.
+    /// The headroom is measured against the profile's own other two shares,
+    /// which on a fresh database are the seeded defaults.
     #[test]
-    fn the_headroom_counts_the_defaults_the_unset_keys_stand_for() {
+    fn the_headroom_counts_the_active_profiles_other_two_shares() {
         let db = db::open_in_memory().unwrap();
 
-        // Nothing is set: Future Housing 30 and Investment 10 by default, so
-        // Retirement may have 60 and no more.
+        // Future Housing 30 and Investment 10, so Retirement may have 60 and
+        // no more.
         assert!(
             Target::RetirementPct
                 .write(&db, day(2026, 8, 14), "61")
@@ -530,7 +588,7 @@ mod tests {
                 .write(&db, day(2026, 8, 14), "101")
                 .is_err()
         );
-        assert_eq!(setting::get(&db, key::SPLIT_RETIREMENT_PCT).unwrap(), None);
+        assert_eq!(split(&db).retirement, BasisPoints(2_000), "unchanged");
     }
 
     /// The `.max(1)` clamps downstream are the backstop; the form is where a

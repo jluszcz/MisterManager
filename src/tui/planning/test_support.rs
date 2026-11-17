@@ -178,6 +178,8 @@ pub(super) fn view(pinned: Option<Cents>, pinned_at: Option<NaiveDate>) -> View 
         transfer_error: None,
         transfer_detail: Vec::new(),
         expense_constants: Vec::new(),
+        split_profile: "Default".to_string(),
+        split_profiles: 1,
     }
 }
 

@@ -34,7 +34,7 @@ forget, and the copy that goes stale is always the one further from the code.
 | `r` | reconcile the ledgers' filtered account against a statement |
 | `l` | link the selected recurring goal entry to an existing goal, on Recurring Goals — no relative elsewhere, so a letter of its own |
 | `[` / `]` | step a month: the filter a screen narrows by, or the date a field holds |
-| `←` / `→` | move the caret in a text field, step a date a day at a time, or cycle the focused selector — see the invariant below |
+| `←` / `→` | move the caret in a text field, step a date a day at a time, or cycle the focused selector — see the invariant below; on a screen, the Overview's scrub and the Planning Split block's profile switch |
 | `Shift`+`←` / `Shift`+`→` | the same nudge, a week at a time on a date; one choice on a selector |
 | `Shift`+`↑` / `Shift`+`↓` | move the selected row one place in an order kept by hand: a goal on Savings, an account on Accounts |
 | `Ctrl`+a letter | edit the text under the caret, in every box in the app — see the invariant below |
@@ -47,7 +47,7 @@ forget, and the copy that goes stale is always the one further from the code.
 
 A capital is the same verb on a wider or a second object: `A` opens a whole payday where `a`
 allocates one goal, `G` regenerates every recurring transaction where `g` regenerates the selected
-one, `E` edits the selected bill in full where `e` edits just the figure on its row. `g`/`G` is
+one. `g`/`G` is
 that same pair on Funds, over a second object — bring what is stored up to date with what it is
 derived from, a schedule on the eighth screen and a published filing on the sixth. **The one
 divergence is what "every" means there**: `G` on Funds refreshes every ticker any holding names
@@ -129,8 +129,7 @@ own last keys with nothing on screen to say a word went missing.
 `help::tests::every_screen_footer_fits_the_minimum_width` measures every screen topic against both
 halves plus the separator; `app`'s two own width tests measure what `App::footer` composes at
 runtime, which a `Topic` alone does not see. The first lever when a screen runs out of room is
-`Label::Shared`: several keys join under one word naming what they act *on* — `E/a/d bill` on
-Planning, `a/A/i/t money` and `n/e/c/⇧↑↓/f/F/Enter goal` on Savings, `a/t/p money` on the ledgers,
+`Label::Shared`: several keys join under one word naming what they act *on* — `a/A/i/t money` and `n/e/c/⇧↑↓/f/F/Enter goal` on Savings, `a/t/p money` on the ledgers,
 where the three keys that write new rows join against the `e` and `d` that act on the one selected —
 which buys back a whole item's separator per key absorbed, and the verbs it costs are a keystroke
 away in the panel, which has room for them. A shorter word is the smaller adjustment beside it —
@@ -847,6 +846,16 @@ deferred to nothing.
   trusted plan is read without scrolling, and a doubted figure is chased downwards from the total
   that looked wrong. When the plan does not resolve, `unresolved` and its message take the block's
   place at the top rather than sitting where nothing but a scroll would reach them.
+  - **The Split block answers `←`/`→`, `a` and `d` for the split profile**, and nowhere else on
+    the screen does: with the cursor on the Split heading or one of the three percentages,
+    `←`/`→` switches the active profile, `a` adds one and `d` deletes the one showing, where on
+    any other row `a` and `d` add and delete bills. `Target::in_split_block` is the one statement
+    of which rows those are. The heading is a cursor stop for `e` to rename the profile, and the
+    `◀▶` beside the name is this medium's alone — the page has no key to switch with. A switch is
+    live, not a preview: the waterfall, `t` and the report all read the active profile.
+  - **`e` is the one edit key on Planning.** On a bill it opens the full `BillForm` — label,
+    amount and category — because a bill's label and category live nowhere else on the screen;
+    there is no `E`.
   - **A plan with nothing to transfer is not an unresolved one**, and does not take that label.
     Every line zero is what a payday whose excess is nothing produces, now that the fixed bills are
     capped by it — there is no goal in the wrong container, nothing for `Enter` to explain, and
@@ -1777,8 +1786,7 @@ deferred to nothing.
   while generation begins at today. The list carries neither: its `Next` and `Last` are what the
   ledger holds, not what the form asks.
 - **A holding is one row, and `e` edits all of it: account, ticker and balance.** There is no `E`
-  beside it the way a bill splits `e`/`E` — a holding has no figure that stands apart from the row
-  the way a bill's amount does, so one form asks for the three fields together. Nothing on this
+  beside it, the same as a bill on Planning — one form asks for the fields together. Nothing on this
   screen moves money — there is no `t` — and nothing reconciles a balance against a statement —
   there is no `r`. A holding does link to an account, through `account_id`; what it does not link
   to is a goal or a transaction, and its balance is always typed, never imported — `holding` and

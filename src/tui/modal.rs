@@ -33,9 +33,11 @@ use crate::db::goal;
 use crate::db::holding;
 use crate::db::recurring_goal;
 use crate::db::recurring_txn;
+use crate::db::split_profile;
 use crate::db::txn;
 use crate::db::{
-    AccountId, AllocationId, BatchId, BillId, Db, HoldingId, RecurringGoalId, RecurringTxnId, TxnId,
+    AccountId, AllocationId, BatchId, BillId, Db, HoldingId, RecurringGoalId, RecurringTxnId,
+    SplitProfileId, TxnId,
 };
 use anyhow::Result;
 use ratatui::Frame;
@@ -199,6 +201,9 @@ pub(super) enum ValueTarget {
     /// `e` on the Planning screen, parsed by the [`Target`] it was opened
     /// for.
     Planning(Target),
+    /// `a` on the Planning screen's Split block: the name of a new split
+    /// profile, which starts as a copy of the active one.
+    NewSplitProfile,
     /// `r` on a ledger narrowed to one account: the balance a statement says
     /// that account holds. Session state on the `Ledger`, so committing it
     /// writes nothing and reloads nothing.
@@ -235,6 +240,10 @@ pub(super) enum Confirm {
     /// account, goal or transaction links to one -- so the write is a plain
     /// delete.
     DeleteHolding(HoldingId),
+    /// A split profile on Planning. The waterfall moves to whichever profile
+    /// takes over the active flag, so the dialog is the one chance to see
+    /// which one is going.
+    DeleteSplitProfile(SplitProfileId),
 }
 
 impl Confirm {
@@ -249,6 +258,7 @@ impl Confirm {
             Confirm::DeleteRecurringGoal(_) => "Delete this recurring goal?",
             Confirm::DeleteAllocation(_) => "Delete this allocation?",
             Confirm::DeleteHolding(_) => "Delete this holding?",
+            Confirm::DeleteSplitProfile(_) => "Delete this split profile?",
         }
     }
 
@@ -266,7 +276,8 @@ impl Confirm {
             | Confirm::DeleteRecurringTxn(_)
             | Confirm::DeleteRecurringGoal(_)
             | Confirm::DeleteAllocation(_)
-            | Confirm::DeleteHolding(_) => "y deletes · any other key cancels",
+            | Confirm::DeleteHolding(_)
+            | Confirm::DeleteSplitProfile(_) => "y deletes · any other key cancels",
         }
     }
 
@@ -280,7 +291,8 @@ impl Confirm {
             | Confirm::DeleteRecurringTxn(_)
             | Confirm::DeleteRecurringGoal(_)
             | Confirm::DeleteAllocation(_)
-            | Confirm::DeleteHolding(_) => "delete cancelled",
+            | Confirm::DeleteHolding(_)
+            | Confirm::DeleteSplitProfile(_) => "delete cancelled",
         }
     }
 
@@ -317,6 +329,11 @@ impl Confirm {
             Confirm::DeleteHolding(id) => {
                 holding::delete(db, id)?;
                 "holding deleted".to_string()
+            }
+            Confirm::DeleteSplitProfile(id) => {
+                let now = split_profile::delete(db, id)?;
+                let name = split_profile::get(db, now)?.name;
+                format!("split profile deleted · {}", crate::demo::text(&name))
             }
         })
     }
@@ -477,6 +494,7 @@ mod tests {
             Confirm::DeleteRecurringGoal(RecurringGoalId(1)),
             Confirm::DeleteAllocation(AllocationId(1)),
             Confirm::DeleteHolding(HoldingId(1)),
+            Confirm::DeleteSplitProfile(SplitProfileId(1)),
         ] {
             let title = action.title();
             assert!(title.starts_with("Delete this "), "{title}");

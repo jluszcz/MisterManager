@@ -214,15 +214,20 @@ fn every_planning_constant_comes_from_the_sheet() {
             .and_then(mistermanager::import::cell::as_rate_bp)
             .unwrap_or_else(|| panic!("no percentage at row {row}"))
     };
-    for (setting_key, row, cell) in [
-        (key::BILL_PAYMENT_PCT, 18, "F19"),
-        (key::SPLIT_FUTURE_HOUSING_PCT, 24, "F25"),
-        (key::SPLIT_RETIREMENT_PCT, 25, "F26"),
-        (key::SPLIT_INVESTMENT_PCT, 26, "F27"),
+    let got = mistermanager::db::setting::get(&db, key::BILL_PAYMENT_PCT)
+        .unwrap()
+        .unwrap_or_else(|| panic!("{} was never imported", key::BILL_PAYMENT_PCT));
+    assert_eq!(got, sheet_pct(18), "F19");
+
+    // The splits land in the active profile rather than in settings.
+    let split = mistermanager::db::split_profile::active(&db)
+        .unwrap()
+        .shares;
+    for (got, row, cell) in [
+        (split.future_housing, 24, "F25"),
+        (split.retirement, 25, "F26"),
+        (split.investment, 26, "F27"),
     ] {
-        let got = mistermanager::db::setting::get(&db, setting_key)
-            .unwrap()
-            .unwrap_or_else(|| panic!("{setting_key} was never imported"));
         assert_eq!(got, sheet_pct(row), "{cell}");
     }
 }
