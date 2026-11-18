@@ -851,7 +851,7 @@ deferred to nothing.
     `←`/`→` switches the active profile, `a` adds one and `d` deletes the one showing, where on
     any other row `a` and `d` add and delete bills. `Target::in_split_block` is the one statement
     of which rows those are. The heading is a cursor stop for `e` to rename the profile, and the
-    `◀▶` beside the name is this medium's alone — the page has no key to switch with. A switch is
+    `◀ ▶` either side of the name is this medium's alone — the page has no key to switch with. A switch is
     live, not a preview: the waterfall, `t` and the report all read the active profile.
   - **`e` is the one edit key on Planning.** On a bill it opens the full `BillForm` — label,
     amount and category — because a bill's label and category live nowhere else on the screen;

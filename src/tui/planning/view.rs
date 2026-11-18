@@ -433,7 +433,10 @@ pub(super) fn build(view: &View) -> Result<Vec<Row>> {
             .iter_mut()
             .find(|r| r.editable == Some(Editable::Constant(Target::SplitProfile)))
     {
-        heading.label.push_str(" ◀▶");
+        // The heading's label ends in the name, so the left arrow goes in front of it.
+        let name_at = heading.label.len() - view.split_profile.len();
+        heading.label.insert_str(name_at, "◀ ");
+        heading.label.push_str(" ▶");
     }
 
     // Where the money the split just divided lands. Below the figures rather
@@ -483,7 +486,7 @@ mod tests {
     #[test]
     fn the_heading_shows_switch_arrows_only_when_there_is_another_profile() {
         assert_eq!(split_heading(1), "Split · Default");
-        assert_eq!(split_heading(2), "Split · Default ◀▶");
+        assert_eq!(split_heading(2), "Split · ◀ Default ▶");
     }
 
     /// One waterfall row in this medium. These tests are about the mapper

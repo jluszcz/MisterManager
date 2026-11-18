@@ -120,9 +120,9 @@
 - [ ] **Step 1: Failing tests.**
   - `plan_rows`: `the_split_heading_names_the_profile_and_is_the_profiles_row` — with `split_profile: "Maxed"`, the heading row's label text is `Split · Maxed` and `target == Some(Target::SplitProfile)`.
   - `target.rs`: rewrite `each_target_writes_its_own_setting`'s split half and the `write_split` tests (~360–535) to assert against `split_profile::active(&db).shares`; keep the existing refusal-message assertions. Add `a_split_edit_writes_only_the_active_profile` (two profiles; editing Retirement leaves the inactive one's shares alone) and `writing_the_profile_target_renames_the_active_profile`.
-  - `view.rs`: `the_heading_shows_switch_arrows_only_when_there_is_another_profile` — `split_profiles: 1` → label `Split · Default`; `2` → label ends ` ◀▶`.
+  - `view.rs`: `the_heading_shows_switch_arrows_only_when_there_is_another_profile` — `split_profiles: 1` → label `Split · Default`; `2` → label `Split · ◀ Default ▶`.
 - [ ] **Step 2: Run** `cargo test --lib planning` — expect FAIL.
-- [ ] **Step 3: Implement.** `rows()` pushes `Row { target: Some(Target::SplitProfile), ..Row::heading(&format!("Split · {}", input.split_profile)) }`. `write_split` reads the active profile, replaces its one share, checks the set bound with today's message, and calls `set_shares`. The screen's `build` appends ` ◀▶` to the `Target::SplitProfile` row's label when `split_profiles > 1`. Every other `Input { .. }` construction (tests in `plan_rows.rs`) gains the field.
+- [ ] **Step 3: Implement.** `rows()` pushes `Row { target: Some(Target::SplitProfile), ..Row::heading(&format!("Split · {}", input.split_profile)) }`. `write_split` reads the active profile, replaces its one share, checks the set bound with today's message, and calls `set_shares`. The screen's `build` puts `◀ ` before the name and ` ▶` after it on the `Target::SplitProfile` row when `split_profiles > 1`. Every other `Input { .. }` construction (tests in `plan_rows.rs`) gains the field.
 - [ ] **Step 4: Run** `cargo test`, `cargo test --all-features` — expect PASS.
 
 ### Task 4: Planning keys — `←`/`→`, contextual `a`/`d`, one `e`

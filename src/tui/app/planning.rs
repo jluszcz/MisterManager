@@ -1229,7 +1229,7 @@ mod tests {
         assert_ne!(planning_row(&app, "Retirement").value, before);
         assert_eq!(app.planning.selected_target(), Some(Target::RetirementPct));
         assert!(app.status.contains("Maxed"), "{}", app.status);
-        assert!(has_row(&app, "Split · Maxed ◀▶"));
+        assert!(has_row(&app, "Split · ◀ Maxed ▶"));
     }
 
     #[test]
@@ -1349,7 +1349,7 @@ mod tests {
         let mut app = two_profile_app();
         assert!(has_row(
             &app,
-            &format!("Split · {} ◀▶", crate::demo::text("Default"))
+            &format!("Split · ◀ {} ▶", crate::demo::text("Default"))
         ));
         select_split(&mut app, Target::SplitProfile);
 
