@@ -69,16 +69,25 @@ impl Planning {
     /// a deleted bill -- falls back to the first editable row.
     pub fn set_view(&mut self, view: View) -> Result<()> {
         let held = self.selected_editable();
+        let was_at = self.cursor.index();
         self.rows = build(&view)?;
         self.excess_actual = view.plan.excess_actual;
         self.transfer_detail = view.transfer_detail;
         self.pinned = view.pinned;
         self.pinned_at = view.pinned_at;
         self.message = None;
-        self.cursor.select(
-            held.and_then(|e| self.rows.iter().position(|r| r.editable == Some(e)))
-                .unwrap_or(0),
-        );
+        let found = held.and_then(|e| self.rows.iter().position(|r| r.editable == Some(e)));
+        self.cursor.select(found.unwrap_or(0));
+        // Rows can come and go above the cursor -- a split profile with a zero
+        // share has no line in the transfers block -- so the view moves by as
+        // much as the cursor's row did, keeping that row on the line it was on.
+        if let Some(now_at) = found {
+            let offset = (self.cursor.offset() + now_at).saturating_sub(was_at);
+            self.cursor.record_viewport(Viewport {
+                height: self.cursor.page_height(),
+                offset,
+            });
+        }
         if self
             .rows
             .get(self.cursor.index())
@@ -872,6 +881,32 @@ mod tests {
         planning.set_view(without_wework).unwrap();
 
         assert_eq!(planning.selected_target(), Some(Target::Target));
+    }
+
+    /// A reload that adds or drops rows above the cursor -- a split profile
+    /// with a zero share drops that line from the transfers block -- moves
+    /// the view with the cursor's row, so the row stays on the same line of
+    /// the screen rather than jumping by however many rows went.
+    #[test]
+    fn a_reload_that_drops_rows_above_the_cursor_keeps_its_row_on_the_same_line() {
+        let mut planning = screen();
+        walk_until!(
+            planning.selected_target() == Some(Target::SplitProfile),
+            planning.select_next()
+        );
+        let before = planning.selected_index();
+        planning.record_viewport(Viewport {
+            height: 20,
+            offset: before - 5,
+        });
+
+        let mut one_bill_fewer = view(Some(Cents::from_dollars(17_500)), None);
+        one_bill_fewer.other_bills.pop();
+        planning.set_view(one_bill_fewer).unwrap();
+
+        assert_eq!(planning.selected_target(), Some(Target::SplitProfile));
+        assert_eq!(planning.selected_index(), before - 1);
+        assert_eq!(planning.cursor().offset(), before - 6);
     }
 
     /// `p` pins the live figure, so the screen has to carry it.
