@@ -134,7 +134,10 @@ pub struct Worksheet {
     cursor: Cursor,
     focus: Focus,
     search: SearchBox,
-    pending_slash: bool,
+    /// The digits typed since `/`, while a divisor is being typed: `None`
+    /// outside one, and `Some("")` for a slash still waiting to learn whether
+    /// it is a fraction or a filter.
+    divisor: Option<String>,
 }
 
 impl Worksheet {
@@ -185,7 +188,7 @@ impl Worksheet {
             cursor: Cursor::new(),
             focus: Focus::Amount,
             search: SearchBox::new(),
-            pending_slash: false,
+            divisor: None,
         }
     }
 
@@ -496,19 +499,70 @@ impl Worksheet {
         Ok(())
     }
 
-    /// `/` waits for the next key: a digit runs [`Worksheet::divide`], and
-    /// anything else begins a name filter. The spec gives `/` both jobs, and
-    /// digits are already spoken for by line editing.
+    /// `/` waits for the next key: a digit begins a divisor, and anything
+    /// else begins a name filter. The spec gives `/` both jobs, and digits
+    /// are already spoken for by line editing.
     pub fn slash(&mut self) {
-        self.pending_slash = true;
+        self.divisor = Some(String::new());
     }
 
+    /// The digits typed since `/`, while a divisor is being typed.
+    pub fn divisor(&self) -> Option<&str> {
+        self.divisor.as_deref()
+    }
+
+    /// Whether `/` is still waiting to learn whether it is a fraction or a
+    /// filter -- the state in which the next key is data either way.
     pub fn is_pending_slash(&self) -> bool {
-        self.pending_slash
+        self.divisor.as_deref() == Some("")
     }
 
-    pub fn cancel_pending_slash(&mut self) {
-        self.pending_slash = false;
+    /// One more digit of the divisor, and the division re-run by it.
+    ///
+    /// Applied on every digit rather than at a terminator, so `/2` divides
+    /// the instant the `2` lands -- the key no longer has to wait to be read
+    /// -- and `/12` overwrites the halving with a twelfth when the `2`
+    /// follows the `1`. That is safe because [`Worksheet::divide`] *sets*
+    /// each targeted line rather than adding to it, so the last digit's
+    /// answer is the only one left standing. A divisor that does not yet
+    /// read as positive -- a leading `0` -- divides nothing until one does.
+    pub fn push_divisor_digit(&mut self, digit: char) -> Result<()> {
+        let Some(typed) = &mut self.divisor else {
+            return Ok(());
+        };
+        typed.push(digit);
+        // A digit past what an `i64` holds is dropped rather than leaving a
+        // divisor on screen that divides nothing, and so is a second leading
+        // `0`, which every later digit would read past while the footer grew.
+        if super::form::parse_divisor(typed).is_err() || typed.starts_with("00") {
+            typed.pop();
+            return Ok(());
+        }
+        self.redivide()
+    }
+
+    /// `Backspace` inside a divisor: one digit back, divided by what is left.
+    /// Emptied, it is a slash waiting again, and the lines keep the last
+    /// division they were given -- there is no division by nothing to undo
+    /// it to.
+    pub fn pop_divisor_digit(&mut self) -> Result<()> {
+        if let Some(typed) = &mut self.divisor {
+            typed.pop();
+        }
+        self.redivide()
+    }
+
+    fn redivide(&mut self) -> Result<()> {
+        match self.divisor.as_deref().map(super::form::parse_divisor) {
+            Some(Ok(n)) if n > 0 => self.divide(n),
+            _ => Ok(()),
+        }
+    }
+
+    /// The divisor is finished, or the slash abandoned: the lines keep
+    /// whatever division they were last given.
+    pub fn end_divisor(&mut self) {
+        self.divisor = None;
     }
 }
 
@@ -546,7 +600,7 @@ impl Search for Worksheet {
     /// a filter that has begun is no longer waiting to become `/N`.
     fn begin_search(&mut self) {
         self.search.open();
-        self.pending_slash = false;
+        self.divisor = None;
     }
 }
 
@@ -669,6 +723,12 @@ pub(super) fn render(frame: &mut Frame, sheet: &Worksheet) -> Viewport {
         spans.extend(search::search_spans(sheet));
         spans.push(Span::raw("  · Enter to keep · Esc to clear"));
         TextLine::from(spans)
+    } else if let Some(divisor) = sheet.divisor().filter(|d| !d.is_empty()) {
+        // A count, unmasked for the reason the forms' `/N` is.
+        TextLine::from(format!(
+            "/{divisor}  ·  remaining {}  ·  another digit divides further · Esc to finish",
+            crate::demo::figure(sheet.remaining()),
+        ))
     } else {
         TextLine::from(format!(
             "remaining {}  ·  {} selected  ·  Space · * · - · z · /N · s · w",
@@ -1280,6 +1340,53 @@ mod tests {
         assert_eq!(sheet.selected_count(), 0);
     }
 
+    /// A divisor takes every digit that follows the slash, re-dividing on
+    /// each: `/1` hands each line the whole pot and the `2` after it turns
+    /// that into a twelfth, which is what makes `/12` reachable without
+    /// costing `/2` a terminator.
+    #[test]
+    fn a_divisor_past_nine_divides_by_every_digit_typed() {
+        let mut sheet = sheet();
+        sheet.set_amount(Cents(120_000));
+        sheet.next_focus();
+        sheet.next_focus();
+        sheet.select_all_visible();
+        sheet.slash();
+        sheet.push_divisor_digit('1').unwrap();
+        assert_eq!(amounts(&sheet), [Cents(120_000); 3]);
+        sheet.push_divisor_digit('2').unwrap();
+        assert_eq!(amounts(&sheet), [Cents(10_000); 3]);
+        assert_eq!(sheet.divisor(), Some("12"));
+
+        sheet.pop_divisor_digit().unwrap();
+        assert_eq!(amounts(&sheet), [Cents(120_000); 3]);
+    }
+
+    /// A leading `0` is a divisor not yet positive, so it divides nothing --
+    /// rather than reporting a division by zero halfway through `/05` -- and
+    /// a digit an `i64` cannot hold is dropped.
+    #[test]
+    fn a_divisor_divides_nothing_until_it_reads_positive_and_drops_an_overflowing_digit() {
+        let mut sheet = sheet();
+        sheet.set_amount(Cents(100_000));
+        sheet.next_focus();
+        sheet.next_focus();
+        sheet.select_all_visible();
+        let before = amounts(&sheet);
+        sheet.slash();
+        sheet.push_divisor_digit('0').unwrap();
+        sheet.push_divisor_digit('0').unwrap();
+        assert_eq!(sheet.divisor(), Some("0"));
+        assert_eq!(amounts(&sheet), before);
+        sheet.push_divisor_digit('5').unwrap();
+        assert_eq!(amounts(&sheet), [Cents(20_000); 3]);
+
+        for _ in 0..30 {
+            sheet.push_divisor_digit('9').unwrap();
+        }
+        assert!(sheet.divisor().unwrap().len() < 25);
+    }
+
     /// `/` waits for the next key: a digit is the fraction operator, anything
     /// else begins a name filter and is typed into it.
     #[test]
@@ -1290,7 +1397,6 @@ mod tests {
         sheet.slash();
         assert!(sheet.is_pending_slash());
 
-        sheet.cancel_pending_slash();
         sheet.begin_search();
         sheet.push_search('H');
         assert!(!sheet.is_pending_slash());

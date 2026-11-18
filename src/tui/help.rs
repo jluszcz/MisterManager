@@ -737,7 +737,7 @@ const WORKSHEET: [Entry; 15] = [
     Entry {
         key: "/N",
         label: Label::Hidden,
-        detail: "With a digit: divide the selected lines by it. With anything else: begin a filter over the line names and the amounts they currently hold.",
+        detail: "With digits: divide the selected lines by them, re-dividing as each lands; Esc or any other key finishes. With anything else: begin a filter over the line names and the amounts they currently hold.",
     },
     Entry {
         key: "Enter",

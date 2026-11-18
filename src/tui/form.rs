@@ -567,11 +567,11 @@ pub(super) fn tax_note(taxed: bool, typed: &str, rate: Option<BasisPoints>) -> S
 
 /// Whether an amount field is holding a `/N` fraction rather than a figure.
 ///
-/// Beside [`parse_share`], which is what decides it: the allocation form asks
-/// twice over -- once to resolve the fraction for the line under the field,
+/// Beside [`parse_share`], which is what decides it: [`ShareField`] asks
+/// twice over -- once to resolve the fraction for the note beside the field,
 /// and once to keep the scramble off a divisor -- and a second spelling of
 /// the same prefix test is how those two would come to disagree.
-pub(super) fn is_share(raw: &str) -> bool {
+fn is_share(raw: &str) -> bool {
     raw.trim().starts_with('/')
 }
 
@@ -594,10 +594,9 @@ pub(super) enum Precision {
 
 /// A whole amount, or a fraction of `pot` written `/N`.
 ///
-/// `pot` is the container's unallocated remainder, and `/6` is a sixth of it:
-/// the allocation form's answer to splitting a remainder across goals without
-/// reaching for a calculator. Text rather than a keystroke so the divisor can
-/// run past nine -- `/12` is a month's worth.
+/// `/6` is a sixth of `pot` -- the forms' answer to splitting a figure without
+/// reaching for a calculator. [`ShareField`] says what each form's pot is.
+/// The divisor runs past nine: `/12` is a month's worth.
 ///
 /// The fraction floors to a whole dollar whatever the `precision`, and under
 /// [`Precision::WholeDollars`] a *typed* `12.50` is refused: cents typed into
@@ -612,11 +611,87 @@ pub(super) fn parse_share(raw: &str, pot: Cents, precision: Precision) -> Result
             Precision::Cents => parse_amount(raw),
         };
     };
-    let n: i64 = divisor
-        .trim()
+    super::share_of(pot, parse_divisor(divisor)?)
+}
+
+/// The `N` of a `/N`, as typed after the slash -- by a form's amount field
+/// through [`parse_share`], and by the worksheet a digit at a time. Positivity
+/// is [`super::share_of`]'s to refuse, since that is where it would divide.
+pub(super) fn parse_divisor(text: &str) -> Result<i64> {
+    text.trim()
         .parse()
-        .with_context(|| format!("not a whole divisor: {raw:?}"))?;
-    super::share_of(pot, n)
+        .with_context(|| format!("not a whole divisor: {:?}", format!("/{text}")))
+}
+
+/// An amount field that also takes `/N`, a fraction of `pot`.
+///
+/// One type for the two forms that offer it -- `a`'s allocation and `t`'s
+/// goal transfer -- so the reading, the on-screen resolution and the masking
+/// rule are stated once. They differ only in the pot: the container's
+/// unallocated remainder for one, the source goal's balance for the other.
+/// The pot is a snapshot taken at open: each form writes once and closes,
+/// and nothing can move the figure while it is up.
+#[derive(Debug)]
+pub(super) struct ShareField {
+    field: Field,
+    pot: Cents,
+    precision: Precision,
+}
+
+impl ShareField {
+    pub(super) fn new(field: Field, pot: Cents, precision: Precision) -> ShareField {
+        ShareField {
+            field,
+            pot,
+            precision,
+        }
+    }
+
+    pub(super) fn pot(&self) -> Cents {
+        self.pot
+    }
+
+    pub(super) fn field_mut(&mut self) -> &mut Field {
+        &mut self.field
+    }
+
+    /// The amount the field commits to.
+    pub(super) fn parse(&self) -> Result<Cents> {
+        parse_share(self.field.value(), self.pot, self.precision)
+    }
+
+    /// What a `/N` comes to, for the form to show beside the field.
+    ///
+    /// `None` for a typed figure, which needs no resolving, and for a divisor
+    /// that will not parse, which has nothing to show -- that one reports
+    /// itself on the status line at Enter, like every other bad field.
+    pub(super) fn resolved(&self) -> Option<Cents> {
+        is_share(self.field.value())
+            .then(|| self.parse().ok())
+            .flatten()
+    }
+
+    /// The note drawn beside the field: `= ` and what a `/N` resolves to.
+    pub(super) fn note(&self) -> String {
+        self.resolved()
+            .map(|cents| format!("= {}", crate::demo::whole_figure(cents)))
+            .unwrap_or_default()
+    }
+
+    /// The field's text as drawn. The one amount field that can be holding
+    /// something other than an amount: `/12` is a count, and counts are not
+    /// scrambled. What it divides is scrambled wherever the form shows it,
+    /// and [`ShareField::note`] puts the answer beside the field scrambled
+    /// too -- so scrambling the divisor as well would leave the field with no
+    /// visible feedback at all, and `/12` and `/2` would read the same right
+    /// up to Enter.
+    pub(super) fn display(&self) -> String {
+        let raw = self.field.value();
+        match is_share(raw) {
+            true => raw.to_string(),
+            false => crate::demo::typed(raw),
+        }
+    }
 }
 
 /// What `App`'s shared modal key handler needs from a form.
@@ -1100,8 +1175,7 @@ mod tests {
         }
     }
 
-    /// The divisor is text rather than a keystroke precisely so it can run
-    /// past nine.
+    /// `/12` is a month's worth, so the divisor has to run past nine.
     #[test]
     fn a_share_takes_a_divisor_of_more_than_one_digit() {
         assert_eq!(

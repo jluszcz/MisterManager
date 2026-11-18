@@ -519,6 +519,12 @@ impl App {
         if key.code == KeyCode::F(1)
             || (key.code == KeyCode::Char('?') && !topic.takes_typed_chars())
         {
+            // Help is a key that is not a digit, so it finishes a divisor the
+            // way every other one does -- or the digit typed after closing
+            // help would divide again rather than edit the line it was for.
+            if let Some(Modal::Worksheet(sheet)) = &mut self.modal {
+                sheet.end_divisor();
+            }
             self.help = Some(Help::new(topic));
             return Ok(());
         }

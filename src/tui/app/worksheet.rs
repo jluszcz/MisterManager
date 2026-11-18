@@ -24,26 +24,43 @@ impl App {
         let Some(Modal::Worksheet(sheet)) = &mut self.modal else {
             return Ok(());
         };
-        // `/` waits for the next key: a digit is the fraction operator,
-        // anything else begins a name filter.
-        if sheet.is_pending_slash() {
-            sheet.cancel_pending_slash();
-            return match key.code {
+        // `/` waits for the next key: a digit begins a divisor, anything else
+        // begins a name filter. Once begun, a divisor takes digits for as
+        // long as they come, so `/12` is reachable.
+        if let Some(divisor) = sheet.divisor() {
+            let waiting = divisor.is_empty();
+            match key.code {
                 // The worksheet is a context that takes the editing keys, so
                 // `App::dispatch` lets a `Ctrl` through to reach its date --
                 // and this is one of the two arms here that must not read one
                 // as the letter it arrives as. The other is the operators'.
-                KeyCode::Char(_) if !text::is_bare(key) => Ok(()),
-                KeyCode::Char(c) if c.is_ascii_digit() => {
-                    sheet.divide(c.to_digit(10).expect("checked above") as i64)
+                KeyCode::Char(c) if text::is_bare(key) && c.is_ascii_digit() => {
+                    return sheet.push_divisor_digit(c);
                 }
-                KeyCode::Char(c) => {
+                KeyCode::Backspace if !waiting => return sheet.pop_divisor_digit(),
+                KeyCode::Char(c) if waiting && text::is_bare(key) => {
                     sheet.begin_search();
                     sheet.push_search(c);
-                    Ok(())
+                    return Ok(());
                 }
-                _ => Ok(()),
-            };
+                // A slash nothing followed is abandoned by whatever comes
+                // next, and that key is spent abandoning it.
+                _ if waiting => {
+                    sheet.end_divisor();
+                    return Ok(());
+                }
+                // `Esc` finishes a divisor rather than cancelling the sheet:
+                // the division is already on the lines, and a key pressed to
+                // say "that's the number" must not throw the sheet away.
+                KeyCode::Esc => {
+                    sheet.end_divisor();
+                    return Ok(());
+                }
+                // Anything else finishes it and then means what it always
+                // does -- `Enter` commits the sheet the division is on, and a
+                // `/` begins the next one.
+                _ => sheet.end_divisor(),
+            }
         }
         if sheet.is_searching() {
             search::search_key(sheet, key);
@@ -417,6 +434,47 @@ mod tests {
             .map(|l| l.name.as_str())
             .collect();
         assert_eq!(names, ["Couch"]);
+    }
+
+    /// A divisor keeps taking digits until a key that is not one, and `Esc`
+    /// there finishes it rather than cancelling the sheet the division is
+    /// already on. The key after that is a line edit again.
+    #[test]
+    fn a_two_digit_divisor_divides_and_esc_finishes_it_without_closing_the_sheet() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('A'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('*'));
+        type_str(&mut app, "/10");
+        assert_eq!(worksheet(&app).lines()[0].amount, Cents(5_000));
+
+        press(&mut app, KeyCode::Esc);
+        assert!(worksheet(&app).divisor().is_none());
+        assert_eq!(worksheet(&app).lines()[0].amount, Cents(5_000));
+
+        press(&mut app, KeyCode::Char('7'));
+        assert_eq!(worksheet(&app).lines()[0].amount, Cents(700));
+    }
+
+    /// `?` is a key that is not a digit, so it finishes a divisor too: the
+    /// digit typed once help closes edits the line rather than dividing again.
+    #[test]
+    fn opening_help_finishes_a_divisor() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('A'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('*'));
+        type_str(&mut app, "/1");
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Esc);
+        assert!(worksheet(&app).divisor().is_none());
+
+        press(&mut app, KeyCode::Char('7'));
+        assert_eq!(worksheet(&app).lines()[0].amount, Cents(700));
     }
 
     /// The operator keys are line-editing keys. With the date focused they
