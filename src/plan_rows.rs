@@ -53,6 +53,10 @@ pub enum Target {
     InvestmentPct,
     PinnedExcess,
     Bill(BillId),
+    /// The split profile the Split block is divided by: the block's heading,
+    /// which edits the profile's name. Its shares are the three `*Pct`
+    /// targets above.
+    SplitProfile,
 }
 
 impl Target {
@@ -304,7 +308,6 @@ impl Row {
         Row {
             extra: Extra::Biweekly(b.biweekly),
             target: Some(Target::Bill(b.id)),
-            edit: b.monthly.to_string(),
             counts_as_expense: b.counts_as_expense,
             ..Row::figure(&b.label, b.monthly, depth)
         }
@@ -386,6 +389,9 @@ pub struct Input<'a> {
     /// [`Target::counts_as_expense_key`] says which can -- is neither marked
     /// nor counted, so the two halves cannot come apart.
     pub expense_constants: &'a [Target],
+    /// The active split profile's name, as this medium draws it -- the
+    /// screen masks it under `--demo`, the report draws it as stored.
+    pub split_profile: &'a str,
 }
 
 /// The transfers a payday would write, then `Planning!C1:G41` top to bottom
@@ -577,7 +583,10 @@ pub fn rows(input: &Input) -> Vec<Row> {
     );
 
     rows.push(Row::blank());
-    rows.push(Row::heading("Split"));
+    rows.push(Row {
+        target: Some(Target::SplitProfile),
+        ..Row::heading(&format!("Split · {}", input.split_profile))
+    });
     for (line, cents, pct, target) in [
         (
             Line::FutureHousing,
@@ -696,6 +705,7 @@ mod tests {
             spread_ask_total: Cents::ZERO,
             scrubbed_adhoc: None,
             expense_constants: constants,
+            split_profile: "Default",
         })
     }
 
@@ -729,6 +739,7 @@ mod tests {
             spread_ask_total: Cents::ZERO,
             scrubbed_adhoc: None,
             expense_constants: &[],
+            split_profile: "Default",
         };
         edit(&mut input);
         rows(&input)
@@ -773,9 +784,19 @@ mod tests {
                 "Bills",
                 "Gates",
                 "Waterfall",
-                "Split"
+                "Split · Default"
             ]
         );
+    }
+
+    /// The Split heading carries the profile the block is divided by, and is
+    /// that profile's row: what an editor on it edits is the profile itself.
+    #[test]
+    fn the_split_heading_names_the_profile_and_is_the_profiles_row() {
+        let rows = built(&[], |input| input.split_profile = "Maxed");
+        let heading = at(&rows, "Split · Maxed");
+        assert_eq!(heading.kind, Kind::Heading);
+        assert_eq!(heading.target, Some(Target::SplitProfile));
     }
 
     /// A block's own lines sit one level under its heading, and a line that
@@ -914,6 +935,7 @@ mod tests {
             spread_ask_total: Cents::ZERO,
             scrubbed_adhoc: None,
             expense_constants: &[],
+            split_profile: "Default",
         });
 
         assert_eq!(rows[2].extra, Extra::Gap(Cents::from_dollars(237)));
@@ -941,6 +963,7 @@ mod tests {
             spread_ask_total: Cents::from_dollars(220),
             scrubbed_adhoc: None,
             expense_constants: &[],
+            split_profile: "Default",
         });
 
         assert_eq!(rows[1].kind, Kind::Note);
@@ -1165,6 +1188,7 @@ mod tests {
             spread_ask_total: Cents::ZERO,
             scrubbed_adhoc: None,
             expense_constants: &[],
+            split_profile: "Default",
         });
 
         assert_eq!(at(&rows, "Expenses").extra, Extra::Annual(Cents(i64::MAX)));
@@ -1191,6 +1215,7 @@ mod tests {
                 spread_ask_total: Cents::ZERO,
                 scrubbed_adhoc: None,
                 expense_constants: &[Target::BillPaymentCap, Target::GoalsFloor],
+                split_profile: "Default",
             },
             26,
         );

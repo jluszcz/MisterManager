@@ -150,6 +150,7 @@ pub(super) fn plan_view() -> PlanView {
     PlanView {
         settings,
         expense_constants: Vec::new(),
+        split_profile: "Default".into(),
         housing: vec![Bill {
             id: crate::db::BillId(1),
             label: "Mortgage".into(),

@@ -186,6 +186,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/db/migration.rs` | The frozen v1 baseline and the chain of arms above it, as the `DATABASE` schema `finance-utils`' `sqlite::migrate` applies, with what the owner is told when it cannot. |
 | `src/db/date.rs` | The stored date format, in one place: `iso` writes it, `parse`/`parse_opt` read it back for a `from_row`. |
 | `src/db/bill.rs` | The monthly bill block, labelled — the `Planning!C6:E12` rows, and the owner's mark saying which of them the Biweekly Expenses figure counts. |
+| `src/db/split_profile.rs` | The `split_profile` table — named sets of the three Planning splits, exactly one of them active, which is the set the waterfall divides by. |
 | `src/db/holding.rs` | The `holding` table — a fund held in an investment account, and the balance the owner typed. |
 | `src/db/fund_mix.rs` | The `fund_mix` table — one fund's composition by asset class, plus the name the fund files under, as of the filing both were read from. |
 | `src/db/balance_snapshot.rs` | The `balance_snapshot` and `holding_snapshot` tables — a ledger account's balance per month, and a fund's per account per month. Its writers leave an unchanged figure unwritten, so a run that edits nothing still reads as one that wrote no rows. |
@@ -617,7 +618,7 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
   - **A bill carries its mark as a column and a constant carries it as a key**, because a bill has a
     row of its own and a constant has none. `bill.counts_as_expense` is the first, and
     `bill::set_counts_as_expense` is its one writer for the reason `goal::set_favorite` is its
-    column's: the bill form has no box for it, so `E` would clear a mark the owner never touched.
+    column's: the bill form has no box for it, so `e` would clear a mark the owner never touched.
     The second is `plan_rows::Target::counts_as_expense_key`, which owns both the key and the
     per-period figure the constant contributes — the `gate::Gate` construction, so no call site ever
     pairs them, and `Target::COUNTABLE_AS_EXPENSE` is the list `plan::expense_constants` walks.
@@ -647,11 +648,20 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
 - **The Planning percentages are `BasisPoints`, not `Percent`**, so a split can be `10.5 / 20.5 / 69`.
   `tui::form::parse_percent` is the one place one is typed, and both sinks draw it through
   `BasisPoints::exact_percent`, which is also what `e` prefills.
+- **The three discretionary splits live in `split_profile`, not `setting`, and the active row is
+  the whole of what the waterfall divides by.** The owner keeps several named sets — one while a
+  401k is being funded, one once it is maxed — and switches between them on the Planning screen.
+  The table is in `PRESERVED_TABLES` because the sheet carries one unnamed set: an import writes
+  `F25:F27` into the *active* profile (`import::splits`) and leaves the rest alone. Exactly one row
+  is active — the schema's partial index holds at most one, and `split_profile::{set_active,
+  delete}` never leave none, which is why a missing active row is a corrupt database rather than
+  an unconfigured one and the waterfall has no default to fall back on. Migration arm 23 seeded
+  the first row, `Default`, out of the three settings it then deleted.
 - **The three discretionary splits are bounded as a set and one at a time, at both writers.** Goals
   takes `100 − (fh + rt + inv)`, so a set over 100 leaves it nothing and sends every discretionary
   dollar elsewhere. `tui::planning::write_split` refuses one percentage at a time — the shape the
   form writes, where `parse_percent` has already refused anything outside `0..=100` — and
-  `plan::check_splits` refuses both, the shape an import writes, because `import::cell::as_rate_bp`
+  `plan::check_shares` refuses both, the shape an import writes, because `import::cell::as_rate_bp`
   reads whatever the sheet carries and does not clamp. Both exist because both are writers, and the
   per-field half is what makes the set half mean anything: `150 / -60 / 5` totals 95, and
   `BasisPoints::of` hands that negative to a line unclamped — a real transfer instruction moving money
@@ -757,7 +767,7 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
 - **`mm --demo` replaces absolute figures and owner-entered text, and nothing else.** Every
   absolute dollar figure draws with another figure's digits, keyed on a per-run salt so one amount
   reads the same everywhere; every account name and code, goal name, goal note, recurring-goal name,
-  bill label, fund ticker, fund name and transaction description draws as a same-length pronounceable pseudoword,
+  bill label, split profile name, fund ticker, fund name and transaction description draws as a same-length pronounceable pseudoword,
   keyed the same way so one word reads the same all run. Percentages, dates, counts, the app's own vocabulary, and every match key are
   untouched: a percentage is a shape rather than a sum, a scrambled date is not a date, and a count
   over a list of rows the reader can see would read as a fault. It is display-only and installed

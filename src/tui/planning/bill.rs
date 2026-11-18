@@ -27,7 +27,7 @@ impl BillField {
     }
 }
 
-/// Adding or editing one bill. Backs `a` and `E`.
+/// Adding or editing one bill. Backs `a`, and `e` on a bill row.
 ///
 /// The category is a selector over `Category::ALL` rather than a text field,
 /// so a category the schema's `CHECK` would refuse is unrepresentable.

@@ -40,6 +40,7 @@ row_id!(BatchId, "batch");
 row_id!(AllocationId, "allocation");
 row_id!(BillId, "bill");
 row_id!(HoldingId, "holding");
+row_id!(SplitProfileId, "split_profile");
 
 #[cfg(test)]
 mod tests {

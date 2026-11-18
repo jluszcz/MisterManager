@@ -1,6 +1,7 @@
 use crate::calc::planning::{self, PlanInputs, PlanSettings};
 use crate::db::account;
 use crate::db::setting::key;
+use crate::db::split_profile::{self, Shares};
 use crate::db::{Db, bill, setting, txn};
 use crate::gate::Gate;
 use crate::goal as goal_engine;
@@ -42,6 +43,9 @@ pub fn settings_from_db(db: &Db) -> Result<PlanSettings> {
     // is read through the same `Key<T>` constants, so nothing about which key
     // holds which type is given up to buy them back.
     let s = setting::all(db)?;
+    // The three splits are the active profile's rather than settings, and
+    // have no default: a database always holds an active profile.
+    let split = split_profile::active(db)?.shares;
     Ok(PlanSettings {
         target: s.get_or(key::PLANNING_TARGET, dollars(10_000))?,
         buffer: s.get_or(key::PLANNING_BUFFER, dollars(5_000))?,
@@ -50,9 +54,9 @@ pub fn settings_from_db(db: &Db) -> Result<PlanSettings> {
         bill_payment_pct: s.get_or(key::BILL_PAYMENT_PCT, BasisPoints(4_000))?,
         mom_and_dad_annual: s.get_or(key::MOM_AND_DAD_ANNUAL, dollars(12_000))?,
         goals_floor: s.get_or(key::GOALS_FLOOR, dollars(400))?,
-        future_housing_pct: s.get_or(key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(3_000))?,
-        retirement_pct: s.get_or(key::SPLIT_RETIREMENT_PCT, BasisPoints(2_000))?,
-        investment_pct: s.get_or(key::SPLIT_INVESTMENT_PCT, BasisPoints(1_000))?,
+        future_housing_pct: split.future_housing,
+        retirement_pct: split.retirement,
+        investment_pct: split.investment,
     })
 }
 
@@ -107,11 +111,12 @@ pub fn expense_constants(db: &Db) -> Result<Vec<Target>> {
 /// anything: three shares that sum inside 100 by cancelling each other out is
 /// the arithmetic the set rule assumes cannot happen.
 ///
-/// Read through [`settings_from_db`] so an unset key counts as the default the
-/// waterfall will use rather than as nothing.
-pub fn check_splits(db: &Db) -> Result<()> {
-    let s = settings_from_db(db)?;
-    let (fh, rt, inv) = (s.future_housing_pct, s.retirement_pct, s.investment_pct);
+/// On values rather than the database, because the import has to check the
+/// set it is about to write: the table's `CHECK` would refuse an out-of-range
+/// share with a constraint error, where this names the split and the sheet's
+/// figure.
+pub fn check_shares(shares: Shares) -> Result<()> {
+    let (fh, rt, inv) = (shares.future_housing, shares.retirement, shares.investment);
     for (label, pct) in [
         ("Future Housing", fh),
         ("Retirement", rt),
@@ -125,7 +130,7 @@ pub fn check_splits(db: &Db) -> Result<()> {
             pct.exact_percent()
         );
     }
-    let total = fh + rt + inv;
+    let total = shares.total();
     anyhow::ensure!(
         total <= BasisPoints::ONE,
         "the three splits total {}%, which leaves Goals nothing: \
@@ -533,12 +538,35 @@ mod tests {
         );
     }
 
+    fn shares(fh: i64, rt: i64, inv: i64) -> split_profile::Shares {
+        split_profile::Shares {
+            future_housing: BasisPoints(fh),
+            retirement: BasisPoints(rt),
+            investment: BasisPoints(inv),
+        }
+    }
+
     /// The defaults total 60, so a fresh database is already a set the
     /// waterfall can divide.
     #[test]
     fn the_default_splits_leave_goals_a_share() {
         let db = db::open_in_memory().unwrap();
-        check_splits(&db).unwrap();
+        check_shares(split_profile::active(&db).unwrap().shares).unwrap();
+    }
+
+    /// The waterfall divides by whichever profile the owner last switched
+    /// to, so a switch is a different plan on the very next read.
+    #[test]
+    fn settings_read_the_active_profiles_shares() {
+        let db = db::open_in_memory().unwrap();
+        let maxed = split_profile::insert(&db, "Maxed", shares(1_000, 4_000, 2_000)).unwrap();
+        split_profile::set_active(&db, maxed).unwrap();
+
+        let s = settings_from_db(&db).unwrap();
+
+        assert_eq!(s.future_housing_pct, BasisPoints(1_000));
+        assert_eq!(s.retirement_pct, BasisPoints(4_000));
+        assert_eq!(s.investment_pct, BasisPoints(2_000));
     }
 
     /// A share below zero is the one the set rule cannot catch: it makes
@@ -547,12 +575,9 @@ mod tests {
     /// instruction, since nothing downstream reads a line's sign.
     #[test]
     fn a_split_below_zero_is_refused_even_when_the_three_total_under_a_hundred() {
-        let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(15_000)).unwrap();
-        setting::set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints(-6_000)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(500)).unwrap();
+        let set = shares(15_000, -6_000, 500);
 
-        let err = check_splits(&db).unwrap_err().to_string();
+        let err = check_shares(set).unwrap_err().to_string();
 
         // The first one outside the bound, named as the sheet's own row.
         assert!(
@@ -566,12 +591,9 @@ mod tests {
     /// sheet carries.
     #[test]
     fn a_split_past_a_hundred_is_refused_on_its_own() {
-        let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(10_100)).unwrap();
-        setting::set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints::ZERO).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints::ZERO).unwrap();
+        let set = shares(10_100, 0, 0);
 
-        let err = check_splits(&db).unwrap_err().to_string();
+        let err = check_shares(set).unwrap_err().to_string();
 
         assert!(
             err.contains("101"),
@@ -584,12 +606,9 @@ mod tests {
     /// dollar would go somewhere Goals was meant to have a share of.
     #[test]
     fn splits_totalling_over_one_hundred_are_refused_with_all_three_named() {
-        let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(6_000)).unwrap();
-        setting::set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints(3_000)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(3_000)).unwrap();
+        let set = shares(6_000, 3_000, 3_000);
 
-        let err = check_splits(&db).unwrap_err().to_string();
+        let err = check_shares(set).unwrap_err().to_string();
 
         assert!(err.contains("120"), "the total is not named: {err}");
         for part in ["60", "30"] {
@@ -601,12 +620,9 @@ mod tests {
     /// -- it is only *more* than the remainder that cannot be divided.
     #[test]
     fn splits_landing_exactly_on_one_hundred_are_accepted() {
-        let db = db::open_in_memory().unwrap();
-        setting::set(&db, key::SPLIT_FUTURE_HOUSING_PCT, BasisPoints(5_000)).unwrap();
-        setting::set(&db, key::SPLIT_RETIREMENT_PCT, BasisPoints(3_000)).unwrap();
-        setting::set(&db, key::SPLIT_INVESTMENT_PCT, BasisPoints(2_000)).unwrap();
+        let set = shares(5_000, 3_000, 2_000);
 
-        check_splits(&db).unwrap();
+        check_shares(set).unwrap();
     }
 
     /// An unset key is a waterfall running off the live balance, which is

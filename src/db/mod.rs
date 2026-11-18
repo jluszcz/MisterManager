@@ -25,11 +25,12 @@ mod migration;
 pub mod recurring_goal;
 pub mod recurring_txn;
 pub mod setting;
+pub mod split_profile;
 pub mod txn;
 
 pub use id::{
     AccountId, AllocationId, BatchId, BillId, GoalId, HoldingId, RecurringGoalId, RecurringTxnId,
-    TxnId,
+    SplitProfileId, TxnId,
 };
 
 use anyhow::{Context, Result};
@@ -193,7 +194,7 @@ pub use jluszcz_finance_utils::sqlite::snapshot;
 /// deleted explicitly anyway so this order is self-documenting rather than
 /// relying on a cascade a reader has to go look up.
 ///
-/// **Five tables the schema creates are deliberately not here.** `account`
+/// **Six tables the schema creates are deliberately not here.** `account`
 /// holds the owner's own naming, banding and ordering, which the import no
 /// longer supplies — it writes a row per code and nothing more — so clearing
 /// it would throw that away on every `--replace`. `recurring_txn` only
@@ -204,8 +205,10 @@ pub use jluszcz_finance_utils::sqlite::snapshot;
 /// fund's ticker nor its composition, so a replace has nothing in either to
 /// write back — the owner's typed balances and the fetcher's own cache both
 /// survive it untouched, the same as `account` does. `holding_snapshot` is
-/// the newest: a fund's past balances exist nowhere else, so nothing could
-/// put them back.
+/// there because a fund's past balances exist nowhere else, so nothing could
+/// put them back. `split_profile` is the owner's set of named splits, of
+/// which the sheet carries one unnamed set: the import writes that set into
+/// the active profile rather than clearing the rest.
 ///
 /// `balance_snapshot` *is* here, though the import never writes it: every
 /// figure in it is the ledger's, so a replace that rewrites the ledger leaves
@@ -239,6 +242,7 @@ const PRESERVED_TABLES: &[&str] = &[
     "holding",
     "fund_mix",
     "holding_snapshot",
+    "split_profile",
 ];
 
 /// Whether this database already holds imported data.

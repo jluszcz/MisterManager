@@ -35,7 +35,7 @@ impl Percent {
 /// (`Planning!F19`, `F25:F27`).
 ///
 /// The splits' `0..=100%` bound belongs to `tui::form::parse_percent` and
-/// `plan::check_splits`, which enforce it on the paths where an out-of-range
+/// `plan::check_shares`, which enforce it on the paths where an out-of-range
 /// share would reroute real money; it is not an invariant of the type, and a
 /// gap between two of these is routinely negative.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]

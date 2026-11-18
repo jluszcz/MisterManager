@@ -143,23 +143,12 @@ pub fn update(db: &Db, id: BillId, edit: &BillEdit) -> Result<()> {
     Ok(())
 }
 
-/// Rewrite one bill's monthly amount, which is what the Planning screen's `e`
-/// edits: the row shows an amount, so that is what the one-field editor sets.
-pub fn set_amount(db: &Db, id: BillId, cents: Cents) -> Result<()> {
-    let changed = db.conn.execute(
-        "UPDATE bill SET cents = ?2 WHERE id = ?1",
-        params![id, cents.0],
-    )?;
-    ensure!(changed == 1, "no bill with id {id}");
-    Ok(())
-}
-
 /// Mark or unmark one bill as a biweekly expense, which is what `f` on the
 /// Planning screen presses.
 ///
 /// This column's one writer. It is deliberately not a field on [`BillEdit`],
 /// for the reason `favorite` is not one on a goal's: the bill form has no box
-/// for it, so an `E` that rewrote the whole row would clear a mark the owner
+/// for it, so an `e` that rewrote the whole row would clear a mark the owner
 /// never touched.
 pub fn set_counts_as_expense(db: &Db, id: BillId, counts: bool) -> Result<()> {
     let changed = db.conn.execute(
@@ -332,20 +321,6 @@ mod tests {
         assert_eq!(found.sort, 3, "sort is not the edit's to change");
     }
 
-    /// `e` on a bill row edits the figure the row shows and nothing else.
-    #[test]
-    fn set_amount_leaves_the_label_and_category_alone() {
-        let db = db::open_in_memory().unwrap();
-        let id = insert(&db, &housing("Mortgage", 1_200, 0)).unwrap();
-
-        set_amount(&db, id, Cents::from_dollars(1_500)).unwrap();
-
-        let found = get(&db, id).unwrap();
-        assert_eq!(found.cents, Cents::from_dollars(1_500));
-        assert_eq!(found.label, "Mortgage");
-        assert_eq!(found.category, Category::Housing);
-    }
-
     #[test]
     fn deleting_a_bill_removes_only_that_row() {
         let db = seeded();
@@ -381,16 +356,13 @@ mod tests {
 
     /// `f` writes this column and nothing else does -- it is not a field on
     /// [`BillEdit`], for the reason `favorite` is not one on a goal's: the
-    /// bill form has no box for it, so an `E` that wrote the whole row would
+    /// bill form has no box for it, so an `e` that wrote the whole row would
     /// clear a mark the owner never touched.
     #[test]
     fn set_counts_as_expense_is_that_columns_one_writer() {
         let db = db::open_in_memory().unwrap();
         let id = insert(&db, &other("Coworking", 1_000, 3)).unwrap();
         set_counts_as_expense(&db, id, true).unwrap();
-
-        set_amount(&db, id, Cents::from_dollars(900)).unwrap();
-        assert!(get(&db, id).unwrap().counts_as_expense);
 
         update(
             &db,
@@ -408,10 +380,9 @@ mod tests {
     /// A silent no-op here would let the screen report a delete that did not
     /// happen, and the row would come back on the next reload.
     #[test]
-    fn updating_deleting_or_repricing_a_missing_bill_is_an_error() {
+    fn updating_or_deleting_a_missing_bill_is_an_error() {
         let db = db::open_in_memory().unwrap();
         assert!(delete(&db, BillId(999)).is_err());
-        assert!(set_amount(&db, BillId(999), Cents::ZERO).is_err());
         assert!(set_counts_as_expense(&db, BillId(999), true).is_err());
         assert!(
             update(

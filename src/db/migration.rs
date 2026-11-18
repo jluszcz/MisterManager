@@ -511,7 +511,72 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         // Nothing to move: no existing batch lowered anything.
         data: None,
     },
+    Migration {
+        version: 23,
+        // Named sets of the three Planning splits, one of them active, in
+        // place of the three `planning.split_*` settings. A table rather than
+        // keys because the owner creates as many as they like, and outside
+        // `setting` because a `--replace` clears that table and these are the
+        // owner's rather than the workbook's. The partial index is what holds
+        // the active profile to one; the name index folds case, so `maxed`
+        // and `Maxed` cannot be two entries in a cycle the owner reads by name.
+        sql: "CREATE TABLE split_profile (
+                id                INTEGER PRIMARY KEY,
+                name              TEXT NOT NULL CHECK (length(trim(name)) > 0),
+                future_housing_bp INTEGER NOT NULL CHECK (future_housing_bp BETWEEN 0 AND 10000),
+                retirement_bp     INTEGER NOT NULL CHECK (retirement_bp BETWEEN 0 AND 10000),
+                investment_bp     INTEGER NOT NULL CHECK (investment_bp BETWEEN 0 AND 10000),
+                active            INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1))
+              );
+              CREATE UNIQUE INDEX split_profile_name ON split_profile (name COLLATE NOCASE);
+              CREATE UNIQUE INDEX split_profile_one_active ON split_profile (active)
+                WHERE active = 1;",
+        data: Some(seed_split_profile),
+    },
 ];
+
+/// Arm 23's data half: the three stored splits become the one active
+/// profile, and the keys go.
+///
+/// Every database gets the row, a fresh one included, because the waterfall
+/// reads the active profile and has no default of its own to fall back on.
+/// An unset key takes the default the waterfall used for it when it was a
+/// setting. An unparsable one takes that default too, which is a departure
+/// from arm 19 leaving such a value to be refused by key: there the key
+/// survived the arm and `setting::get` could go on refusing it, where this arm
+/// deletes the key, so the only alternatives are a default or an error that
+/// stops every screen opening over one Planning figure. The default is drawn
+/// on the Split block, where a wrong share is in plain view. A share outside
+/// `0..=100` predates the rules that refuse one and is clamped, for the same
+/// reason: the table's `CHECK` would otherwise refuse to open the database.
+fn seed_split_profile(conn: &Connection) -> Result<()> {
+    const KEYS: [(&str, i64); 3] = [
+        ("planning.split_down_payment_pct", 3_000),
+        ("planning.split_retirement_pct", 2_000),
+        ("planning.split_investment_pct", 1_000),
+    ];
+    let mut shares = [0_i64; 3];
+    for (share, (key, default)) in shares.iter_mut().zip(KEYS) {
+        let stored: Option<String> = conn
+            .query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        *share = stored
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(default)
+            .clamp(0, 10_000);
+    }
+    conn.execute(
+        "INSERT INTO split_profile (name, future_housing_bp, retirement_bp, investment_bp, active)
+         VALUES ('Default', ?1, ?2, ?3, 1)",
+        shares,
+    )?;
+    for (key, _) in KEYS {
+        conn.execute("DELETE FROM setting WHERE key = ?1", [key])?;
+    }
+    Ok(())
+}
 
 /// Arm 19's data half: every stored Planning percentage, whole percent to
 /// basis points.
@@ -669,7 +734,9 @@ mod tests {
         )
         .unwrap();
 
-        apply(&conn, SCHEMA, MIGRATIONS).unwrap();
+        // Through this arm and no further: a later arm moves the three
+        // splits out of `setting` altogether.
+        apply(&conn, SCHEMA, &MIGRATIONS[..=at]).unwrap();
 
         let value = |key: &str| -> String {
             conn.query_row("SELECT value FROM setting WHERE key = ?1", [key], |r| {
@@ -686,6 +753,69 @@ mod tests {
         );
         assert_eq!(value("planning.split_investment_pct"), "ten");
         assert_eq!(value("tax.rate_bp"), "625", "a key the arm never named");
+    }
+
+    /// The arm moving the splits into `split_profile`, against a database
+    /// holding them as settings: the shares arrive as the `Default` profile,
+    /// active, and the keys are gone so nothing can go on reading them.
+    #[test]
+    fn the_split_profile_arm_seeds_default_from_the_stored_splits_and_drops_the_keys() {
+        let conn = at_split_profile_arm(
+            "('planning.split_down_payment_pct', '1050'),
+             ('planning.split_retirement_pct', '2050'),
+             ('planning.split_investment_pct', '6900')",
+        );
+        assert_eq!(
+            seeded(&conn),
+            ("Default".to_string(), 1_050, 2_050, 6_900, 1)
+        );
+        let left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM setting WHERE key LIKE 'planning.split_%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    /// A share the form and the import would both have refused can still sit
+    /// in a database written before either rule, and the table's `CHECK`
+    /// would refuse to hold it -- so the arm clamps rather than leaving the
+    /// owner a database that will not open.
+    #[test]
+    fn a_stored_split_outside_a_share_is_clamped_rather_than_failing_the_open() {
+        let conn = at_split_profile_arm(
+            "('planning.split_down_payment_pct', '15000'),
+             ('planning.split_retirement_pct', '-600')",
+        );
+        assert_eq!(seeded(&conn), ("Default".to_string(), 10_000, 0, 1_000, 1));
+    }
+
+    /// A database brought to just below the split-profile arm, given `rows`
+    /// of `setting`, then taken the rest of the way.
+    fn at_split_profile_arm(rows: &str) -> Connection {
+        const SPLIT_PROFILE_AT: i64 = 23;
+        let at = MIGRATIONS
+            .iter()
+            .position(|arm| arm.version == SPLIT_PROFILE_AT)
+            .expect("the arm that adds split_profile");
+        let conn = Connection::open_in_memory().unwrap();
+        apply(&conn, SCHEMA, &MIGRATIONS[..at]).unwrap();
+        conn.execute_batch(&format!("INSERT INTO setting (key, value) VALUES {rows}"))
+            .unwrap();
+        apply(&conn, SCHEMA, MIGRATIONS).unwrap();
+        conn
+    }
+
+    fn seeded(conn: &Connection) -> (String, i64, i64, i64, i64) {
+        conn.query_row(
+            "SELECT name, future_housing_bp, retirement_bp, investment_bp, active \
+               FROM split_profile",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap()
     }
 
     #[test]

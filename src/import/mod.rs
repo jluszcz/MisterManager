@@ -33,7 +33,7 @@ pub fn sheet(sheets: &mut Sheets, name: &str) -> Result<SheetRange> {
 
 use crate::db::account;
 use crate::db::setting::key;
-use crate::db::{self, AccountId, Db, bill, setting};
+use crate::db::{self, AccountId, Db, bill, setting, split_profile};
 use crate::default_source::Source;
 use crate::rate::BasisPoints;
 use chrono::NaiveDate;
@@ -173,6 +173,30 @@ fn set_default_sources(db: &Db, defaults: &[(Source, AccountId)]) -> Result<()> 
     Ok(())
 }
 
+/// `F25:F27` into the active split profile, and only that one: the sheet
+/// carries one unnamed set, and the owner's other profiles are theirs.
+///
+/// Merged over what the profile already holds, so a sheet carrying only two
+/// of the three leaves the third standing; checked once all three are in,
+/// since that is the set the waterfall will divide. The whole import is one
+/// transaction, so a refusal here takes the rest of it with it.
+fn splits(db: &Db, cells: [Option<BasisPoints>; 3]) -> Result<()> {
+    let profile = split_profile::active(db)?;
+    let mut shares = profile.shares;
+    let [fh, rt, inv] = cells;
+    for (share, cell) in [
+        (&mut shares.future_housing, fh),
+        (&mut shares.retirement, rt),
+        (&mut shares.investment, inv),
+    ] {
+        if let Some(pct) = cell {
+            *share = pct;
+        }
+    }
+    crate::plan::check_shares(shares)?;
+    split_profile::set_shares(db, profile.id, shares)
+}
+
 /// Sheet `Planning` -> settings and the `bill` table. Cell references are in
 /// the comments so the mapping can be checked against the workbook.
 fn planning(db: &Db, sheets: &mut Sheets) -> Result<()> {
@@ -230,24 +254,15 @@ fn planning(db: &Db, sheets: &mut Sheets) -> Result<()> {
         }
     }
 
-    // Fractions, stored as basis points: F19, then F25:F27.
-    for (row, setting_key) in [
-        (18, key::BILL_PAYMENT_PCT),
-        (24, key::SPLIT_FUTURE_HOUSING_PCT),
-        (25, key::SPLIT_RETIREMENT_PCT),
-        (26, key::SPLIT_INVESTMENT_PCT),
-    ] {
-        if let Some(pct) = cell::as_rate_bp(&at(row, 5)) {
-            setting::set(db, setting_key, pct)?;
-        }
+    // Fractions, stored as basis points: F19 as a setting.
+    if let Some(pct) = cell::as_rate_bp(&at(18, 5)) {
+        setting::set(db, key::BILL_PAYMENT_PCT, pct)?;
     }
 
-    // Checked after the writes rather than on the cells themselves: a sheet
-    // carrying only two of the three leaves the third standing at whatever
-    // the database already held, so what the waterfall will actually divide
-    // is only knowable once all three are in. The whole import is one
-    // transaction, so a refusal here takes the rest of it with it.
-    crate::plan::check_splits(db)?;
+    splits(
+        db,
+        [24, 25, 26].map(|row| cell::as_rate_bp(&at(row, 5))), // F25:F27
+    )?;
 
     // And the pin, for the reason the splits are checked at all: `D3` is a
     // hand-typed cell, and what it writes is the figure every line below it
@@ -267,4 +282,62 @@ fn planning(db: &Db, sheets: &mut Sheets) -> Result<()> {
         BasisPoints(intl.0 * 10_000 / equity),
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::split_profile::Shares;
+
+    fn shares(fh: i64, rt: i64, inv: i64) -> Shares {
+        Shares {
+            future_housing: BasisPoints(fh),
+            retirement: BasisPoints(rt),
+            investment: BasisPoints(inv),
+        }
+    }
+
+    #[test]
+    fn the_sheets_splits_land_in_the_active_profile_and_leave_the_others_alone() {
+        let db = db::open_in_memory().unwrap();
+        let first = split_profile::active(&db).unwrap().id;
+        let maxed = split_profile::insert(&db, "Maxed", shares(1_000, 4_000, 2_000)).unwrap();
+        split_profile::set_active(&db, maxed).unwrap();
+
+        splits(
+            &db,
+            [Some(BasisPoints(2_500)), Some(BasisPoints(1_500)), None],
+        )
+        .unwrap();
+
+        assert_eq!(
+            split_profile::get(&db, maxed).unwrap().shares,
+            shares(2_500, 1_500, 2_000),
+            "a cell the sheet leaves blank keeps the profile's own share"
+        );
+        assert_eq!(
+            split_profile::get(&db, first).unwrap().shares,
+            shares(3_000, 2_000, 1_000)
+        );
+    }
+
+    #[test]
+    fn a_sheet_set_over_one_hundred_is_refused_and_writes_nothing() {
+        let db = db::open_in_memory().unwrap();
+        let err = splits(
+            &db,
+            [
+                Some(BasisPoints(6_000)),
+                Some(BasisPoints(3_000)),
+                Some(BasisPoints(3_000)),
+            ],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("120"), "{err}");
+        assert_eq!(
+            split_profile::active(&db).unwrap().shares,
+            shares(3_000, 2_000, 1_000)
+        );
+    }
 }

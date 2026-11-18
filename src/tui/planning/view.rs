@@ -339,6 +339,11 @@ impl Row {
 /// Everything the screen renders, as `App` gathers it.
 pub struct View {
     pub plan: Plan,
+    /// The active split profile's name, already masked for `--demo`.
+    pub split_profile: String,
+    /// How many split profiles there are, which is whether `←`/`→` has
+    /// anywhere to go.
+    pub split_profiles: usize,
     pub settings: PlanSettings,
     pub housing: Vec<Bill>,
     pub other_bills: Vec<Bill>,
@@ -410,6 +415,7 @@ pub(super) fn build(view: &View) -> Result<Vec<Row>> {
         },
         spread_ask_total: view.spread_ask_total,
         scrubbed_adhoc: view.scrubbed_adhoc,
+        split_profile: &view.split_profile,
     });
     let mut rows: Vec<Row> = waterfall
         .iter()
@@ -421,6 +427,17 @@ pub(super) fn build(view: &View) -> Result<Vec<Row>> {
             _ => Row::of(row),
         })
         .collect();
+    // The arrows are this medium's: the page has no key to switch with.
+    if view.split_profiles > 1
+        && let Some(heading) = rows
+            .iter_mut()
+            .find(|r| r.editable == Some(Editable::Constant(Target::SplitProfile)))
+    {
+        // The heading's label ends in the name, so the left arrow goes in front of it.
+        let name_at = heading.label.len() - view.split_profile.len();
+        heading.label.insert_str(name_at, "◀ ");
+        heading.label.push_str(" ▶");
+    }
 
     // Where the money the split just divided lands. Below the figures rather
     // than beside the transfers at the top: this block is read when one of
@@ -452,6 +469,25 @@ mod tests {
 
     use crate::tui::planning::Planning;
     use crate::tui::planning::test_support::*;
+
+    fn split_heading(split_profiles: usize) -> String {
+        let mut v = view(None, None);
+        v.split_profiles = split_profiles;
+        build(&v)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.editable == Some(Editable::Constant(Target::SplitProfile)))
+            .expect("the Split heading is the profile's row")
+            .label
+    }
+
+    /// The arrows say `←`/`→` has somewhere to go, so they are drawn only
+    /// when there is another profile to go to.
+    #[test]
+    fn the_heading_shows_switch_arrows_only_when_there_is_another_profile() {
+        assert_eq!(split_heading(1), "Split · Default");
+        assert_eq!(split_heading(2), "Split · ◀ Default ▶");
+    }
 
     /// One waterfall row in this medium. These tests are about the mapper
     /// rather than the list it maps, so the row is built by hand: what
@@ -1102,7 +1138,7 @@ mod tests {
         targets.dedup();
         assert_eq!(targets.len(), before, "two rows write the same setting");
         assert_eq!(
-            before, 11,
+            before, 12,
             "every Target variant but Bill must have a row: {targets:?}"
         );
     }

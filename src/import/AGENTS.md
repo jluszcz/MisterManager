@@ -149,7 +149,7 @@ group carry recurring-goal months two years ahead of their goal dates.
 | `E19` / `F19` | `key::BILL_PAYMENT_CAP` / `key::BILL_PAYMENT_PCT` |
 | `E20` | `key::MOM_AND_DAD_ANNUAL` |
 | `E24` | `key::GOALS_FLOOR` |
-| `F25:F27` | the split percentages — refused by `plan::check_splits` if any is outside `0..=100` or the three total over 100% |
+| `F25:F27` | the split percentages, written into the active split profile — refused by `plan::check_shares` if any is outside `0..=100` or the three total over 100% |
 | `C7:D12` | the `bill` table — `C7:C8` Housing, `C9:C12` Other |
 | `J3:J4` | `key::INTL_EQUITY_SHARE` — the international target as a share of `J3 + J4`, not either cell on its own; **both cells are required**, and a missing one fails the whole import, as does a pair summing to nothing |
 

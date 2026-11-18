@@ -175,6 +175,8 @@ pub struct PlanView {
     pub spread_ask_total: Cents,
     /// The waterfall constants the owner has marked as biweekly expenses.
     pub expense_constants: Vec<plan_rows::Target>,
+    /// The active split profile's name, which heads the Split block.
+    pub split_profile: String,
 }
 
 /// Everything the report draws, read in one pass.
@@ -420,6 +422,7 @@ fn plan_view(db: &Db, today: NaiveDate, adhoc: NaiveDate) -> Result<PlanView> {
         transfers,
         spread_ask_total,
         expense_constants: plan::expense_constants(db)?,
+        split_profile: crate::db::split_profile::active(db)?.name,
     })
 }
 

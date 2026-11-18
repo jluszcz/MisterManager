@@ -26,6 +26,7 @@ fn waterfall(view: &PlanView) -> Vec<plan_rows::Row> {
         // The report quotes the canonical dates and never `App::adhoc`, so
         // there is no hypothetical balance for a row to name.
         scrubbed_adhoc: None,
+        split_profile: &view.split_profile,
     })
 }
 
