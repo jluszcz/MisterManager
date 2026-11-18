@@ -483,8 +483,8 @@ deferred to nothing.
       `render_with` has masked the text. Concatenating first and masking the result is what turns
       `Cash` into a pseudoword, since the mask scrambles every alphanumeric run it is handed and
       has no way to tell which of them the owner typed.
-    - **The allocation form's amount field is the one field whose text may be either**, so it is the
-      one `display(field)` that asks before masking. `/12` is a count and stays; a typed figure goes
+    - **The allocation and goal-transfer forms' amount fields are the fields whose text may be
+      either**, so they are the `display(field)`s that ask before masking. `/12` is a count and stays; a typed figure goes
       through `demo::typed`. `form::is_share` is the question, beside the `parse_share` that answers
       it for real, so the two cannot come to disagree about what a divisor looks like. Masking it
       too would leave that field with no feedback at all — what it divides is on the line below and
@@ -1313,13 +1313,21 @@ deferred to nothing.
   split over a subset, where `s` divides equally and `/N` divides the pot. `interest_prefill` is
   therefore consulted once, at open, and never re-run from the sheet — the worksheet stays a pure
   function over numbers and never reaches for the policy or the database itself.
-- **`/N` is one arithmetic in two places, and `tui::share_of` is that place.** The worksheet
+- **`/N` is one arithmetic in three places, and `tui::share_of` is that place.** The worksheet
   divides its posted amount across the targeted lines; the allocation form divides the container's
-  unallocated remainder. Same pot and same divisor must give the same figure whichever screen it is
-  typed on, so both go through the one function, which floors to a whole dollar and refuses a
-  non-positive divisor. Where they differ is how the divisor is *read*: the worksheet takes it as
-  the keystroke after `/`, which caps it at nine, while the allocation form's amount is a text
-  field, so `/12` is reachable and `parse_share` is what tells a fraction from a figure. A `/N`
+  unallocated remainder; the goal-transfer form `t` opens divides the source goal's balance. Same
+  pot and same divisor must give the same figure whichever screen it is typed on, so all three go
+  through the one function, which floors to a whole dollar and refuses a
+  non-positive divisor, and both readings of the digits go through `form::parse_divisor`. Where
+  they differ is how the divisor is *typed*: the two forms' amounts are one type, `form::ShareField`,
+  a text field in which `parse_share` tells a fraction from a figure, while the worksheet has no
+  field to type into — digits there edit lines — so it collects the digits after `/` itself and
+  re-divides on each. That is what lets `/2` divide the instant the `2` lands and `/12` still be
+  reachable: `Worksheet::divide` *sets* the targeted lines rather than adding to them, so the last
+  digit's answer is the only one left. The divisor ends at the first key that is not a digit, which
+  then means what it always does — except `Esc`, which only finishes the divisor, since the
+  division is already on the lines and a key pressed to say "that's the number" must not throw the
+  sheet away. A `/N`
   amount floors its cents where a *typed* `12.50` is refused, and the two are not in tension: cents
   typed into a whole-dollar field are a typo, cents left over from a division are arithmetic, and
   they stay in the remainder where the footer reports them.
@@ -1329,7 +1337,10 @@ deferred to nothing.
   on the bill, value, goal, close-out and recurring-goal-entry forms. So the form draws its own
   line naming the container and its remainder, at full precision as the Savings footer does, and
   annotates the amount with what a `/N` resolves to. The remainder is snapshotted at open: the
-  form writes once and closes, and nothing can move the figure while it is up.
+  form writes once and closes, and nothing can move the figure while it is up. The goal-transfer
+  form draws the same line — the key and its pot, the source goal's balance — rather than naming
+  the key in a title already wider than the form, and the amount carries the same `= …`
+  annotation.
 - **The Savings list is two blocks, and only the first one is the owner's to arrange.** Undated
   goals lead, in `goal.sort` order; dated goals follow, soonest first. The two halves are arranged by
   different things — a deadline decides a goal's place for it, and a goal with none is placed by

@@ -6,7 +6,7 @@
 //! render functions at the bottom drawing only.
 
 use super::form::{
-    DateField, Field, Focused, FormFields, Precision, Step, is_share, next_in, parse_share,
+    DateField, Field, Focused, FormFields, Precision, ShareField, Step, next_in,
     parse_whole_amount, step_index, tax_note,
 };
 use super::search::Matcher;
@@ -72,12 +72,10 @@ pub struct AllocationForm {
     pub focus: AllocField,
     goal_name: String,
     container_name: String,
-    /// The container's unallocated remainder, as it stood when the form
-    /// opened. A snapshot is enough: the form writes once and closes, and
-    /// nothing else can move the figure while it is up.
-    unallocated: Cents,
     date: DateField,
-    amount: Field,
+    /// Its pot is the container's unallocated remainder, as it stood when the
+    /// form opened.
+    amount: ShareField,
     note: Field,
 }
 
@@ -97,9 +95,8 @@ impl AllocationForm {
             focus: AllocField::Amount,
             goal_name: goal_name.to_string(),
             container_name: container_name.to_string(),
-            unallocated,
             date: DateField::today(today),
-            amount: Field::default(),
+            amount: ShareField::new(Field::default(), unallocated, Precision::WholeDollars),
             note: Field::default(),
         }
     }
@@ -122,9 +119,12 @@ impl AllocationForm {
             focus: AllocField::Amount,
             goal_name: goal_name.to_string(),
             container_name: container_name.to_string(),
-            unallocated,
             date: DateField::given(today, Some(row.date)),
-            amount: Field::given(row.cents.to_string()),
+            amount: ShareField::new(
+                Field::given(row.cents.to_string()),
+                unallocated,
+                Precision::Cents,
+            ),
             note: Field::given(row.note.clone().unwrap_or_default()),
         }
     }
@@ -133,25 +133,9 @@ impl AllocationForm {
         self.target
     }
 
-    /// How a typed figure is read, which is the one thing the two subjects
-    /// disagree about.
-    fn precision(&self) -> Precision {
-        match self.target {
-            AllocTarget::Insert => Precision::WholeDollars,
-            AllocTarget::Update(_) => Precision::Cents,
-        }
-    }
-
-    /// What a `/N` amount comes to, for the form to show beside the field.
-    ///
-    /// `None` for a typed figure, which needs no resolving, and for a divisor
-    /// that will not parse, which has nothing to show -- that one reports
-    /// itself on the status line at Enter, like every other bad field.
+    /// What a `/N` amount comes to: [`ShareField::resolved`].
     pub fn resolved_share(&self) -> Option<Cents> {
-        let raw = self.amount.value().trim();
-        is_share(raw)
-            .then(|| parse_share(raw, self.unallocated, self.precision()).ok())
-            .flatten()
+        self.amount.resolved()
     }
 
     /// The line under the fields: the pot `/N` divides, and the key that
@@ -172,7 +156,7 @@ impl AllocationForm {
         format!(
             "{} unallocated {} · /N takes 1/N",
             crate::demo::text(&self.container_name),
-            crate::demo::figure(self.unallocated)
+            crate::demo::figure(self.amount.pot())
         )
     }
 
@@ -190,18 +174,7 @@ impl AllocationForm {
     pub fn display(&self, field: AllocField) -> Label {
         Label::plain(match field {
             AllocField::Date => self.date.display(self.focus == AllocField::Date),
-            // The one amount field that can be holding something other than an
-            // amount. `/12` is a count, and counts are not scrambled: what it
-            // divides is the unallocated remainder on the line below, which is
-            // scrambled there, and `resolved_share` puts the answer beside
-            // the field scrambled too. Scrambling the divisor as well would
-            // leave the one field whose text is not a figure with no visible
-            // feedback at all -- `/12` and `/2` would read the same right up
-            // to Enter.
-            AllocField::Amount => match is_share(self.amount.value()) {
-                true => self.amount.value().to_string(),
-                false => crate::demo::typed(self.amount.value()),
-            },
+            AllocField::Amount => self.amount.display(),
             // Prefilled from the stored row by `edit`, so it is owner text the
             // same as a transaction's description -- and the history behind
             // this modal draws the same note through `description::render`.
@@ -217,7 +190,7 @@ impl AllocationForm {
         let note = self.note.value().trim().to_string();
         Ok(AllocationEdit {
             date: self.date.parse()?,
-            cents: parse_share(self.amount.value(), self.unallocated, self.precision())?,
+            cents: self.amount.parse()?,
             // An empty note is no note, not a note that says nothing.
             note: (!note.is_empty()).then_some(note),
         })
@@ -233,7 +206,7 @@ impl FormFields for AllocationForm {
     fn focused(&mut self) -> Focused<'_> {
         match self.focus {
             AllocField::Date => Focused::Date(&mut self.date),
-            AllocField::Amount => Focused::Text(&mut self.amount),
+            AllocField::Amount => Focused::Text(self.amount.field_mut()),
             AllocField::Note => Focused::Text(&mut self.note),
         }
     }
@@ -738,6 +711,9 @@ pub struct GoalTransfer {
 /// unallocated. Returning value to unallocated is `a` with a negative amount;
 /// a second spelling of it here would be a second spelling of an ending.
 ///
+/// The amount is a [`ShareField`], as the allocation form's is. What `/N`
+/// divides is the source goal's balance -- the value there is to move.
+///
 /// Named apart from `form::TransferForm`, which is the cash transfer `t`
 /// opens on the ledgers: one moves money between accounts and the other moves
 /// none at all.
@@ -746,9 +722,9 @@ pub struct GoalTransferForm {
     pub goal_id: GoalId,
     pub focus: GoalTransferField,
     goal_name: String,
-    balance: Cents,
     date: DateField,
-    amount: Field,
+    /// Its pot is the source goal's balance, which the title quotes.
+    amount: ShareField,
     /// Never empty: `App::open_goal_transfer` refuses to open the form over a
     /// container whose only open goal is the one the cursor is on.
     destinations: Vec<(GoalId, String)>,
@@ -782,9 +758,8 @@ impl GoalTransferForm {
             // one arrow away.
             focus: GoalTransferField::Amount,
             goal_name: goal_name.to_string(),
-            balance,
             date: DateField::today(today),
-            amount: Field::default(),
+            amount: ShareField::new(Field::default(), balance, Precision::WholeDollars),
             destinations: siblings,
             destination: 0,
             needle: Field::default(),
@@ -829,14 +804,14 @@ impl GoalTransferForm {
         format!(
             "Move value out of {} ({}) — type or ←/→ destination · Enter save · Esc cancel",
             crate::demo::text(&self.goal_name),
-            crate::demo::figure(self.balance)
+            crate::demo::figure(self.amount.pot())
         )
     }
 
     pub fn display(&self, field: GoalTransferField) -> Label {
         Label::plain(match field {
             GoalTransferField::Date => self.date.display(self.focus == GoalTransferField::Date),
-            GoalTransferField::Amount => crate::demo::typed(self.amount.value()),
+            GoalTransferField::Amount => self.amount.display(),
             GoalTransferField::Destination => self
                 .selected()
                 .map(|(_, name)| crate::demo::text(name).into_owned())
@@ -848,6 +823,11 @@ impl GoalTransferForm {
         })
     }
 
+    /// What a `/N` amount comes to: [`ShareField::resolved`].
+    pub fn resolved_share(&self) -> Option<Cents> {
+        self.amount.resolved()
+    }
+
     pub fn commit(&self) -> Result<GoalTransfer> {
         let (to, _) = self
             .selected()
@@ -855,7 +835,7 @@ impl GoalTransferForm {
         let note = self.note.value().trim().to_string();
         Ok(GoalTransfer {
             date: self.date.parse()?,
-            cents: parse_whole_amount(self.amount.value())?,
+            cents: self.amount.parse()?,
             to: *to,
             // An empty note is no note, the reading the allocation form takes.
             note: (!note.is_empty()).then_some(note),
@@ -900,7 +880,7 @@ impl FormFields for GoalTransferForm {
     fn focused(&mut self) -> Focused<'_> {
         match self.focus {
             GoalTransferField::Date => Focused::Date(&mut self.date),
-            GoalTransferField::Amount => Focused::Text(&mut self.amount),
+            GoalTransferField::Amount => Focused::Text(self.amount.field_mut()),
             GoalTransferField::Destination => Focused::Filter(&mut self.needle),
             GoalTransferField::Note => Focused::Text(&mut self.note),
             GoalTransferField::LowerTarget => Focused::Selector,
@@ -915,10 +895,7 @@ use ratatui::text::Line as TextLine;
 ///
 /// One line taller than the other two forms here, for the pot `/N` divides.
 pub fn render_allocation(frame: &mut Frame, form: &mut AllocationForm) {
-    let share = form
-        .resolved_share()
-        .map(|cents| format!("= {}", crate::demo::whole_figure(cents)))
-        .unwrap_or_default();
+    let share = form.amount.note();
     let caret = form.caret();
     let mut lines = field_stack(
         &AllocField::ORDER,
@@ -952,16 +929,26 @@ pub fn render_goal(frame: &mut Frame, form: &mut GoalForm) {
 
 /// Draws the move-value-to-another-goal modal: `t`'s form.
 pub fn render_goal_transfer(frame: &mut Frame, form: &mut GoalTransferForm) {
+    let share = form.amount.note();
     let note = form.destination_note();
     let caret = form.caret();
-    let lines = field_stack(
+    let mut lines = field_stack(
         &GoalTransferField::ORDER,
         form.focus,
         caret,
         GoalTransferField::label,
         |f| form.display(f),
-        &[(GoalTransferField::Destination, note.as_str())],
+        &[
+            (GoalTransferField::Amount, share.as_str()),
+            (GoalTransferField::Destination, note.as_str()),
+        ],
     );
+    // The title already runs past the form's width, so the key goes where the
+    // allocation form puts its own, and the pot is quoted again beside it.
+    lines.push(TextLine::from(format!(
+        "  /N takes 1/N of {}",
+        crate::demo::figure(form.amount.pot())
+    )));
     render_fields(frame, form.title(), lines);
 }
 
@@ -2159,6 +2146,38 @@ mod tests {
         let mut form = transfer();
         typed_transfer(&mut form, GoalTransferField::Amount, "250.50");
         assert!(form.commit().is_err(), "cents are a typo in a whole field");
+    }
+
+    /// `/N` divides the source goal's balance, flooring to a whole dollar the
+    /// way the allocation form's does, and the form says what it comes to
+    /// before Enter.
+    #[test]
+    fn a_goal_transfer_takes_a_share_of_the_source_goals_balance() {
+        let mut form = GoalTransferForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(60_050),
+            siblings(),
+            day(2026, 8, 16),
+        );
+        typed_transfer(&mut form, GoalTransferField::Amount, "/3");
+        assert_eq!(form.resolved_share(), Some(Cents::from_dollars(200)));
+        assert_eq!(form.commit().unwrap().cents, Cents::from_dollars(200));
+        assert_eq!(form.display(GoalTransferField::Amount).plain_text(), "/3");
+    }
+
+    /// A typed figure needs no resolving, and a divisor that will not parse
+    /// reports itself at Enter rather than beside the field.
+    #[test]
+    fn only_a_valid_share_resolves_on_a_goal_transfer() {
+        let mut form = transfer();
+        typed_transfer(&mut form, GoalTransferField::Amount, "250");
+        assert_eq!(form.resolved_share(), None);
+
+        let mut form = transfer();
+        typed_transfer(&mut form, GoalTransferField::Amount, "/0");
+        assert_eq!(form.resolved_share(), None);
+        assert!(form.commit().is_err());
     }
 
     /// Off unless flipped, so a transfer nobody asked to lower a target with

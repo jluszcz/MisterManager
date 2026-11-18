@@ -83,6 +83,7 @@ color it does not survive a `--replace`.
 
 An allocation's amount takes `/N` for a fraction of the container's unallocated remainder — `/2` is
 half of it, `/12` a twelfth — and the form names the remainder it would divide before committing.
+`t`'s amount takes it too, as a fraction of the goal's balance: `/3` moves a third of it.
 
 `Enter` opens the selected goal's allocation history: every row its balance is the sum of, footed by
 what they come to, so an audit visibly adds up. A figure entered wrongly four batches ago is
@@ -92,7 +93,9 @@ one across containers would move a goal's value with no cash moved between the a
 misdirected allocation is deleted here and re-entered with `a` on the right goal.
 
 `A` opens the allocation worksheet for the container — one amount, a line per goal, and a live
-remaining counter, committed as a single batch that `U` takes back whole. `i` posts interest from
+remaining counter, committed as a single batch that `U` takes back whole. `/N` there sets the
+selected lines to a fraction of the amount, dividing again as each digit lands, and `Esc` finishes
+the divisor. `i` posts interest from
 the container's unallocated remainder, and `n` opens a blank goal (`n`, not `a`, which this screen
 spends on the allocation it is mostly used for).
 

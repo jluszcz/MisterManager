@@ -81,9 +81,9 @@ use jluszcz_finance_utils::money::dollar_sign;
 
 /// One share of `pot`, floored to a whole dollar.
 ///
-/// The `/N` operator both screens offer: the worksheet divides its posted
-/// amount across the selected lines, and the allocation form divides the
-/// container's unallocated remainder. One function so the two cannot drift --
+/// The `/N` operator: the worksheet divides its posted amount across the
+/// selected lines, and [`form::ShareField`] divides a form's pot. One
+/// function so the two cannot drift --
 /// the same pot and the same divisor must give the same figure whichever
 /// screen it is typed on.
 ///
