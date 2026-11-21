@@ -1351,7 +1351,7 @@ mod tests {
             },
         )
         .unwrap();
-        goal::insert_allocation(&db, taxed, day(2026, 1, 1), Cents(106_500), None, None).unwrap();
+        goal::insert_allocation(&db, taxed, day(2026, 1, 1), Cents(106_300), None, None).unwrap();
 
         let spread = spread_goals(&db, Reading::Strict).unwrap();
 

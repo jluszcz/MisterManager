@@ -544,7 +544,7 @@ pub(super) fn parse_percent(raw: &str) -> Result<BasisPoints> {
     Ok(value)
 }
 
-/// What a base comes to once the tax lambda has had it -- the note the goal
+/// What a base comes to once `calc::tax` has had it -- the note the goal
 /// form's Target and the recurring-goal form's Base both draw past the caret,
 /// in the same words, so the two forms answer the same question the same way.
 ///

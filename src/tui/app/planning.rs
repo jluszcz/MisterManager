@@ -2512,10 +2512,9 @@ mod tests {
             .find(|(g, _)| g.id == id)
             .unwrap_or_else(|| panic!("no plug entry for the taxed goal"));
 
-        // 1,000 taxed at 6.25% is 1,062.50, carried up to 1,065 by the
-        // lambda's $5 increment. Funded to the base, the goal still lacks
-        // the $65 of tax.
-        assert_eq!(*ask, Cents::from_dollars(65));
+        // 1,000 taxed at 6.25% is 1,062.50, carried up to 1,063. Funded to
+        // the base, the goal still lacks the $63 of tax.
+        assert_eq!(*ask, Cents::from_dollars(63));
     }
 
     /// An undated goal has no runway to divide, so it asks for nothing and

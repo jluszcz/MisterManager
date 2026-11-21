@@ -511,7 +511,7 @@ impl App {
                 container_account_id: container,
                 // The entry's base and its flag, handed across rather than
                 // spent: a goal made from a taxed entry is indistinguishable
-                // from one the owner marked taxed by hand, and the lambda runs
+                // from one the owner marked taxed by hand, and `calc::tax` runs
                 // once, on read.
                 base_cents: entry.base_cents,
                 goal_date: Some(*goal_date),
@@ -817,7 +817,7 @@ mod tests {
     /// The picker hands the flag across rather than spending it, so the screen
     /// shows the derived target while the table holds the base.
     #[test]
-    fn only_a_taxed_catalog_entry_goes_through_the_tax_lambda() {
+    fn only_a_taxed_catalog_entry_is_taxed() {
         let mut app = app();
         setting::set(&app.db, key::TAX_RATE, crate::rate::BasisPoints(625)).unwrap();
         for (name, taxed) in [("Rolex", true), ("Dropbox", false)] {
@@ -846,12 +846,12 @@ mod tests {
                 .unwrap_or_else(|| panic!("no goal named {name}"))
                 .goal
         };
-        // 9,000 × 1.0625 = 9,562.50, rounded up to the next $5.
-        assert_eq!(target("Rolex"), Cents::from_dollars(9_565));
+        // 9,000 × 1.0625 = 9,562.50, rounded up to the next dollar.
+        assert_eq!(target("Rolex"), Cents::from_dollars(9_563));
         assert_eq!(target("Dropbox"), Cents::from_dollars(9_000));
 
         // ...and what the *table* holds is the base and the flag, handed
-        // across rather than spent: the lambda runs on read, so a goal made
+        // across rather than spent: `calc::tax` runs on read, so a goal made
         // from a taxed entry is indistinguishable from one the owner marked
         // taxed by hand, and nothing can tax the taxed figure a second time.
         let stored = |name: &str| {
