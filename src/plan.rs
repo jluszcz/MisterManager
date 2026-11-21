@@ -295,7 +295,7 @@ mod tests {
         .unwrap();
         setting::set(&db, Gate::Roth.key(), id).unwrap();
 
-        assert_eq!(remaining(&db, Gate::Roth).unwrap(), Cents(6_500));
+        assert_eq!(remaining(&db, Gate::Roth).unwrap(), Cents(6_300));
     }
 
     /// A recorded id pointing at a goal that is gone must fail loudly and

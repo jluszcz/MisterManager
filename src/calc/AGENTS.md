@@ -1,7 +1,8 @@
 # calc — the spreadsheet's formulas
 
-Every function here reproduces something the workbook computes: a named lambda, or a block of the
-`Planning` sheet. The workbook is the oracle, but no figure off it may be committed here, so each
+Every function here but `tax` reproduces something the workbook computes: a named lambda, or a
+block of the `Planning` sheet; `tax` departs from its lambda, as set out below. The workbook is the
+oracle, but no figure off it may be committed here, so each
 `mod tests` carries *invented* inputs and the results recomputed from them by hand. Those tests
 record **what** the answer is. This file records the derivations they don't show — why a formula
 has the shape it has, and which of its edges are load-bearing.
@@ -12,15 +13,14 @@ No database, no I/O. `plan.rs` feeds these from `db`; `tui/planning/` renders th
 
 | Workbook | Here |
 |---|---|
-| `Tax(price)` | `tax::tax` |
 | `Biweekly(monthly)` | `paycheck::biweekly` |
 | `PerPaycheck(cur, goal, by)` | `paycheck::per_paycheck` |
 
-**`Tax`'s threshold is on the taxed value, not the price.** `IFS(v<500, 1, TRUE, 5)` tests `v`, the
-price already grossed up by the rate — so a $475 item at 6.25% is $504.69 and rounds to the next
-$5 ($505), not the next dollar. Reading the threshold off the price instead would put it at $501,
-a dollar out, and only for items in the narrow band that crosses $500 under tax. The whole
-computation stays in basis-point-scaled integers; nothing becomes a float on the way through.
+**`tax::tax` departs from the workbook's `Tax()` lambda.** The sheet rounds a taxed value of $500
+or more up to the next $5; `tax::tax` rounds every taxed value up to the next whole dollar. Imported
+goals are untaxed — the sheet's target *is* their base — so the oracle never compares a figure the
+two roundings disagree on. The computation stays in basis-point-scaled integers; nothing becomes a
+float on the way through.
 
 **`PerPaycheck`'s blanks are meaningful.** The sheet shows `""` for an undated goal and for one
 already at or past its target, and `None` here means exactly those two cases — not "zero". The

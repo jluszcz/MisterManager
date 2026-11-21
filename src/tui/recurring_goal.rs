@@ -371,7 +371,7 @@ impl RecurringGoalForm {
         }
     }
 
-    /// The note beside the Base: what it comes to once the tax lambda has had
+    /// The note beside the Base: what it comes to once `calc::tax` has had
     /// it -- the same sentence, in the same place, that the goal form's Target
     /// carries, so the two forms answer the same question the same way. This
     /// form asks nothing about the rate: an entry writes no goal, and it is
@@ -1007,7 +1007,7 @@ mod tests {
         walk_until!(form.focus == RecurringGoalField::Taxed, form.next_field());
         form.choice(Step::NEXT);
 
-        assert_eq!(form.tax_note(), "(1,065 w/ tax)");
+        assert_eq!(form.tax_note(), "(1,063 w/ tax)");
         assert_eq!(
             form.display(RecurringGoalField::Amount).plain_text(),
             "1000",

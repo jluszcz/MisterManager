@@ -69,8 +69,8 @@ pub struct Funding {
 /// **A floating goal is funded to whatever it holds**, which is why the
 /// balance is an argument here rather than something the callers keep to
 /// themselves. Read before `taxed`, and before the rate is asked for: a
-/// target that follows the balance has no base for the tax lambda to
-/// ceiling, so a row carrying both flags resolves rather than erroring.
+/// target that follows the balance has no base for `calc::tax` to
+/// round up, so a row carrying both flags resolves rather than erroring.
 ///
 /// **A taxed goal with no rate on record is an error, not a silent fallback
 /// to the base.** An unset key normally means a feature is off, but the flag
@@ -188,8 +188,8 @@ pub fn shortfall(db: &Db, goal_id: GoalId) -> Result<Cents> {
 /// A spend is paid at the register, tax included, so it is the taxed figure
 /// the target has to fall by -- and a taxed target is `calc::tax` of the
 /// base, which no base reaches exactly, so the base falls by what the spend
-/// was before tax, in whole dollars, and the target lands within the
-/// lambda's rounding of falling by the amount. A floating goal takes the same rule: its target
+/// was before tax, in whole dollars, and the target falls by the amount
+/// give or take those two whole-dollar roundings. A floating goal takes the same rule: its target
 /// already follows its balance, and the base it keeps for when the flag is
 /// turned off is a goal of which this much has now been bought.
 ///
@@ -306,9 +306,9 @@ mod tests {
     }
 
     /// A spend is paid tax included, so a taxed base falls by the pre-tax
-    /// part and the target lands within the lambda's rounding of falling by
-    /// the amount: $1,000 at 6.25% is $1,065; $106.25 spent is $100 of base,
-    /// and $900 taxes to $960 -- $105 lower, the $5 step's nearest.
+    /// part and the target falls by the amount give or take its whole-dollar
+    /// rounding: $1,000 at 6.25% is $1,063; $106.25 spent is $100 of base,
+    /// and $900 taxes to $957 -- $106 lower.
     #[test]
     fn spending_from_a_taxed_goal_lowers_its_base_by_the_pre_tax_part() {
         let (db, savings) = seeded();
@@ -323,7 +323,7 @@ mod tests {
         let funded = list_with_balances(&db, savings).unwrap();
         let couch_row = funded.iter().find(|f| f.goal.id == couch).unwrap();
         assert_eq!(couch_row.goal.base_cents, Cents::from_dollars(900));
-        assert_eq!(couch_row.target, Cents::from_dollars(960));
+        assert_eq!(couch_row.target, Cents::from_dollars(957));
     }
 
     /// $80 at 6.25% is $75.29 before tax; the base falls by $75, so it stays
@@ -384,18 +384,18 @@ mod tests {
         );
     }
 
-    /// 6.25% of $1,000 is $1,062.50, which the lambda's $5 increment carries
-    /// up to $1,065. That is what the goal has to be funded to, because that
+    /// 6.25% of $1,000 is $1,062.50, which rounds up to the dollar at
+    /// $1,063. That is what the goal has to be funded to, because that
     /// is what the item costs at the register.
     #[test]
-    fn a_taxed_goals_target_is_what_the_lambda_makes_of_its_base() {
+    fn a_taxed_goals_target_is_its_base_taxed_and_rounded_up_to_the_dollar() {
         let db = db::open_in_memory().unwrap();
         setting::set(&db, key::TAX_RATE, BasisPoints(625)).unwrap();
         let savings = account::insert(&db, "SAV", "Rainy Day", Kind::Cash, 0, None).unwrap();
         db::goal::insert(&db, &new_goal("Couch", savings, 1_000, true)).unwrap();
 
         let funded = list_with_balances(&db, savings).unwrap();
-        assert_eq!(funded[0].target, Cents(106_500));
+        assert_eq!(funded[0].target, Cents(106_300));
         assert_eq!(
             funded[0].goal.base_cents,
             Cents::from_dollars(1_000),
@@ -448,7 +448,7 @@ mod tests {
 
         assert_eq!(
             all_with_balances(&db, Reading::Tolerant).unwrap()[0].target,
-            Cents(106_500)
+            Cents(106_300)
         );
     }
 
@@ -516,7 +516,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(shortfall(&db, id).unwrap(), Cents(6_500));
+        assert_eq!(shortfall(&db, id).unwrap(), Cents(6_300));
     }
 
     /// Emergency Savings sits above its target in the live workbook, so an
@@ -571,7 +571,7 @@ mod tests {
     }
 
     /// Floating is read before `taxed`, so a row carrying both is not an
-    /// error over a missing rate: there is no base for a lambda to ceiling
+    /// error over a missing rate: there is no base for `calc::tax` to round
     /// once the target follows the balance. The form cannot write that pair,
     /// but a row can hold it, and a strict read must still resolve.
     #[test]

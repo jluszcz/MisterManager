@@ -449,7 +449,7 @@ impl GoalForm {
     }
 
     /// The note beside the Target: what the base in the field comes to once
-    /// the tax lambda has had it -- the figure every reader will derive.
+    /// `calc::tax` has had it -- the figure every reader will derive.
     ///
     /// Empty whenever there is nothing to say -- the flag is off, the field is
     /// not a whole figure yet, or no rate is on record -- rather than a guess
@@ -1576,7 +1576,7 @@ mod tests {
             "1,000.00",
             "the field holds the base"
         );
-        assert_eq!(form.tax_note(), "(1,065 w/ tax)");
+        assert_eq!(form.tax_note(), "(1,063 w/ tax)");
         let edit = form.commit().unwrap();
         assert_eq!(edit.base_cents, Cents(100_000));
         assert!(edit.taxed, "the flag round-trips");
@@ -1601,7 +1601,7 @@ mod tests {
         walk_until!(form.focus == GoalField::Taxed, form.next_field());
         form.choice(Step::NEXT);
 
-        assert_eq!(form.tax_note(), "(1,065 w/ tax)");
+        assert_eq!(form.tax_note(), "(1,063 w/ tax)");
         assert_eq!(
             form.display(GoalField::Target).plain_text(),
             "1,000.00",

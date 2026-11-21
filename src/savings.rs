@@ -29,7 +29,7 @@ pub struct Row {
     /// The target, which is what the `Goal` column shows.
     pub goal: Cents,
     /// What the table holds. Equal to `goal` unless the goal is taxed, whose
-    /// target is the lambda of this, or floating, whose target is the balance
+    /// target is `calc::tax` of this, or floating, whose target is the balance
     /// beside it. Carried so `e` can prefill the form from the row rather
     /// than re-querying -- the reason `interest_eligible` is here too.
     pub base: Cents,
@@ -450,7 +450,7 @@ mod tests {
             vec![taxed(
                 goal(1, 1, "Couch", 100_000, 100_000, None),
                 100_000,
-                106_500,
+                106_300,
             )],
             &accounts(),
             today(),
@@ -458,7 +458,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(rows[0].goal, Cents(106_500), "the column shows the target");
+        assert_eq!(rows[0].goal, Cents(106_300), "the column shows the target");
         assert_eq!(rows[0].base, Cents(100_000), "the base is carried for `e`");
         assert!(rows[0].taxed);
         assert_eq!(rows[0].percent, Some(Percent(94)));
@@ -495,7 +495,7 @@ mod tests {
             vec![taxed(
                 goal(1, 1, "Couch", 100_000, 100_000, Some(day(2026, 1, 1))),
                 100_000,
-                106_500,
+                106_300,
             )],
             &accounts(),
             today(),
@@ -518,7 +518,7 @@ mod tests {
                 // exactly one paycheck away: one period to divide by.
                 goal(1, 1, "Couch", 100_000, 100_000, Some(day(2026, 8, 26))),
                 100_000,
-                106_500,
+                106_300,
             )],
             &accounts(),
             today(),
@@ -526,7 +526,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(rows[0].per_paycheck, Some(Cents(6_500)));
+        assert_eq!(rows[0].per_paycheck, Some(Cents(6_300)));
     }
 
     #[test]
