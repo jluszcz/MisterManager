@@ -652,8 +652,9 @@ pub struct CloseOut {
 
 /// Ending a goal. Backs `c`.
 ///
-/// The only real field is the destination, and it is a selector rather than a
-/// text field so a goal that does not exist is unrepresentable. The amount is
+/// The only real field is the destination, and it is a selector -- narrowed by
+/// typing, the way `t`'s is -- rather than a text field, so a goal that does
+/// not exist is unrepresentable. The amount is
 /// the goal's whole balance and is deliberately absent: a partial move is two
 /// `a` allocations, and calling that a close-out would leave a goal closed
 /// with money in it.
@@ -666,8 +667,7 @@ pub struct CloseForm {
     date: DateField,
     /// `None` is unallocated, and is always first: abandoning is the ending
     /// that needs no second goal, so it is the safe default.
-    destinations: Vec<(Option<GoalId>, String)>,
-    destination: usize,
+    destination: DestinationPick<Option<GoalId>>,
 }
 
 impl CloseForm {
@@ -691,14 +691,13 @@ impl CloseForm {
             goal_name: goal_name.to_string(),
             balance,
             date: DateField::today(today),
-            destinations,
-            destination: 0,
+            destination: DestinationPick::new(destinations),
         }
     }
 
     pub fn title(&self) -> String {
         format!(
-            "Close out {} ({}) — ←/→ destination · Enter save · Esc cancel",
+            "Close out {} ({}) — type or ←/→ destination · Enter save · Esc cancel",
             crate::demo::text(&self.goal_name),
             crate::demo::figure(self.balance)
         )
@@ -711,8 +710,8 @@ impl CloseForm {
             // the app's own words, never masked -- and every other one names
             // a sibling goal.
             CloseField::Destination => self
-                .destinations
-                .get(self.destination)
+                .destination
+                .selected()
                 .map(|(id, label)| match id {
                     Some(_) => crate::demo::text(label).into_owned(),
                     None => label.clone(),
@@ -721,13 +720,19 @@ impl CloseForm {
         })
     }
 
+    /// What `To` draws past the choice: [`DestinationPick::note`].
+    pub fn destination_note(&self) -> String {
+        self.destination.note()
+    }
+
     pub fn commit(&self) -> Result<CloseOut> {
+        let (to, _) = self
+            .destination
+            .selected()
+            .ok_or_else(|| self.destination.no_match())?;
         Ok(CloseOut {
             date: self.date.parse()?,
-            to: self
-                .destinations
-                .get(self.destination)
-                .and_then(|(id, _)| *id),
+            to: *to,
         })
     }
 }
@@ -740,13 +745,17 @@ impl FormFields for CloseForm {
     // `←`/`→` step the date on one field and cycle the destination on the
     // other, and neither may reach across.
     fn cycle(&mut self, step: Step) {
-        self.destination = step_index(self.destination, self.destinations.len(), step.direction());
+        self.destination.cycle(step);
+    }
+
+    fn refilter(&mut self) {
+        self.destination.refilter();
     }
 
     fn focused(&mut self) -> Focused<'_> {
         match self.focus {
             CloseField::Date => Focused::Date(&mut self.date),
-            CloseField::Destination => Focused::Selector,
+            CloseField::Destination => Focused::Filter(self.destination.needle_mut()),
         }
     }
 }
@@ -997,6 +1006,7 @@ pub fn render_goal_transfer(frame: &mut Frame, form: &mut GoalTransferForm) {
 
 /// Draws the close-out-a-goal modal: `c`'s form.
 pub fn render_close(frame: &mut Frame, form: &mut CloseForm) {
+    let note = form.destination_note();
     let caret = form.caret();
     let lines = field_stack(
         &CloseField::ORDER,
@@ -1004,7 +1014,7 @@ pub fn render_close(frame: &mut Frame, form: &mut CloseForm) {
         caret,
         CloseField::label,
         |f| form.display(f),
-        &[],
+        &[(CloseField::Destination, note.as_str())],
     );
     render_fields(frame, form.title(), lines);
 }
@@ -2055,6 +2065,81 @@ mod tests {
             "— unallocated —",
             "the cycle wraps back to abandon"
         );
+    }
+
+    fn close_out() -> CloseForm {
+        CloseForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(60_000),
+            siblings(),
+            day(2026, 8, 16),
+        )
+    }
+
+    fn typed_close(form: &mut CloseForm, field: CloseField, text: &str) {
+        walk_until!(form.focus == field, form.next_field());
+        for c in text.chars() {
+            form.edit(char_key(c));
+        }
+    }
+
+    fn drawn_close_destination(form: &CloseForm) -> String {
+        form.display(CloseField::Destination).plain_text()
+    }
+
+    /// `c` searches its targets the way `t` does: a few letters rather than
+    /// a run of arrows to the goal at the far end of the container.
+    #[test]
+    fn typing_on_a_close_outs_destination_lands_on_the_first_goal_it_matches() {
+        let mut form = close_out();
+        typed_close(&mut form, CloseField::Destination, "lamp");
+        assert_eq!(drawn_close_destination(&form), "Lamp");
+        assert_eq!(form.destination_note(), "/lamp · 1 of 1");
+        assert_eq!(form.commit().unwrap().to, Some(GoalId(9)));
+    }
+
+    /// The abandon ending is an entry like any other, found by its own words.
+    #[test]
+    fn typing_unallocated_on_a_close_out_finds_the_abandon_ending() {
+        let mut form = close_out();
+        form.choice(Step::NEXT);
+        assert_eq!(drawn_close_destination(&form), "Rug");
+        typed_close(&mut form, CloseField::Destination, "unal");
+        assert_eq!(drawn_close_destination(&form), "— unallocated —");
+        assert_eq!(form.commit().unwrap().to, None);
+    }
+
+    /// An ending is no batch, so `U` cannot take back a close-out made into a
+    /// goal the owner could no longer see; a needle matching nothing refuses
+    /// rather than falling back to abandoning.
+    #[test]
+    fn a_close_out_whose_needle_matches_nothing_refuses_to_commit() {
+        let mut form = close_out();
+        typed_close(&mut form, CloseField::Destination, "zzz");
+        assert_eq!(drawn_close_destination(&form), "");
+        assert_eq!(form.destination_note(), "/zzz · no match");
+        let err = form.commit().unwrap_err().to_string();
+        assert!(err.contains("zzz"), "{err}");
+
+        for _ in 0..3 {
+            form.edit(backspace_key());
+        }
+        assert_eq!(form.commit().unwrap().to, None);
+    }
+
+    #[test]
+    fn an_untyped_close_out_destination_draws_no_note() {
+        assert_eq!(close_out().destination_note(), "");
+    }
+
+    /// The needle belongs to `To`; a character typed on the date is the date's.
+    #[test]
+    fn typing_on_a_close_outs_date_edits_the_date_not_the_destination() {
+        let mut form = close_out();
+        typed_close(&mut form, CloseField::Date, "x");
+        assert_eq!(form.destination_note(), "");
+        assert_eq!(drawn_close_destination(&form), "— unallocated —");
     }
 
     /// The amount is not editable, so the title is where the user reads what

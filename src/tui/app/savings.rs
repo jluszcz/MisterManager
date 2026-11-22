@@ -1146,6 +1146,32 @@ mod tests {
         assert_eq!(last.cents, Cents(25_000));
     }
 
+    /// `c`'s `To` takes typing through the shared form handler the way `t`'s
+    /// does, and `Enter` closes into the goal the needle landed on.
+    #[test]
+    fn typing_on_cs_destination_narrows_it_and_enter_closes_into_the_match() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Down);
+        let balance = app.savings.rows()[1].current;
+        let to = app.savings.rows()[0].goal_id;
+
+        press(&mut app, KeyCode::Char('c'));
+        type_str(&mut app, "zz");
+        press(&mut app, KeyCode::Enter);
+        assert!(app.modal.is_some(), "a needle matching nothing commits");
+        assert!(app.status.contains("no goal matches"), "{}", app.status);
+
+        press(&mut app, KeyCode::Backspace);
+        press(&mut app, KeyCode::Backspace);
+        type_str(&mut app, "cou");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        let last = goal::allocations(&app.db, to).unwrap().pop().unwrap();
+        assert_eq!(last.cents, balance);
+    }
+
     /// A note typed on the form reaches both rows the transfer writes,
     /// after the goal at the other end of each.
     #[test]
