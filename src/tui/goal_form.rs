@@ -2137,7 +2137,10 @@ mod tests {
     #[test]
     fn typing_on_a_close_outs_date_edits_the_date_not_the_destination() {
         let mut form = close_out();
-        typed_close(&mut form, CloseField::Date, "x");
+        walk_until!(form.focus == CloseField::Date, form.next_field());
+        form.edit(backspace_key());
+        typed_close(&mut form, CloseField::Date, "7");
+        assert_eq!(form.commit().unwrap().date, day(2026, 8, 17));
         assert_eq!(form.destination_note(), "");
         assert_eq!(drawn_close_destination(&form), "— unallocated —");
     }
@@ -2235,6 +2238,20 @@ mod tests {
         assert_ne!(drawn, "Rug");
         assert_eq!(drawn, crate::demo::text("Rug"));
         // The buffer is untouched: the id, not the name, is what commits.
+        assert_eq!(form.commit().unwrap().to, Some(GoalId(8)));
+    }
+
+    /// A demo draws a sibling as a pseudoword, but the needle is matched
+    /// against the name the owner typed: what is searched is the database,
+    /// and the mask is only how it is drawn. One picker backs `c` and `t`, so
+    /// this pins both.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_close_out_matches_the_needle_against_the_real_name() {
+        crate::demo::install_with_salt(7);
+        let mut form = close_out();
+        typed_close(&mut form, CloseField::Destination, "rug");
+        assert_eq!(drawn_close_destination(&form), crate::demo::text("Rug"));
         assert_eq!(form.commit().unwrap().to, Some(GoalId(8)));
     }
 
