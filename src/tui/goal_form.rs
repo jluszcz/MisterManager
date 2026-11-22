@@ -536,6 +536,95 @@ impl FormFields for GoalForm {
     }
 }
 
+/// The `To` selector a close-out and a goal transfer share: a list of
+/// destinations, the one under the cursor, and a needle typed to narrow them.
+/// A container can hold dozens of goals, and cycling them one `→` at a time is
+/// the slow way to the one at the far end. One type behind both forms, so `c`
+/// and `t` cannot come to search their targets differently.
+///
+/// What commits is still the entry under the cursor, and only while the
+/// needle matches it. The needle is matched against the stored name, never
+/// the masked one a demo draws.
+#[derive(Debug)]
+struct DestinationPick<T> {
+    entries: Vec<(T, String)>,
+    at: usize,
+    needle: Field,
+}
+
+impl<T> DestinationPick<T> {
+    fn new(entries: Vec<(T, String)>) -> DestinationPick<T> {
+        DestinationPick {
+            entries,
+            at: 0,
+            needle: Field::default(),
+        }
+    }
+
+    fn needle_mut(&mut self) -> &mut Field {
+        &mut self.needle
+    }
+
+    /// The indices of the entries the needle leaves standing, in list order --
+    /// every one of them while nothing is typed.
+    fn matches(&self) -> Vec<usize> {
+        let matcher = Matcher::new(self.needle.value());
+        (0..self.entries.len())
+            .filter(|&i| matcher.matches(&self.entries[i].1, &[]))
+            .collect()
+    }
+
+    /// The entry under the cursor, unless the needle has ruled out every one
+    /// of them.
+    fn selected(&self) -> Option<&(T, String)> {
+        self.entries
+            .get(self.at)
+            .filter(|(_, name)| Matcher::new(self.needle.value()).matches(name, &[]))
+    }
+
+    /// What `To` draws past the choice: the needle and where the choice sits
+    /// among its matches. Nothing until something is typed, because an
+    /// unnarrowed list is a plain selector.
+    fn note(&self) -> String {
+        let needle = self.needle.value();
+        if needle.is_empty() {
+            return String::new();
+        }
+        let matches = self.matches();
+        match matches.iter().position(|&i| i == self.at) {
+            Some(at) => format!("/{needle} · {} of {}", at + 1, matches.len()),
+            None => format!("/{needle} · no match"),
+        }
+    }
+
+    /// The cycle is over what the needle left, so a narrowed list wraps within
+    /// its matches.
+    fn cycle(&mut self, step: Step) {
+        let matches = self.matches();
+        if let Some(at) = matches.iter().position(|&i| i == self.at) {
+            self.at = matches[step_index(at, matches.len(), step.direction())];
+        }
+    }
+
+    /// The choice stays put while the needle still matches it, so typing more
+    /// of the name already on screen never moves it; otherwise it lands on
+    /// the first match. A needle matching nothing leaves it where it was, and
+    /// the next `Backspace` that finds it again draws it again.
+    fn refilter(&mut self) {
+        let matches = self.matches();
+        if !matches.contains(&self.at)
+            && let Some(&first) = matches.first()
+        {
+            self.at = first;
+        }
+    }
+
+    /// The error a commit raises when the needle has ruled every entry out.
+    fn no_match(&self) -> anyhow::Error {
+        anyhow::anyhow!("no goal matches {:?}", self.needle.value())
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CloseField {
     Date,
@@ -727,12 +816,7 @@ pub struct GoalTransferForm {
     amount: ShareField,
     /// Never empty: `App::open_goal_transfer` refuses to open the form over a
     /// container whose only open goal is the one the cursor is on.
-    destinations: Vec<(GoalId, String)>,
-    destination: usize,
-    /// Typed on `To` to narrow `destinations`: a container can hold dozens of
-    /// goals, and cycling them one `→` at a time is the slow way to the one
-    /// at the far end. What commits is still the id under `destination`.
-    needle: Field,
+    destination: DestinationPick<GoalId>,
     note: Field,
     /// Off on every open: a transfer that leaves the target alone is the
     /// ordinary one, and a lowered target is the change `U` has to reach to
@@ -760,44 +844,15 @@ impl GoalTransferForm {
             goal_name: goal_name.to_string(),
             date: DateField::today(today),
             amount: ShareField::new(Field::default(), balance, Precision::WholeDollars),
-            destinations: siblings,
-            destination: 0,
-            needle: Field::default(),
+            destination: DestinationPick::new(siblings),
             note: Field::default(),
             lower_target: false,
         }
     }
 
-    /// The indices of the destinations the needle leaves standing, in list
-    /// order -- every one of them while nothing is typed.
-    fn matches(&self) -> Vec<usize> {
-        let matcher = Matcher::new(self.needle.value());
-        (0..self.destinations.len())
-            .filter(|&i| matcher.matches(&self.destinations[i].1, &[]))
-            .collect()
-    }
-
-    /// The destination under the cursor, unless the needle has ruled out
-    /// every one of them.
-    fn selected(&self) -> Option<&(GoalId, String)> {
-        self.destinations
-            .get(self.destination)
-            .filter(|(_, name)| Matcher::new(self.needle.value()).matches(name, &[]))
-    }
-
-    /// What `To` draws past the choice: the needle and where the choice sits
-    /// among its matches. Nothing until something is typed, because an
-    /// unnarrowed list is the selector the form always was.
+    /// What `To` draws past the choice: [`DestinationPick::note`].
     pub fn destination_note(&self) -> String {
-        let needle = self.needle.value();
-        if needle.is_empty() {
-            return String::new();
-        }
-        let matches = self.matches();
-        match matches.iter().position(|&i| i == self.destination) {
-            Some(at) => format!("/{needle} · {} of {}", at + 1, matches.len()),
-            None => format!("/{needle} · no match"),
-        }
+        self.destination.note()
     }
 
     pub fn title(&self) -> String {
@@ -813,6 +868,7 @@ impl GoalTransferForm {
             GoalTransferField::Date => self.date.display(self.focus == GoalTransferField::Date),
             GoalTransferField::Amount => self.amount.display(),
             GoalTransferField::Destination => self
+                .destination
                 .selected()
                 .map(|(_, name)| crate::demo::text(name).into_owned())
                 .unwrap_or_default(),
@@ -830,8 +886,9 @@ impl GoalTransferForm {
 
     pub fn commit(&self) -> Result<GoalTransfer> {
         let (to, _) = self
+            .destination
             .selected()
-            .with_context(|| format!("no goal matches {:?}", self.needle.value()))?;
+            .ok_or_else(|| self.destination.no_match())?;
         let note = self.note.value().trim().to_string();
         Ok(GoalTransfer {
             date: self.date.parse()?,
@@ -850,38 +907,24 @@ impl FormFields for GoalTransferForm {
     }
 
     // `←`/`→` step the date on one field, flip the toggle on another, and
-    // cycle the destination on a third, and none may reach across. The cycle
-    // is over what the needle left, so a narrowed list wraps within its
-    // matches.
+    // cycle the destination on a third, and none may reach across.
     fn cycle(&mut self, step: Step) {
         if self.focus == GoalTransferField::LowerTarget {
             self.lower_target = !self.lower_target;
             return;
         }
-        let matches = self.matches();
-        if let Some(at) = matches.iter().position(|&i| i == self.destination) {
-            self.destination = matches[step_index(at, matches.len(), step.direction())];
-        }
+        self.destination.cycle(step);
     }
 
-    /// The choice stays put while the needle still matches it, so typing more
-    /// of the name already on screen never moves it; otherwise it lands on
-    /// the first match. A needle matching nothing leaves it where it was, and
-    /// the next `Backspace` that finds it again draws it again.
     fn refilter(&mut self) {
-        let matches = self.matches();
-        if !matches.contains(&self.destination)
-            && let Some(&first) = matches.first()
-        {
-            self.destination = first;
-        }
+        self.destination.refilter();
     }
 
     fn focused(&mut self) -> Focused<'_> {
         match self.focus {
             GoalTransferField::Date => Focused::Date(&mut self.date),
             GoalTransferField::Amount => Focused::Text(self.amount.field_mut()),
-            GoalTransferField::Destination => Focused::Filter(&mut self.needle),
+            GoalTransferField::Destination => Focused::Filter(self.destination.needle_mut()),
             GoalTransferField::Note => Focused::Text(&mut self.note),
             GoalTransferField::LowerTarget => Focused::Selector,
         }
