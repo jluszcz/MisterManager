@@ -545,11 +545,19 @@ impl FormFields for GoalForm {
 /// What commits is still the entry under the cursor, and only while the
 /// needle matches it. The needle is matched against the stored name, never
 /// the masked one a demo draws.
+///
+/// A `fallback` is the entry a form opens on that is not a goal -- the
+/// close-out's abandon ending. Once something is typed it ranks behind every
+/// goal the needle matches and is chosen only when none does: its label
+/// shares letters with a great many goal names, and a needle typed towards
+/// one of them must not leave an ending nobody can undo standing under
+/// `Enter`.
 #[derive(Debug)]
 struct DestinationPick<T> {
     entries: Vec<(T, String)>,
     at: usize,
     needle: Field,
+    fallback: Option<usize>,
 }
 
 impl<T> DestinationPick<T> {
@@ -558,6 +566,15 @@ impl<T> DestinationPick<T> {
             entries,
             at: 0,
             needle: Field::default(),
+            fallback: None,
+        }
+    }
+
+    /// Opens on `entries[0]`, which is the fallback.
+    fn with_fallback(entries: Vec<(T, String)>) -> DestinationPick<T> {
+        DestinationPick {
+            fallback: Some(0),
+            ..DestinationPick::new(entries)
         }
     }
 
@@ -565,13 +582,22 @@ impl<T> DestinationPick<T> {
         &mut self.needle
     }
 
-    /// The indices of the entries the needle leaves standing, in list order --
-    /// every one of them while nothing is typed.
+    /// The indices of the entries the needle leaves standing, in list order
+    /// -- every one of them while nothing is typed -- with the fallback moved
+    /// behind the goals once something is.
     fn matches(&self) -> Vec<usize> {
         let matcher = Matcher::new(self.needle.value());
-        (0..self.entries.len())
+        let mut matches: Vec<usize> = (0..self.entries.len())
             .filter(|&i| matcher.matches(&self.entries[i].1, &[]))
-            .collect()
+            .collect();
+        if !self.needle.value().is_empty()
+            && let Some(fallback) = self.fallback
+            && let Some(at) = matches.iter().position(|&i| i == fallback)
+        {
+            matches.remove(at);
+            matches.push(fallback);
+        }
+        matches
     }
 
     /// The entry under the cursor, unless the needle has ruled out every one
@@ -608,13 +634,14 @@ impl<T> DestinationPick<T> {
 
     /// The choice stays put while the needle still matches it, so typing more
     /// of the name already on screen never moves it; otherwise it lands on
-    /// the first match. A needle matching nothing leaves it where it was, and
-    /// the next `Backspace` that finds it again draws it again.
+    /// the first match. The fallback alone does not hold the choice against a
+    /// goal the needle also matches. A needle matching nothing leaves it where
+    /// it was, and the next `Backspace` that finds it again draws it again.
     fn refilter(&mut self) {
         let matches = self.matches();
-        if !matches.contains(&self.at)
-            && let Some(&first) = matches.first()
-        {
+        let holds =
+            matches.contains(&self.at) && (Some(self.at) != self.fallback || matches.len() == 1);
+        if !holds && let Some(&first) = matches.first() {
             self.at = first;
         }
     }
@@ -691,7 +718,7 @@ impl CloseForm {
             goal_name: goal_name.to_string(),
             balance,
             date: DateField::today(today),
-            destination: DestinationPick::new(destinations),
+            destination: DestinationPick::with_fallback(destinations),
         }
     }
 
@@ -2097,6 +2124,35 @@ mod tests {
         assert_eq!(drawn_close_destination(&form), "Lamp");
         assert_eq!(form.destination_note(), "/lamp · 1 of 1");
         assert_eq!(form.commit().unwrap().to, Some(GoalId(9)));
+    }
+
+    /// A goal whose name shares letters with "unallocated" is what the owner
+    /// is typing towards, so the needle lands on it rather than leaving the
+    /// abandon default standing -- an ending is no batch, and an `Enter` that
+    /// abandoned instead of moving could not be taken back.
+    #[test]
+    fn typing_a_goal_name_on_a_close_out_leaves_the_abandon_default() {
+        let mut form = CloseForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(60_000),
+            vec![
+                (GoalId(8), "Rug".to_string()),
+                (GoalId(9), "Allowance".to_string()),
+            ],
+            day(2026, 8, 16),
+        );
+        typed_close(&mut form, CloseField::Destination, "allo");
+        assert_eq!(drawn_close_destination(&form), "Allowance");
+        assert_eq!(form.destination_note(), "/allo · 1 of 2");
+        assert_eq!(form.commit().unwrap().to, Some(GoalId(9)));
+
+        form.choice(Step::NEXT);
+        assert_eq!(
+            drawn_close_destination(&form),
+            "— unallocated —",
+            "the abandon ending is still one arrow past the goals"
+        );
     }
 
     /// The abandon ending is an entry like any other, found by its own words.

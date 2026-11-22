@@ -885,7 +885,7 @@ const FORM: [Entry; 10] = [
     Entry {
         key: "Backspace",
         label: Label::Hidden,
-        detail: "Delete the character before the caret in the focused text field. A choice field ignores it.",
+        detail: "Delete the character before the caret in the focused text field. A choice field ignores it, unless it is one typed into to narrow it -- a close-out's or a goal transfer's destination -- where it rubs out the search.",
     },
     Entry {
         key: "Enter",
