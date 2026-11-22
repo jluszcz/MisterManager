@@ -303,7 +303,7 @@ const SAVINGS: [Entry; 17] = [
     Entry {
         key: "t",
         label: Label::Shared("money"),
-        detail: "Move part of the selected goal's value to another goal in the same container. Both goals stay open -- 'c' is the ending that closes one -- and the pair is one batch, so 'U' takes the whole transfer back. Crossing containers is refused.",
+        detail: "Move part of the selected goal's value to another goal in the same container. Both goals stay open -- 'c' is the ending that closes one -- and the pair is one batch, so 'U' takes the whole transfer back. Type on To to narrow the goals by name. Crossing containers is refused.",
     },
     Entry {
         key: "n",
@@ -318,7 +318,7 @@ const SAVINGS: [Entry; 17] = [
     Entry {
         key: "c",
         label: Label::Shared("goal"),
-        detail: "End the selected goal: return its value to unallocated, or move it to another goal in the same container. Crossing containers is refused.",
+        detail: "End the selected goal: return its value to unallocated, or move it to another goal in the same container. Type on To to narrow the goals by name, unallocated among them. Crossing containers is refused.",
     },
     Entry {
         key: "⇧↑↓",
@@ -885,7 +885,7 @@ const FORM: [Entry; 10] = [
     Entry {
         key: "Backspace",
         label: Label::Hidden,
-        detail: "Delete the character before the caret in the focused text field. A choice field ignores it.",
+        detail: "Delete the character before the caret in the focused text field. A choice field ignores it, unless it is one typed into to narrow it -- a close-out's or a goal transfer's destination -- where it rubs out the search.",
     },
     Entry {
         key: "Enter",

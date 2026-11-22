@@ -536,6 +536,122 @@ impl FormFields for GoalForm {
     }
 }
 
+/// The `To` selector a close-out and a goal transfer share: a list of
+/// destinations, the one under the cursor, and a needle typed to narrow them.
+/// A container can hold dozens of goals, and cycling them one `→` at a time is
+/// the slow way to the one at the far end. One type behind both forms, so `c`
+/// and `t` cannot come to search their targets differently.
+///
+/// What commits is still the entry under the cursor, and only while the
+/// needle matches it. The needle is matched against the stored name, never
+/// the masked one a demo draws.
+///
+/// A `fallback` is the entry a form opens on that is not a goal -- the
+/// close-out's abandon ending. Once something is typed it ranks behind every
+/// goal the needle matches and is chosen only when none does: its label
+/// shares letters with a great many goal names, and a needle typed towards
+/// one of them must not leave an ending nobody can undo standing under
+/// `Enter`.
+#[derive(Debug)]
+struct DestinationPick<T> {
+    entries: Vec<(T, String)>,
+    at: usize,
+    needle: Field,
+    fallback: Option<usize>,
+}
+
+impl<T> DestinationPick<T> {
+    fn new(entries: Vec<(T, String)>) -> DestinationPick<T> {
+        DestinationPick {
+            entries,
+            at: 0,
+            needle: Field::default(),
+            fallback: None,
+        }
+    }
+
+    /// Opens on `entries[0]`, which is the fallback.
+    fn with_fallback(entries: Vec<(T, String)>) -> DestinationPick<T> {
+        DestinationPick {
+            fallback: Some(0),
+            ..DestinationPick::new(entries)
+        }
+    }
+
+    fn needle_mut(&mut self) -> &mut Field {
+        &mut self.needle
+    }
+
+    /// The indices of the entries the needle leaves standing, in list order
+    /// -- every one of them while nothing is typed -- with the fallback moved
+    /// behind the goals once something is.
+    fn matches(&self) -> Vec<usize> {
+        let matcher = Matcher::new(self.needle.value());
+        let mut matches: Vec<usize> = (0..self.entries.len())
+            .filter(|&i| matcher.matches(&self.entries[i].1, &[]))
+            .collect();
+        if !self.needle.value().is_empty()
+            && let Some(fallback) = self.fallback
+            && let Some(at) = matches.iter().position(|&i| i == fallback)
+        {
+            matches.remove(at);
+            matches.push(fallback);
+        }
+        matches
+    }
+
+    /// The entry under the cursor, unless the needle has ruled out every one
+    /// of them.
+    fn selected(&self) -> Option<&(T, String)> {
+        self.entries
+            .get(self.at)
+            .filter(|(_, name)| Matcher::new(self.needle.value()).matches(name, &[]))
+    }
+
+    /// What `To` draws past the choice: the needle and where the choice sits
+    /// among its matches. Nothing until something is typed, because an
+    /// unnarrowed list is a plain selector.
+    fn note(&self) -> String {
+        let needle = self.needle.value();
+        if needle.is_empty() {
+            return String::new();
+        }
+        let matches = self.matches();
+        match matches.iter().position(|&i| i == self.at) {
+            Some(at) => format!("/{needle} · {} of {}", at + 1, matches.len()),
+            None => format!("/{needle} · no match"),
+        }
+    }
+
+    /// The cycle is over what the needle left, so a narrowed list wraps within
+    /// its matches.
+    fn cycle(&mut self, step: Step) {
+        let matches = self.matches();
+        if let Some(at) = matches.iter().position(|&i| i == self.at) {
+            self.at = matches[step_index(at, matches.len(), step.direction())];
+        }
+    }
+
+    /// The choice stays put while the needle still matches it, so typing more
+    /// of the name already on screen never moves it; otherwise it lands on
+    /// the first match. The fallback alone does not hold the choice against a
+    /// goal the needle also matches. A needle matching nothing leaves it where
+    /// it was, and the next `Backspace` that finds it again draws it again.
+    fn refilter(&mut self) {
+        let matches = self.matches();
+        let holds =
+            matches.contains(&self.at) && (Some(self.at) != self.fallback || matches.len() == 1);
+        if !holds && let Some(&first) = matches.first() {
+            self.at = first;
+        }
+    }
+
+    /// The error a commit raises when the needle has ruled every entry out.
+    fn no_match(&self) -> anyhow::Error {
+        anyhow::anyhow!("no goal matches {:?}", self.needle.value())
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CloseField {
     Date,
@@ -563,8 +679,9 @@ pub struct CloseOut {
 
 /// Ending a goal. Backs `c`.
 ///
-/// The only real field is the destination, and it is a selector rather than a
-/// text field so a goal that does not exist is unrepresentable. The amount is
+/// The only real field is the destination, and it is a selector -- narrowed by
+/// typing, the way `t`'s is -- rather than a text field, so a goal that does
+/// not exist is unrepresentable. The amount is
 /// the goal's whole balance and is deliberately absent: a partial move is two
 /// `a` allocations, and calling that a close-out would leave a goal closed
 /// with money in it.
@@ -577,8 +694,7 @@ pub struct CloseForm {
     date: DateField,
     /// `None` is unallocated, and is always first: abandoning is the ending
     /// that needs no second goal, so it is the safe default.
-    destinations: Vec<(Option<GoalId>, String)>,
-    destination: usize,
+    destination: DestinationPick<Option<GoalId>>,
 }
 
 impl CloseForm {
@@ -602,14 +718,13 @@ impl CloseForm {
             goal_name: goal_name.to_string(),
             balance,
             date: DateField::today(today),
-            destinations,
-            destination: 0,
+            destination: DestinationPick::with_fallback(destinations),
         }
     }
 
     pub fn title(&self) -> String {
         format!(
-            "Close out {} ({}) — ←/→ destination · Enter save · Esc cancel",
+            "Close out {} ({}) — type or ←/→ destination · Enter save · Esc cancel",
             crate::demo::text(&self.goal_name),
             crate::demo::figure(self.balance)
         )
@@ -622,8 +737,8 @@ impl CloseForm {
             // the app's own words, never masked -- and every other one names
             // a sibling goal.
             CloseField::Destination => self
-                .destinations
-                .get(self.destination)
+                .destination
+                .selected()
                 .map(|(id, label)| match id {
                     Some(_) => crate::demo::text(label).into_owned(),
                     None => label.clone(),
@@ -632,13 +747,19 @@ impl CloseForm {
         })
     }
 
+    /// What `To` draws past the choice: [`DestinationPick::note`].
+    pub fn destination_note(&self) -> String {
+        self.destination.note()
+    }
+
     pub fn commit(&self) -> Result<CloseOut> {
+        let (to, _) = self
+            .destination
+            .selected()
+            .ok_or_else(|| self.destination.no_match())?;
         Ok(CloseOut {
             date: self.date.parse()?,
-            to: self
-                .destinations
-                .get(self.destination)
-                .and_then(|(id, _)| *id),
+            to: *to,
         })
     }
 }
@@ -651,13 +772,17 @@ impl FormFields for CloseForm {
     // `←`/`→` step the date on one field and cycle the destination on the
     // other, and neither may reach across.
     fn cycle(&mut self, step: Step) {
-        self.destination = step_index(self.destination, self.destinations.len(), step.direction());
+        self.destination.cycle(step);
+    }
+
+    fn refilter(&mut self) {
+        self.destination.refilter();
     }
 
     fn focused(&mut self) -> Focused<'_> {
         match self.focus {
             CloseField::Date => Focused::Date(&mut self.date),
-            CloseField::Destination => Focused::Selector,
+            CloseField::Destination => Focused::Filter(self.destination.needle_mut()),
         }
     }
 }
@@ -727,12 +852,7 @@ pub struct GoalTransferForm {
     amount: ShareField,
     /// Never empty: `App::open_goal_transfer` refuses to open the form over a
     /// container whose only open goal is the one the cursor is on.
-    destinations: Vec<(GoalId, String)>,
-    destination: usize,
-    /// Typed on `To` to narrow `destinations`: a container can hold dozens of
-    /// goals, and cycling them one `→` at a time is the slow way to the one
-    /// at the far end. What commits is still the id under `destination`.
-    needle: Field,
+    destination: DestinationPick<GoalId>,
     note: Field,
     /// Off on every open: a transfer that leaves the target alone is the
     /// ordinary one, and a lowered target is the change `U` has to reach to
@@ -760,44 +880,15 @@ impl GoalTransferForm {
             goal_name: goal_name.to_string(),
             date: DateField::today(today),
             amount: ShareField::new(Field::default(), balance, Precision::WholeDollars),
-            destinations: siblings,
-            destination: 0,
-            needle: Field::default(),
+            destination: DestinationPick::new(siblings),
             note: Field::default(),
             lower_target: false,
         }
     }
 
-    /// The indices of the destinations the needle leaves standing, in list
-    /// order -- every one of them while nothing is typed.
-    fn matches(&self) -> Vec<usize> {
-        let matcher = Matcher::new(self.needle.value());
-        (0..self.destinations.len())
-            .filter(|&i| matcher.matches(&self.destinations[i].1, &[]))
-            .collect()
-    }
-
-    /// The destination under the cursor, unless the needle has ruled out
-    /// every one of them.
-    fn selected(&self) -> Option<&(GoalId, String)> {
-        self.destinations
-            .get(self.destination)
-            .filter(|(_, name)| Matcher::new(self.needle.value()).matches(name, &[]))
-    }
-
-    /// What `To` draws past the choice: the needle and where the choice sits
-    /// among its matches. Nothing until something is typed, because an
-    /// unnarrowed list is the selector the form always was.
+    /// What `To` draws past the choice: [`DestinationPick::note`].
     pub fn destination_note(&self) -> String {
-        let needle = self.needle.value();
-        if needle.is_empty() {
-            return String::new();
-        }
-        let matches = self.matches();
-        match matches.iter().position(|&i| i == self.destination) {
-            Some(at) => format!("/{needle} · {} of {}", at + 1, matches.len()),
-            None => format!("/{needle} · no match"),
-        }
+        self.destination.note()
     }
 
     pub fn title(&self) -> String {
@@ -813,6 +904,7 @@ impl GoalTransferForm {
             GoalTransferField::Date => self.date.display(self.focus == GoalTransferField::Date),
             GoalTransferField::Amount => self.amount.display(),
             GoalTransferField::Destination => self
+                .destination
                 .selected()
                 .map(|(_, name)| crate::demo::text(name).into_owned())
                 .unwrap_or_default(),
@@ -830,8 +922,9 @@ impl GoalTransferForm {
 
     pub fn commit(&self) -> Result<GoalTransfer> {
         let (to, _) = self
+            .destination
             .selected()
-            .with_context(|| format!("no goal matches {:?}", self.needle.value()))?;
+            .ok_or_else(|| self.destination.no_match())?;
         let note = self.note.value().trim().to_string();
         Ok(GoalTransfer {
             date: self.date.parse()?,
@@ -850,38 +943,24 @@ impl FormFields for GoalTransferForm {
     }
 
     // `←`/`→` step the date on one field, flip the toggle on another, and
-    // cycle the destination on a third, and none may reach across. The cycle
-    // is over what the needle left, so a narrowed list wraps within its
-    // matches.
+    // cycle the destination on a third, and none may reach across.
     fn cycle(&mut self, step: Step) {
         if self.focus == GoalTransferField::LowerTarget {
             self.lower_target = !self.lower_target;
             return;
         }
-        let matches = self.matches();
-        if let Some(at) = matches.iter().position(|&i| i == self.destination) {
-            self.destination = matches[step_index(at, matches.len(), step.direction())];
-        }
+        self.destination.cycle(step);
     }
 
-    /// The choice stays put while the needle still matches it, so typing more
-    /// of the name already on screen never moves it; otherwise it lands on
-    /// the first match. A needle matching nothing leaves it where it was, and
-    /// the next `Backspace` that finds it again draws it again.
     fn refilter(&mut self) {
-        let matches = self.matches();
-        if !matches.contains(&self.destination)
-            && let Some(&first) = matches.first()
-        {
-            self.destination = first;
-        }
+        self.destination.refilter();
     }
 
     fn focused(&mut self) -> Focused<'_> {
         match self.focus {
             GoalTransferField::Date => Focused::Date(&mut self.date),
             GoalTransferField::Amount => Focused::Text(self.amount.field_mut()),
-            GoalTransferField::Destination => Focused::Filter(&mut self.needle),
+            GoalTransferField::Destination => Focused::Filter(self.destination.needle_mut()),
             GoalTransferField::Note => Focused::Text(&mut self.note),
             GoalTransferField::LowerTarget => Focused::Selector,
         }
@@ -954,6 +1033,7 @@ pub fn render_goal_transfer(frame: &mut Frame, form: &mut GoalTransferForm) {
 
 /// Draws the close-out-a-goal modal: `c`'s form.
 pub fn render_close(frame: &mut Frame, form: &mut CloseForm) {
+    let note = form.destination_note();
     let caret = form.caret();
     let lines = field_stack(
         &CloseField::ORDER,
@@ -961,7 +1041,7 @@ pub fn render_close(frame: &mut Frame, form: &mut CloseForm) {
         caret,
         CloseField::label,
         |f| form.display(f),
-        &[],
+        &[(CloseField::Destination, note.as_str())],
     );
     render_fields(frame, form.title(), lines);
 }
@@ -2014,6 +2094,113 @@ mod tests {
         );
     }
 
+    fn close_out() -> CloseForm {
+        CloseForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(60_000),
+            siblings(),
+            day(2026, 8, 16),
+        )
+    }
+
+    fn typed_close(form: &mut CloseForm, field: CloseField, text: &str) {
+        walk_until!(form.focus == field, form.next_field());
+        for c in text.chars() {
+            form.edit(char_key(c));
+        }
+    }
+
+    fn drawn_close_destination(form: &CloseForm) -> String {
+        form.display(CloseField::Destination).plain_text()
+    }
+
+    /// `c` searches its targets the way `t` does: a few letters rather than
+    /// a run of arrows to the goal at the far end of the container.
+    #[test]
+    fn typing_on_a_close_outs_destination_lands_on_the_first_goal_it_matches() {
+        let mut form = close_out();
+        typed_close(&mut form, CloseField::Destination, "lamp");
+        assert_eq!(drawn_close_destination(&form), "Lamp");
+        assert_eq!(form.destination_note(), "/lamp · 1 of 1");
+        assert_eq!(form.commit().unwrap().to, Some(GoalId(9)));
+    }
+
+    /// A goal whose name shares letters with "unallocated" is what the owner
+    /// is typing towards, so the needle lands on it rather than leaving the
+    /// abandon default standing -- an ending is no batch, and an `Enter` that
+    /// abandoned instead of moving could not be taken back.
+    #[test]
+    fn typing_a_goal_name_on_a_close_out_leaves_the_abandon_default() {
+        let mut form = CloseForm::new(
+            GoalId(7),
+            "Couch",
+            Cents(60_000),
+            vec![
+                (GoalId(8), "Rug".to_string()),
+                (GoalId(9), "Allowance".to_string()),
+            ],
+            day(2026, 8, 16),
+        );
+        typed_close(&mut form, CloseField::Destination, "allo");
+        assert_eq!(drawn_close_destination(&form), "Allowance");
+        assert_eq!(form.destination_note(), "/allo · 1 of 2");
+        assert_eq!(form.commit().unwrap().to, Some(GoalId(9)));
+
+        form.choice(Step::NEXT);
+        assert_eq!(
+            drawn_close_destination(&form),
+            "— unallocated —",
+            "the abandon ending is still one arrow past the goals"
+        );
+    }
+
+    /// The abandon ending is an entry like any other, found by its own words.
+    #[test]
+    fn typing_unallocated_on_a_close_out_finds_the_abandon_ending() {
+        let mut form = close_out();
+        form.choice(Step::NEXT);
+        assert_eq!(drawn_close_destination(&form), "Rug");
+        typed_close(&mut form, CloseField::Destination, "unal");
+        assert_eq!(drawn_close_destination(&form), "— unallocated —");
+        assert_eq!(form.commit().unwrap().to, None);
+    }
+
+    /// An ending is no batch, so `U` cannot take back a close-out made into a
+    /// goal the owner could no longer see; a needle matching nothing refuses
+    /// rather than falling back to abandoning.
+    #[test]
+    fn a_close_out_whose_needle_matches_nothing_refuses_to_commit() {
+        let mut form = close_out();
+        typed_close(&mut form, CloseField::Destination, "zzz");
+        assert_eq!(drawn_close_destination(&form), "");
+        assert_eq!(form.destination_note(), "/zzz · no match");
+        let err = form.commit().unwrap_err().to_string();
+        assert!(err.contains("zzz"), "{err}");
+
+        for _ in 0..3 {
+            form.edit(backspace_key());
+        }
+        assert_eq!(form.commit().unwrap().to, None);
+    }
+
+    #[test]
+    fn an_untyped_close_out_destination_draws_no_note() {
+        assert_eq!(close_out().destination_note(), "");
+    }
+
+    /// The needle belongs to `To`; a character typed on the date is the date's.
+    #[test]
+    fn typing_on_a_close_outs_date_edits_the_date_not_the_destination() {
+        let mut form = close_out();
+        walk_until!(form.focus == CloseField::Date, form.next_field());
+        form.edit(backspace_key());
+        typed_close(&mut form, CloseField::Date, "7");
+        assert_eq!(form.commit().unwrap().date, day(2026, 8, 17));
+        assert_eq!(form.destination_note(), "");
+        assert_eq!(drawn_close_destination(&form), "— unallocated —");
+    }
+
     /// The amount is not editable, so the title is where the user reads what
     /// is about to move.
     #[test]
@@ -2107,6 +2294,20 @@ mod tests {
         assert_ne!(drawn, "Rug");
         assert_eq!(drawn, crate::demo::text("Rug"));
         // The buffer is untouched: the id, not the name, is what commits.
+        assert_eq!(form.commit().unwrap().to, Some(GoalId(8)));
+    }
+
+    /// A demo draws a sibling as a pseudoword, but the needle is matched
+    /// against the name the owner typed: what is searched is the database,
+    /// and the mask is only how it is drawn. One picker backs `c` and `t`, so
+    /// this pins both.
+    #[cfg(feature = "demo")]
+    #[test]
+    fn a_demo_close_out_matches_the_needle_against_the_real_name() {
+        crate::demo::install_with_salt(7);
+        let mut form = close_out();
+        typed_close(&mut form, CloseField::Destination, "rug");
+        assert_eq!(drawn_close_destination(&form), crate::demo::text("Rug"));
         assert_eq!(form.commit().unwrap().to, Some(GoalId(8)));
     }
 
