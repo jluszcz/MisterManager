@@ -294,6 +294,9 @@ pub struct App {
     /// Overview's scrub, and kept across a reload: an edge left open follows
     /// the history as it grows.
     chart_window: retirement_screen::Window,
+    /// The rate the Retirement screen states a year's withdrawal at. View
+    /// state, like the window above it.
+    withdrawal_rate: crate::rate::BasisPoints,
     /// The `[sec] contact` line from the config file, or `None` when the
     /// section is absent. Carried rather than read per press because it is a
     /// fact about the run, the same standing as `today` -- and because
@@ -431,6 +434,7 @@ impl App {
             retirement: crate::retirement::Retirement::default(),
             history: crate::balance_history::History::default(),
             chart_window: retirement_screen::Window::default(),
+            withdrawal_rate: crate::calc::retirement::DEFAULT_WITHDRAWAL_RATE,
             sec_contact,
             db,
             today,
@@ -1240,6 +1244,7 @@ impl jluszcz_finance_utils::tui::app::App for App {
                 &self.retirement,
                 &self.history,
                 self.chart_window,
+                self.withdrawal_rate,
             ),
         }
 
@@ -2806,7 +2811,7 @@ mod tests {
     /// `the_app_wide_keys_work_from_every_screen` is what holds them up.
     #[test]
     fn every_key_a_screen_handler_matches_appears_in_its_table() {
-        let handlers: [(Topic, &[&str]); 8] = [
+        let handlers: [(Topic, &[&str]); 9] = [
             (Topic::Overview, &["←/→", "⇧←→", "Esc"]),
             (
                 Topic::Ledger,
@@ -2850,6 +2855,7 @@ mod tests {
                 &["[ ]", "Esc", "/", "a", "e", "d", "s", "l"],
             ),
             (Topic::Accounts, &["a", "e", "⇧↑↓"]),
+            (Topic::Retirement, &["[ ]", "{ }", "w", "Esc", "←/→", "e"]),
         ];
         assert_documented(&handlers);
     }

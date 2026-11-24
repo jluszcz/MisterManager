@@ -110,8 +110,8 @@ impl BasisPoints {
     ///
     /// The third question: a share read against a target band drawn from a
     /// rule of thumb, where a hundredth is precision the rule never had and a
-    /// whole point hides a gap of most of one. The Retirement standings and
-    /// milestones are what ask it.
+    /// whole point hides a gap of most of one. The Retirement standings,
+    /// milestones and withdrawal rates are what ask it.
     pub fn tenth_percent(self) -> String {
         let sign = if self.0 < 0 { "-" } else { "" };
         let tenths = (self.0.unsigned_abs() + 5) / 10;

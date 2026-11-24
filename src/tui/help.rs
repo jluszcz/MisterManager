@@ -488,7 +488,7 @@ const RETIREMENT_EDIT: &str = "Edit the salary the savings are a multiple of, an
 /// one of a pair -- `{ }` is the other edge -- and `month` would name half of
 /// it. Both exemptions are stated in the two tests that would otherwise hold
 /// this table to the shared filters.
-const RETIREMENT: [Entry; 5] = [
+const RETIREMENT: [Entry; 6] = [
     Entry {
         key: "[ ]",
         label: Label::Own(GRAPH_START),
@@ -512,6 +512,11 @@ const RETIREMENT: [Entry; 5] = [
         key: "e",
         label: Label::Own("edit"),
         detail: RETIREMENT_EDIT,
+    },
+    Entry {
+        key: "←/→",
+        label: Label::Own("rate"),
+        detail: "Change the rate a year's withdrawal is stated at: 3.0% to 5.0% of what is saved, in half points, before tax. View state only: restarting shows 4.0% again.",
     },
 ];
 
@@ -1606,7 +1611,7 @@ mod tests {
         assert_eq!(Topic::Accounts.footer(), "a add · e edit · ⇧↑↓ move");
         assert_eq!(
             Topic::Retirement.footer(),
-            "[ ] graph start · { } graph end · w graph window · Esc clear · e edit"
+            "[ ] graph start · { } graph end · w graph window · Esc clear · e edit · ←/→ rate"
         );
     }
 

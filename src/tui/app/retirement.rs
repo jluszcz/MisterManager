@@ -1,9 +1,11 @@
 //! Screen 8: retirement savings against the age rule. Nothing on it is
 //! selectable, so it has no cursor and no scroll keys; what the keys move
-//! besides the two settings is the charts' window.
+//! besides the two settings is the charts' window and the withdrawal rate.
 
 use super::App;
+use crate::calc::retirement::WITHDRAWAL_RATES;
 use crate::db::setting::{self, key};
+use crate::tui::form::next_in;
 use crate::tui::modal::Modal;
 use crate::tui::retirement::{RetirementForm, Window, WindowForm};
 use anyhow::Result;
@@ -29,10 +31,16 @@ impl App {
             (KeyCode::Char(']'), Some(extent)) => self.chart_window = window.step_start(1, extent),
             (KeyCode::Char('{'), Some(extent)) => self.chart_window = window.step_end(-1, extent),
             (KeyCode::Char('}'), Some(extent)) => self.chart_window = window.step_end(1, extent),
+            (KeyCode::Left, _) => self.step_withdrawal_rate(-1),
+            (KeyCode::Right, _) => self.step_withdrawal_rate(1),
             (KeyCode::Esc, _) => self.chart_window = Window::default(),
             _ => {}
         }
         Ok(())
+    }
+
+    fn step_withdrawal_rate(&mut self, step: isize) {
+        self.withdrawal_rate = next_in(&WITHDRAWAL_RATES, self.withdrawal_rate, step);
     }
 
     /// With nothing recorded there is no history to hold the window inside,
@@ -129,6 +137,50 @@ mod tests {
                 "no {title} box:\n{screen}"
             );
         }
+    }
+
+    /// The whole row, so a step that moved the rate and not the figure fails.
+    fn withdrawal_line(app: &mut App) -> String {
+        let screen = drawn(app);
+        screen
+            .lines()
+            .find(|l| l.contains("Withdraw "))
+            .unwrap_or_else(|| panic!("no withdrawal:\n{screen}"))
+            .to_string()
+    }
+
+    #[test]
+    fn the_arrows_toggle_the_annual_withdrawals_rate_and_esc_leaves_it() {
+        let mut app = retirement_app();
+        press(&mut app, KeyCode::Char('8'));
+        for (key, rate, figure) in [
+            (None, " 4.0% ", "$13,200"),
+            (Some(KeyCode::Left), " 3.5% ", "$11,550"),
+            (Some(KeyCode::Left), " 3.0% ", "$9,900"),
+            (Some(KeyCode::Left), " 5.0% ", "$16,500"),
+            (Some(KeyCode::Left), " 4.5% ", "$14,850"),
+            (Some(KeyCode::Right), " 5.0% ", "$16,500"),
+            (Some(KeyCode::Right), " 3.0% ", "$9,900"),
+            (Some(KeyCode::Right), " 3.5% ", "$11,550"),
+            (Some(KeyCode::Esc), " 3.5% ", "$11,550"),
+        ] {
+            if let Some(key) = key {
+                press(&mut app, key);
+            }
+            let line = withdrawal_line(&mut app);
+            assert!(line.contains(rate) && line.contains(figure), "{line}");
+        }
+    }
+
+    #[test]
+    fn the_annual_withdrawal_needs_neither_a_birth_date_nor_a_salary() {
+        let mut app = retirement_app();
+        setting::clear(&app.db, key::BIRTH_DATE).unwrap();
+        setting::clear(&app.db, key::ANNUAL_SALARY).unwrap();
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('8'));
+        let line = withdrawal_line(&mut app);
+        assert!(line.contains("$13,200"), "{line}");
     }
 
     /// The terminal height the charts are held to: the boxes above them take

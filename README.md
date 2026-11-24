@@ -211,7 +211,9 @@ they are a multiple of and the birth date the age comes from. The top box says w
 today — `Short` by how much, `On track` inside the range, or `Ahead` — and the table below runs
 from your age to 55, leaving out the milestones already behind you, each with what today's
 savings fall short of it — the dollar target, and the tax-free share of that target — with no
-growth assumed, so a later milestone reads as everything still to save for it. An account that is only partly
+growth assumed, so a later milestone reads as everything still to save for it. The top box also
+estimates a year's withdrawal from today's savings, before tax, at 3.0% to 5.0% in half points:
+`←`/`→` switch the rate, which starts at 4.0% and is not saved. The report's Retirement tab carries the same rates in a dropdown. An account that is only partly
 tax-free, a workplace plan with a Roth side, takes its tax-free part on screen `0`, as a percentage
 (to the hundredth, so `15.5` works) or as a dollar amount — typing into either works out the other from what the account holds, and
 the one you typed last is what is kept. That part counts as tax-free here and in the Funds screen's tax columns.

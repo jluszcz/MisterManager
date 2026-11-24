@@ -140,6 +140,29 @@
     return wrap;
   }
 
+  function pick(b) {
+    var wrap = el("div");
+    var id = "pick" + picks++;
+    var label = el("label", "pick", b.label);
+    label.htmlFor = id;
+    var select = el("select");
+    select.id = id;
+    b.options.forEach(function (o, i) {
+      select.appendChild(new Option(o[0], i, false, i === b.opens));
+    });
+    var shown = el("div");
+    function draw() {
+      shown.textContent = "";
+      shown.appendChild(block(b.options[+select.value][1]));
+    }
+    select.addEventListener("change", draw);
+    draw();
+    label.appendChild(select);
+    wrap.appendChild(label);
+    wrap.appendChild(shown);
+    return wrap;
+  }
+
   function bar(b) {
     var wrap = el("div");
     var track = el("div", "bar");
@@ -287,6 +310,8 @@
         return table(b.class, b.head, b.rows);
       case "Ledger":
         return ledger(b);
+      case "Pick":
+        return pick(b);
       case "Bar":
         return bar(b);
       case "Chart":

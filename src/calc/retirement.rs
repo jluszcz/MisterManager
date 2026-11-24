@@ -1,5 +1,6 @@
 //! Where retirement savings should stand at an age: a multiple of salary, and
-//! the share of it held tax-free.
+//! the share of it held tax-free; and the rates a year's withdrawal from it is
+//! stated at.
 //!
 //! Two anchors, the owner's: 3× and 10% by 35; 5–6× and 15–20% by 45. Every
 //! other age is read off straight lines through them -- one for each end of
@@ -43,6 +44,19 @@ pub fn compact(cents: Cents) -> String {
         format!("{sign}{dollars}")
     }
 }
+
+/// The shares of retirement savings a year's withdrawal may be stated at, in
+/// the order a toggle walks them.
+pub const WITHDRAWAL_RATES: [BasisPoints; 5] = [
+    BasisPoints(300),
+    BasisPoints(350),
+    BasisPoints(400),
+    BasisPoints(450),
+    BasisPoints(500),
+];
+
+/// The one of [`WITHDRAWAL_RATES`] both mediums open on.
+pub const DEFAULT_WITHDRAWAL_RATE: BasisPoints = BasisPoints(400);
 
 /// A multiple of salary in hundredths: `Multiple(340)` is 3.40×.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
