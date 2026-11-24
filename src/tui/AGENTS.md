@@ -34,7 +34,7 @@ forget, and the copy that goes stale is always the one further from the code.
 | `r` | reconcile the ledgers' filtered account against a statement |
 | `l` | link the selected recurring goal entry to an existing goal, on Recurring Goals — no relative elsewhere, so a letter of its own |
 | `[` / `]` | step a month: the filter a screen narrows by, or the date a field holds |
-| `←` / `→` | move the caret in a text field, step a date a day at a time, or cycle the focused selector — see the invariant below; on a screen, the Overview's scrub and the Planning Split block's profile switch |
+| `←` / `→` | move the caret in a text field, step a date a day at a time, or cycle the focused selector — see the invariant below; on a screen, the Overview's scrub, the Planning Split block's profile switch and Retirement's withdrawal rate |
 | `Shift`+`←` / `Shift`+`→` | the same nudge, a week at a time on a date; one choice on a selector |
 | `Shift`+`↑` / `Shift`+`↓` | move the selected row one place in an order kept by hand: a goal on Savings, an account on Accounts |
 | `Ctrl`+a letter | edit the text under the caret, in every box in the app — see the invariant below |
@@ -221,8 +221,9 @@ which the report's Retirement tab draws too, so the screen decides only glyphs a
 chart through `account_label::account_series`, the third exit beside `account_cell` and
 `label_line`, so a line and its legend entry are the account's own color by construction. `e` edits the salary and the birth
 date — the first editor the birth date has, pressed here rather than on Funds, whose target the
-same date sets, because this is the first screen that needs both. The rest of its keys move the
-charts' window, which is view state like the Overview's scrub: `[`/`]` step its start a month,
+same date sets, because this is the first screen that needs both. `←`/`→` cycle the rate a
+year's withdrawal is stated at, view state too, which `Esc` leaves alone. The rest of its keys move
+the charts' window, which is view state like the Overview's scrub: `[`/`]` step its start a month,
 the vocabulary's month step; `{`/`}` step its end, the same keys
 shifted for the window's other edge, which nothing else in the vocabulary has; `Esc` clears it
 back to the whole history; and `w` types both edges into a form — a new letter, because `E`

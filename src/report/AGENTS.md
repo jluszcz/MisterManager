@@ -204,8 +204,9 @@ about a figure, one of them is wrong.
   decides only what this medium has to — a status's tone as `neg`, `mid` or `pos` off the three
   `palette::standing` answers, and a `$` on every dollar figure, cells included, because its
   tables set balances beside multiples and shares and a bare `1,253,067` under `Balance` is one
-  header away from reading as either. **Its two charts are `balance_history::Charts` drawn as
-  inline SVG built in Rust**, the bar's argument again: every coordinate is computed at render
+  header away from reading as either. **A year's withdrawal is a `Block::Pick`**, every rate's
+  figure already in the payload, so the dropdown swaps blocks and computes nothing. **Its two
+  charts are `balance_history::Charts` drawn as inline SVG built in Rust**, the bar's argument again: every coordinate is computed at render
   time, and every line is inked by class (`ln a-<color>`, `ln total`) in `currentColor`, so the
   tokens are the only thing that colors one. They span the whole history, since a page has no key
   to move the screen's window, and share the screen's one scale for the screen's reason. They are

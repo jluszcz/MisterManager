@@ -71,6 +71,13 @@ pub enum Block {
         opens: Option<String>,
         empty: Option<String>,
     },
+    /// One of several blocks, chosen by a dropdown; each option is its label
+    /// and what it shows. `opens` is the index of the one shown first.
+    Pick {
+        label: &'static str,
+        options: Vec<(String, Block)>,
+        opens: usize,
+    },
     /// Segments are `(width %, palette::CLASSES index)`; the legend pairs a
     /// label with the same index.
     Bar {

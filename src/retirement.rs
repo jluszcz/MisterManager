@@ -1,12 +1,12 @@
 //! Retirement savings against the age rule: what the retirement-marked
-//! accounts hold, as a multiple of salary and as a tax-free share, and the
-//! milestone table. In neither medium -- the Retirement screen and the
-//! report's tab both draw this, the way both draw `plan_rows`.
+//! accounts hold, as a multiple of salary, as a tax-free share and as a year's
+//! withdrawal, and the milestone table. In neither medium -- the Retirement
+//! screen and the report's tab both draw this, the way both draw `plan_rows`.
 
 use crate::account_label::Account;
 use crate::calc::{
     self,
-    retirement::{Band, Multiple, Status},
+    retirement::{Band, Multiple, Status, WithdrawalRate},
 };
 use crate::db::account::{self, TaxTreatment};
 use crate::db::setting::{self, key};
@@ -75,6 +75,13 @@ impl Retirement {
 
     pub fn tax_free_share(&self) -> Option<BasisPoints> {
         share(self.tax_free, self.saved)
+    }
+
+    /// A year's income off today's savings at `rate`: before tax, with no
+    /// growth and no contributions assumed, and tax-free money not told apart
+    /// from the rest. Truncated to the cent.
+    pub fn withdrawal(&self, rate: WithdrawalRate) -> Cents {
+        rate.share().of(self.saved)
     }
 
     pub fn now(&self) -> Option<&Row> {
@@ -232,6 +239,24 @@ mod tests {
         .unwrap();
         account::set_retirement(db, id, true).unwrap();
         id
+    }
+
+    #[test]
+    fn the_annual_withdrawal_is_the_rates_share_of_what_is_saved() {
+        let r = Retirement {
+            saved: Cents::from_dollars(330_000),
+            ..Retirement::default()
+        };
+        assert_eq!(
+            WithdrawalRate::ALL.map(|rate| (rate.to_string(), r.withdrawal(rate))),
+            [
+                ("3.0%".to_string(), Cents::from_dollars(9_900)),
+                ("3.5%".to_string(), Cents::from_dollars(11_550)),
+                ("4.0%".to_string(), Cents::from_dollars(13_200)),
+                ("4.5%".to_string(), Cents::from_dollars(14_850)),
+                ("5.0%".to_string(), Cents::from_dollars(16_500)),
+            ]
+        );
     }
 
     #[test]

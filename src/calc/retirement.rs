@@ -1,5 +1,6 @@
 //! Where retirement savings should stand at an age: a multiple of salary, and
-//! the share of it held tax-free.
+//! the share of it held tax-free; and the rates a year's withdrawal from it is
+//! stated at.
 //!
 //! Two anchors, the owner's: 3× and 10% by 35; 5–6× and 15–20% by 45. Every
 //! other age is read off straight lines through them -- one for each end of
@@ -41,6 +42,45 @@ pub fn compact(cents: Cents) -> String {
         format!("{sign}{}K", dollars / 1_000)
     } else {
         format!("{sign}{dollars}")
+    }
+}
+
+/// The share of retirement savings drawn in a year: what stating savings as
+/// an annual income assumes. Every rate is here, in the order a toggle walks
+/// them.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum WithdrawalRate {
+    Three,
+    ThreeAndAHalf,
+    #[default]
+    Four,
+    FourAndAHalf,
+    Five,
+}
+
+impl WithdrawalRate {
+    pub const ALL: [WithdrawalRate; 5] = [
+        WithdrawalRate::Three,
+        WithdrawalRate::ThreeAndAHalf,
+        WithdrawalRate::Four,
+        WithdrawalRate::FourAndAHalf,
+        WithdrawalRate::Five,
+    ];
+
+    pub fn share(self) -> BasisPoints {
+        BasisPoints(match self {
+            WithdrawalRate::Three => 300,
+            WithdrawalRate::ThreeAndAHalf => 350,
+            WithdrawalRate::Four => 400,
+            WithdrawalRate::FourAndAHalf => 450,
+            WithdrawalRate::Five => 500,
+        })
+    }
+}
+
+impl fmt::Display for WithdrawalRate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}%", self.share().tenth_percent())
     }
 }
 

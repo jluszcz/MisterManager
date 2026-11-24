@@ -30,7 +30,7 @@ button.goal:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 /* Figures and dates hold their line and sit right; text wraps at its spaces. */
 .ov>:nth-child(n+2),.lg>:nth-child(4),.sv>:nth-child(2),.sv>:nth-child(3),.sv>:nth-child(4),.pl>:nth-child(n+2),
 .fs>:nth-child(n+2),.fh>:nth-child(2),.rs>:nth-child(2),.rs>:nth-child(3),.rs>:nth-child(4),.rm>:nth-child(n+2),
-.ra>:nth-child(n+3),.hs>:nth-child(3){text-align:right;white-space:nowrap}
+.rw>:nth-child(2),.ra>:nth-child(n+3),.hs>:nth-child(3){text-align:right;white-space:nowrap}
 .lg>:first-child,.sv>:nth-child(5),.fh>:nth-child(3),.hs>:first-child{white-space:nowrap}
 
 /* Overview: the name, then its three figures under the three dates. */
@@ -93,6 +93,7 @@ button.goal:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .rs>:nth-child(n+3):not(.neg):not(.pos):not(.mid){color:var(--mut)}
 .rs>.span{grid-column:1/-1;text-align:left}
 .rs.hd>*{font-size:inherit}
+.rw{grid-template-columns:minmax(0,1fr) auto}
 .rm{grid-template-columns:minmax(0,1fr) auto}
 .rm>:nth-child(1){grid-area:1/1}
 .rm>:nth-child(3){grid-area:1/2}
@@ -129,7 +130,7 @@ svg.chart circle.dot{fill:currentColor;stroke:var(--bg);stroke-width:1.5}
 /* A goal's history: date, note, amount. */
 .hs{grid-template-columns:6rem minmax(0,1fr) auto}
 
-/* The month filter. */
+/* A dropdown: the month filter, the withdrawal rate. */
 label.pick{display:flex;align-items:center;gap:.6rem;margin:.3rem 0 .6rem;font-size:.82rem;color:var(--mut)}
 select{font:inherit;font-size:1rem;color:var(--fg);background:var(--bg);border:1px solid var(--rule);border-radius:8px;padding:6px 10px}
 
@@ -172,6 +173,7 @@ nav.tabs,footer{padding-left:max(16px,env(safe-area-inset-left),calc(50% - 36rem
 .rs>:nth-child(3){text-align:right}
 .rs>:nth-child(5){text-align:left}
 .rs>:nth-child(n+3):not(.neg):not(.pos):not(.mid){color:inherit}
+.rw{grid-template-columns:minmax(0,1fr) 8rem 6rem 8rem 9rem}
 .ra{grid-template-columns:minmax(0,1fr) 8rem 8rem 6rem}
 .ra>:nth-child(2),.ra>:nth-child(4){color:inherit}
 .ra>:nth-child(2){text-align:left}

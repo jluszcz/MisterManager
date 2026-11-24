@@ -10,7 +10,7 @@ use crate::balance_history::{
     self, CASH_TITLE, Charts, History, INVESTMENT_TITLE, NO_HISTORY, Series,
 };
 use crate::calc::Month;
-use crate::calc::retirement::{BAND_DASH, Band, Status};
+use crate::calc::retirement::{BAND_DASH, Band, Status, WithdrawalRate};
 use crate::money::Cents;
 use crate::retirement::Retirement;
 use anyhow::{Result, ensure};
@@ -74,15 +74,21 @@ fn title(r: &Retirement, charts: Option<(Month, Month)>) -> Line<'static> {
 }
 
 /// What the "Where you stand" box holds: the two standings, or the one thing
-/// standing between the owner and them.
-fn standing_lines(r: &Retirement) -> Vec<Line<'static>> {
+/// standing between the owner and them, and under either a year's withdrawal
+/// -- which takes no age and no salary, so it needs only something marked.
+fn standing_lines(r: &Retirement, rate: WithdrawalRate) -> Vec<Line<'static>> {
     if r.held.is_empty() {
         return vec![Line::from(
             "Mark investment accounts as Retirement on Accounts (0)",
         )];
     }
+    let withdrawal = Line::from(format!(
+        "Withdraw  {:>12}   {:>7}   a year",
+        dollars(r.withdrawal(rate)),
+        rate.to_string()
+    ));
     let Some(now) = r.now() else {
-        return vec![Line::from("Press e to set a birth date")];
+        return vec![Line::from("Press e to set a birth date"), withdrawal];
     };
     let saved = match (r.multiple(), r.saved_status()) {
         (Some(multiple), Some((status, short_by))) => Line::from(vec![
@@ -111,7 +117,7 @@ fn standing_lines(r: &Retirement) -> Vec<Line<'static>> {
         ]),
         _ => Line::from(format!("Tax-free  {:>12}   {ABSENT}", dollars(r.tax_free))),
     };
-    vec![saved, tax_free]
+    vec![saved, tax_free, withdrawal]
 }
 
 /// A milestone's shortfall in today's dollars, in the color a short
@@ -315,8 +321,9 @@ pub(super) fn render(
     r: &Retirement,
     history: &History,
     window: Window,
+    rate: WithdrawalRate,
 ) {
-    let standing = standing_lines(r);
+    let standing = standing_lines(r, rate);
     let bounds = balance_history::extent(history).map(|extent| window.bounds(extent));
     // Each box is its content plus a border above and below, the table a
     // header row too. The charts take whatever is left.

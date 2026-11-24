@@ -7,7 +7,7 @@
 use super::escape;
 use crate::balance_history::{CASH_TITLE, Chart, Charts, INVESTMENT_TITLE, NO_HISTORY};
 use crate::calc::Month;
-use crate::calc::retirement::{self, BAND_DASH, Band, Status};
+use crate::calc::retirement::{self, BAND_DASH, Band, Status, WithdrawalRate};
 use crate::money::Cents;
 use crate::palette;
 use crate::report::view::{Accounts, Block, Cell, Hover, Row, TabView, money as money_cell};
@@ -268,6 +268,32 @@ fn standing_block(r: &Retirement) -> Block {
     }
 }
 
+/// A year's withdrawal, at each rate the screen's `←`/`→` walks.
+fn withdrawal_block(r: &Retirement) -> Block {
+    Block::Pick {
+        label: "Withdrawal rate",
+        options: WithdrawalRate::ALL
+            .into_iter()
+            .map(|rate| {
+                let row = plain_row(vec![
+                    text("Annual withdrawal"),
+                    dollar_data(r.withdrawal(rate)),
+                ]);
+                let table = Block::Table {
+                    class: "rw",
+                    head: vec![String::new(); 2],
+                    rows: vec![row],
+                };
+                (rate.to_string(), table)
+            })
+            .collect(),
+        opens: WithdrawalRate::ALL
+            .iter()
+            .position(|rate| *rate == WithdrawalRate::default())
+            .expect("ALL carries every rate, the default included"),
+    }
+}
+
 fn milestones_block(r: &Retirement) -> Block {
     let rows = r
         .rows
@@ -380,19 +406,22 @@ fn chart_block(
     }]
 }
 
-/// The Retirement tab: the title, the standings, the milestones, the
-/// accounts behind them, and both charts -- stacked, since side by side they
-/// would each get half a phone, and over the whole history, since a page has
-/// no key to move a window. The milestones stand on their own, as on the
-/// screen; only the account list needs something marked.
+/// The Retirement tab: the title, the standings, a year's withdrawal, the
+/// milestones, the accounts behind them, and both charts -- stacked, since side
+/// by side they would each get half a phone, and over the whole history, since
+/// a page has no key to move a window. The milestones stand on their own, as on
+/// the screen; only the withdrawal and the account list need something marked.
 pub(super) fn view(r: &Retirement, history: Option<&Charts>, acc: &mut Accounts) -> TabView {
     let mut blocks = vec![
         Block::Heading {
             text: Cell::Text(title(r)),
         },
         standing_block(r),
-        milestones_block(r),
     ];
+    if !r.held.is_empty() {
+        blocks.push(withdrawal_block(r));
+    }
+    blocks.push(milestones_block(r));
     if !r.held.is_empty() {
         blocks.push(accounts_block(r, acc));
     }
@@ -499,6 +528,34 @@ mod tests {
         let drawn = blocks(&r, None);
         let saved = &table(&drawn, "rs")["rows"][0]["c"];
         assert_eq!(saved[4][1], "mid", "{saved}");
+    }
+
+    #[test]
+    fn the_withdrawal_offers_every_rate_and_opens_on_the_screens() {
+        let drawn = blocks(&retirement(), None);
+        let pick = drawn.iter().find(|b| b["t"] == "Pick").unwrap();
+        let options = pick["options"].as_array().unwrap();
+        let drawn: Vec<(&Value, &Value)> = options
+            .iter()
+            .map(|o| (&o[0], &o[1]["rows"][0]["c"][1]))
+            .collect();
+        assert_eq!(
+            drawn,
+            [
+                (&json!("3.0%"), &json!("$9,900")),
+                (&json!("3.5%"), &json!("$11,550")),
+                (&json!("4.0%"), &json!("$13,200")),
+                (&json!("4.5%"), &json!("$14,850")),
+                (&json!("5.0%"), &json!("$16,500")),
+            ]
+        );
+        assert_eq!(pick["opens"], 2);
+    }
+
+    #[test]
+    fn the_withdrawal_is_left_off_when_nothing_is_marked() {
+        let drawn = blocks(&Retirement::default(), None);
+        assert!(drawn.iter().all(|b| b["t"] != "Pick"));
     }
 
     #[test]
