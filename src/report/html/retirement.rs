@@ -7,7 +7,9 @@
 use super::escape;
 use crate::balance_history::{CASH_TITLE, Chart, Charts, INVESTMENT_TITLE, NO_HISTORY};
 use crate::calc::Month;
-use crate::calc::retirement::{self, BAND_DASH, Band, Status, WithdrawalRate};
+use crate::calc::retirement::{
+    self, BAND_DASH, Band, DEFAULT_WITHDRAWAL_RATE, Status, WITHDRAWAL_RATES,
+};
 use crate::money::Cents;
 use crate::palette;
 use crate::report::view::{Accounts, Block, Cell, Hover, Row, TabView, money as money_cell};
@@ -272,7 +274,7 @@ fn standing_block(r: &Retirement) -> Block {
 fn withdrawal_block(r: &Retirement) -> Block {
     Block::Pick {
         label: "Withdrawal rate",
-        options: WithdrawalRate::ALL
+        options: WITHDRAWAL_RATES
             .into_iter()
             .map(|rate| {
                 let row = plain_row(vec![
@@ -284,13 +286,13 @@ fn withdrawal_block(r: &Retirement) -> Block {
                     head: vec![String::new(); 2],
                     rows: vec![row],
                 };
-                (rate.to_string(), table)
+                (format!("{}%", rate.tenth_percent()), table)
             })
             .collect(),
-        opens: WithdrawalRate::ALL
+        opens: WITHDRAWAL_RATES
             .iter()
-            .position(|rate| *rate == WithdrawalRate::default())
-            .expect("ALL carries every rate, the default included"),
+            .position(|rate| *rate == DEFAULT_WITHDRAWAL_RATE)
+            .expect("the default is one of the rates"),
     }
 }
 

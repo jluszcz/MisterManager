@@ -296,7 +296,7 @@ pub struct App {
     chart_window: retirement_screen::Window,
     /// The rate the Retirement screen states a year's withdrawal at. View
     /// state, like the window above it.
-    withdrawal_rate: crate::calc::retirement::WithdrawalRate,
+    withdrawal_rate: crate::rate::BasisPoints,
     /// The `[sec] contact` line from the config file, or `None` when the
     /// section is absent. Carried rather than read per press because it is a
     /// fact about the run, the same standing as `today` -- and because
@@ -434,7 +434,7 @@ impl App {
             retirement: crate::retirement::Retirement::default(),
             history: crate::balance_history::History::default(),
             chart_window: retirement_screen::Window::default(),
-            withdrawal_rate: crate::calc::retirement::WithdrawalRate::default(),
+            withdrawal_rate: crate::calc::retirement::DEFAULT_WITHDRAWAL_RATE,
             sec_contact,
             db,
             today,

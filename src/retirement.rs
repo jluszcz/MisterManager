@@ -6,7 +6,7 @@
 use crate::account_label::Account;
 use crate::calc::{
     self,
-    retirement::{Band, Multiple, Status, WithdrawalRate},
+    retirement::{Band, Multiple, Status},
 };
 use crate::db::account::{self, TaxTreatment};
 use crate::db::setting::{self, key};
@@ -80,8 +80,8 @@ impl Retirement {
     /// A year's income off today's savings at `rate`: before tax, with no
     /// growth and no contributions assumed, and tax-free money not told apart
     /// from the rest. Truncated to the cent.
-    pub fn withdrawal(&self, rate: WithdrawalRate) -> Cents {
-        rate.share().of(self.saved)
+    pub fn withdrawal(&self, rate: BasisPoints) -> Cents {
+        rate.of(self.saved)
     }
 
     pub fn now(&self) -> Option<&Row> {
@@ -248,13 +248,14 @@ mod tests {
             ..Retirement::default()
         };
         assert_eq!(
-            WithdrawalRate::ALL.map(|rate| (rate.to_string(), r.withdrawal(rate))),
+            calc::retirement::WITHDRAWAL_RATES
+                .map(|rate| (rate.tenth_percent(), r.withdrawal(rate))),
             [
-                ("3.0%".to_string(), Cents::from_dollars(9_900)),
-                ("3.5%".to_string(), Cents::from_dollars(11_550)),
-                ("4.0%".to_string(), Cents::from_dollars(13_200)),
-                ("4.5%".to_string(), Cents::from_dollars(14_850)),
-                ("5.0%".to_string(), Cents::from_dollars(16_500)),
+                ("3.0".to_string(), Cents::from_dollars(9_900)),
+                ("3.5".to_string(), Cents::from_dollars(11_550)),
+                ("4.0".to_string(), Cents::from_dollars(13_200)),
+                ("4.5".to_string(), Cents::from_dollars(14_850)),
+                ("5.0".to_string(), Cents::from_dollars(16_500)),
             ]
         );
     }

@@ -45,44 +45,18 @@ pub fn compact(cents: Cents) -> String {
     }
 }
 
-/// The share of retirement savings drawn in a year: what stating savings as
-/// an annual income assumes. Every rate is here, in the order a toggle walks
-/// them.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-pub enum WithdrawalRate {
-    Three,
-    ThreeAndAHalf,
-    #[default]
-    Four,
-    FourAndAHalf,
-    Five,
-}
+/// The shares of retirement savings a year's withdrawal may be stated at, in
+/// the order a toggle walks them.
+pub const WITHDRAWAL_RATES: [BasisPoints; 5] = [
+    BasisPoints(300),
+    BasisPoints(350),
+    BasisPoints(400),
+    BasisPoints(450),
+    BasisPoints(500),
+];
 
-impl WithdrawalRate {
-    pub const ALL: [WithdrawalRate; 5] = [
-        WithdrawalRate::Three,
-        WithdrawalRate::ThreeAndAHalf,
-        WithdrawalRate::Four,
-        WithdrawalRate::FourAndAHalf,
-        WithdrawalRate::Five,
-    ];
-
-    pub fn share(self) -> BasisPoints {
-        BasisPoints(match self {
-            WithdrawalRate::Three => 300,
-            WithdrawalRate::ThreeAndAHalf => 350,
-            WithdrawalRate::Four => 400,
-            WithdrawalRate::FourAndAHalf => 450,
-            WithdrawalRate::Five => 500,
-        })
-    }
-}
-
-impl fmt::Display for WithdrawalRate {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}%", self.share().tenth_percent())
-    }
-}
+/// The one of [`WITHDRAWAL_RATES`] both mediums open on.
+pub const DEFAULT_WITHDRAWAL_RATE: BasisPoints = BasisPoints(400);
 
 /// A multiple of salary in hundredths: `Multiple(340)` is 3.40×.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]

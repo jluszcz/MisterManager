@@ -10,8 +10,9 @@ use crate::balance_history::{
     self, CASH_TITLE, Charts, History, INVESTMENT_TITLE, NO_HISTORY, Series,
 };
 use crate::calc::Month;
-use crate::calc::retirement::{BAND_DASH, Band, Status, WithdrawalRate};
+use crate::calc::retirement::{BAND_DASH, Band, Status};
 use crate::money::Cents;
+use crate::rate::BasisPoints;
 use crate::retirement::Retirement;
 use anyhow::{Result, ensure};
 use chrono::NaiveDate;
@@ -76,7 +77,7 @@ fn title(r: &Retirement, charts: Option<(Month, Month)>) -> Line<'static> {
 /// What the "Where you stand" box holds: the two standings, or the one thing
 /// standing between the owner and them, and under either a year's withdrawal
 /// -- which takes no age and no salary, so it needs only something marked.
-fn standing_lines(r: &Retirement, rate: WithdrawalRate) -> Vec<Line<'static>> {
+fn standing_lines(r: &Retirement, rate: BasisPoints) -> Vec<Line<'static>> {
     if r.held.is_empty() {
         return vec![Line::from(
             "Mark investment accounts as Retirement on Accounts (0)",
@@ -85,7 +86,7 @@ fn standing_lines(r: &Retirement, rate: WithdrawalRate) -> Vec<Line<'static>> {
     let withdrawal = Line::from(format!(
         "Withdraw  {:>12}   {:>7}   a year",
         dollars(r.withdrawal(rate)),
-        rate.to_string()
+        format!("{}%", rate.tenth_percent())
     ));
     let Some(now) = r.now() else {
         return vec![Line::from("Press e to set a birth date"), withdrawal];
@@ -321,7 +322,7 @@ pub(super) fn render(
     r: &Retirement,
     history: &History,
     window: Window,
-    rate: WithdrawalRate,
+    rate: BasisPoints,
 ) {
     let standing = standing_lines(r, rate);
     let bounds = balance_history::extent(history).map(|extent| window.bounds(extent));

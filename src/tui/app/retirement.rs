@@ -3,7 +3,7 @@
 //! besides the two settings is the charts' window and the withdrawal rate.
 
 use super::App;
-use crate::calc::retirement::WithdrawalRate;
+use crate::calc::retirement::WITHDRAWAL_RATES;
 use crate::db::setting::{self, key};
 use crate::tui::form::next_in;
 use crate::tui::modal::Modal;
@@ -40,7 +40,7 @@ impl App {
     }
 
     fn step_withdrawal_rate(&mut self, step: isize) {
-        self.withdrawal_rate = next_in(&WithdrawalRate::ALL, self.withdrawal_rate, step);
+        self.withdrawal_rate = next_in(&WITHDRAWAL_RATES, self.withdrawal_rate, step);
     }
 
     /// With nothing recorded there is no history to hold the window inside,
