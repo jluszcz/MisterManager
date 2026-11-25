@@ -11,6 +11,7 @@ use super::{Planning, Row, View};
 use crate::calc::planning::{Plan, PlanInputs, PlanSettings, compute};
 use crate::db::bill::{Bill, Category};
 use crate::db::{AccountId, BillId};
+use crate::gate::Gate;
 use crate::money::Cents;
 use crate::plan_line::Line;
 use crate::rate::BasisPoints;
@@ -72,23 +73,26 @@ pub(super) fn transfers(plan: &Plan) -> Vec<transfer::Row> {
             to: crate::db::AccountId(1),
             name: "Rainy Day".to_string(),
             color: None,
-            cents: l.bills + l.current_housing + l.goals + l.roth,
+            cents: l.bills + l.current_housing + l.goals + l.gates[Gate::Roth.index()],
             lines: vec![
                 (Line::Bills, l.bills),
                 (Line::CurrentHousing, l.current_housing),
                 (Line::Goals, l.goals),
-                (Line::Roth, l.roth),
+                (Line::Gate(Gate::Roth), l.gates[Gate::Roth.index()]),
             ],
         },
         transfer::Row::Transfer {
             to: crate::db::AccountId(2),
             name: "Brokerage".to_string(),
             color: None,
-            cents: l.future_housing + l.mom_and_dad + l.emergency_fund,
+            cents: l.future_housing + l.mom_and_dad + l.gates[Gate::EmergencyFund.index()],
             lines: vec![
                 (Line::FutureHousing, l.future_housing),
                 (Line::MomAndDad, l.mom_and_dad),
-                (Line::EmergencyFund, l.emergency_fund),
+                (
+                    Line::Gate(Gate::EmergencyFund),
+                    l.gates[Gate::EmergencyFund.index()],
+                ),
             ],
         },
         transfer::Row::Transfer {
@@ -138,11 +142,11 @@ pub(super) fn wiring() -> Vec<Wiring> {
                 container: container("Rainy Day"),
             },
         ),
-        wired(Line::Roth, in_goal("Roth IRA", "Rainy Day")),
+        wired(Line::Gate(Gate::Roth), in_goal("Roth IRA", "Rainy Day")),
         wired(Line::FutureHousing, Landing::Withdrawal),
         wired(Line::MomAndDad, in_goal("Mom & Dad", "Brokerage")),
         wired(
-            Line::EmergencyFund,
+            Line::Gate(Gate::EmergencyFund),
             in_goal("Emergency Savings", "Brokerage"),
         ),
         wired(Line::Retirement, Landing::Withdrawal),
@@ -159,8 +163,11 @@ pub(super) fn view(pinned: Option<Cents>, pinned_at: Option<NaiveDate>) -> View 
         pinned_excess: pinned,
         housing_monthly: housing().iter().map(|b| b.cents).collect(),
         other_bills_monthly: other_bills().iter().map(|b| b.cents).collect(),
-        remaining_emergency: Cents::ZERO,
-        remaining_roth: Cents::ZERO,
+        gates: [crate::calc::planning::GateState::Open(crate::calc::planning::Progress {
+            current: Cents::ZERO,
+            target: Cents::ZERO,
+        }); crate::calc::planning::GATES],
+        gate_order: [0, 1],
     };
     let plan = compute(&settings, &inputs).unwrap();
     let transfers = transfers(&plan);
@@ -179,6 +186,7 @@ pub(super) fn view(pinned: Option<Cents>, pinned_at: Option<NaiveDate>) -> View 
         transfer_detail: Vec::new(),
         expense_constants: Vec::new(),
         split_profile: "Default".to_string(),
+        gate_names: Default::default(),
         split_profiles: 1,
     }
 }

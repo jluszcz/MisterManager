@@ -27,6 +27,7 @@ fn waterfall(view: &PlanView) -> Vec<plan_rows::Row> {
         // there is no hypothetical balance for a row to name.
         scrubbed_adhoc: None,
         split_profile: &view.split_profile,
+        gate_names: &view.gate_names,
     })
 }
 
@@ -81,6 +82,12 @@ fn view_row(row: &plan_rows::Row, after_blank: bool, acc: &mut Accounts) -> Opti
         Value::Money(cents) => whole(cents),
         Value::Count(count) => Cell::Text(count.to_string()),
         Value::Stated(text) => Cell::Text(text.to_string()),
+        Value::Fault(text) => Cell::Toned(text.to_string(), "neg".to_string()),
+        Value::Progress(p) => Cell::Text(format!(
+            "{}/{}",
+            p.current.to_whole_dollars(),
+            p.target.to_whole_dollars()
+        )),
         Value::None => Cell::Text(String::new()),
     };
     let extra = match row.extra {
@@ -226,6 +233,24 @@ mod tests {
             .filter(|r| r["c"][2] == json!(["\u{394} 237", "neg"]))
             .count();
         assert!(gaps >= 1, "no toned gap: {drawn:?}");
+    }
+
+    #[test]
+    fn an_unmet_gate_is_its_balance_over_its_target() {
+        let planning = resolved(|v| {
+            v.plan.gates[crate::gate::Gate::Roth.index()] =
+                crate::calc::planning::GateState::Open(crate::calc::planning::Progress {
+                    current: crate::money::Cents::from_dollars(1_500),
+                    target: crate::money::Cents::from_dollars(5_500),
+                })
+        });
+        let drawn = rows(&planning);
+        assert!(
+            drawn
+                .iter()
+                .any(|r| r["c"][0] == "Roth" && r["c"][1] == "1,500/5,500"),
+            "{drawn:?}"
+        );
     }
 
     #[test]

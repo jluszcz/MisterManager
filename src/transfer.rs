@@ -12,6 +12,7 @@ use crate::db::goal::Goal;
 use crate::db::setting::Key;
 use crate::db::txn::{self, NewTxn};
 use crate::db::{AccountId, Db, GoalId, goal, setting};
+use crate::gate::{Gate, Names};
 use crate::goal as goal_engine;
 use crate::money::Cents;
 use crate::plan_line::{Destination, Line};
@@ -523,9 +524,18 @@ pub fn diagnose(
     // denies the alarm is worse than either signal alone.
     let mut out: Vec<String> = Vec::new();
 
+    for refusal in closed_gates(db)? {
+        out.push(format!("{}.", capitalized(&refusal)));
+        out.push(String::new());
+    }
+
+    let names = Names::load(db)?;
     for w in &wired.lines {
         if let Landing::Dangling { key } = &w.landing {
-            out.push(format!("{} points at a row that is gone.", w.line.label()));
+            out.push(format!(
+                "{} points at a row that is gone.",
+                w.line.drawn(&names)
+            ));
             out.push(format!(
                 "The setting {key} names a goal or account this database no longer holds. That is \
                  corruption rather than a gap: nothing moves for this line until it is pointed at \
@@ -767,6 +777,22 @@ fn merge_transfer(
     Ok(())
 }
 
+/// What to do about each gate naming a closed goal, one sentence per gate.
+fn closed_gates(db: &Db) -> Result<Vec<String>> {
+    let names = Names::load(db)?;
+    let mut out = Vec::new();
+    for gate in Gate::ALL {
+        if resolve_goal(db, gate.key(), Reading::Tolerant)?.is_some_and(|g| g.closed) {
+            out.push(format!(
+                "the {} gate names a closed goal: choose another, or switch it off, in the Gates \
+                 block of the Planning screen",
+                names.drawn(gate)
+            ));
+        }
+    }
+    Ok(out)
+}
+
 /// The rows a payday writes, grouped by destination and summed.
 ///
 /// Transfers first, in the order their lines appear in [`Line::ALL`], then
@@ -792,6 +818,12 @@ fn merge_transfer(
 /// demanding it up front would refuse a plan that resolves today, on the
 /// strength of a key belonging to a line moving nothing.
 pub fn plan(db: &Db, lines: &Lines, spread: Option<&Asks>) -> Result<Vec<Row>> {
+    // Ahead of the amounts, because a gate on a closed goal draws nothing: the
+    // payday would resolve, with its money on the lines below the gate.
+    if let Some(refusal) = closed_gates(db)?.into_iter().next() {
+        bail!(refusal);
+    }
+
     let mut transfers: Vec<Row> = Vec::new();
     let mut withdrawals: Vec<Row> = Vec::new();
     let mut plug_error: Option<anyhow::Error> = None;
@@ -1095,10 +1127,9 @@ mod tests {
             bills: Cents::from_dollars(2_544),
             current_housing: Cents::from_dollars(693),
             goals: Cents::from_dollars(4_832),
-            roth: Cents::ZERO,
+            gates: Default::default(),
             future_housing: Cents::from_dollars(4_830),
             mom_and_dad: Cents::from_dollars(461),
-            emergency_fund: Cents::ZERO,
             retirement: Cents::from_dollars(2_070),
             investment: Cents::from_dollars(2_070),
         }
@@ -1589,6 +1620,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_gate_on_a_closed_goal_alongside_an_ambiguous_plug_is_explained_too() {
+        let (db, _, _) = configured();
+        setting::clear(&db, key_of(Line::MomAndDad)).unwrap();
+        let roth = setting::get(&db, Gate::Roth.key()).unwrap().unwrap();
+        goal::close(&db, roth).unwrap();
+
+        let text = diagnosed(&db, &lines()).unwrap().join("\n");
+        assert!(text.contains("Roth gate names a closed goal"), "{text}");
+        assert!(text.contains("no one container"), "{text}");
+    }
+
     /// A corrupt key is often the very thing that *causes* the ambiguity --
     /// the goal it should have claimed stays unclaimed in its own container
     /// -- so the two arrive together, and a `diagnose` that refuses on the
@@ -1958,7 +2001,9 @@ mod tests {
             })
             .expect("no Rainy Day transfer");
         assert!(
-            !savings_lines.iter().any(|(line, _)| *line == Line::Roth),
+            !savings_lines
+                .iter()
+                .any(|(line, _)| *line == Line::Gate(Gate::Roth)),
             "{savings_lines:?}"
         );
     }
@@ -2090,7 +2135,7 @@ mod tests {
                 name: "Nowhere".to_string(),
                 color: None,
                 cents: Cents::from_dollars(100),
-                lines: vec![(Line::Roth, Cents::from_dollars(100))],
+                lines: vec![(Line::Gate(Gate::Roth), Cents::from_dollars(100))],
             },
         ];
 

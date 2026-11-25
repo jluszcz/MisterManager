@@ -266,7 +266,7 @@ pub fn has_goal_dated_in_year(
 /// **The one row-by-id read that hands its caller an `Option`.**
 /// [`super::account::get`] is the rule everywhere else -- a dangling foreign
 /// key is a corrupt database, so it errors -- and a goal id is usually one
-/// too, which is why [`crate::goal::shortfall`] and [`move_value`] put the `Option` back
+/// too, which is why [`crate::goal::progress`] and [`move_value`] put the `Option` back
 /// into that shape immediately.
 ///
 /// What keeps the `Option` here is that absence is *also* an ordinary answer

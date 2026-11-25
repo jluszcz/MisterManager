@@ -107,6 +107,12 @@ gates, the split, and where each line lands. `↑`/`↓` move between the editab
 everything computed. A percentage takes up to two decimals, so the split can be `10.5 / 20.5 / 69`.
 `e` edits the selected row; on a bill it opens the bill's whole form, label and category included.
 
+A gate fills its goal before the split's shares reach their own lines, and takes no more than the
+goal still needs. The gates draw in the order shown: `Shift`+`↑`/`↓` moves one, and `e` chooses the
+goal it fills or switches it off, on a list that opens filtered to its goal's name until `Esc`
+clears it; `e` again, inside that list, renames the gate. A gate whose goal has been closed says so, and no payday is
+written until it is pointed at another.
+
 The split belongs to a named **split profile** — one for while a 401k is being funded and one for
 once it is maxed, say — and the Split heading names the one in use. With the cursor in the Split
 block, `←`/`→` switches profiles, `a` adds one copied from the current one, `d` deletes the current

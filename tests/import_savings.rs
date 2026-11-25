@@ -10,7 +10,7 @@ use mistermanager::db::goal;
 use mistermanager::db::recurring_goal::{self, Cadence};
 use mistermanager::db::setting::{self, key};
 use mistermanager::default_source::Source;
-use mistermanager::gate::Gate;
+use mistermanager::gate::{self, Gate};
 use mistermanager::goal as goal_engine;
 use mistermanager::money::Cents;
 use mistermanager::plan_line::Line;
@@ -462,6 +462,23 @@ fn a_replace_keeps_the_accounts_the_money_forms_open_on() {
         Some(account),
         "the investment account did not survive a --replace"
     );
+}
+
+#[test]
+fn a_replace_keeps_the_gates_priority_and_names() {
+    let Some((db, mut sheets)) = loaded() else {
+        return;
+    };
+    let path = workbook().expect("loaded already found it");
+    let today = workbook_today(&mut sheets);
+    let order = gate::Priority::default().moved(Gate::Roth, 0);
+    setting::set(&db, gate::PRIORITY, order).unwrap();
+    gate::rename(&db, Gate::Roth, "Nest Egg").unwrap();
+
+    import::import_all(&db, &path, today, true).unwrap();
+
+    assert_eq!(setting::get(&db, gate::PRIORITY).unwrap(), Some(order));
+    assert_eq!(gate::Names::load(&db).unwrap().of(Gate::Roth), "Nest Egg");
 }
 
 /// No sheet carries a salary, so it is the owner's the way the settings

@@ -5,9 +5,12 @@
 //! what is here is only what a terminal adds to them: the cursor, the
 //! editors, and the destination each line lands in.
 
-use super::{App, DUPLICATE_SCAN_DAYS, NOTHING_SELECTED, WorksheetPrefill, add_share, destination};
+use super::{
+    App, DUPLICATE_SCAN_DAYS, Move, NOTHING_SELECTED, WorksheetPrefill, add_share, destination,
+};
 use crate::db::setting::{self, key};
 use crate::db::{GoalId, account, bill, goal, split_profile};
+use crate::gate::{self, Gate, Names, Priority};
 use crate::money::Cents;
 use crate::plan_line::{Destination, Line};
 use crate::tui::cursor;
@@ -30,6 +33,9 @@ const COUNTABLE_ROWS: &str =
 
 impl App {
     pub(super) fn planning_key(&mut self, key: KeyEvent) -> Result<()> {
+        if let Some(direction) = Move::from_key(key) {
+            return self.move_gate(direction);
+        }
         if cursor::scroll_key(&mut self.planning, key.code) {
             return Ok(());
         }
@@ -215,6 +221,9 @@ impl App {
                 let found = bill::get(&self.db, id)?;
                 self.modal = Some(Modal::Bill(BillForm::edit(&found)));
             }
+            Some((Some(planning_screen::Editable::Constant(Target::Gate(gate))), _, _)) => {
+                self.open_destination(Line::Gate(gate))?
+            }
             // Prefilled from the database rather than the row, whose label
             // carries the name masked for `--demo`: the buffer keeps the real
             // text, and `ValueForm::name` masks only what it draws.
@@ -243,6 +252,20 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Move the selected gate one place in the priority order.
+    fn move_gate(&mut self, direction: Move) -> Result<()> {
+        let Some(Target::Gate(gate)) = self.planning.selected_target() else {
+            self.status = "only a gate has a place to move".to_string();
+            return Ok(());
+        };
+        let order = setting::get_or(&self.db, gate::PRIORITY, Priority::default())?;
+        let Some(to) = direction.within(order.gates(), gate)? else {
+            return Ok(());
+        };
+        setting::set(&self.db, gate::PRIORITY, order.moved(gate, to))?;
+        self.reload()
     }
 
     /// Count the selected row into the Biweekly Expenses figure, or stop
@@ -322,6 +345,7 @@ impl App {
                 .to_string(),
             id: goal.id,
             name: goal.name,
+            closed: goal.closed,
         };
         let offered = goal::all_with_balances(&self.db)?
             .into_iter()
@@ -338,9 +362,12 @@ impl App {
             },
             _ => None,
         };
-        self.modal = Some(Modal::Destination(destination::Chooser::new(
-            line, offered, current,
-        )));
+        let goal = current.as_ref().map(|o| o.name.clone());
+        let mut chooser = destination::Chooser::new(line, offered, current);
+        if let Some(gate) = line.gate() {
+            chooser = chooser.for_gate(Names::load(&self.db)?.drawn(gate), goal.as_deref());
+        }
+        self.modal = Some(Modal::Destination(chooser));
         Ok(())
     }
 
@@ -367,6 +394,15 @@ impl App {
                 }
             }
             KeyCode::Char('/') => chooser.begin_search(),
+            KeyCode::Char('e') => {
+                if let Some(gate) = chooser.line().gate() {
+                    let names = Names::load(&self.db)?;
+                    self.modal = Some(Modal::Value(
+                        ValueTarget::Planning(Target::Gate(gate)),
+                        ValueForm::name("Gate", names.of(gate)),
+                    ));
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -386,15 +422,30 @@ impl App {
         let Destination::Goal(key) = line.destination() else {
             bail!("{} holds no goal to point", line.label());
         };
+        let names = Names::load(&self.db)?;
         let status = match chosen {
             None => return self.nothing_selected(),
             Some(destination::Choice::Unset) => {
                 setting::clear(&self.db, key)?;
-                format!("{} now leaves the tracked system", line.label())
+                match line.gate() {
+                    Some(gate) => format!("{} gate off", names.drawn(gate)),
+                    None => format!("{} now leaves the tracked system", line.label()),
+                }
             }
             Some(destination::Choice::Goal { id, name, .. }) => {
+                // Each gate draws what its goal needs, so two on one goal would
+                // fund it twice over.
+                if let Some(gate) = line.gate() {
+                    for other in Gate::ALL {
+                        if other != gate && setting::get(&self.db, other.key())? == Some(id) {
+                            self.status =
+                                format!("the {} gate already names that goal", names.drawn(other));
+                            return Ok(());
+                        }
+                    }
+                }
                 setting::set(&self.db, key, id)?;
-                format!("{} → {}", line.label(), crate::demo::text(&name))
+                format!("{} → {}", line.drawn(&names), crate::demo::text(&name))
             }
         };
         self.close_modal();
@@ -658,6 +709,7 @@ impl App {
         Ok(planning_screen::View {
             split_profile: crate::demo::text(&active.name).into_owned(),
             split_profiles: profiles.len(),
+            gate_names: Names::load(&self.db)?,
             plan,
             settings,
             wiring: wired.lines,
@@ -1791,6 +1843,163 @@ mod tests {
         );
     }
 
+    fn cursor_to_gate(app: &mut App, gate: Gate) {
+        press(app, KeyCode::Char('5'));
+        press(app, KeyCode::Home);
+        walk_until!(
+            app.planning.selected_target() == Some(Target::Gate(gate)),
+            press(app, KeyCode::Down)
+        );
+    }
+
+    #[test]
+    fn a_gate_on_a_closed_goal_stops_the_payday_until_it_is_repointed() {
+        let mut app = planning_app();
+        let old = setting::get(&app.db, Gate::Roth.key()).unwrap().unwrap();
+        goal::close(&app.db, old).unwrap();
+        app.reload().unwrap();
+        cursor_to_gate(&mut app, Gate::Roth);
+        assert_eq!(app.planning.selected().unwrap().value, "goal closed");
+
+        press(&mut app, KeyCode::Char('t'));
+        assert!(app.modal.is_none());
+        assert!(app.status.contains("Roth gate"), "{}", app.status);
+
+        // A bare Enter keeps what it named; only a choice moves it.
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(setting::get(&app.db, Gate::Roth.key()).unwrap(), Some(old));
+
+        let lego = goal_named(&app, "Lego");
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Esc);
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Destination(c)) if matches!(
+                c.selected(), Some(destination::Choice::Goal { id, .. }) if *id == lego)),
+            press(&mut app, KeyCode::Down)
+        );
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(setting::get(&app.db, Gate::Roth.key()).unwrap(), Some(lego));
+        assert_eq!(app.planning.selected().unwrap().value, "0/1,000");
+        press(&mut app, KeyCode::Char('t'));
+        assert!(app.modal.is_some(), "{}", app.status);
+    }
+
+    fn choices(app: &App) -> Option<usize> {
+        match &app.modal {
+            Some(Modal::Destination(c)) => Some(c.choices().len()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_gates_goals_open_narrowed_to_its_own_and_esc_widens_before_it_closes() {
+        let mut app = planning_app();
+        cursor_to_gate(&mut app, Gate::Roth);
+        press(&mut app, KeyCode::Char('e'));
+        assert_eq!(choices(&app), Some(2), "Roth IRA and off");
+
+        press(&mut app, KeyCode::Esc);
+        let open = goal::all_with_balances(&app.db).unwrap().len();
+        assert_eq!(choices(&app), Some(open + 1));
+
+        press(&mut app, KeyCode::Esc);
+        assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn slash_over_the_opening_filter_starts_a_new_one() {
+        let mut app = planning_app();
+        cursor_to_gate(&mut app, Gate::Roth);
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Char('/'));
+        for c in "Lego".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        assert_eq!(choices(&app), Some(2), "Lego and off");
+    }
+
+    #[test]
+    fn e_in_a_gates_goal_list_renames_the_gate_everywhere_it_is_drawn() {
+        let mut app = planning_app();
+        cursor_to_gate(&mut app, Gate::Roth);
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Char('e'));
+        for _ in 0.."Roth".len() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        for c in "Retire".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.modal.is_none(), "{}", app.status);
+        let drawn = |label: &str| {
+            let rows = app.planning.rows().iter();
+            rows.filter(|r| r.label.trim() == label).count()
+        };
+        assert_eq!(drawn("Retire"), 2, "the gate and its destination");
+        assert_eq!(drawn("Roth"), 0);
+    }
+
+    #[test]
+    fn two_gates_may_not_name_one_goal() {
+        let mut app = planning_app();
+        let emergency = setting::get(&app.db, Gate::EmergencyFund.key())
+            .unwrap()
+            .unwrap();
+        let roth = setting::get(&app.db, Gate::Roth.key()).unwrap();
+        cursor_to_gate(&mut app, Gate::Roth);
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Esc);
+        walk_until!(
+            matches!(&app.modal, Some(Modal::Destination(c)) if matches!(
+                c.selected(), Some(destination::Choice::Goal { id, .. }) if *id == emergency)),
+            press(&mut app, KeyCode::Down)
+        );
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(setting::get(&app.db, Gate::Roth.key()).unwrap(), roth);
+        assert!(app.status.contains("already names"), "{}", app.status);
+    }
+
+    #[test]
+    fn the_unset_choice_switches_a_gate_off() {
+        let mut app = planning_app();
+        cursor_to_gate(&mut app, Gate::Roth);
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(setting::get(&app.db, Gate::Roth.key()).unwrap(), None);
+        assert_eq!(app.planning.selected().unwrap().value, "off");
+    }
+
+    #[test]
+    fn shift_and_an_arrow_move_a_gate_through_the_priority_order_and_no_further() {
+        let mut app = planning_app();
+        cursor_to_gate(&mut app, Gate::Roth);
+        for _ in 0..2 {
+            shift_press(&mut app, KeyCode::Up);
+            let order = setting::get(&app.db, gate::PRIORITY).unwrap().unwrap();
+            assert_eq!(order.gates(), &[Gate::Roth, Gate::EmergencyFund]);
+            assert_eq!(
+                app.planning.selected_target(),
+                Some(Target::Gate(Gate::Roth))
+            );
+        }
+        shift_press(&mut app, KeyCode::Down);
+        let order = setting::get(&app.db, gate::PRIORITY).unwrap();
+        assert_eq!(order, Some(Priority::default()));
+    }
+
+    #[test]
+    fn shift_and_an_arrow_off_the_gates_say_what_they_move() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        shift_press(&mut app, KeyCode::Down);
+        assert_eq!(setting::get(&app.db, gate::PRIORITY).unwrap(), None);
+        assert!(app.status.contains("only a gate"), "{}", app.status);
+    }
+
     /// The six scroll keys are documented nowhere because they work on every
     /// list in the app. A modal whose height never reaches its cursor keeps
     /// `page_height: 1`, so `PageDown` degenerates to `Down` -- an
@@ -2128,7 +2337,7 @@ mod tests {
             panic!("Bills is goal-backed");
         };
         let bill_payments = setting::get(&app.db, bills_key).unwrap().unwrap();
-        let Destination::Goal(roth_key) = Line::Roth.destination() else {
+        let Destination::Goal(roth_key) = Line::Gate(crate::gate::Gate::Roth).destination() else {
             panic!("Roth is goal-backed");
         };
         let roth = setting::get(&app.db, roth_key).unwrap().unwrap();

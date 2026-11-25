@@ -143,7 +143,7 @@ impl Screen {
 
 /// Which way `Shift`+`↑`/`↓` move the selected row in a hand-kept order: a
 /// goal among its container's undated goals on Savings, an account among the
-/// accounts of its kind on Accounts.
+/// accounts of its kind on Accounts, a gate among the gates on Planning.
 ///
 /// A direction rather than a signed delta because the two ends are not
 /// symmetric arithmetic: the top of the block and the bottom are each a place
@@ -2843,7 +2843,7 @@ mod tests {
             ),
             (
                 Topic::Planning,
-                &["e", "a", "d", "←/→", "t", "f", "Enter", "p", "P"],
+                &["e", "a", "d", "←/→", "⇧↑↓", "t", "f", "Enter", "p", "P"],
             ),
             (
                 Topic::Funds,
@@ -2961,7 +2961,7 @@ mod tests {
                 ],
             ),
             (Topic::Picker, &["Space", "Enter", "Esc"]),
-            (Topic::Destination, &["/", "Enter", "Esc"]),
+            (Topic::Destination, &["/", "Enter", "Esc", "e"]),
             (Topic::Link, &["/", "Enter", "Esc", "u"]),
             (
                 Topic::LinkSearch,

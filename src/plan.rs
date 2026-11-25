@@ -1,9 +1,9 @@
-use crate::calc::planning::{self, PlanInputs, PlanSettings};
+use crate::calc::planning::{self, GATES, GateState, PlanInputs, PlanSettings};
 use crate::db::account;
 use crate::db::setting::key;
 use crate::db::split_profile::{self, Shares};
-use crate::db::{Db, bill, setting, txn};
-use crate::gate::Gate;
+use crate::db::{Db, bill, goal, setting, txn};
+use crate::gate::{self, Gate, Priority};
 use crate::goal as goal_engine;
 use crate::money::Cents;
 use crate::plan_rows::Target;
@@ -11,7 +11,7 @@ use crate::rate::BasisPoints;
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
 
-/// The outstanding need behind one Planning gate.
+/// What one Planning gate finds at the goal it names.
 ///
 /// Two different failures, treated differently. An **unset** setting means
 /// the gate is not configured for this database, so it is off. A setting
@@ -19,11 +19,14 @@ use chrono::NaiveDate;
 /// is an error rather than a silently disabled gate: the gates decide
 /// where roughly half the waterfall's money goes, and one switching itself
 /// off unnoticed is the bug this indirection exists to prevent.
-fn remaining(db: &Db, gate: Gate) -> Result<Cents> {
+fn gate_state(db: &Db, gate: Gate) -> Result<GateState> {
     let key = gate.key();
     match setting::get(db, key)? {
-        None => Ok(Cents::ZERO),
-        Some(id) => goal_engine::shortfall(db, id).with_context(|| format!("setting {key} = {id}")),
+        None => Ok(GateState::Off),
+        Some(id) if goal::get(db, id)?.is_some_and(|g| g.closed) => Ok(GateState::Closed),
+        Some(id) => goal_engine::progress(db, id)
+            .map(GateState::Open)
+            .with_context(|| format!("setting {key} = {id}")),
     }
 }
 
@@ -192,6 +195,11 @@ pub fn compute_from_db(
 ) -> Result<planning::Plan> {
     let checking = account::checking(db)?.id;
 
+    let mut gates = [GateState::Off; GATES];
+    for gate in Gate::ALL {
+        gates[gate.index()] = gate_state(db, gate)?;
+    }
+
     let inputs = PlanInputs {
         checking_at_adhoc: txn::balance_at(db, checking, adhoc)?,
         pinned_excess: setting::get(db, key::PINNED_EXCESS)?,
@@ -199,8 +207,8 @@ pub fn compute_from_db(
         // concern, and the waterfall is unchanged by this stage.
         housing_monthly: bill::amounts(db, bill::Category::Housing)?,
         other_bills_monthly: bill::amounts(db, bill::Category::Other)?,
-        remaining_emergency: remaining(db, Gate::EmergencyFund)?,
-        remaining_roth: remaining(db, Gate::Roth)?,
+        gates,
+        gate_order: setting::get_or(db, gate::PRIORITY, Priority::default())?.indices(),
     };
 
     planning::compute(settings, &inputs)
@@ -212,7 +220,8 @@ mod tests {
     use crate::db;
     use crate::db::GoalId;
     use crate::db::account::{Group, Kind};
-    use crate::db::goal::{self, NewGoal};
+    use crate::db::goal::NewGoal;
+    use crate::plan_line::Line;
 
     /// A goal the database does not have configured must leave its gate off,
     /// so a hand-built database -- or a workbook with no Roth row -- can
@@ -220,7 +229,10 @@ mod tests {
     #[test]
     fn an_unset_gate_setting_leaves_the_gate_off() {
         let db = db::open_in_memory().unwrap();
-        assert_eq!(remaining(&db, Gate::Roth).unwrap(), Cents::ZERO);
+        assert_eq!(
+            gate_state(&db, Gate::Roth).unwrap().shortfall(),
+            Cents::ZERO
+        );
     }
 
     #[test]
@@ -255,7 +267,7 @@ mod tests {
         setting::set(&db, Gate::Roth.key(), id).unwrap();
 
         assert_eq!(
-            remaining(&db, Gate::Roth).unwrap(),
+            gate_state(&db, Gate::Roth).unwrap().shortfall(),
             Cents::from_dollars(3_500)
         );
     }
@@ -295,7 +307,10 @@ mod tests {
         .unwrap();
         setting::set(&db, Gate::Roth.key(), id).unwrap();
 
-        assert_eq!(remaining(&db, Gate::Roth).unwrap(), Cents(6_300));
+        assert_eq!(
+            gate_state(&db, Gate::Roth).unwrap().shortfall(),
+            Cents(6_300)
+        );
     }
 
     /// A recorded id pointing at a goal that is gone must fail loudly and
@@ -307,14 +322,14 @@ mod tests {
         let db = db::open_in_memory().unwrap();
         setting::set(&db, Gate::EmergencyFund.key(), GoalId(999)).unwrap();
 
-        let err = remaining(&db, Gate::EmergencyFund).unwrap_err();
+        let err = gate_state(&db, Gate::EmergencyFund).unwrap_err();
         let text = format!("{err:#}");
         assert!(text.contains("planning.goal.emergency_id"), "{text}");
         assert!(text.contains("999"), "{text}");
     }
 
-    /// `compute_from_db` wires two setting keys to `remaining_emergency` and
-    /// `remaining_roth`. Nothing else in the test suite would notice if
+    /// `compute_from_db` wires each gate's setting key to its place in
+    /// `PlanInputs::gates`. Nothing else in the test suite would notice if
     /// those two wires were crossed: every other test either hand-builds
     /// `PlanInputs` directly (`calc::planning`) or runs against the real
     /// workbook, where both shortfalls happen to be zero. A transposition
@@ -323,13 +338,12 @@ mod tests {
     /// bucket. This test goes through `compute_from_db` end to end with two
     /// goals of distinct, non-zero shortfalls -- distinct so a swapped
     /// mapping produces a visibly wrong number instead of coincidentally
-    /// matching -- and checks both the `need_*` flags and a downstream
-    /// amount fed by `remaining_roth`.
+    /// matching -- and checks whether each gate is open and a downstream
+    /// amount fed by the Roth's.
     ///
     /// Emergency is funded exactly to its target (shortfall zero) so its gate
-    /// stays off; `compute` shuts the Roth line off entirely whenever
-    /// `need_emergency` is true, which would make it insensitive to a swap
-    /// with Emergency.
+    /// stays off, and the Roth's line is what Emergency would have drawn were
+    /// the two swapped.
     ///
     /// The Home Down Payment goal is set up below too, for realism, but
     /// nothing reads its shortfall into a `PlanInputs` field.
@@ -438,20 +452,24 @@ mod tests {
         let settings = settings_from_db(&db).unwrap();
         let plan = compute_from_db(&db, &settings, today).unwrap();
 
-        assert!(!plan.need_emergency);
-        assert!(plan.need_roth);
-        // `lines.roth` reports the Roth's own shortfall ($1,000) rather than
-        // being clamped by it, since the computed retirement share comfortably
-        // exceeds it -- a wire crossed with Emergency (whose shortfall is
+        assert_eq!(
+            plan.gates[Gate::EmergencyFund.index()].shortfall(),
+            Cents::ZERO
+        );
+        assert!(plan.gates[Gate::Roth.index()].shortfall() > Cents::ZERO);
+        // The Roth line reports the Roth's own shortfall ($1,000) rather than
+        // being clamped by it, since the computed future housing share
+        // comfortably exceeds it -- a wire crossed with Emergency (whose shortfall is
         // zero) would report a different figure here.
-        assert_eq!(plan.lines.roth, Cents::from_dollars(1_000));
-        // Future Housing is not fed by any gate, so it is one whole share of
-        // the remainder, floored.
+        assert_eq!(
+            Line::Gate(Gate::Roth).amount(&plan.lines),
+            Cents::from_dollars(1_000)
+        );
+        // The Roth fills out of Future Housing first, which keeps the rest of
+        // its share, floored.
         assert_eq!(
             plan.lines.future_housing,
-            settings
-                .future_housing_pct
-                .of(plan.remainder)
+            (settings.future_housing_pct.of(plan.remainder) - Cents::from_dollars(1_000))
                 .floor_to_dollar()
         );
     }

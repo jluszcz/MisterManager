@@ -35,6 +35,7 @@ use crate::db::account;
 use crate::db::setting::key;
 use crate::db::{self, AccountId, Db, bill, setting, split_profile};
 use crate::default_source::Source;
+use crate::gate;
 use crate::rate::BasisPoints;
 use chrono::NaiveDate;
 
@@ -98,6 +99,9 @@ pub fn import_all(db: &Db, path: &Path, today: NaiveDate, replace: bool) -> Resu
         let investment = setting::get(db, key::INVESTMENT_ACCOUNT)?;
         // Carried for the same reason again: no sheet has a salary in it.
         let salary = setting::get(db, key::ANNUAL_SALARY)?;
+        // And the gates' order and names, which the sheet states nowhere.
+        let priority = setting::get(db, gate::PRIORITY)?;
+        let gate_names = gate::Names::load(db)?;
 
         if db::has_imported_data(db)? {
             if !replace {
@@ -118,6 +122,10 @@ pub fn import_all(db: &Db, path: &Path, today: NaiveDate, replace: bool) -> Resu
         }
         if let Some(salary) = salary {
             setting::set(db, key::ANNUAL_SALARY, salary)?;
+        }
+        gate_names.store(db)?;
+        if let Some(priority) = priority {
+            setting::set(db, gate::PRIORITY, priority)?;
         }
 
         let Some(containers) = containers else {

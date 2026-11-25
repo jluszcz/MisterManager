@@ -12,6 +12,7 @@
 //! all computed against it. The stored number is the base those come from,
 //! and the only places it is shown as itself are the two forms that edit it.
 
+use crate::calc::planning::Progress;
 use crate::db::goal::{self, Goal, GoalWithBalance};
 use crate::db::setting::{self, key};
 use crate::db::{AccountId, Db, GoalId};
@@ -155,7 +156,7 @@ pub fn list_with_balances(db: &Db, container: AccountId) -> Result<Vec<Funding>>
     )
 }
 
-/// How much a goal still needs: its target less its balance, clamped at zero.
+/// What a goal holds against its target, as a Planning gate reads it.
 ///
 /// Here rather than in `db::goal` because it is a *target* reader, and the
 /// rate cannot be reached from `db`. Leaving a second one behind would let
@@ -165,20 +166,14 @@ pub fn list_with_balances(db: &Db, container: AccountId) -> Result<Vec<Funding>>
 /// is gone is looking at a corrupt database, not at an unfunded goal, and
 /// reporting zero there would silently disable a Planning gate.
 ///
-/// Clamped because goals overshoot: Emergency Savings sits above its target
-/// in the live workbook, and a negative need would read as "needs funding"
-/// at every call site that compares against zero.
-///
 /// Ignores `closed`, as `container_excess` does -- a closed goal's
 /// allocations still count.
-pub fn shortfall(db: &Db, goal_id: GoalId) -> Result<Cents> {
+pub fn progress(db: &Db, goal_id: GoalId) -> Result<Progress> {
     let found = goal::get(db, goal_id)?.with_context(|| format!("no goal with id {goal_id}"))?;
     let current = goal::balance(db, goal_id)?;
-    let remaining = target(&found, current, setting::get(db, key::TAX_RATE)?)? - current;
-    Ok(if remaining < Cents::ZERO {
-        Cents::ZERO
-    } else {
-        remaining
+    Ok(Progress {
+        current,
+        target: target(&found, current, setting::get(db, key::TAX_RATE)?)?,
     })
 }
 
@@ -300,7 +295,7 @@ mod tests {
 
         assert_eq!(lowered, Cents::ZERO);
         assert_eq!(
-            shortfall(&db, couch).unwrap(),
+            progress(&db, couch).unwrap().shortfall(),
             Cents::from_dollars(1_200 + 100)
         );
     }
@@ -477,7 +472,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(shortfall(&db, id).unwrap(), Cents::from_dollars(3_500));
+        assert_eq!(
+            progress(&db, id).unwrap().shortfall(),
+            Cents::from_dollars(3_500)
+        );
     }
 
     #[test]
@@ -494,7 +492,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(shortfall(&db, id).unwrap(), Cents::ZERO);
+        assert_eq!(progress(&db, id).unwrap().shortfall(), Cents::ZERO);
     }
 
     /// The shortfall of a taxed goal is measured against the taxed figure, or
@@ -516,7 +514,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(shortfall(&db, id).unwrap(), Cents(6_300));
+        assert_eq!(progress(&db, id).unwrap().shortfall(), Cents(6_300));
     }
 
     /// Emergency Savings sits above its target in the live workbook, so an
@@ -537,7 +535,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(shortfall(&db, id).unwrap(), Cents::ZERO);
+        assert_eq!(progress(&db, id).unwrap().shortfall(), Cents::ZERO);
     }
 
     /// The flag is the whole of what a floating goal's target is: the base
@@ -604,7 +602,7 @@ mod tests {
         g.floating = true;
         let id = db::goal::insert(&db, &g).unwrap();
         assert_eq!(
-            shortfall(&db, id).unwrap(),
+            progress(&db, id).unwrap().shortfall(),
             Cents::ZERO,
             "with nothing in it"
         );
@@ -618,16 +616,20 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(shortfall(&db, id).unwrap(), Cents::ZERO, "and overspent");
+        assert_eq!(
+            progress(&db, id).unwrap().shortfall(),
+            Cents::ZERO,
+            "and overspent"
+        );
     }
 
     /// A dangling id is a corrupt database, not an unfunded goal. Returning
     /// zero here would silently switch a Planning gate off -- the exact
     /// failure this whole indirection exists to remove.
     #[test]
-    fn shortfall_of_a_missing_goal_is_an_error() {
+    fn progress_of_a_missing_goal_is_an_error() {
         let (db, _) = seeded();
-        let err = shortfall(&db, crate::db::GoalId(999)).unwrap_err();
+        let err = progress(&db, crate::db::GoalId(999)).unwrap_err();
         assert!(err.to_string().contains("999"), "{err}");
     }
 }

@@ -135,7 +135,7 @@ fn the_waterfall_reproduces_the_workbooks_transfer_instructions() {
         // the group total alone cannot catch an error in any one of them: because
         // `lines.goals` is defined as the plug, the total algebraically reduces
         // to `excess_used` minus the other two groups, so a bug in `lines.bills`,
-        // `lines.current_housing`, or `lines.roth` would be silently absorbed
+        // `lines.current_housing`, or the Roth line would be silently absorbed
         // and the total would stay unchanged.
         assert_eq!(computed.lines.bills, sheet_cents(&planning, 29, 3), "D30");
         assert_eq!(
@@ -144,19 +144,23 @@ fn the_waterfall_reproduces_the_workbooks_transfer_instructions() {
             "D31"
         );
         assert_eq!(computed.lines.goals, sheet_cents(&planning, 31, 3), "D32");
-        assert_eq!(computed.lines.roth, sheet_cents(&planning, 32, 3), "D33");
+        assert_eq!(
+            computed.lines.gates[Gate::Roth.index()],
+            sheet_cents(&planning, 32, 3),
+            "D33"
+        );
         assert_eq!(
             computed.lines.bills
                 + computed.lines.current_housing
                 + computed.lines.goals
-                + computed.lines.roth,
+                + computed.lines.gates[Gate::Roth.index()],
             sheet_cents(&planning, 28, 3),
             "D29"
         );
         assert_eq!(
             computed.lines.future_housing
                 + computed.lines.mom_and_dad
-                + computed.lines.emergency_fund,
+                + computed.lines.gates[Gate::EmergencyFund.index()],
             sheet_cents(&planning, 33, 3),
             "D34"
         );

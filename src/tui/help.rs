@@ -347,11 +347,11 @@ const SAVINGS: [Entry; 17] = [
     },
 ];
 
-const PLANNING: [Entry; 9] = [
+const PLANNING: [Entry; 10] = [
     Entry {
         key: "e",
         label: Label::Own("edit"),
-        detail: "Edit the selected row: a constant is typed into a field, a bill opens its full form, a destination is chosen from a list of goals, and the Split heading renames the split profile. The cursor settles on the nearest editable row after every move. Roth and Emergency Fund are read-only among the destinations. A figure typed into Excess (Used) pins it, in whole dollars. The three splits may not total over 100.",
+        detail: "Edit the selected row: a constant is typed into a field, a bill opens its full form, a destination is chosen from a list of goals, and the Split heading renames the split profile. A gate's goal and name are set in the Gates block. A figure typed into Excess (Used) pins it, in whole dollars. The three splits may not total over 100.",
     },
     Entry {
         key: "a",
@@ -367,6 +367,11 @@ const PLANNING: [Entry; 9] = [
         key: "←/→",
         label: Label::Own("profile"),
         detail: "On the Split block, switch to the previous or next split profile. The switch is live: the waterfall, the transfers t writes and the report all divide by the profile showing. Edits to a split percentage land in that profile alone.",
+    },
+    Entry {
+        key: "⇧↑↓",
+        label: Label::Hidden,
+        detail: "Move the selected gate one place in the priority order. The gates draw in the order shown, each taking what its goal still needs from what the ones above it left.",
     },
     Entry {
         key: "t",
@@ -777,7 +782,7 @@ const PICKER: [Entry; 3] = [
     },
 ];
 
-const DESTINATION: [Entry; 3] = [
+const DESTINATION: [Entry; 4] = [
     Entry {
         key: "/",
         label: Label::Hidden,
@@ -791,7 +796,12 @@ const DESTINATION: [Entry; 3] = [
     Entry {
         key: "Esc",
         label: Label::Hidden,
-        detail: "Clear a kept filter if one is narrowing the list; otherwise close without changing where the line lands.",
+        detail: "Clear a kept filter if one is narrowing the list; otherwise close without changing where the line lands. A gate's list opens filtered to its goal's name.",
+    },
+    Entry {
+        key: "e",
+        label: Label::Hidden,
+        detail: "On a gate's list, rename the gate. An empty name gives it back its own.",
     },
 ];
 

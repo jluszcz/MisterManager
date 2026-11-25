@@ -9,7 +9,7 @@
 use crate::calc::planning::Lines;
 use crate::db::setting::Key;
 use crate::db::{AccountId, GoalId};
-use crate::gate::Gate;
+use crate::gate::{Gate, Names};
 use crate::money::Cents;
 
 /// One line of the Planning waterfall's allocation.
@@ -18,10 +18,10 @@ pub enum Line {
     Bills,
     CurrentHousing,
     Goals,
-    Roth,
+    /// What a gate draws, into the goal it gates on.
+    Gate(Gate),
     FutureHousing,
     MomAndDad,
-    EmergencyFund,
     Retirement,
     Investment,
 }
@@ -45,15 +45,16 @@ pub enum Destination {
 }
 
 impl Line {
-    /// Every line, in the order the screens list them.
+    /// Every line, in the order the screens list them: the gates together, in
+    /// [`Gate::ALL`]'s.
     pub const ALL: [Line; 9] = [
         Line::Bills,
         Line::CurrentHousing,
         Line::Goals,
-        Line::Roth,
+        Line::Gate(Gate::EmergencyFund),
+        Line::Gate(Gate::Roth),
         Line::FutureHousing,
         Line::MomAndDad,
-        Line::EmergencyFund,
         Line::Retirement,
         Line::Investment,
     ];
@@ -68,12 +69,19 @@ impl Line {
             Line::Bills => "Bills",
             Line::CurrentHousing => "Current Housing",
             Line::Goals => "Goals",
-            Line::Roth => "Roth",
+            Line::Gate(gate) => gate.label(),
             Line::FutureHousing => "Future Housing",
             Line::MomAndDad => "Mom & Dad",
-            Line::EmergencyFund => "Emergency Fund",
             Line::Retirement => "Retirement",
             Line::Investment => "Investment",
+        }
+    }
+
+    /// [`Line::label`], or a gate's own name where the owner has given one.
+    pub fn drawn(self, names: &Names) -> String {
+        match self {
+            Line::Gate(gate) => names.drawn(gate),
+            _ => self.label().to_string(),
         }
     }
 
@@ -87,10 +95,9 @@ impl Line {
             Line::Bills => lines.bills,
             Line::CurrentHousing => lines.current_housing,
             Line::Goals => lines.goals,
-            Line::Roth => lines.roth,
+            Line::Gate(gate) => lines.gates[gate.index()],
             Line::FutureHousing => lines.future_housing,
             Line::MomAndDad => lines.mom_and_dad,
-            Line::EmergencyFund => lines.emergency_fund,
             Line::Retirement => lines.retirement,
             Line::Investment => lines.investment,
         }
@@ -107,13 +114,12 @@ impl Line {
             Line::Bills => Destination::Goal(Key::new("planning.goal.bill_payments_id")),
             Line::CurrentHousing => Destination::Goal(Key::new("planning.goal.housing_id")),
             Line::Goals => Destination::Spread,
-            Line::Roth => Destination::Goal(Gate::Roth.key()),
+            Line::Gate(gate) => Destination::Goal(gate.key()),
             // The stored string still says `down_payment`: it is the key an
             // existing database already holds this goal's id under, written
             // there when it was a gate.
             Line::FutureHousing => Destination::Goal(Key::new("planning.goal.down_payment_id")),
             Line::MomAndDad => Destination::Goal(Key::new("planning.goal.mom_and_dad_id")),
-            Line::EmergencyFund => Destination::Goal(Gate::EmergencyFund.key()),
             Line::Retirement => Destination::Account(Key::new("planning.account.retirement_id")),
             Line::Investment => Destination::Account(Key::new("planning.account.investment_id")),
         }
@@ -121,7 +127,7 @@ impl Line {
 
     /// The key and goal-name substring this line is matched by at import.
     ///
-    /// `None` for the two lines whose goal a [`Gate`] already matches, and
+    /// `None` for the lines whose goal a [`Gate`] already matches, and
     /// for the plug, which resolves through goals rather than a key. Name
     /// matching happens at import, once, and never at read time: goal names
     /// are not unique.
@@ -139,7 +145,7 @@ impl Line {
         }
     }
 
-    /// The gate whose goal this line funds, for the two lines a gate matches.
+    /// The gate whose goal this line funds, for the lines a gate matches.
     ///
     /// They borrow the gate's key rather than declaring their own, so the
     /// line and the gate cannot come to name two different goals. The cost of
@@ -148,15 +154,14 @@ impl Line {
     /// *write* a destination have to know which lines these are.
     pub fn gate(self) -> Option<Gate> {
         match self {
-            Line::Roth => Some(Gate::Roth),
-            Line::EmergencyFund => Some(Gate::EmergencyFund),
+            Line::Gate(gate) => Some(gate),
             _ => None,
         }
     }
 
     /// The substring this line's goal name must contain at import.
     ///
-    /// [`Line::owned_goal`]'s, or the gate's for the two lines whose goal a
+    /// [`Line::owned_goal`]'s, or the gate's for the lines whose goal a
     /// [`Gate`] matches — so every goal-backed line answers, which
     /// `owned_goal` alone does not. `None` for the plug and for the two lines
     /// naming an account, neither of which is matched by name at all.
@@ -187,15 +192,16 @@ mod tests {
                 Line::Bills
                 | Line::CurrentHousing
                 | Line::Goals
-                | Line::Roth
+                | Line::Gate(_)
                 | Line::FutureHousing
                 | Line::MomAndDad
-                | Line::EmergencyFund
                 | Line::Retirement
                 | Line::Investment => {}
             }
         }
-        assert_eq!(Line::ALL.len(), 9);
+        assert_eq!(Line::ALL.len(), 7 + Gate::ALL.len());
+        let gates: Vec<Gate> = Line::ALL.iter().filter_map(|l| l.gate()).collect();
+        assert_eq!(gates, Gate::ALL, "each gate's line");
     }
 
     /// The import matches a goal-backed line's destination by this
@@ -222,11 +228,9 @@ mod tests {
     /// covers the key.
     #[test]
     fn a_gate_backed_line_takes_that_gates_substring() {
-        assert_eq!(Line::Roth.import_substring(), Some(Gate::Roth.substring()));
-        assert_eq!(
-            Line::EmergencyFund.import_substring(),
-            Some(Gate::EmergencyFund.substring())
-        );
+        for gate in Gate::ALL {
+            assert_eq!(Line::Gate(gate).import_substring(), Some(gate.substring()));
+        }
     }
 
     /// Two lines sharing a destination key would send one line's money where
@@ -269,20 +273,16 @@ mod tests {
         assert_eq!(labels.len(), before, "two lines share a label");
     }
 
-    /// The two gate-backed lines borrow the gate's key rather than declaring
+    /// The gate-backed lines borrow the gate's key rather than declaring
     /// their own. A second copy of the string would be a second thing to keep
     /// in step, and the gate is the one that reads it at import.
     #[test]
     fn the_gate_backed_lines_resolve_through_the_gates_own_key() {
-        match Line::Roth.destination() {
-            Destination::Goal(key) => assert_eq!(key.name(), Gate::Roth.key().name()),
-            other => panic!("Roth resolves to {other:?}"),
-        }
-        match Line::EmergencyFund.destination() {
-            Destination::Goal(key) => {
-                assert_eq!(key.name(), Gate::EmergencyFund.key().name())
+        for gate in Gate::ALL {
+            match Line::Gate(gate).destination() {
+                Destination::Goal(key) => assert_eq!(key.name(), gate.key().name()),
+                other => panic!("{gate:?} resolves to {other:?}"),
             }
-            other => panic!("Emergency Fund resolves to {other:?}"),
         }
     }
 
@@ -299,8 +299,9 @@ mod tests {
             owned,
             vec!["Bill Payments", "Housing", "Down Payment", "Mom & Dad"]
         );
-        assert!(Line::Roth.owned_goal().is_none());
-        assert!(Line::EmergencyFund.owned_goal().is_none());
+        for gate in Gate::ALL {
+            assert!(Line::Gate(gate).owned_goal().is_none());
+        }
         assert!(Line::Goals.owned_goal().is_none());
     }
 
@@ -313,10 +314,9 @@ mod tests {
             bills: Cents(1),
             current_housing: Cents(2),
             goals: Cents(3),
-            roth: Cents(4),
+            gates: [Cents(4), Cents(7)],
             future_housing: Cents(5),
             mom_and_dad: Cents(6),
-            emergency_fund: Cents(7),
             retirement: Cents(8),
             investment: Cents(9),
         };

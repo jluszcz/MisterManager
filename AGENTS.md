@@ -172,7 +172,7 @@ Layered, and the layering is enforced by module privacy rather than convention:
 | `src/money.rs` | `Cents(i64)` — the only money type. No floats anywhere in the crate. |
 | `src/palette.rs` | What a color *is*, in numbers: the eight account colors, the negative and positive colors and which side of zero wears each (`Sense` — Credit's ledger runs as debt on the screen and the page alike), and the funding ramp — how funded a goal is, red through yellow to green — and the Total line a balance chart draws over its accounts, as `(u8, u8, u8)`. `tui::style` wraps them for a terminal; `report` spells them as `#rrggbb`. |
 | `src/rate.rs` | `Percent` (/100) and `BasisPoints` (/10,000) — the two scalings, as distinct types. `BasisPoints` prints itself as a percentage with two decimals, on the type rather than beside a screen, so the Funds screen and the report cannot render one share two ways; `whole_percent` is the second spelling, on the type for the same reason, for a share read down a column rather than against the target beside it, and `exact_percent` the one a Planning split and an account's tax-free part are drawn and prefilled in. `Percent` is a goal's funded share; the Planning splits and an account's tax-free part are `BasisPoints`. |
-| `src/gate.rs` | `Gate` — the Planning gates, each owning its setting key and goal-name substring. |
+| `src/gate.rs` | `Gate` — the Planning gates, each owning its setting key and goal-name substring; and `Priority` and `Names`, the order the owner has them draw in and what they are called, which `mm import` carries across a `--replace`. A display spells a gate through `Names::drawn` or `Line::drawn`, never `label`. |
 | `src/reading.rs` | `Reading` — whether a reader refuses a row it cannot resolve or draws past it. One parameter rather than a strict function and a tolerant twin, so the two readings differ in nothing but the thing they name. Taken by `goal::all_with_balances` and by the `transfer` readers built on it. |
 | `src/savings_block.rs` | `Block` — the two blocks of the `Savings` sheet, each owning the setting key naming its container account. |
 | `src/default_source.rs` | `Source` — the two money forms, `t` and `p`, each owning the setting key naming the account its `From` opens on. |
@@ -767,7 +767,7 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
 - **`mm --demo` replaces absolute figures and owner-entered text, and nothing else.** Every
   absolute dollar figure draws with another figure's digits, keyed on a per-run salt so one amount
   reads the same everywhere; every account name and code, goal name, goal note, recurring-goal name,
-  bill label, split profile name, fund ticker, fund name and transaction description draws as a same-length pronounceable pseudoword,
+  bill label, split profile name, gate name, fund ticker, fund name and transaction description draws as a same-length pronounceable pseudoword,
   keyed the same way so one word reads the same all run. Percentages, dates, counts, the app's own vocabulary, and every match key are
   untouched: a percentage is a shape rather than a sum, a scrambled date is not a date, and a count
   over a list of rows the reader can see would read as a fault. It is display-only and installed
@@ -832,7 +832,7 @@ the code. The same rule governs each module `AGENTS.md` against the code beneath
     ask before `insert_all` runs.
   - **That refusal binds every path that *spends* a target, and no path that only *draws* one**, and
     which one a caller gets is the `Reading` it passes. Strict: `transfer::plan` through
-    `spread_goals`, both worksheet prefills, and `shortfall` behind every Planning gate. Tolerant:
+    `spread_goals`, both worksheet prefills, and `progress` behind every Planning gate. Tolerant:
     the Savings screen, `wiring`, and the report. `src/reading.rs` is where the split is argued.
 - **A container's goals are two blocks, and `goal.sort` orders only the first.** Undated goals lead,
   in `sort` order; dated goals follow, soonest first. The halves are arranged by different things — a

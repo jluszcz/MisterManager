@@ -36,7 +36,7 @@ forget, and the copy that goes stale is always the one further from the code.
 | `[` / `]` | step a month: the filter a screen narrows by, or the date a field holds |
 | `←` / `→` | move the caret in a text field, step a date a day at a time, or cycle the focused selector — see the invariant below; on a screen, the Overview's scrub, the Planning Split block's profile switch and Retirement's withdrawal rate |
 | `Shift`+`←` / `Shift`+`→` | the same nudge, a week at a time on a date; one choice on a selector |
-| `Shift`+`↑` / `Shift`+`↓` | move the selected row one place in an order kept by hand: a goal on Savings, an account on Accounts |
+| `Shift`+`↑` / `Shift`+`↓` | move the selected row one place in an order kept by hand: a goal on Savings, an account on Accounts, a gate on Planning |
 | `Ctrl`+a letter | edit the text under the caret, in every box in the app — see the invariant below |
 | `Esc` | back out of the innermost thing: a form, a search box, a filter, the Overview's scrub, the panel |
 | `Tab` | cycle the screen's filter, or move to the next field in a form |
@@ -533,8 +533,9 @@ deferred to nothing.
   borrow `gate::Gate`'s key — deliberately, so a line and its gate cannot name two different goals —
   which means writing it is never only a destination change: `plan::compute_from_db` reads the same
   key as that gate's remaining shortfall, so a pick there would decide whether the gate fires and
-  re-route four other lines' amounts. The Gates block is where that belongs. A destination row must
-  not become a second, quieter door to it.
+  re-route four other lines' amounts. The Gates block is where that is done: `e` on a gate's row
+  opens the same list, over the same key. A destination row must not become a second, quieter door
+  to it.
 - **A date field is `form::DateField`, and that is where every rule about one lives.** The text and
   the reading of it are one value, because a date is the one field whose meaning depends on *when*
   it is being typed — the `M/D` shorthand needs a `today` to resolve against — and a bare `Field`

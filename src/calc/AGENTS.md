@@ -192,23 +192,26 @@ on the payday where every line is zero and there is no line to draw a `Δ` besid
 
 ### The gates, in priority order
 
-Emergency → Roth, each firing on `remaining_* > 0`. `plan.rs` resolves each remainder from goal
-ids stored in `setting` under the keys `gate::Gate` owns — never by name; see the root `AGENTS.md`
-on why goal names cannot be keys.
+A gate is its place in the priority order and nothing more: `calc` takes an array of `GateState` by
+`Gate::index` and the order to draw them in, which is `gate::PRIORITY`, the owner's. Each draws on
+`GateState::shortfall`. `plan.rs` resolves each state from goal ids stored in `setting` under the keys `gate::Gate`
+owns — never by name; see the root `AGENTS.md` on why goal names cannot be keys.
 
-- **Emergency shuts off everything else.** Roth, retirement and investment go to zero, and the
-  future housing, retirement, and investment shares pile into `lines.emergency_fund` — summed
-  first, floored once, so the separate floors don't leak a dollar or two out of the total.
-- **Roth splits the retirement share.** `lines.roth` takes up to what the Roth still needs;
-  `lines.retirement` gets the rest.
+- **Each gate takes what its goal still needs and no more**, out of the future housing share, then
+  retirement, then investment — so a split giving any of the three nothing still fills it.
+- **A gate on a closed goal draws nothing, and `transfer::plan` refuses the payday.** The waterfall
+  is still drawn, because the Gates block is where the gate is pointed elsewhere.
+- **A gate draws from what the ones above it left.** `lines.future_housing`,
+  `lines.retirement` and `lines.investment` keep what none of them took. Each gate's line is summed
+  first and floored once, so separate floors don't leak a dollar or two out of the total.
 
-Each gate has its own test, because a gate with no exercising test is a branch that silently rots,
-and both read false in the ordinary case.
+Each priority has its own tests, because a gate with no exercising test is a branch that silently
+rots, and both read false in the ordinary case.
 
 ### Future Housing is one destination, floored once
 
-`future_housing` is the whole `future_housing_pct` share of the remainder, under one line —
-`lines.future_housing`. Which account it resolves to, a down-payment goal or mortgage principal, is
+`future_housing` is the whole `future_housing_pct` share of the remainder, and what the gates leave
+of it is under one line — `lines.future_housing`. Which account it resolves to, a down-payment goal or mortgage principal, is
 a question for the layer above `calc`, which is why the share is not split here: splitting it into a
 goal contribution and a mortgage overflow, the way the sheet's `D35`/`D41` do, floors twice and can
 leak a dollar the single merged line does not.

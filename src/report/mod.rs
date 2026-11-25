@@ -177,6 +177,7 @@ pub struct PlanView {
     pub expense_constants: Vec<plan_rows::Target>,
     /// The active split profile's name, which heads the Split block.
     pub split_profile: String,
+    pub gate_names: crate::gate::Names,
 }
 
 /// Everything the report draws, read in one pass.
@@ -423,6 +424,7 @@ fn plan_view(db: &Db, today: NaiveDate, adhoc: NaiveDate) -> Result<PlanView> {
         spread_ask_total,
         expense_constants: plan::expense_constants(db)?,
         split_profile: crate::db::split_profile::active(db)?.name,
+        gate_names: crate::gate::Names::load(db)?,
     })
 }
 
