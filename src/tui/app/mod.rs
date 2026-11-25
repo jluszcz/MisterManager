@@ -771,38 +771,112 @@ impl App {
             return TextLine::from(self.status.clone());
         }
         match self.screen {
-            // The pin's reasoning, for the scrub: with nothing scrubbed `Esc`
-            // has nothing to clear, and naming it would offer to.
-            Screen::Overview => TextLine::from(match self.scrubbed_days() {
-                0 => Topic::Overview.footer_without(&["Esc"]),
-                _ => Topic::Overview.footer(),
-            }),
             Screen::Cash | Screen::Credit if self.ledger().is_searching() => {
                 search_footer(self.ledger())
             }
-            Screen::Cash => TextLine::from(Topic::Ledger.footer()),
-            // `t` opens a transfer, which the Credit ledger does not offer: a
-            // footer must not name a key its screen refuses.
-            Screen::Credit => TextLine::from(Topic::Ledger.footer_without(&["t"])),
             Screen::Savings if self.savings.is_searching() => search_footer(&self.savings),
-            Screen::Savings => TextLine::from(Topic::Savings.footer()),
-            // `P` is live either way -- it says "nothing pinned" rather than
-            // failing silently -- but naming it on an unpinned screen would
-            // offer to clear something that is not there.
-            Screen::Planning => TextLine::from(match self.planning.is_pinned() {
-                true => Topic::Planning.footer(),
-                false => Topic::Planning.footer_without(&["P"]),
-            }),
             Screen::Funds if self.funds.is_searching() => search_footer(&self.funds),
-            Screen::Funds => TextLine::from(Topic::Funds.footer()),
-            Screen::RecurringTxns => TextLine::from(Topic::RecurringTxns.footer()),
             Screen::RecurringGoals if self.recurring_goal.is_searching() => {
                 search_footer(&self.recurring_goal)
             }
-            Screen::RecurringGoals => TextLine::from(Topic::RecurringGoals.footer()),
-            Screen::Accounts => TextLine::from(Topic::Accounts.footer()),
-            Screen::Retirement => TextLine::from(Topic::Retirement.footer()),
+            Screen::Overview
+            | Screen::Cash
+            | Screen::Credit
+            | Screen::Savings
+            | Screen::Planning
+            | Screen::Funds
+            | Screen::RecurringTxns
+            | Screen::RecurringGoals
+            | Screen::Accounts
+            | Screen::Retirement => {
+                TextLine::from(self.screen_topic().footer_without(&self.idle_keys()))
+            }
         }
+    }
+
+    /// The current screen's keys that would do nothing, or be refused, where
+    /// the cursor and the view state stand -- which the footer leaves out.
+    ///
+    /// This decides only what is offered, never what a key does: the handlers
+    /// answer every press themselves, most with a reason it did nothing. Read
+    /// from what the screens already hold, since the footer is composed on
+    /// every draw.
+    fn idle_keys(&self) -> Vec<&'static str> {
+        let live: Vec<(&'static str, bool)> = match self.screen {
+            Screen::Overview => vec![("Esc", self.scrubbed_days() != 0)],
+            Screen::Cash | Screen::Credit => vec![
+                ("e", self.ledger().selected().is_some()),
+                ("d", self.ledger().selected().is_some()),
+                ("t", self.screen == Screen::Cash),
+                ("r", self.ledger().selected_account().is_some()),
+            ],
+            Screen::Savings => vec![
+                ("a", self.savings.selected().is_some()),
+                ("e", self.savings.selected().is_some()),
+                ("c", self.savings.selected().is_some()),
+                ("f", self.savings.selected().is_some()),
+                ("Enter", self.savings.selected().is_some()),
+                ("t", self.savings.selected_has_sibling()),
+                ("⇧↑↓", self.savings.selected_is_movable()),
+            ],
+            Screen::Planning => {
+                let target = self.planning.selected_target();
+                let in_split = target.is_some_and(planning_screen::Target::in_split_block);
+                let bill = matches!(target, Some(planning_screen::Target::Bill(_)));
+                let drawn = self.planning.message().is_none();
+                vec![
+                    ("e", self.planning.selected_editable().is_some()),
+                    ("t", drawn),
+                    ("p", drawn),
+                    ("P", self.planning.is_pinned()),
+                    ("Enter", !self.planning.transfer_detail().is_empty()),
+                    ("d", bill || in_split),
+                    (
+                        "f",
+                        bill || target.is_some_and(|t| t.counts_as_expense_key().is_some()),
+                    ),
+                    ("←/→", in_split),
+                    (
+                        "⇧↑↓",
+                        matches!(target, Some(planning_screen::Target::Gate(_))),
+                    ),
+                ]
+            }
+            Screen::RecurringTxns => {
+                let row = self.recurring_txn.selected();
+                vec![
+                    ("e", row.is_some()),
+                    ("d", row.is_some()),
+                    ("g", row.is_some()),
+                    (
+                        "P",
+                        row.is_some_and(|row| row.to.is_none() && !row.is_paycheck),
+                    ),
+                ]
+            }
+            Screen::RecurringGoals => {
+                let row = self.recurring_goal.selected();
+                vec![
+                    ("e", row.is_some()),
+                    ("l", row.is_some()),
+                    ("d", row.is_some_and(|row| row.open_goals == 0)),
+                ]
+            }
+            Screen::Funds => vec![
+                ("e", self.funds.selected().is_some()),
+                ("d", self.funds.selected().is_some()),
+                ("g", self.funds.selected().is_some()),
+            ],
+            Screen::Accounts => vec![
+                ("e", self.accounts.selected().is_some()),
+                ("⇧↑↓", self.accounts.selected().is_some()),
+            ],
+            Screen::Retirement => vec![],
+        };
+        live.iter()
+            .filter(|(_, live)| !live)
+            .map(|(key, _)| *key)
+            .collect()
     }
 
     /// The app-wide keys, drawn against the footer's right edge -- or nothing,
@@ -846,6 +920,12 @@ impl App {
         if let Some(modal) = &self.modal {
             return modal.topic();
         }
+        self.screen_topic()
+    }
+
+    /// The topic of the screen itself, whatever modal is drawn over it: what
+    /// [`App::footer`] goes on naming underneath one.
+    fn screen_topic(&self) -> Topic {
         match self.screen {
             Screen::Overview => Topic::Overview,
             Screen::Cash | Screen::Credit if self.ledger().is_searching() => Topic::LedgerSearch,
@@ -1282,9 +1362,9 @@ impl jluszcz_finance_utils::tui::app::App for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{account, holding, recurring_goal, recurring_txn};
+    use crate::db::{self, account, goal, holding, recurring_goal, recurring_txn};
     use crate::money::Cents;
-    use crate::test_support::day;
+    use crate::test_support::{day, walk_until};
     use crate::tui::app::test_support::*;
     use crate::tui::cursor::Scroll;
     use crate::tui::help::{self, Topic};
@@ -2300,6 +2380,8 @@ mod tests {
     fn the_ledger_footers_key_hints_fit_the_minimum_width() {
         let mut app = app();
         press(&mut app, KeyCode::Char('2'));
+        // An account filter is what `r target` needs, and the widest line.
+        press(&mut app, KeyCode::Tab);
         let footer = footer_line(&app);
         assert!(footer.contains("r target"), "{footer}");
         assert!(
@@ -2350,32 +2432,29 @@ mod tests {
         assert_eq!(footer_of(&mut app, '1'), "←/→ scrub · ⇧←→ week");
         assert_eq!(
             footer_of(&mut app, '2'),
-            "Tab acct · [ ] month · Esc clear · / search · r target · a/t/p money · e edit · d delete"
+            "Tab acct · [ ] month · Esc clear · / search · a/t/p money · e edit · d delete"
         );
         assert_eq!(
             footer_of(&mut app, '3'),
-            "Tab acct · [ ] month · Esc clear · / search · r target · a/p money · e edit · d delete"
+            "Tab acct · [ ] month · Esc clear · / search · a/p money · e edit · d delete"
         );
         assert_eq!(
             footer_of(&mut app, '4'),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t money · n/e/c/⇧↑↓/f/F/Enter goal · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t money · U undo · n/e/c/f/F/Enter/⇧↑↓ goal"
         );
         assert_eq!(
             footer_of(&mut app, '5'),
-            "e edit · a add · d delete · ←/→ profile · t transfers · f expense · Enter why · p pin"
+            "e edit · a add · t transfers · p pin · Enter why"
         );
         assert_eq!(
             footer_of(&mut app, '7'),
-            "Tab acct · Esc clear · / search · a/e/d holding · g refresh · G all"
+            "Tab acct · Esc clear · / search · a holding · G all"
         );
         assert_eq!(
             footer_of(&mut app, '6'),
-            "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings · l link"
+            "[ ] month · Esc clear · / search · a add · s savings"
         );
-        assert_eq!(
-            footer_of(&mut app, '9'),
-            "a add · e edit · d delete · g regen · G all · x extend · P paycheck"
-        );
+        assert_eq!(footer_of(&mut app, '9'), "a add · G all · x extend");
     }
 
     /// `Esc` clears a scrub, so the footer names it only while there is one to
@@ -2392,6 +2471,232 @@ mod tests {
         press(&mut app, KeyCode::Esc);
         app.expire_status_at(Instant::now() + STATUS_TTL);
         assert_eq!(footer(&app), "←/→ scrub · ⇧←→ week");
+    }
+
+    #[test]
+    fn the_planning_footer_names_only_the_keys_the_selected_row_answers() {
+        use crate::tui::planning::Target;
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        for (target, keys) in [
+            (Target::SplitProfile, " · d delete · ←/→ profile"),
+            (Target::InvestmentPct, " · d delete · ←/→ profile"),
+            (Target::Gate(crate::gate::Gate::Roth), " · ⇧↑↓ move"),
+            (Target::GoalsFloor, " · f expense"),
+            (Target::Buffer, ""),
+        ] {
+            press(&mut app, KeyCode::Home);
+            walk_until!(
+                app.planning.selected_target() == Some(target),
+                press(&mut app, KeyCode::Down)
+            );
+            let footer = footer(&app);
+            assert_eq!(
+                footer,
+                format!("e edit · a add · t transfers · p pin{keys}"),
+                "{target:?}"
+            );
+        }
+        press(&mut app, KeyCode::Home);
+        select_first_bill(&mut app);
+        assert!(footer(&app).ends_with(" · p pin · d delete · f expense"));
+    }
+
+    #[test]
+    fn a_footer_goes_on_naming_the_screens_keys_under_a_modal() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        let before = footer(&app);
+        press(&mut app, KeyCode::Char('a'));
+        assert!(app.modal.is_some());
+        assert_eq!(footer(&app), before);
+    }
+
+    /// Every row in both pin states, since the keys a footer names depend on
+    /// the row under the cursor.
+    #[test]
+    fn the_planning_footer_fits_the_minimum_width_on_every_row() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        for _ in 0..2 {
+            press(&mut app, KeyCode::Home);
+            for _ in 0..app.planning.rows().len() {
+                let line = footer_line(&app);
+                assert!(line.chars().count() <= usize::from(MIN_WIDTH), "{line}");
+                press(&mut app, KeyCode::Down);
+            }
+            press(&mut app, KeyCode::Char('p'));
+        }
+    }
+
+    #[test]
+    fn the_planning_footer_offers_why_only_while_the_transfers_are_unresolved() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        assert!(app.planning.transfer_detail().is_empty());
+        assert!(!footer(&app).contains("Enter why"));
+
+        let key = destination_key(crate::plan_line::Line::FutureHousing);
+        setting::set(&app.db, key, crate::db::GoalId(999)).unwrap();
+        app.reload().unwrap();
+        assert!(!app.planning.transfer_detail().is_empty());
+        assert!(footer(&app).contains("Enter why"));
+    }
+
+    #[test]
+    fn the_ledger_footer_offers_a_target_only_under_an_account_filter() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        assert!(!footer(&app).contains("r target"));
+        press(&mut app, KeyCode::Tab);
+        assert!(footer(&app).ends_with(" · r target"));
+    }
+
+    #[test]
+    fn the_savings_footer_offers_to_move_only_an_undated_goal_outside_a_search() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        // The undated goals lead, so the cursor opens on one.
+        press(&mut app, KeyCode::Home);
+        assert!(
+            footer(&app).ends_with("F/Enter/⇧↑↓ goal"),
+            "{}",
+            footer(&app)
+        );
+        press(&mut app, KeyCode::End);
+        assert!(footer(&app).ends_with("F/Enter goal"), "{}", footer(&app));
+
+        press(&mut app, KeyCode::Char('/'));
+        press(&mut app, KeyCode::Char('C'));
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Home);
+        assert!(footer(&app).ends_with("F/Enter goal"), "{}", footer(&app));
+    }
+
+    #[test]
+    fn the_savings_footer_offers_a_transfer_only_beside_another_open_goal() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        assert!(footer(&app).contains("a/A/i/t money"));
+
+        let couch = app
+            .savings
+            .rows()
+            .iter()
+            .find(|row| row.name == "Couch")
+            .unwrap()
+            .goal_id;
+        goal::move_value(&app.db, couch, None, today()).unwrap();
+        app.reload().unwrap();
+        assert!(footer(&app).contains("a/A/i money"), "{}", footer(&app));
+    }
+
+    #[test]
+    fn the_recurring_footer_offers_paycheck_only_on_a_row_that_is_no_transfer() {
+        use crate::db::recurring_txn::{self, Cadence, NewRecurringTxn};
+        let mut app = app();
+        let checking = account::by_code(&app.db, "CHK", Kind::Cash)
+            .unwrap()
+            .unwrap()
+            .id;
+        let savings = account::by_code(&app.db, "SAV", Kind::Cash)
+            .unwrap()
+            .unwrap()
+            .id;
+        for (to, offered) in [(None, true), (Some(savings), false)] {
+            let id = recurring_txn::insert(
+                &app.db,
+                &NewRecurringTxn {
+                    description: "Payday".to_string(),
+                    cents: Cents(100),
+                    account_id: checking,
+                    to_account_id: to,
+                    cadence: Cadence::Biweekly,
+                    anchor_date: today(),
+                    horizon: None,
+                },
+            )
+            .unwrap();
+            app.reload().unwrap();
+            press(&mut app, KeyCode::Char('9'));
+            assert_eq!(footer(&app).contains("P paycheck"), offered);
+            recurring_txn::delete(&app.db, id).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_recurring_footer_offers_paycheck_only_until_the_row_carries_the_mark() {
+        let mut app = app();
+        let checking = account::by_code(&app.db, "CHK", Kind::Cash)
+            .unwrap()
+            .unwrap()
+            .id;
+        let id = recurring_txn::insert(
+            &app.db,
+            &recurring_txn::NewRecurringTxn {
+                description: "Payday".to_string(),
+                cents: Cents(100),
+                account_id: checking,
+                to_account_id: None,
+                cadence: recurring_txn::Cadence::Biweekly,
+                anchor_date: today(),
+                horizon: None,
+            },
+        )
+        .unwrap();
+        recurring_txn::set_paycheck(&app.db, id).unwrap();
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('9'));
+        assert!(!footer(&app).contains("P paycheck"), "{}", footer(&app));
+    }
+
+    #[test]
+    fn the_savings_footer_offers_no_row_key_when_a_search_leaves_no_row() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('4'));
+        press(&mut app, KeyCode::Char('/'));
+        for c in "zzzz".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Enter);
+        assert!(app.savings.selected().is_none());
+        assert!(
+            footer(&app).ends_with("A/i money · U undo · n/F goal"),
+            "{}",
+            footer(&app)
+        );
+    }
+
+    #[test]
+    fn the_planning_footer_offers_only_add_while_the_plan_cannot_be_drawn() {
+        let mut app = planning_app();
+        press(&mut app, KeyCode::Char('5'));
+        app.planning.set_unavailable("no plan".to_string());
+        assert_eq!(footer(&app), "a add");
+    }
+
+    #[test]
+    fn the_recurring_goal_footer_offers_delete_only_where_no_open_goal_refuses_it() {
+        let mut app = app();
+        let entry = db::recurring_goal::insert(
+            &app.db,
+            &db::recurring_goal::NewEntry {
+                name: "Insurance".to_string(),
+                month: 3,
+                base_cents: Cents(10_000),
+                taxed: false,
+                cadence: db::recurring_goal::Cadence::Annual,
+            },
+        )
+        .unwrap();
+        app.reload().unwrap();
+        press(&mut app, KeyCode::Char('6'));
+        assert!(footer(&app).ends_with(" · d delete"), "{}", footer(&app));
+
+        let couch = app.savings.rows()[0].goal_id;
+        goal::link_recurring_goal(&app.db, couch, entry).unwrap();
+        app.reload().unwrap();
+        assert!(!footer(&app).contains("d delete"), "{}", footer(&app));
     }
 
     /// The pin is the one footer entry whose word changes with state. The table

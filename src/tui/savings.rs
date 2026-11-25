@@ -225,6 +225,22 @@ impl Savings {
         self.visible.get(self.cursor.index()).map(|i| &self.all[*i])
     }
 
+    /// Whether the selected goal's container holds another open goal to move
+    /// value to -- over every goal, since a filter hides none of them from `t`.
+    pub fn selected_has_sibling(&self) -> bool {
+        self.selected().is_some_and(|row| {
+            self.all.iter().any(|other| {
+                other.goal_id != row.goal_id && other.container.id() == row.container.id()
+            })
+        })
+    }
+
+    /// Whether the selected goal has a place to move in: only an undated goal
+    /// is ordered by hand, and only over a list no search is narrowing.
+    pub fn selected_is_movable(&self) -> bool {
+        self.search().is_empty() && self.selected().is_some_and(|row| row.goal_date.is_none())
+    }
+
     /// Put the cursor on a goal by id, leaving it where it is if the goal is
     /// not among the visible rows.
     ///

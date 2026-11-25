@@ -127,15 +127,26 @@ end`, since `month` would name one edge of a pair.
 truncates a `Paragraph` from the right, so an over-wide left half runs into the chrome and drops its
 own last keys with nothing on screen to say a word went missing.
 `help::tests::every_screen_footer_fits_the_minimum_width` measures every screen topic against both
-halves plus the separator; `app`'s two own width tests measure what `App::footer` composes at
+halves plus the separator; `app`'s own width tests measure what `App::footer` composes at
 runtime, which a `Topic` alone does not see. The first lever when a screen runs out of room is
-`Label::Shared`: several keys join under one word naming what they act *on* — `a/A/i/t money` and `n/e/c/⇧↑↓/f/F/Enter goal` on Savings, `a/t/p money` on the ledgers,
+`Label::Shared`: several keys join under one word naming what they act *on* — `a/A/i/t money` and `n/e/c/f/F/Enter/⇧↑↓ goal` on Savings, `a/t/p money` on the ledgers,
 where the three keys that write new rows join against the `e` and `d` that act on the one selected —
 which buys back a whole item's separator per key absorbed, and the verbs it costs are a keystroke
 away in the panel, which has room for them. A shorter word is the smaller adjustment beside it —
 the `acct` every screen's `Tab` takes. What neither of them does is drop a key: a key nothing
 advertises is a key nobody presses, so `Label::Hidden` stays for the entries a footer word would
 only say twice, `BackTab` being the one.
+
+**A footer names only the keys that would do something where the cursor stands.** `App::idle_keys`
+lists the rest from the selected row and the view state, and `Topic::footer_without` leaves them
+out; the panel keeps every key, and a hidden key pressed anyway is still answered by its handler's
+own refusal. With no row selected, the keys that act on one go too. A table
+puts its other contextual keys last — the ones that follow state, such as `P unpin`, ahead of the
+ones that follow the cursor, and inside a `Shared` run at its end — so moving the cursor reflows as
+little as possible. The shared filters are never hidden, bar the Overview's `Esc`. A refusal that
+only the database can decide is not asked for, since a footer is composed on every draw. Planning's
+whole table is wider than `MIN_WIDTH` and may be: its `←/→`, `f` and `⇧↑↓` belong to different
+rows, so no one footer holds them together.
 
 **`Shift` is spelled `⇧` wherever a key is printed** — a footer, a panel row — the glyph macOS
 prints for it, and one column where the word is six. `⇧↑↓` is what let Savings' move keys into its
@@ -145,7 +156,7 @@ the slash is what separates keys, so `n/e/c/⇧↑/↓` would read as two.
 **Savings' footer is the one closest to the edge**, at two columns of slack, so the next key that
 needs a group is likelier to be its than any other screen's — and both its levers are spent: every
 key it has that writes or acts on one goal is already inside `a/A/i/t money` or
-`n/e/c/⇧↑↓/f/F/Enter goal`, which is what bought `Enter`, `t` and `F` their places there, and the
+`n/e/c/f/F/Enter/⇧↑↓ goal`, which is what bought `Enter`, `t` and `F` their places there, and the
 first of those took the ledgers' `money` over `allocate` for the three columns `F` needed. The
 ledgers' is the next widest, and both of *its* levers are spent too, the
 grouping on `a/t/p` and the shorter word on `Tab`. A footer that overflows has nothing left to fall
