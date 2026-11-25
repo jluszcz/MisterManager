@@ -232,11 +232,6 @@ const LEDGER: [Entry; 11] = [
         "Filter rows by description or amount as you type -- 1234 finds a row of $1,234.56. Enter keeps the filter and leaves the box; Esc clears it.",
     ),
     Entry {
-        key: "r",
-        label: Label::Own("target"),
-        detail: "Reconcile the filtered account against a statement: type the balance it should hold, and the border carries it beside today's figure with the difference after it. Needs an account filter. An empty field clears it, Esc leaves it alone, and nothing is saved.",
-    },
-    Entry {
         key: "a",
         label: Label::Shared("money"),
         detail: "Add a transaction, opening on the account the ledger is filtered to, or the first when the filter is All, and on the date the last row added this session was written for -- today, until a row is added.",
@@ -260,6 +255,11 @@ const LEDGER: [Entry; 11] = [
         key: "d",
         label: Label::Own("delete"),
         detail: "Delete the selected row. Confirms first, because the write commits immediately.",
+    },
+    Entry {
+        key: "r",
+        label: Label::Own("target"),
+        detail: "Reconcile the filtered account against a statement: type the balance it should hold, and the border carries it beside today's figure with the difference after it. Needs an account filter. An empty field clears it, Esc leaves it alone, and nothing is saved.",
     },
 ];
 
@@ -306,6 +306,11 @@ const SAVINGS: [Entry; 17] = [
         detail: "Move part of the selected goal's value to another goal in the same container. Both goals stay open -- 'c' is the ending that closes one -- and the pair is one batch, so 'U' takes the whole transfer back. Type on To to narrow the goals by name. Crossing containers is refused.",
     },
     Entry {
+        key: "U",
+        label: Label::Own("undo"),
+        detail: "Undo the most recent batch by insert order. Never an Import batch: that one holds every opening balance in the database.",
+    },
+    Entry {
         key: "n",
         label: Label::Shared("goal"),
         detail: "Create a goal from scratch -- a name, a target and a date -- in the container Tab names. Goals created from recurring goal entries are 's' on screen 6.",
@@ -319,11 +324,6 @@ const SAVINGS: [Entry; 17] = [
         key: "c",
         label: Label::Shared("goal"),
         detail: "End the selected goal: return its value to unallocated, or move it to another goal in the same container. Type on To to narrow the goals by name, unallocated among them. Crossing containers is refused.",
-    },
-    Entry {
-        key: "⇧↑↓",
-        label: Label::Shared("goal"),
-        detail: "Move the selected goal one place in its container's manual order. Only the undated goals are ordered by hand -- a dated goal takes its place from its date. Refused while a search is narrowing the list.",
     },
     Entry {
         key: "f",
@@ -341,9 +341,9 @@ const SAVINGS: [Entry; 17] = [
         detail: "Open the selected goal's allocation rows -- the long form of the balance cell the row already carries. Correcting one and deleting one are that modal's own keys.",
     },
     Entry {
-        key: "U",
-        label: Label::Own("undo"),
-        detail: "Undo the most recent batch by insert order. Never an Import batch: that one holds every opening balance in the database.",
+        key: "⇧↑↓",
+        label: Label::Shared("goal"),
+        detail: "Move the selected goal one place in its container's manual order. Only the undated goals are ordered by hand -- a dated goal takes its place from its date. Refused while a search is narrowing the list.",
     },
 ];
 
@@ -359,34 +359,9 @@ const PLANNING: [Entry; 10] = [
         detail: "Add a bill. Housing bills and other bills reach different waterfall lines, so the category is part of the form. On the Split block, add a split profile instead: it starts as a copy of the one showing and becomes the active one.",
     },
     Entry {
-        key: "d",
-        label: Label::Own("delete"),
-        detail: "Delete the selected bill, after a confirmation. A dropped bill inflates the excess the waterfall has left, which moves every line below it. On the Split block, delete the split profile showing instead; the next one takes over, and the last one cannot be deleted.",
-    },
-    Entry {
-        key: "←/→",
-        label: Label::Own("profile"),
-        detail: "On the Split block, switch to the previous or next split profile. The switch is live: the waterfall, the transfers t writes and the report all divide by the profile showing. Edits to a split percentage land in that profile alone.",
-    },
-    Entry {
-        key: "⇧↑↓",
-        label: Label::Hidden,
-        detail: "Move the selected gate one place in the priority order. The gates draw in the order shown, each taking what its goal still needs from what the ones above it left.",
-    },
-    Entry {
         key: "t",
         label: Label::Own("transfers"),
         detail: "Confirm the computed plan: writes its payday transfers, then opens the allocation worksheets prefilled.",
-    },
-    Entry {
-        key: "f",
-        label: Label::Own("expense"),
-        detail: "Count the selected row towards Biweekly Expenses, or stop counting it -- a bill at its biweekly figure, the Cap and the Goals Floor at their own, Mom & Dad at its share of a paycheck. No other row counts. The Expenses line under the transfers is that total rounded up to a hundred, with the year beside it, and every row it counted is dotted. An import that replaces the bills clears the marks.",
-    },
-    Entry {
-        key: "Enter",
-        label: Label::Own("why"),
-        detail: "Explain in full why the transfers could not be resolved -- more than the screen's one cell has room for. Nothing to open when they resolve.",
     },
     Entry {
         key: "p",
@@ -397,6 +372,31 @@ const PLANNING: [Entry; 10] = [
         key: "P",
         label: Label::Own("unpin"),
         detail: "Put the waterfall back on the live balance -- the only way out of a pin, since typing over Excess (Used) replaces one rather than removing it. Named on the footer only while something is pinned, though the key is live either way.",
+    },
+    Entry {
+        key: "Enter",
+        label: Label::Own("why"),
+        detail: "Explain in full why the transfers could not be resolved -- more than the screen's one cell has room for. Nothing to open when they resolve.",
+    },
+    Entry {
+        key: "d",
+        label: Label::Own("delete"),
+        detail: "Delete the selected bill, after a confirmation. A dropped bill inflates the excess the waterfall has left, which moves every line below it. On the Split block, delete the split profile showing instead; the next one takes over, and the last one cannot be deleted.",
+    },
+    Entry {
+        key: "f",
+        label: Label::Own("expense"),
+        detail: "Count the selected row towards Biweekly Expenses, or stop counting it -- a bill at its biweekly figure, the Cap and the Goals Floor at their own, Mom & Dad at its share of a paycheck. No other row counts. The Expenses line under the transfers is that total rounded up to a hundred, with the year beside it, and every row it counted is dotted. An import that replaces the bills clears the marks.",
+    },
+    Entry {
+        key: "←/→",
+        label: Label::Own("profile"),
+        detail: "On the Split block, switch to the previous or next split profile. The switch is live: the waterfall, the transfers t writes and the report all divide by the profile showing. Edits to a split percentage land in that profile alone.",
+    },
+    Entry {
+        key: "⇧↑↓",
+        label: Label::Own("move"),
+        detail: "Move the selected gate one place in the priority order. The gates draw in the order shown, each taking what its goal still needs from what the ones above it left.",
     },
 ];
 
@@ -591,11 +591,6 @@ const RECURRING_GOALS: [Entry; 8] = [
         detail: "Edit the selected entry.",
     },
     Entry {
-        key: "d",
-        label: Label::Own("delete"),
-        detail: "Delete the selected entry, after a confirmation. Refused while an open goal still references it; closed goals are kept and unlinked.",
-    },
-    Entry {
         key: "s",
         label: Label::Own("savings"),
         detail: "Open the picker: goals created from these entries, in the container the Savings screen's Tab names. The month filter opens it with those entries ticked and sorted to the top, every other entry still listed below. An entry that already has an open goal is left unticked. Each goal is dated a year past its month's next occurrence; a biennial entry that has had this year's round steps two.",
@@ -604,6 +599,11 @@ const RECURRING_GOALS: [Entry; 8] = [
         key: "l",
         label: Label::Own("link"),
         detail: "Link the selected entry to an open goal that was not created from it -- an imported one, or one typed with n -- so it counts in Open. Every container's unlinked goals are offered, beside this entry's own links for u to undo; a goal linked to another entry is never re-pointed.",
+    },
+    Entry {
+        key: "d",
+        label: Label::Own("delete"),
+        detail: "Delete the selected entry, after a confirmation. Refused while an open goal still references it; closed goals are kept and unlinked.",
     },
 ];
 
@@ -1214,19 +1214,21 @@ impl Topic {
         }
     }
 
-    /// The footer line: this context's own labelled entries, joined.
-    ///
-    /// Not the app-wide keys, which are [`chrome`] and are drawn against the
-    /// right edge rather than after the last of these.
+    /// Every labelled entry of this context, joined.
+    #[cfg(test)]
     pub(super) fn footer(self) -> String {
         self.footer_without(&[])
     }
 
-    /// The same, minus the entries whose key is listed.
+    /// The footer line: this context's own labelled entries, joined, minus
+    /// those whose key is listed.
     ///
-    /// One caller: the Credit ledger, which shares [`Topic::Ledger`] with Cash
-    /// and has no `t`. The panel still shows `t` on Credit, with a detail
-    /// saying why it is cash-only -- which is more use than its absence.
+    /// Not the app-wide keys, which are [`chrome`] and are drawn against the
+    /// right edge rather than after the last of these.
+    ///
+    /// `App::idle_keys` is what lists them. The panel still shows every key,
+    /// with a detail saying when it applies -- which is more use than its
+    /// absence.
     ///
     /// Omitting happens before grouping, so dropping a key from inside a
     /// `Shared` run shrinks the group rather than splitting or dropping it.
@@ -1485,12 +1487,20 @@ mod tests {
     #[test]
     fn every_screen_footer_fits_the_minimum_width() {
         for topic in SCREENS {
-            let footer = [topic.footer(), chrome()].join(SEPARATOR);
-            let width = footer.chars().count();
-            assert!(
-                width <= MIN_WIDTH as usize,
-                "{topic:?} footer is {width} wide: {footer}"
-            );
+            // Planning's focus keys belong to different rows: no one footer
+            // names the Split block's, the gates' and the countable rows'.
+            let apart: &[&[&str]] = match topic {
+                Topic::Planning => &[&["←/→", "⇧↑↓"], &["f", "⇧↑↓"], &["d", "f", "←/→"]],
+                _ => &[&[]],
+            };
+            for omit in apart {
+                let footer = [topic.footer_without(omit), chrome()].join(SEPARATOR);
+                let width = footer.chars().count();
+                assert!(
+                    width <= MIN_WIDTH as usize,
+                    "{topic:?} footer is {width} wide: {footer}"
+                );
+            }
         }
     }
 
@@ -1596,15 +1606,15 @@ mod tests {
         assert_eq!(Topic::Overview.footer(), "←/→ scrub · ⇧←→ week · Esc clear");
         assert_eq!(
             Topic::Ledger.footer(),
-            "Tab acct · [ ] month · Esc clear · / search · r target · a/t/p money · e edit · d delete"
+            "Tab acct · [ ] month · Esc clear · / search · a/t/p money · e edit · d delete · r target"
         );
         assert_eq!(
             Topic::Savings.footer(),
-            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t money · n/e/c/⇧↑↓/f/F/Enter goal · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/A/i/t money · U undo · n/e/c/f/F/Enter/⇧↑↓ goal"
         );
         assert_eq!(
             Topic::Planning.footer(),
-            "e edit · a add · d delete · ←/→ profile · t transfers · f expense · Enter why · p pin · P unpin"
+            "e edit · a add · t transfers · p pin · P unpin · Enter why · d delete · f expense · ←/→ profile · ⇧↑↓ move"
         );
         assert_eq!(
             Topic::Funds.footer(),
@@ -1616,7 +1626,7 @@ mod tests {
         );
         assert_eq!(
             Topic::RecurringGoals.footer(),
-            "[ ] month · Esc clear · / search · a add · e edit · d delete · s savings · l link"
+            "[ ] month · Esc clear · / search · a add · e edit · s savings · l link · d delete"
         );
         assert_eq!(Topic::Accounts.footer(), "a add · e edit · ⇧↑↓ move");
         assert_eq!(
@@ -1632,7 +1642,7 @@ mod tests {
     fn the_credit_footer_is_the_ledger_footer_without_transfer() {
         assert_eq!(
             Topic::Ledger.footer_without(&["t"]),
-            "Tab acct · [ ] month · Esc clear · / search · r target · a/p money · e edit · d delete"
+            "Tab acct · [ ] month · Esc clear · / search · a/p money · e edit · d delete · r target"
         );
     }
 
@@ -1643,7 +1653,7 @@ mod tests {
     fn omitting_a_key_inside_a_shared_group_shrinks_it() {
         assert_eq!(
             Topic::Savings.footer_without(&["A"]),
-            "Tab acct · [ ] month · Esc clear · / search · a/i/t money · n/e/c/⇧↑↓/f/F/Enter goal · U undo"
+            "Tab acct · [ ] month · Esc clear · / search · a/i/t money · U undo · n/e/c/f/F/Enter/⇧↑↓ goal"
         );
     }
 
@@ -1906,7 +1916,10 @@ mod tests {
 
         help.bottom();
         let bottom = drawn(&mut help, MIN_WIDTH, 24);
-        assert!(bottom.contains("Undo the most recent batch"), "{bottom}");
+        assert!(
+            bottom.contains("Move the selected goal one place"),
+            "{bottom}"
+        );
     }
 
     /// The scroll stops at both ends: past the last line there is nothing to show,
