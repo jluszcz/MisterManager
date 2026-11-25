@@ -5,6 +5,7 @@
 //! `calc`, hands the result back up.
 
 use crate::calc::fund as calc_fund;
+use crate::calc::planning::GateState;
 use crate::db::account::{self, Kind};
 use crate::db::setting::{self, key};
 use crate::db::{AccountId, Db};
@@ -36,11 +37,11 @@ pub fn targets_from_db(db: &Db, today: NaiveDate) -> Result<calc_fund::Targets> 
 /// what the waterfall puts on that line at `adhoc` -- or `None` when there is
 /// no recommendation to make.
 ///
-/// `None` covers three states, none of them an error: no account chosen (or
+/// `None` covers four states, none of them an error: no account chosen (or
 /// one chosen that is gone, or is no longer an investment account -- see
-/// [`key::INVESTMENT_ACCOUNT`]), a plan that will not resolve, and a line at
-/// zero. The first is the Accounts screen's to fix and the second the
-/// Planning screen's to explain; a recommendation beside either would be
+/// [`key::INVESTMENT_ACCOUNT`]), a plan that will not resolve, a gate on a
+/// closed goal, and a line at zero. The first is the Accounts screen's to fix
+/// and the next two the Planning screen's to explain; a recommendation beside either would be
 /// advice about money the waterfall is not moving.
 ///
 /// `adhoc` for the reason `plan::compute_from_db` takes it: the figure is the
@@ -64,6 +65,11 @@ pub fn investment(db: &Db, adhoc: NaiveDate) -> Result<Option<(AccountId, Cents)
     else {
         return Ok(None);
     };
+    // A gate on a closed goal draws nothing and stops the payday, so the line
+    // is holding money that is not going to be invested.
+    if plan.gates.contains(&GateState::Closed) {
+        return Ok(None);
+    }
     Ok((plan.lines.investment > Cents::ZERO).then_some((id, plan.lines.investment)))
 }
 

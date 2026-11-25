@@ -136,6 +136,8 @@ impl Target {
             // `e` on a bill opens the bill's own form, which writes the whole
             // row through `bill::update`; no one-field editor reaches here.
             Target::Bill(_) => bail!("a bill is edited through its form"),
+            // Its name: the goal it fills is chosen from a list, not typed.
+            Target::Gate(gate) => crate::gate::rename(db, gate, raw),
             Target::SplitProfile => split_profile::rename(db, split_profile::active(db)?.id, raw),
         }
     }
@@ -162,6 +164,7 @@ impl Target {
             | Target::FutureHousingPct
             | Target::RetirementPct
             | Target::InvestmentPct
+            | Target::Gate(_)
             | Target::SplitProfile => false,
         }
     }

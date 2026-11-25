@@ -143,14 +143,18 @@ pub(super) fn plan_view() -> PlanView {
         pinned_excess: None,
         housing_monthly: vec![dollars(2_000)],
         other_bills_monthly: vec![dollars(300)],
-        remaining_emergency: Cents::ZERO,
-        remaining_roth: Cents::ZERO,
+        gates: [crate::calc::planning::GateState::Open(crate::calc::planning::Progress {
+            current: Cents::ZERO,
+            target: Cents::ZERO,
+        }); crate::calc::planning::GATES],
+        gate_order: [0, 1],
     };
     let plan = crate::calc::planning::compute(&settings, &inputs).unwrap();
     PlanView {
         settings,
         expense_constants: Vec::new(),
         split_profile: "Default".into(),
+        gate_names: Default::default(),
         housing: vec![Bill {
             id: crate::db::BillId(1),
             label: "Mortgage".into(),

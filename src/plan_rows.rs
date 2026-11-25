@@ -20,10 +20,10 @@
 //! of them read.
 
 use crate::account_label::Account;
-use crate::calc::planning::{Plan, PlanSettings, per_period};
+use crate::calc::planning::{GateState, Plan, PlanSettings, Progress, per_period};
 use crate::db::BillId;
 use crate::db::setting::{Key, key};
-use crate::gate::Gate;
+use crate::gate::{Gate, Names};
 use crate::money::Cents;
 use crate::plan_line::Line;
 use crate::rate::BasisPoints;
@@ -53,6 +53,8 @@ pub enum Target {
     InvestmentPct,
     PinnedExcess,
     Bill(BillId),
+    /// A gate, which is edited by choosing the goal it names.
+    Gate(Gate),
     /// The split profile the Split block is divided by: the block's heading,
     /// which edits the profile's name. Its shares are the three `*Pct`
     /// targets above.
@@ -206,8 +208,13 @@ pub enum Value {
     /// A count of pay periods. A number rather than an amount, which is what
     /// keeps it from ever drawing as a negative figure would.
     Count(i64),
-    /// A gate's verdict.
+    /// A gate's verdict, when it has nothing to draw for.
     Stated(&'static str),
+    /// A verdict that stops the payday, drawn in the red both sinks keep for
+    /// one.
+    Fault(&'static str),
+    /// An unmet gate: what its goal holds against what it is funded to.
+    Progress(Progress),
     None,
 }
 
@@ -392,6 +399,8 @@ pub struct Input<'a> {
     /// The active split profile's name, as this medium draws it -- the
     /// screen masks it under `--demo`, the report draws it as stored.
     pub split_profile: &'a str,
+    /// What each gate is called.
+    pub gate_names: &'a Names,
 }
 
 /// The transfers a payday would write, then `Planning!C1:G41` top to bottom
@@ -438,7 +447,7 @@ pub fn rows(input: &Input) -> Vec<Row> {
                             true => Extra::Gap(cut),
                             false => Extra::None,
                         },
-                        ..Row::figure(line.label(), *cents, 2)
+                        ..Row::figure(&line.drawn(input.gate_names), *cents, 2)
                     });
                 }
             }
@@ -546,16 +555,17 @@ pub fn rows(input: &Input) -> Vec<Row> {
 
     rows.push(Row::blank());
     rows.push(Row::heading("Gates"));
-    for (gate, needed) in [
-        (Gate::EmergencyFund, p.need_emergency),
-        (Gate::Roth, p.need_roth),
-    ] {
-        rows.push(Row::new(
-            Kind::Figure,
-            gate.label(),
-            Value::Stated(if needed { "needed" } else { "met" }),
-            1,
-        ));
+    for gate in p.gate_order.map(|i| Gate::ALL[i]) {
+        let value = match p.gates[gate.index()] {
+            GateState::Off => Value::Stated("off"),
+            GateState::Closed => Value::Fault("goal closed"),
+            GateState::Open(progress) if progress.needed() => Value::Progress(progress),
+            GateState::Open(_) => Value::Stated("met"),
+        };
+        rows.push(Row {
+            target: Some(Target::Gate(gate)),
+            ..Row::new(Kind::Figure, &input.gate_names.drawn(gate), value, 1)
+        });
     }
 
     rows.push(Row::blank());
@@ -706,6 +716,7 @@ mod tests {
             scrubbed_adhoc: None,
             expense_constants: constants,
             split_profile: "Default",
+            gate_names: &Names::default(),
         })
     }
 
@@ -717,11 +728,48 @@ mod tests {
                 pinned_excess: None,
                 housing_monthly: vec![Cents::from_dollars(1_200), Cents::from_dollars(300)],
                 other_bills_monthly: vec![Cents::from_dollars(90)],
-                remaining_emergency: Cents::ZERO,
-                remaining_roth: Cents::ZERO,
+                gates: [crate::calc::planning::GateState::Open(crate::calc::planning::Progress {
+                    current: Cents::ZERO,
+                    target: Cents::ZERO,
+                }); crate::calc::planning::GATES],
+                gate_order: [0, 1],
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn an_unmet_gate_states_its_progress_and_a_met_one_its_verdict() {
+        let mut plan = plan();
+        let roth = Gate::Roth.index();
+        let progress = Progress {
+            current: Cents::from_dollars(1_500),
+            target: Cents::from_dollars(5_500),
+        };
+        plan.gates[roth] = GateState::Open(progress);
+        plan.gate_order = [Gate::Roth.index(), Gate::EmergencyFund.index()];
+        let rows = rows(&Input {
+            plan: &plan,
+            settings: &settings(),
+            housing: &[],
+            other_bills: &[],
+            transfers: Ok(&[]),
+            spread_ask_total: Cents::ZERO,
+            scrubbed_adhoc: None,
+            expense_constants: &[],
+            split_profile: "Default",
+            gate_names: &Names::default(),
+        });
+        assert_eq!(at(&rows, "Roth").value, Value::Progress(progress));
+        assert_eq!(at(&rows, "Emergency Fund").value, Value::Stated("met"));
+        let gates: Vec<_> = rows
+            .iter()
+            .filter_map(|r| match r.target {
+                Some(Target::Gate(gate)) => Some(gate),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(gates, [Gate::Roth, Gate::EmergencyFund], "priority order");
     }
 
     /// The waterfall over the fixture above, with one of its inputs moved.
@@ -740,6 +788,7 @@ mod tests {
             scrubbed_adhoc: None,
             expense_constants: &[],
             split_profile: "Default",
+            gate_names: &Names::default(),
         };
         edit(&mut input);
         rows(&input)
@@ -936,6 +985,7 @@ mod tests {
             scrubbed_adhoc: None,
             expense_constants: &[],
             split_profile: "Default",
+            gate_names: &Names::default(),
         });
 
         assert_eq!(rows[2].extra, Extra::Gap(Cents::from_dollars(237)));
@@ -964,6 +1014,7 @@ mod tests {
             scrubbed_adhoc: None,
             expense_constants: &[],
             split_profile: "Default",
+            gate_names: &Names::default(),
         });
 
         assert_eq!(rows[1].kind, Kind::Note);
@@ -1189,6 +1240,7 @@ mod tests {
             scrubbed_adhoc: None,
             expense_constants: &[],
             split_profile: "Default",
+            gate_names: &Names::default(),
         });
 
         assert_eq!(at(&rows, "Expenses").extra, Extra::Annual(Cents(i64::MAX)));
@@ -1216,6 +1268,7 @@ mod tests {
                 scrubbed_adhoc: None,
                 expense_constants: &[Target::BillPaymentCap, Target::GoalsFloor],
                 split_profile: "Default",
+                gate_names: &Names::default(),
             },
             26,
         );

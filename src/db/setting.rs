@@ -567,6 +567,8 @@ mod tests {
             key::BILL_PAYMENT_PCT.name(),
             key::RECURRING_TXN_HORIZON_MONTHS.name(),
         ];
+        names.push(crate::gate::PRIORITY.name());
+        names.extend(crate::gate::Gate::ALL.iter().map(|g| g.name_key().name()));
         names.extend(crate::gate::Gate::ALL.iter().map(|g| g.key().name()));
         names.extend(
             crate::savings_block::Block::ALL

@@ -11,6 +11,7 @@ use crate::calc::planning::{Plan, PlanSettings};
 use crate::db::AccountId;
 use crate::db::account::AccountColor;
 use crate::db::bill::Bill;
+use crate::gate::Names;
 use crate::money::Cents;
 use crate::plan_line::{Destination, Line};
 use crate::plan_rows;
@@ -183,6 +184,15 @@ impl Row {
             ),
             plan_rows::Value::Count(count) => (count.to_string(), Tone::Plain),
             plan_rows::Value::Stated(text) => (text.to_string(), Tone::Plain),
+            plan_rows::Value::Fault(text) => (text.to_string(), Tone::Negative),
+            plan_rows::Value::Progress(p) => (
+                format!(
+                    "{}/{}",
+                    crate::demo::whole_figure(p.current),
+                    crate::demo::whole_figure(p.target)
+                ),
+                Tone::Plain,
+            ),
             plan_rows::Value::None => (String::new(), Tone::Plain),
         };
         // The one thing this cell reports rather than states is a gap the
@@ -248,7 +258,7 @@ impl Row {
 
     /// Where one line's money lands: the goal or account in the value
     /// column, and its container beside it.
-    fn destination(w: &Wiring) -> Row {
+    fn destination(w: &Wiring, names: &Names) -> Row {
         // Which of the two right-hand cells names an account, if either.
         // The account-backed lines name theirs in `value`; every other
         // landing that names one at all puts its container in `extra`.
@@ -295,7 +305,7 @@ impl Row {
             },
         };
         Row {
-            label: format!("  {}", w.line.label()),
+            label: format!("  {}", w.line.drawn(names)),
             value,
             extra,
             tone: if w.landing.breaks_the_plan() {
@@ -341,6 +351,7 @@ pub struct View {
     pub plan: Plan,
     /// The active split profile's name, already masked for `--demo`.
     pub split_profile: String,
+    pub gate_names: Names,
     /// How many split profiles there are, which is whether `←`/`→` has
     /// anywhere to go.
     pub split_profiles: usize,
@@ -416,6 +427,7 @@ pub(super) fn build(view: &View) -> Result<Vec<Row>> {
         spread_ask_total: view.spread_ask_total,
         scrubbed_adhoc: view.scrubbed_adhoc,
         split_profile: &view.split_profile,
+        gate_names: &view.gate_names,
     });
     let mut rows: Vec<Row> = waterfall
         .iter()
@@ -448,7 +460,11 @@ pub(super) fn build(view: &View) -> Result<Vec<Row>> {
     // to offer that.
     rows.push(Row::blank());
     rows.push(Row::heading("Destinations"));
-    rows.extend(view.wiring.iter().map(Row::destination));
+    rows.extend(
+        view.wiring
+            .iter()
+            .map(|w| Row::destination(w, &view.gate_names)),
+    );
 
     Ok(rows)
 }
@@ -456,6 +472,7 @@ pub(super) fn build(view: &View) -> Result<Vec<Row>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gate::Gate;
 
     use crate::db::{AccountId, BillId};
     use crate::money::Cents;
@@ -580,10 +597,20 @@ mod tests {
             Tone::Plain
         );
         assert_eq!(mapped(Kind::Figure, Value::Count(26)).tone, Tone::Plain);
-        assert_eq!(
-            mapped(Kind::Figure, Value::Stated("needed")).tone,
-            Tone::Plain
+        assert_eq!(mapped(Kind::Figure, Value::Stated("met")).tone, Tone::Plain);
+        let unmet = mapped(
+            Kind::Figure,
+            Value::Progress(calc::planning::Progress {
+                current: Cents::from_dollars(1_500),
+                target: Cents::from_dollars(5_500),
+            }),
         );
+        assert_eq!(
+            mapped(Kind::Figure, Value::Fault("goal closed")).tone,
+            Tone::Negative
+        );
+        assert_eq!(unmet.value, "1,500/5,500");
+        assert_eq!(unmet.tone, Tone::Plain);
         assert_eq!(Row::heading("Gates").tone, Tone::Plain);
     }
 
@@ -804,7 +831,7 @@ mod tests {
     #[test]
     fn a_configured_destination_names_its_goal_and_its_container() {
         let planning = screen();
-        let row = destination(&planning, Line::EmergencyFund);
+        let row = destination(&planning, Line::Gate(Gate::EmergencyFund));
         assert_eq!(row.value, "Emergency Savings");
         assert_eq!(row.extra, "Brokerage");
     }
@@ -817,7 +844,7 @@ mod tests {
     fn a_demo_scrambles_the_goal_a_configured_destination_names() {
         crate::demo::install_with_salt(7);
         let planning = screen();
-        let row = destination(&planning, Line::EmergencyFund);
+        let row = destination(&planning, Line::Gate(Gate::EmergencyFund));
         assert_ne!(row.value, "Emergency Savings");
         assert_eq!(row.value, crate::demo::text("Emergency Savings"));
         assert_ne!(row.extra, "Brokerage");
@@ -1086,11 +1113,11 @@ mod tests {
     /// goals. Which means `e` on those rows would not be repointing a
     /// transfer at all: it would be choosing what the waterfall gates on,
     /// silently re-routing four other lines' amounts on the next reload.
-    /// Reading them here is right; editing them from here is not.
+    /// Reading them here is right; the Gates block is where they are edited.
     #[test]
     fn a_gate_backed_destination_is_not_editable_from_the_block() {
         let planning = screen();
-        for line in [Line::Roth, Line::EmergencyFund] {
+        for line in Gate::ALL.map(Line::Gate) {
             assert_eq!(
                 destination(&planning, line).editable,
                 None,
@@ -1138,7 +1165,8 @@ mod tests {
         targets.dedup();
         assert_eq!(targets.len(), before, "two rows write the same setting");
         assert_eq!(
-            before, 12,
+            before,
+            12 + Gate::ALL.len(),
             "every Target variant but Bill must have a row: {targets:?}"
         );
     }

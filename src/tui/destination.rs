@@ -18,6 +18,8 @@ pub struct Offered {
     pub id: GoalId,
     pub name: String,
     pub container: String,
+    /// Only ever the goal the line already names: the list offers open ones.
+    pub closed: bool,
 }
 
 /// One row of the list.
@@ -39,6 +41,7 @@ pub enum Choice {
         /// that clears the key off the top of the screen, with nothing to say
         /// it was ever there.
         current: bool,
+        closed: bool,
     },
 }
 
@@ -54,6 +57,10 @@ impl Choice {
 /// The list, its filter, and where the cursor is in it.
 pub struct Chooser {
     line: Line,
+    /// The line's name as the title draws it.
+    label: String,
+    /// The needle the list opened on, until it is cleared.
+    prefilled: bool,
     choices: Vec<Choice>,
     /// Indices into `choices`, after the search. Parallel to what is drawn.
     visible: Vec<usize>,
@@ -85,6 +92,7 @@ impl Chooser {
                 name: o.name.clone(),
                 container: o.container.clone(),
                 current: true,
+                closed: o.closed,
             });
         }
         choices.push(Choice::Unset);
@@ -98,11 +106,14 @@ impl Chooser {
                     name: o.name,
                     container: o.container,
                     current: false,
+                    closed: o.closed,
                 }),
         );
 
         let mut chooser = Chooser {
             line,
+            label: line.label().to_string(),
+            prefilled: false,
             choices,
             visible: Vec::new(),
             search: SearchBox::new(),
@@ -110,6 +121,19 @@ impl Chooser {
         };
         chooser.refilter();
         chooser
+    }
+
+    /// The same list for a gate: titled with the gate's name, and narrowed to
+    /// the goals called what the one it names is. A gate is repointed when its
+    /// goal is closed and begun again under the same name.
+    pub fn for_gate(mut self, label: String, goal: Option<&str>) -> Chooser {
+        self.label = label;
+        if let Some(goal) = goal {
+            goal.chars().for_each(|c| self.search.push(c));
+            self.prefilled = true;
+            self.refilter();
+        }
+        self
     }
 
     pub fn line(&self) -> Line {
@@ -136,12 +160,31 @@ impl Chooser {
     /// nothing, and the `Esc` clearing the box after it like a second one. A
     /// shut box with a needle still in it is drawn too -- that is a filter
     /// narrowing the list, and it has to be visible to be undone.
+    ///
+    /// Beside a needle the title keeps only the keys it changes or a gate
+    /// adds: the whole list of them leaves two columns of the border for the
+    /// needle under a name at [`crate::gate::NAME_LIMIT`].
     pub(super) fn title(&self) -> TextLine<'static> {
-        let mut spans = vec![Span::raw(format!(
-            "{} — / search · Enter choose · Esc cancel",
-            self.line.label()
-        ))];
-        if self.is_searching() || !self.search().is_empty() {
+        let filtered = self.is_searching() || !self.search().is_empty();
+        let rename = match self.line.gate() {
+            Some(_) if !self.is_searching() => "e rename · ",
+            _ => "",
+        };
+        let mut spans = vec![Span::raw(match filtered {
+            true => format!("{} — {rename}Esc clear", self.label),
+            false => format!(
+                "{} — / search · {rename}Enter choose · Esc cancel",
+                self.label
+            ),
+        })];
+        if self.prefilled {
+            // A goal's name off a row, where every other needle is one the
+            // owner typed.
+            spans.push(Span::raw(format!(
+                " · /{}",
+                crate::demo::text(self.search())
+            )));
+        } else if filtered {
             spans.push(Span::raw(" · /"));
             spans.extend(search::search_spans(self));
         }
@@ -156,6 +199,20 @@ impl Search for Chooser {
 
     fn search_box_mut(&mut self) -> &mut SearchBox {
         &mut self.search
+    }
+
+    /// `/` over the needle the list opened on starts a new one.
+    fn begin_search(&mut self) {
+        if self.prefilled {
+            self.clear_search();
+        }
+        self.search.open();
+    }
+
+    fn clear_search(&mut self) {
+        self.search.clear();
+        self.prefilled = false;
+        self.refilter();
     }
 
     /// The withdrawal row survives every search.
@@ -205,7 +262,10 @@ pub(super) fn render(frame: &mut Frame, chooser: &Chooser) -> Viewport {
         .iter()
         .map(|choice| match choice {
             Choice::Unset => Row::new(vec![
-                Cell::from("— withdrawal: leaves the tracked system —"),
+                Cell::from(match chooser.line().gate() {
+                    Some(_) => "— off: the gate draws nothing —",
+                    None => "— withdrawal: leaves the tracked system —",
+                }),
                 Cell::from(""),
                 Cell::from(""),
             ]),
@@ -213,11 +273,16 @@ pub(super) fn render(frame: &mut Frame, chooser: &Chooser) -> Viewport {
                 name,
                 container,
                 current,
+                closed,
                 ..
             } => Row::new(vec![
                 Cell::from(crate::demo::text(name).into_owned()),
                 Cell::from(crate::demo::text(container).into_owned()),
-                Cell::from(if *current { "current" } else { "" }),
+                Cell::from(match (closed, current) {
+                    (true, _) => "closed",
+                    (false, true) => "current",
+                    (false, false) => "",
+                }),
             ]),
         })
         .collect();
@@ -256,6 +321,7 @@ mod tests {
             id: GoalId(id),
             name: name.to_string(),
             container: container.to_string(),
+            closed: false,
         })
         .collect()
     }
@@ -267,6 +333,7 @@ mod tests {
             id,
             name: format!("goal {}", id.0),
             container: "Rainy Day".to_string(),
+            closed: false,
         }))
     }
 
@@ -373,6 +440,7 @@ mod tests {
             id: GoalId(42),
             name: "Peak Design".to_string(),
             container: "Rainy Day".to_string(),
+            closed: false,
         };
         let chooser = Chooser::new(Line::MomAndDad, offered(), Some(closed));
         assert_eq!(selected_name(&chooser), "Peak Design");
@@ -533,6 +601,25 @@ mod tests {
             .filter(|s| s.style.add_modifier.contains(Modifier::REVERSED))
             .count();
         assert_eq!(carets, 1, "the open box draws no caret to type into");
+    }
+
+    #[test]
+    fn a_gates_title_holds_its_longest_name_and_the_needle_beside_it() {
+        let named = || {
+            Chooser::new(Line::Gate(crate::gate::Gate::Roth), offered(), None)
+                .for_gate("x".repeat(crate::gate::NAME_LIMIT), Some("Vacation 2026"))
+        };
+        let mut searching = named();
+        searching.begin_search();
+        for c in "Vacation 2026".chars() {
+            searching.push_search(c);
+        }
+        for chooser in [named(), searching] {
+            // The modal's 76 columns less its border.
+            assert!(title(&chooser).chars().count() <= 74, "{}", title(&chooser));
+            assert!(title(&chooser).contains("/Vacation 2026"));
+        }
+        assert!(title(&named()).contains("e rename"));
     }
 
     /// The title's words, for the assertions that are about wording.

@@ -46,6 +46,61 @@ impl PlanSettings {
     }
 }
 
+/// How many gates the waterfall runs.
+///
+/// `calc` knows a gate by its index and nothing else: `gate::Gate` owns a
+/// setting key, so it lives above the database boundary. `Gate::index` is what
+/// ties the two.
+pub const GATES: usize = 2;
+
+/// Where a gate's goal stands: what it holds against what it is funded to.
+///
+/// The pair rather than the difference, because both sinks draw an unmet gate
+/// as the two figures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Progress {
+    pub current: Cents,
+    pub target: Cents,
+}
+
+impl Progress {
+    /// What the goal still needs.
+    ///
+    /// Clamped because goals overshoot, and a negative need would read as
+    /// "needs funding" at every call site that compares against zero.
+    pub fn shortfall(self) -> Cents {
+        max_zero(self.target - self.current)
+    }
+
+    /// Whether the gate is open: its goal still needs something.
+    pub fn needed(self) -> bool {
+        self.shortfall() > Cents::ZERO
+    }
+}
+
+/// What a gate finds at the goal it names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GateState {
+    /// The gate names no goal, which is how one is switched off.
+    #[default]
+    Off,
+    /// The gate names a goal that has ended. Nothing is drawn for it, and
+    /// `transfer::plan` refuses the payday until it is pointed elsewhere: a
+    /// closed goal's target is not one anybody is funding any more.
+    Closed,
+    Open(Progress),
+}
+
+impl GateState {
+    /// What the gate draws for, at most.
+    pub fn shortfall(self) -> Cents {
+        match self {
+            GateState::Open(progress) => progress.shortfall(),
+            GateState::Off | GateState::Closed => Cents::ZERO,
+        }
+    }
+}
+
 /// Everything the waterfall reads from the ledger.
 #[derive(Debug, Clone)]
 pub struct PlanInputs {
@@ -57,9 +112,10 @@ pub struct PlanInputs {
     pub housing_monthly: Vec<Cents>,
     /// Other monthly recurring bills, `Planning!E9:E12`.
     pub other_bills_monthly: Vec<Cents>,
-    /// Gate inputs: how much is still needed for each priority.
-    pub remaining_emergency: Cents,
-    pub remaining_roth: Cents,
+    /// What each gate finds at its goal, by gate index.
+    pub gates: [GateState; GATES],
+    /// The gate indices, each once, highest priority first.
+    pub gate_order: [usize; GATES],
 }
 
 /// One `Cents` per Planning line: the nine amounts a payday moves.
@@ -75,13 +131,13 @@ pub struct PlanInputs {
 /// to the dollar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Lines {
+    /// What each gate draws, by gate index.
+    pub gates: [Cents; GATES],
     pub bills: Cents,
     pub current_housing: Cents,
     pub goals: Cents,
-    pub roth: Cents,
     pub future_housing: Cents,
     pub mom_and_dad: Cents,
-    pub emergency_fund: Cents,
     pub retirement: Cents,
     pub investment: Cents,
 }
@@ -92,13 +148,12 @@ impl Lines {
     /// overdraw it are capped, and the Goals plug takes up whatever the
     /// flooring leaves.
     pub fn total(&self) -> Cents {
-        self.bills
+        self.gates.into_iter().sum::<Cents>()
+            + self.bills
             + self.current_housing
             + self.goals
-            + self.roth
             + self.future_housing
             + self.mom_and_dad
-            + self.emergency_fund
             + self.retirement
             + self.investment
     }
@@ -121,8 +176,10 @@ pub struct Plan {
     pub retirement: Cents,
     pub investment: Cents,
 
-    pub need_emergency: bool,
-    pub need_roth: bool,
+    /// The gates as they were read, by gate index, and the priority order
+    /// they drew in.
+    pub gates: [GateState; GATES],
+    pub gate_order: [usize; GATES],
 
     /// What each line moves, after the gates, the caps and the flooring.
     pub lines: Lines,
@@ -157,6 +214,17 @@ fn max_zero(value: Cents) -> Cents {
     } else {
         value
     }
+}
+
+/// Take up to `need` out of `shares`, emptying each before the next.
+fn draw(shares: &mut [Cents], need: Cents) -> Cents {
+    let mut taken = Cents::ZERO;
+    for share in shares {
+        let part = (*share).min(need - taken);
+        *share = *share - part;
+        taken += part;
+    }
+    taken
 }
 
 pub fn compute(settings: &PlanSettings, inputs: &PlanInputs) -> Result<Plan> {
@@ -205,9 +273,6 @@ pub fn compute(settings: &PlanSettings, inputs: &PlanInputs) -> Result<Plan> {
         (settings.goals_pct().of(remainder), fh, rt, inv)
     };
 
-    let need_emergency = inputs.remaining_emergency > Cents::ZERO;
-    let need_roth = inputs.remaining_roth > Cents::ZERO;
-
     // The excess cannot be spent twice. These two are the only lines that
     // could ever try: both are fixed biweekly figures that do not scale with
     // the excess, so a payday too small to cover them used to write transfers
@@ -225,49 +290,25 @@ pub fn compute(settings: &PlanSettings, inputs: &PlanInputs) -> Result<Plan> {
     let bills_ask = (other_bills_biweekly + bill_payments).floor_to_dollar();
     let current_housing = housing_ask.min(budget);
     let bills = bills_ask.min(max_zero(budget - current_housing));
-    let roth_line = if need_emergency {
-        Cents::ZERO
-    } else if need_roth {
-        retirement.min(inputs.remaining_roth)
-    } else {
-        Cents::ZERO
+    // Each gate in turn takes what it needs out of the three shares, and what
+    // none of them needs stays on the line the share belongs to. The need is
+    // floored before it is drawn as well as the line after: cents drawn and
+    // then floored away would come off a share's own line and reach no gate.
+    let mut shares = [future_housing, retirement, investment];
+    let mut gate_lines = [Cents::ZERO; GATES];
+    for gate in inputs.gate_order {
+        let need = inputs.gates[gate].shortfall().floor_to_dollar();
+        gate_lines[gate] = draw(&mut shares, need).floor_to_dollar();
     }
-    .floor_to_dollar();
 
-    // The whole share under one destination. Whether it is a down payment or
-    // a mortgage payment is which account `Line::FutureHousing` resolves to,
-    // which `calc` cannot see and does not need to.
-    let future_housing_line = if need_emergency {
-        Cents::ZERO
-    } else {
-        future_housing
-    }
-    .floor_to_dollar();
+    // What the gates left of the share, under one destination. Whether it is
+    // a down payment or a mortgage payment is which account
+    // `Line::FutureHousing` resolves to, which `calc` cannot see and does not
+    // need to.
+    let [future_housing_line, retirement_line, investment_line] =
+        shares.map(Cents::floor_to_dollar);
 
     let mom_and_dad_line = mom_and_dad.floor_to_dollar();
-
-    let emergency_fund = if need_emergency {
-        future_housing + retirement + investment
-    } else {
-        Cents::ZERO
-    }
-    .floor_to_dollar();
-
-    let retirement_line = if need_emergency {
-        Cents::ZERO
-    } else if need_roth {
-        max_zero(retirement - inputs.remaining_roth)
-    } else {
-        retirement
-    }
-    .floor_to_dollar();
-
-    let investment_line = if need_emergency {
-        Cents::ZERO
-    } else {
-        investment
-    }
-    .floor_to_dollar();
 
     // Goals is the plug: it absorbs every floor above so the plan balances.
     //
@@ -275,24 +316,22 @@ pub fn compute(settings: &PlanSettings, inputs: &PlanInputs) -> Result<Plan> {
     // the plan together: every claim above is capped by what the excess had
     // left, so `claimed` never passes it. The clamp stays because a negative
     // allocation to a savings goal is not a thing whatever the arithmetic.
-    let claimed = bills
+    let claimed = gate_lines.into_iter().sum::<Cents>()
+        + bills
         + current_housing
-        + roth_line
         + future_housing_line
         + mom_and_dad_line
-        + emergency_fund
         + retirement_line
         + investment_line;
     let goals_line = max_zero(excess_used - claimed);
 
     let lines = Lines {
+        gates: gate_lines,
         bills,
         current_housing,
         goals: goals_line,
-        roth: roth_line,
         future_housing: future_housing_line,
         mom_and_dad: mom_and_dad_line,
-        emergency_fund,
         retirement: retirement_line,
         investment: investment_line,
     };
@@ -316,8 +355,8 @@ pub fn compute(settings: &PlanSettings, inputs: &PlanInputs) -> Result<Plan> {
         future_housing,
         retirement,
         investment,
-        need_emergency,
-        need_roth,
+        gates: inputs.gates,
+        gate_order: inputs.gate_order,
         lines,
         shortfall,
     })
@@ -327,6 +366,68 @@ pub fn compute(settings: &PlanSettings, inputs: &PlanInputs) -> Result<Plan> {
 mod tests {
     use super::*;
     use crate::money::Cents;
+
+    /// The gates by priority, which is all `calc` knows them by.
+    const FIRST: usize = 0;
+    const SECOND: usize = 1;
+
+    /// Priority is the whole of what tells two gates apart: alone, either one
+    /// leaves every other line the same at every need.
+    #[test]
+    fn gates_differ_in_nothing_but_their_priority() {
+        let d = Cents::from_dollars;
+        for need in [1, 1_000, 4_200, 5_000, 7_500, 50_000] {
+            let alone = |gate: usize| {
+                let mut inputs = plan_inputs();
+                inputs.gates[gate] = unfunded(d(need));
+                compute(&plan_settings(), &inputs).unwrap().lines
+            };
+            let (first, mut second) = (alone(FIRST), alone(SECOND));
+            second.gates.swap(FIRST, SECOND);
+            assert_eq!(first, second, "needing {need}");
+        }
+    }
+
+    /// A gate whose goal is empty and needs `target`.
+    fn unfunded(target: Cents) -> GateState {
+        GateState::Open(Progress {
+            current: Cents::ZERO,
+            target,
+        })
+    }
+
+    #[test]
+    fn reversing_the_order_reverses_which_gate_draws_first() {
+        let d = Cents::from_dollars;
+        let mut inputs = plan_inputs();
+        inputs.gates = [unfunded(d(8_000)), unfunded(d(3_000))];
+        inputs.gate_order = [SECOND, FIRST];
+        let plan = compute(&plan_settings(), &inputs).unwrap();
+        // 8400.87 of shares between them.
+        assert_eq!(plan.lines.gates[SECOND], d(3_000));
+        assert_eq!(plan.lines.gates[FIRST], d(5_400));
+        assert_eq!(plan.lines.total(), plan.excess_used);
+    }
+
+    #[test]
+    fn a_closed_or_switched_off_gate_draws_nothing() {
+        let off = compute(&plan_settings(), &plan_inputs()).unwrap().lines;
+        let mut inputs = plan_inputs();
+        inputs.gates[FIRST] = GateState::Closed;
+        assert_eq!(compute(&plan_settings(), &inputs).unwrap().lines, off);
+        assert_eq!(off.gates, [Cents::ZERO; GATES]);
+    }
+
+    #[test]
+    fn an_overfunded_gate_needs_nothing_rather_than_less_than_nothing() {
+        let d = Cents::from_dollars;
+        let over = Progress {
+            current: d(1_200),
+            target: d(1_000),
+        };
+        assert_eq!(over.shortfall(), Cents::ZERO);
+        assert!(!over.needed());
+    }
 
     /// Invented settings, chosen so each stage of the waterfall is actually
     /// exercised: the cap binds rather than the percentage, the Mom & Dad
@@ -358,8 +459,8 @@ mod tests {
             pinned_excess: Some(d(17_500)),
             housing_monthly: vec![d(1_200), d(300)],
             other_bills_monthly: vec![d(90), d(60), d(25), d(1_000)],
-            remaining_emergency: Cents::ZERO,
-            remaining_roth: Cents::ZERO,
+            gates: Default::default(),
+            gate_order: [FIRST, SECOND],
         }
     }
 
@@ -387,21 +488,21 @@ mod tests {
         assert_eq!(plan.lines.future_housing, share.floor_to_dollar());
     }
 
-    /// An unmet emergency gate zeros the future housing, retirement, and
-    /// investment lines and pours the same three amounts into the emergency
-    /// fund line instead, and the lines still total the excess used.
+    /// A first-gate need past every share zeros the future housing, retirement,
+    /// and investment lines and pours the same three amounts into the first
+    /// gate's line instead, and the lines still total the excess used.
     #[test]
-    fn an_unmet_emergency_gate_sweeps_future_housing_into_the_emergency_line() {
+    fn a_first_gate_need_past_every_share_sweeps_them_into_its_line() {
         let mut inputs = plan_inputs();
-        inputs.remaining_emergency = Cents::from_dollars(50_000);
+        inputs.gates[FIRST] = unfunded(Cents::from_dollars(50_000));
         let plan = compute(&plan_settings(), &inputs).unwrap();
 
-        assert!(plan.need_emergency);
+        assert!(plan.gates[FIRST].shortfall() > Cents::ZERO);
         assert_eq!(plan.lines.future_housing, Cents::ZERO);
         assert_eq!(plan.lines.retirement, Cents::ZERO);
         assert_eq!(plan.lines.investment, Cents::ZERO);
         assert_eq!(
-            plan.lines.emergency_fund,
+            plan.lines.gates[FIRST],
             (plan.future_housing + plan.retirement + plan.investment).floor_to_dollar()
         );
         assert_eq!(plan.lines.total(), plan.excess_used);
@@ -433,18 +534,21 @@ mod tests {
         assert_eq!(plan.lines.bills, d(2_344)); // D30
         assert_eq!(plan.lines.current_housing, d(693)); // D31
         assert_eq!(plan.lines.goals, d(5_602)); // D32  (the plug)
-        assert_eq!(plan.lines.roth, Cents::ZERO); // D33
+        assert_eq!(plan.lines.gates[SECOND], Cents::ZERO); // D33
         assert_eq!(
-            plan.lines.bills + plan.lines.current_housing + plan.lines.goals + plan.lines.roth,
+            plan.lines.bills
+                + plan.lines.current_housing
+                + plan.lines.goals
+                + plan.lines.gates[SECOND],
             d(8_639)
         ); // D29
 
         // 30% of the remainder, floored once at the line.
         assert_eq!(plan.lines.future_housing, d(4_200));
         assert_eq!(plan.lines.mom_and_dad, d(461)); // D36
-        assert_eq!(plan.lines.emergency_fund, Cents::ZERO); // D37
+        assert_eq!(plan.lines.gates[FIRST], Cents::ZERO); // D37
         assert_eq!(
-            plan.lines.future_housing + plan.lines.mom_and_dad + plan.lines.emergency_fund,
+            plan.lines.future_housing + plan.lines.mom_and_dad + plan.lines.gates[FIRST],
             d(4_661)
         ); // D34
 
@@ -484,35 +588,139 @@ mod tests {
     }
 
     #[test]
-    fn emergency_gate_diverts_every_other_line_into_the_emergency_fund_line() {
+    fn a_first_gate_need_past_every_share_leaves_the_second_nothing() {
         let d = Cents::from_dollars;
         let mut inputs = plan_inputs();
-        inputs.remaining_emergency = d(50_000);
-        // Non-zero, so the Roth gate would otherwise fire too: the assertion
-        // below is that Emergency wins the priority order, not that there is
-        // nothing for Roth to claim.
-        inputs.remaining_roth = d(50_000);
+        inputs.gates[FIRST] = unfunded(d(50_000));
+        // Non-zero, so the second gate would otherwise draw too: the
+        // assertion below is that the first wins the priority order, not that
+        // there is nothing for the second to claim.
+        inputs.gates[SECOND] = unfunded(d(50_000));
         let plan = compute(&plan_settings(), &inputs).unwrap();
-        // Roth, Retirement, and Investment are shut off.
-        assert_eq!(plan.lines.roth, Cents::ZERO);
+        // Nothing is left for the second gate or any share's own line.
+        assert_eq!(plan.lines.gates[SECOND], Cents::ZERO);
         assert_eq!(plan.lines.future_housing, Cents::ZERO);
         assert_eq!(plan.lines.retirement + plan.lines.investment, Cents::ZERO);
-        // Future Housing, Retirement, and Investment pile into Emergency Fund.
+        // Future Housing, Retirement, and Investment pile into the first gate.
         // 4200.44 + 2800.29 + 1400.14 = 8400.87, floored once after summing.
-        assert_eq!(plan.lines.emergency_fund, d(8_400));
+        assert_eq!(plan.lines.gates[FIRST], d(8_400));
         assert_eq!(plan.lines.total(), plan.excess_used);
     }
 
     #[test]
-    fn roth_gate_splits_retirement_between_the_roth_and_retirement_lines() {
+    fn a_first_gate_need_of_a_dollar_takes_a_dollar() {
         let d = Cents::from_dollars;
         let mut inputs = plan_inputs();
-        inputs.remaining_roth = d(1_000);
+        inputs.gates[FIRST] = unfunded(d(1));
         let plan = compute(&plan_settings(), &inputs).unwrap();
-        // Retirement is 2800.29: 1,000 fills the Roth, the rest stays on the
+        // 1 of the 4200.44 of future housing; the other two are whole.
+        assert_eq!(plan.lines.gates[FIRST], d(1));
+        assert_eq!(plan.lines.future_housing, d(4_199));
+        assert_eq!(plan.lines.retirement, d(2_800));
+        assert_eq!(plan.lines.investment, d(1_400));
+        assert_eq!(plan.lines.total(), plan.excess_used);
+    }
+
+    #[test]
+    fn a_gate_needing_less_than_a_dollar_takes_nothing_from_any_line() {
+        let off = compute(&plan_settings(), &plan_inputs()).unwrap().lines;
+        let mut inputs = plan_inputs();
+        inputs.gates[FIRST] = unfunded(Cents(99));
+        assert_eq!(compute(&plan_settings(), &inputs).unwrap().lines, off);
+    }
+
+    #[test]
+    fn the_second_gate_fills_from_what_the_first_leaves() {
+        let d = Cents::from_dollars;
+        let mut inputs = plan_inputs();
+        inputs.gates[FIRST] = unfunded(d(5_000));
+        inputs.gates[SECOND] = unfunded(d(3_000));
+        let plan = compute(&plan_settings(), &inputs).unwrap();
+        // The first takes 4200.44 of future housing and 799.56 of
+        // retirement; the second takes the 2000.73 left of that and 999.27 of
+        // the 1400.14 of investment.
+        assert_eq!(plan.lines.gates[FIRST], d(5_000));
+        assert_eq!(plan.lines.gates[SECOND], d(3_000));
+        assert_eq!(plan.lines.future_housing, Cents::ZERO);
+        assert_eq!(plan.lines.retirement, Cents::ZERO);
+        assert_eq!(plan.lines.investment, d(400));
+        assert_eq!(plan.lines.total(), plan.excess_used);
+    }
+
+    #[test]
+    fn a_gate_spends_the_future_housing_share_before_the_others() {
+        let d = Cents::from_dollars;
+        let mut inputs = plan_inputs();
+        inputs.gates[SECOND] = unfunded(d(1_000));
+        let plan = compute(&plan_settings(), &inputs).unwrap();
+        // 1,000 of the 4200.44 of future housing; the other two are whole.
+        assert_eq!(plan.lines.gates[SECOND], d(1_000));
+        assert_eq!(plan.lines.future_housing, d(3_200));
+        assert_eq!(plan.lines.retirement, d(2_800));
+        assert_eq!(plan.lines.investment, d(1_400));
+        assert_eq!(plan.lines.total(), plan.excess_used);
+    }
+
+    #[test]
+    fn a_gate_splits_retirement_between_its_own_and_the_retirement_line() {
+        let d = Cents::from_dollars;
+        let mut settings = plan_settings();
+        settings.future_housing_pct = BasisPoints::ZERO;
+        let mut inputs = plan_inputs();
+        inputs.gates[SECOND] = unfunded(d(1_000));
+        let plan = compute(&settings, &inputs).unwrap();
+        // Retirement is 2800.29: 1,000 fills the gate, the rest stays on the
         // Retirement line.
-        assert_eq!(plan.lines.roth, d(1_000));
+        assert_eq!(plan.lines.gates[SECOND], d(1_000));
         assert_eq!(plan.lines.retirement, d(1_800));
+        assert_eq!(plan.lines.total(), plan.excess_used);
+    }
+
+    /// With neither share ahead of it a gate still fills,
+    /// out of the investment share, and only the balance is invested.
+    #[test]
+    fn a_gate_fills_from_the_investment_share_when_it_is_the_only_one() {
+        let d = Cents::from_dollars;
+        let mut settings = plan_settings();
+        settings.future_housing_pct = BasisPoints::ZERO;
+        settings.retirement_pct = BasisPoints::ZERO;
+        let mut inputs = plan_inputs();
+        inputs.gates[SECOND] = unfunded(d(1_000));
+        let plan = compute(&settings, &inputs).unwrap();
+        // Investment is 1400.14.
+        assert_eq!(plan.lines.gates[SECOND], d(1_000));
+        assert_eq!(plan.lines.retirement, Cents::ZERO);
+        assert_eq!(plan.lines.investment, d(400));
+        assert_eq!(plan.lines.total(), plan.excess_used);
+    }
+
+    #[test]
+    fn a_gate_spends_the_retirement_share_before_the_investment_share() {
+        let d = Cents::from_dollars;
+        let mut inputs = plan_inputs();
+        inputs.gates[SECOND] = unfunded(d(7_200));
+        let plan = compute(&plan_settings(), &inputs).unwrap();
+        // 4200.44 of future housing and 2800.29 of retirement, then 199.27
+        // of the 1400.14 of investment.
+        assert_eq!(plan.lines.gates[SECOND], d(7_200));
+        assert_eq!(plan.lines.future_housing, Cents::ZERO);
+        assert_eq!(plan.lines.retirement, Cents::ZERO);
+        assert_eq!(plan.lines.investment, d(1_200));
+        assert_eq!(plan.lines.total(), plan.excess_used);
+    }
+
+    #[test]
+    fn a_second_gate_need_past_every_share_takes_all_of_each_and_nothing_else() {
+        let d = Cents::from_dollars;
+        let mut inputs = plan_inputs();
+        inputs.gates[SECOND] = unfunded(d(50_000));
+        let plan = compute(&plan_settings(), &inputs).unwrap();
+        // 4200.44 + 2800.29 + 1400.14 = 8400.87, floored once after summing.
+        assert_eq!(plan.lines.gates[SECOND], d(8_400));
+        assert_eq!(plan.lines.retirement, Cents::ZERO);
+        assert_eq!(plan.lines.investment, Cents::ZERO);
+        assert_eq!(plan.lines.future_housing, Cents::ZERO);
+        assert_eq!(plan.lines.mom_and_dad, d(461));
         assert_eq!(plan.lines.total(), plan.excess_used);
     }
 

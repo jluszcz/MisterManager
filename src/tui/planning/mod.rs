@@ -729,7 +729,7 @@ mod tests {
     }
 
     /// The same, upwards: one page back from the last destination is the
-    /// bill block, not the top of the screen.
+    /// Gates block, not the top of the screen.
     #[test]
     fn paging_up_moves_a_screenful_of_lines_back() {
         let mut planning = screen();
@@ -738,7 +738,10 @@ mod tests {
 
         planning.page_up();
 
-        assert_eq!(planning.selected_target(), Some(Target::Bill(BillId(6))));
+        assert_eq!(
+            planning.selected_target(),
+            Some(Target::Gate(crate::gate::Gate::Roth))
+        );
     }
 
     /// Paging past either end stops there rather than panicking or wrapping,
@@ -821,7 +824,7 @@ mod tests {
 
         let targets = [
             Line::CurrentHousing.label(),
-            Line::EmergencyFund.label(),
+            Line::Gate(crate::gate::Gate::EmergencyFund).label(),
             Line::FutureHousing.label(),
         ];
         let mut found = [false; 3];
